@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-ANTSPATH="/raven/u/${USER}/ANTs/antsInstallExample/install/bin"
-export ANTSPATH="/raven/u/${USER}/ANTs/antsInstallExample/install/bin"
-ANTSBIN="/raven/u/${USER}/ANTs/antsInstallExample/install/bin"
-WALL_TIME="24:00:00"
+ANTSPATH="/users/${USER}/ANTs/antsInstallExample/install/bin" # Install path is in home directory
+export ANTSPATH="/users/${USER}/ANTs/antsInstallExample/install/bin"
+ANTSBIN=$ANTSPATH
+WALL_TIME="24:00:00" # Max runtime
 #PARTITION="general"
 
 SUFFIX="HCR_GCaMP6s_stack.nrrd"
@@ -12,7 +12,7 @@ SUFFIX_HCRTOREF="gcamp_to_avg"
 SUFFIX_FRAME="norot.nrrd"
 
 FILETYPE=".nrrd"
-OUTPATH="/raven/u/${USER}/data/fixed/"
+OUTPATH="$SCRATCH/brains/output" # Make sure you are outputting into scratch (fast storage) 
 
 TARG=$1
 PARTITION=$2 #general, fast, ... specifies what kind of cluster node, gpu, cpu etc
@@ -26,7 +26,7 @@ OUTPATH_ONE="/raven/u/${USER}/reg/moving_one"
 
 BRAINSPATH="/raven/u/${USER}/data/moving/${PREFIX}"
 
-case "$TARG" in
+case "$TARG" in # TARG variable changes parameters based on what you want to do
 
     "align_14dpf")
         for TEMPLATE in /raven/u/${USER}/reg/moving_two/${PREFIX}; do
@@ -75,7 +75,16 @@ case "$TARG" in
         -t [${TEMPLATE%.*}0GenericAffine.mat , 1] \
         -t ${TEMPLATE%.*}1InverseWarp.nii.gz"
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-7dpf --wrap="${ANTSCALL}" #--mem=512000
+        # sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-7dpf --wrap="${ANTSCALL}" #--mem=512000
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-14dpf \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -125,7 +134,17 @@ case "$TARG" in
         -t [${TEMPLATE%.*}0GenericAffine.mat, 1]\
         -t ${TEMPLATE%.*}1InverseWarp.nii.gz"
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-7dpf --wrap="${ANTSCALL}" --mem=256000
+        # sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-7dpf --wrap="${ANTSCALL}" --mem=256000
+        # Above is Munich cluster format, below is UNIL Curnagl cluster format
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-7dpf \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -182,7 +201,16 @@ case "$TARG" in
         -t ${TEMPLATE%.*}1Warp.nii.gz \
         -t ${TEMPLATE%.*}0GenericAffine.mat"
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-21dpf --wrap="${ANTSCALL}" --mem=256000
+        # sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-21dpf --wrap="${ANTSCALL}" --mem=256000
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-21dpf \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -239,7 +267,16 @@ case "$TARG" in
         -t ${TEMPLATE%.*}1Warp.nii.gz \
         -t ${TEMPLATE%.*}0GenericAffine.mat"
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-21dpf --wrap="${ANTSCALL}" --mem=256000
+        # sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-21dpf --wrap="${ANTSCALL}" --mem=256000
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-21dpf \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -292,7 +329,16 @@ case "$TARG" in
         -t ${TEMPLATE%.*}_${value}1Warp.nii.gz \
         -t ${TEMPLATE%.*}_${value}0GenericAffine.mat"
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-21dpf --wrap="${ANTSCALL}" --mem=256000
+        # sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-21dpf --wrap="${ANTSCALL}" --mem=256000
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-21dpf \
+          --wrap="${ANTSCALL}"
         done
         done
         ;;
@@ -330,7 +376,16 @@ case "$TARG" in
         -c [200x200x200x200x10,1e-7,10] \
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox"
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}" #--mem=512000
+         #--mem=512000
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -389,7 +444,16 @@ case "$TARG" in
         -t ${TEMPLATE%.*}_mc2_1InverseWarp.nii.gz
         "
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -448,7 +512,16 @@ case "$TARG" in
         -t ${TEMPLATE%.*}_mc2_1InverseWarp.nii.gz
         "
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -493,7 +566,16 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
 
         MASK_REF="/raven/u/${USER}/reg/fixed/34343" # juvenile_hcr_ref_dv_d_cort_mask.nrrd"
         REF="/raven/u/${USER}/reg/fixed/juvenile_hcr_ref_dv_d.nrrd"
@@ -534,7 +616,16 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         ;;
 
     "align_hcr_2p")
@@ -575,7 +666,16 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
 
         ANTSCALL="${ANTSBIN}/antsRegistration \
         -d 3 --float 1 --verbose 1 \
@@ -603,7 +703,16 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         ;;
 
     "align_hcr_2p_syn")
@@ -627,7 +736,15 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
 
         ANTSCALL="${ANTSBIN}/antsRegistration \
         -d 3 --float 1 --verbose 1 \
@@ -642,7 +759,15 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         ;;
 
 
@@ -667,7 +792,15 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
 
         ANTSCALL="${ANTSBIN}/antsRegistration \
         -d 3 --float 1 --verbose 1 \
@@ -682,7 +815,15 @@ case "$TARG" in
         --shrink-factors 12x8x4x2x1 \
         --smoothing-sigmas 4x3x2x1x0vox
         "
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         ;;
 
 
@@ -733,7 +874,15 @@ case "$TARG" in
         -t ${TEMPLATE%.*}_m_1InverseWarp.nii.gz
         "
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -778,7 +927,15 @@ case "$TARG" in
         -t ${TEMPLATE%.*}_m_1InverseWarp.nii.gz
         "
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --mem=120000 --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=120G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -830,7 +987,15 @@ case "$TARG" in
         -t ${TEMPLATE%.*}_c2_1InverseWarp.nii.gz
         "
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
+          --wrap="${ANTSCALL}"
         done
         ;;
 
@@ -869,7 +1034,16 @@ case "$TARG" in
         echo "$BRAINSPATH"
         echo "${MASKS[@]}"
 
-        sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-template --wrap="${ANTSCALL}"
+        # sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-template --wrap="${ANTSCALL}"
+        sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-template \
+          --wrap="${ANTSCALL}"
         ;;
 
     "apply-reverse-hcr")
@@ -1258,7 +1432,16 @@ case "$TARG" in
 
       #sbatch --partition="$PARTITION" -N 1 -n 1 -t "$WALL_TIME" -J ANTs-template --wrap="${ANTSCALL}" --mem=120000
 
-      sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-template --wrap="${ANTSCALL}" --mem=256000
+      # sbatch --partition="$PARTITION" -N 1 -n 1 -c 72 -t "$WALL_TIME" -J ANTs-template --wrap="${ANTSCALL}" --mem=256000
+      sbatch \
+          -p cpu \
+          -N 1 \
+          -n 1 \
+          -c 72 \
+          --mem=256G \
+          -t "$WALL_TIME" \
+          -J ANTs-template \
+          --wrap="${ANTSCALL}"
 
     esac
 
