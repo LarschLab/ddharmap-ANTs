@@ -80,7 +80,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-14dpf \
@@ -140,7 +140,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-7dpf \
@@ -206,7 +206,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-21dpf \
@@ -272,7 +272,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-21dpf \
@@ -334,7 +334,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-21dpf \
@@ -381,7 +381,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -449,7 +449,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -517,7 +517,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -571,7 +571,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -621,7 +621,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -671,7 +671,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -708,7 +708,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -740,7 +740,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -763,7 +763,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -796,7 +796,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -819,7 +819,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -878,7 +878,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -931,7 +931,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=120G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -991,7 +991,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-reg-"${TEMPLATE:${#OUTPATH}:-${#FILETYPE}}" \
@@ -1039,7 +1039,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-template \
@@ -1437,7 +1437,7 @@ case "$TARG" in # TARG variable changes parameters based on what you want to do
           -p cpu \
           -N 1 \
           -n 1 \
-          -c 72 \
+          -c 48 \
           --mem=256G \
           -t "$WALL_TIME" \
           -J ANTs-template \
