@@ -90,6 +90,8 @@ ANTSCALL="${ANTSBIN}/antsRegistration \
 # Submit job
 sbatch -p ${PARTITION} -N1 -n1 -c${CORES} --mem=${MEM} -t ${WALL_TIME} \
        -J ants_${EXP_NAME}_${FISH}_r${ROUND} \
+       --mail-type=END,FAIL \
+       --mail-user=danin.dharmaperwira@unil.ch \
        --wrap="${ANTSCALL} && \
          ${ANTSBIN}/antsApplyTransforms -d 3 --verbose 1 \
            -r ${REF_GCAMP} \
