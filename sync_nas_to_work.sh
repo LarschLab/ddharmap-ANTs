@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sync_nas_to_work.sh
-# Copies HCR/2P data from NAS into your $WORK folder,
-# creating the data/raw + data/fixed layout for ANTs.
+# Copies HCR/2P data from NAS into your $WORK folder under a specific experiment,
+# creating per-experiment, per-subject raw + fixed layout for ANTs.
 
 set -euo pipefail
 
@@ -18,6 +18,14 @@ usage() {
 EXP_NAME="$1"
 shift
 
+# Define experiment directory under WORK_BASE
+EXP_DIR="$WORK_BASE/$EXP_NAME"
+
+# Create experiment folder if missing
+mkdir -p "$EXP_DIR"
+
+echo "Using experiment directory: $EXP_DIR"
+
 for fish in "$@"; do
   echo "\n=== Processing $fish for experiment $EXP_NAME ==="
 
@@ -27,8 +35,9 @@ for fish in "$@"; do
     continue
   fi
 
-  RAW_DST="$WORK_BASE/data/subjects/$fish/raw"
-  FIXED_DST="$WORK_BASE/data/subjects/$fish/fixed"
+  # Define raw and fixed destinations under the experiment folder
+  RAW_DST="$EXP_DIR/subjects/$fish/raw"
+  FIXED_DST="$EXP_DIR/subjects/$fish/fixed"
 
   # Create target dirs
   mkdir -p "$RAW_DST/anatomy_2P" \
@@ -69,4 +78,4 @@ for fish in "$@"; do
   echo "Finished $fish"
 done
 
-echo "\nAll done! Your data/subjects folders are ready for ANTs."
+echo "\nAll done! Experiment '$EXP_NAME' folder structure created under '$WORK_BASE'."
