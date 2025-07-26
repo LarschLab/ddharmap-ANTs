@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-# User-editable base paths (or rely on env vars)
+# Base paths (override with env vars if needed)
 NAS_BASE="${NAS:-$HOME/NAS}/imaging/CIF/Analysis"
 WORK_BASE="${WORK:-$HOME/WORK}/experiments"
 
@@ -22,6 +22,11 @@ for fish in "$@"; do
   echo "\n=== Processing $fish for experiment $EXP_NAME ==="
 
   SRC_DIR="$NAS_BASE/$EXP_NAME/$fish"
+  if [[ ! -d "$SRC_DIR" ]]; then
+    echo "Warning: source directory '$SRC_DIR' does not exist. Skipping $fish."
+    continue
+  fi
+
   RAW_DST="$WORK_BASE/data/subjects/$fish/raw"
   FIXED_DST="$WORK_BASE/data/subjects/$fish/fixed"
 
@@ -31,18 +36,35 @@ for fish in "$@"; do
            "$FIXED_DST"
 
   # Copy raw acquisitions
-  echo "Copying raw anatomy_2P..."
-  cp "$SRC_DIR/anatomy_2P"/*.nrrd "$RAW_DST/anatomy_2P/"
+  echo "Copying raw anatomy_2P from $SRC_DIR/anatomy_2P to $RAW_DST/anatomy_2P..."
+  if [[ -d "$SRC_DIR/anatomy_2P" ]]; then
+    cp "$SRC_DIR/anatomy_2P"/*.nrrd "$RAW_DST/anatomy_2P/"
+  else
+    echo "Warning: anatomy_2P folder missing in $SRC_DIR."
+  fi
 
-  echo "Copying raw confocal_round1..."
-  cp "$SRC_DIR/confocal_round1"/*.nrrd "$RAW_DST/confocal_round1/"
+  echo "Copying raw confocal_round1 from $SRC_DIR/confocal_round1 to $RAW_DST/confocal_round1..."
+  if [[ -d "$SRC_DIR/confocal_round1" ]]; then
+    cp "$SRC_DIR/confocal_round1"/*.nrrd "$RAW_DST/confocal_round1/"
+  else
+    echo "Warning: confocal_round1 folder missing in $SRC_DIR."
+  fi
 
   # Setup fixed references for ANTs
-  echo "Setting up fixed references..."
-  cp "$RAW_DST/anatomy_2P/anatomy_2P_GCaMP.nrrd" \
-     "$FIXED_DST/anatomy_2P_ref_GCaMP.nrrd"
-  cp "$RAW_DST/confocal_round1/round1_GCaMP.nrrd" \
-     "$FIXED_DST/round1_ref_GCaMP.nrrd"
+  echo "Setting up fixed references in $FIXED_DST..."
+  if [[ -f "$RAW_DST/anatomy_2P/anatomy_2P_GCaMP.nrrd" ]]; then
+    cp "$RAW_DST/anatomy_2P/anatomy_2P_GCaMP.nrrd" \
+       "$FIXED_DST/anatomy_2P_ref_GCaMP.nrrd"
+  else
+    echo "Error: anatomy_2P_GCaMP.nrrd not found in raw anatomy_2P. Skipping fixed copy."
+  fi
+
+  if [[ -f "$RAW_DST/confocal_round1/round1_GCaMP.nrrd" ]]; then
+    cp "$RAW_DST/confocal_round1/round1_GCaMP.nrrd" \
+       "$FIXED_DST/round1_ref_GCaMP.nrrd"
+  else
+    echo "Error: round1_GCaMP.nrrd not found in raw confocal_round1. Skipping fixed copy."
+  fi
 
   echo "Finished $fish"
 done
