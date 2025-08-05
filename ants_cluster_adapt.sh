@@ -18,7 +18,7 @@ if [ $# -lt 4 ]; then
   read -p "Experiment name: " EXP
   read -p "Fish ID: " FISH
   read -p "HCR round number: " ROUND
-  read -p "Partition (cpu/gpu/...): " PARTITION
+  read -p "Partition (cpu/gpu/... or test): " PARTITION
 else
   EXP=$1; FISH=$2; ROUND=$3; PARTITION=$4
 fi
@@ -29,19 +29,38 @@ RAW_ANAT="$BASE/raw/anatomy_2P"
 RAW_CONF="$BASE/raw/confocal_round${ROUND}"
 FIXED="$BASE/fixed"
 REGDIR="$BASE/reg"
-mkdir -p "$REGDIR"
+LOGDIR="$REGDIR/logs"
 
-# reference & inputs
-REF_GCaMP="$FIXED/round${ROUND}_ref_GCaMP.nrrd"
-ANAT_GCaMP="$RAW_ANAT/anatomy_2P_GCaMP.nrrd"
+mkdir -p "$LOGDIR"
 
-# loop over channels (exclude the GCaMP bridge)
+# choose reference GCaMP
+if [ "$ROUND" -eq 1 ]; then
+  REF_GCaMP="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
+else
+  REF_GCaMP="$FIXED/round1_ref_GCaMP.nrrd"
+fi
+
+# sanity check
+if [ ! -f "$REF_GCaMP" ]; then
+  echo "Error: reference not found: $REF_GCaMP" >&2
+  exit 1
+fi
+
+echo "Reference = $REF_GCaMP"
+echo "Processing confocal round $ROUND in $RAW_CONF"
+
+# loop over HCR channels only
 for MOV in "$RAW_CONF"/round${ROUND}_channel*.nrrd; do
-  echo "\n=== aligning $MOV to $REF_GCaMP ==="
+  # skip if no matches
+  [ -f "$MOV" ] || { echo "Warning: no files matching $MOV"; continue; }
+
   NAME=$(basename "${MOV%.*}")
   OUT_PREFIX="$REGDIR/${NAME}_to_round${ROUND}"
 
-  # antsRegistration call with 21dpf params
+  echo
+  echo "=== aligning ${NAME}.nrrd to $(basename $REF_GCaMP) ==="
+
+  # build combined registration + applyTransforms command
   CMD="${ANTSBIN}/antsRegistration \
     -d 3 --float 1 --verbose 1 \
     -o [${OUT_PREFIX},${OUT_PREFIX}_aligned.nrrd] \
@@ -59,18 +78,33 @@ for MOV in "$RAW_CONF"/round${ROUND}_channel*.nrrd; do
     -c [200x200x200x200,1e-6,10] \
     --shrink-factors 12x8x4x2 \
     --smoothing-sigmas 4x3x2x1vox \
-    -t SyN[0.25,6,0.20] \
+    -t SyN[0.1,6,0.1] \
     -m CC[${REF_GCaMP},${MOV},1,4] \
-    -c [200x200x200x200x10,1e-6,10] \
+    -c [200x200x200x200x10,1e-8,10] \
     --shrink-factors 12x8x4x2x1 \
-    --smoothing-sigmas 4x3x2x1x0vox"
+    --smoothing-sigmas 4x3x2x1x0vox && \
+  ${ANTSBIN}/antsApplyTransforms \
+    -d 3 --verbose 1 \
+    -r ${REF_GCaMP} \
+    -i ${MOV} \
+    -o ${OUT_PREFIX}_aligned.nrrd \
+    -t ${OUT_PREFIX}1Warp.nii.gz \
+    -t ${OUT_PREFIX}0GenericAffine.mat"
 
-  sbatch \
-    --mail-type=$MAIL_TYPE \
-    --mail-user=$MAIL_USER \
-    -p $PARTITION \
-    -N 1 -n 1 -c 48 --mem=256G \
-    -t $WALL_TIME \
-    -J ants_${EXP}_${FISH}_r${ROUND} \
-    --wrap="$CMD"
+  if [ "$PARTITION" = "test" ]; then
+    echo "==> TEST mode: running interactively on node"
+    echo ">> $CMD"
+    eval "$CMD"
+  else
+    sbatch \
+      --mail-type="$MAIL_TYPE" \
+      --mail-user="$MAIL_USER" \
+      -p "$PARTITION" \
+      -N 1 -n 1 -c 48 --mem=256G \
+      -t "$WALL_TIME" \
+      -J ants_${EXP}_${FISH}_r${ROUND}_${NAME} \
+      --wrap="$CMD" \
+      2> "$LOGDIR/${NAME}.err" \
+      1> "$LOGDIR/${NAME}.out"
+  fi
 done
