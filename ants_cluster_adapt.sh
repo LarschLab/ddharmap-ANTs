@@ -30,7 +30,6 @@ RAW_CONF="$BASE/raw/confocal_round${ROUND}"
 FIXED="$BASE/fixed"
 REGDIR="$BASE/reg"
 LOGDIR="$REGDIR/logs"
-
 mkdir -p "$LOGDIR"
 
 # choose reference GCaMP
@@ -46,55 +45,86 @@ if [ ! -f "$REF_GCaMP" ]; then
   exit 1
 fi
 
-echo "Reference = $REF_GCaMP"
-echo "Processing confocal round $ROUND in $RAW_CONF"
+# moving GCaMP
+MOV_GCaMP="$RAW_CONF/round${ROUND}_GCaMP.nrrd"
+if [ ! -f "$MOV_GCaMP" ]; then
+  echo "Error: moving GCaMP not found: $MOV_GCaMP" >&2
+  exit 1
+fi
 
-# loop over HCR channels only
+echo "Registering GCaMP:"
+echo "  FIXED  = $REF_GCaMP"
+echo "  MOVING = $MOV_GCaMP"
+
+OUT_PREF_G="$REGDIR/round${ROUND}_GCaMP_to_ref"
+
+# build registration + applyTransforms command for GCaMP
+CMD_REG="${ANTSBIN}/antsRegistration \
+  -d 3 --float 1 --verbose 1 \
+  -o [${OUT_PREF_G},${OUT_PREF_G}_aligned.nrrd] \
+  --interpolation WelchWindowedSinc \
+  --winsorize-image-intensities [0,100] \
+  --use-histogram-matching 1 \
+  -r [${REF_GCaMP},${MOV_GCaMP},1] \
+  -t rigid[0.1] \
+  -m MI[${REF_GCaMP},${MOV_GCaMP},1,32,Regular,0.25] \
+  -c [200x200x200x200,1e-6,10] \
+  --shrink-factors 12x8x4x2 \
+  --smoothing-sigmas 4x3x2x1vox \
+  -t Affine[0.1] \
+  -m MI[${REF_GCaMP},${MOV_GCaMP},1,32,Regular,0.25] \
+  -c [200x200x200x200,1e-6,10] \
+  --shrink-factors 12x8x4x2 \
+  --smoothing-sigmas 4x3x2x1vox \
+  -t SyN[0.1,6,0.1] \
+  -m CC[${REF_GCaMP},${MOV_GCaMP},1,4] \
+  -c [200x200x200x200x10,1e-8,10] \
+  --shrink-factors 12x8x4x2x1 \
+  --smoothing-sigmas 4x3x2x1x0vox && \
+${ANTSBIN}/antsApplyTransforms \
+  -d 3 --verbose 1 \
+  -r ${REF_GCaMP} \
+  -i ${MOV_GCaMP} \
+  -o ${OUT_PREF_G}_aligned.nrrd \
+  -t ${OUT_PREF_G}1Warp.nii.gz \
+  -t ${OUT_PREF_G}0GenericAffine.mat"
+
+if [ "$PARTITION" = "test" ]; then
+  echo "==> TEST mode: running interactively on node"
+  eval "$CMD_REG"
+else
+  sbatch \
+    --mail-type="$MAIL_TYPE" \
+    --mail-user="$MAIL_USER" \
+    -p "$PARTITION" \
+    -N 1 -n 1 -c 48 --mem=256G \
+    -t "$WALL_TIME" \
+    -J ants_${EXP}_${FISH}_r${ROUND}_GCaMP \
+    --wrap="$CMD_REG" \
+    2> "$LOGDIR/GCaMP.err" \
+    1> "$LOGDIR/GCaMP.out"
+fi
+
+# now apply transforms to the HCR channels
+echo
+echo "Applying transforms to HCR channels:"
 for MOV in "$RAW_CONF"/round${ROUND}_channel*.nrrd; do
-  # skip if no matches
-  [ -f "$MOV" ] || { echo "Warning: no files matching $MOV"; continue; }
-
+  [ -f "$MOV" ] || continue
   NAME=$(basename "${MOV%.*}")
-  OUT_PREFIX="$REGDIR/${NAME}_to_round${ROUND}"
+  echo "  $MOV → $REF_GCaMP"
+  OUT_PREF_C="$REGDIR/${NAME}_to_round${ROUND}"
 
-  echo
-  echo "=== aligning ${NAME}.nrrd to $(basename $REF_GCaMP) ==="
-
-  # build combined registration + applyTransforms command
-  CMD="${ANTSBIN}/antsRegistration \
-    -d 3 --float 1 --verbose 1 \
-    -o [${OUT_PREFIX},${OUT_PREFIX}_aligned.nrrd] \
-    --interpolation WelchWindowedSinc \
-    --winsorize-image-intensities [0,100] \
-    --use-histogram-matching 1 \
-    -r [${REF_GCaMP},${MOV},1] \
-    -t rigid[0.1] \
-    -m MI[${REF_GCaMP},${MOV},1,32,Regular,0.25] \
-    -c [200x200x200x200,1e-6,10] \
-    --shrink-factors 12x8x4x2 \
-    --smoothing-sigmas 4x3x2x1vox \
-    -t Affine[0.1] \
-    -m MI[${REF_GCaMP},${MOV},1,32,Regular,0.25] \
-    -c [200x200x200x200,1e-6,10] \
-    --shrink-factors 12x8x4x2 \
-    --smoothing-sigmas 4x3x2x1vox \
-    -t SyN[0.1,6,0.1] \
-    -m CC[${REF_GCaMP},${MOV},1,4] \
-    -c [200x200x200x200x10,1e-8,10] \
-    --shrink-factors 12x8x4x2x1 \
-    --smoothing-sigmas 4x3x2x1x0vox && \
-  ${ANTSBIN}/antsApplyTransforms \
+  CMD_APP="${ANTSBIN}/antsApplyTransforms \
     -d 3 --verbose 1 \
     -r ${REF_GCaMP} \
     -i ${MOV} \
-    -o ${OUT_PREFIX}_aligned.nrrd \
-    -t ${OUT_PREFIX}1Warp.nii.gz \
-    -t ${OUT_PREFIX}0GenericAffine.mat"
+    -o ${OUT_PREF_C}_aligned.nrrd \
+    -t ${OUT_PREF_G}1Warp.nii.gz \
+    -t ${OUT_PREF_G}0GenericAffine.mat"
 
   if [ "$PARTITION" = "test" ]; then
-    echo "==> TEST mode: running interactively on node"
-    echo ">> $CMD"
-    eval "$CMD"
+    echo "==> TEST apply: $CMD_APP"
+    eval "$CMD_APP"
   else
     sbatch \
       --mail-type="$MAIL_TYPE" \
@@ -103,7 +133,7 @@ for MOV in "$RAW_CONF"/round${ROUND}_channel*.nrrd; do
       -N 1 -n 1 -c 48 --mem=256G \
       -t "$WALL_TIME" \
       -J ants_${EXP}_${FISH}_r${ROUND}_${NAME} \
-      --wrap="$CMD" \
+      --wrap="$CMD_APP" \
       2> "$LOGDIR/${NAME}.err" \
       1> "$LOGDIR/${NAME}.out"
   fi
