@@ -16,11 +16,25 @@ MAIL_USER="danin.dharmaperwira@unil.ch"
 # parse args or prompt
 if [ $# -lt 4 ]; then
   read -p "Experiment name: " EXP
-  read -p "Fish ID: " FISH
-  read -p "HCR round number: " ROUND
-  read -p "Partition (cpu/gpu/... or test): " PARTITION
+  read -p "Fish ID: "    FISH
+  read -p "HCR round #: " ROUND
+  read -p "Partition (cpu/gpu/.../test): " PARTITION
 else
   EXP=$1; FISH=$2; ROUND=$3; PARTITION=$4
+fi
+
+# determine resources
+if [ "$PARTITION" = "test" ]; then
+  echo "==> TEST mode: using interactive queue (1 CPU, 8G, 1h)"
+  QUEUE="interactive"
+  CPUS=1
+  MEM="8G"
+  TIME="1:00:00"
+else
+  QUEUE="$PARTITION"
+  CPUS=48
+  MEM="256G"
+  TIME="$WALL_TIME"
 fi
 
 # define directories
@@ -30,9 +44,9 @@ RAW_CONF="$BASE/raw/confocal_round${ROUND}"
 FIXED="$BASE/fixed"
 REGDIR="$BASE/reg"
 LOGDIR="$REGDIR/logs"
-mkdir -p "$LOGDIR"
+mkdir -p "$REGDIR" "$LOGDIR"
 
-# choose reference GCaMP
+# choose reference GCaMP: anatomy for round1, round1_ref for later
 if [ "$ROUND" -eq 1 ]; then
   REF_GCaMP="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
 else
@@ -41,27 +55,21 @@ fi
 
 # sanity check
 if [ ! -f "$REF_GCaMP" ]; then
-  echo "Error: reference not found: $REF_GCaMP" >&2
-  exit 1
-fi
-
-# moving GCaMP
+  echo "Error: reference not found: $REF_GCaMP" >&2; exit 1; fi
 MOV_GCaMP="$RAW_CONF/round${ROUND}_GCaMP.nrrd"
 if [ ! -f "$MOV_GCaMP" ]; then
-  echo "Error: moving GCaMP not found: $MOV_GCaMP" >&2
-  exit 1
-fi
+  echo "Error: moving GCaMP not found: $MOV_GCaMP" >&2; exit 1; fi
 
-echo "Registering GCaMP:"
+echo "Registering GCaMP bridge:"
 echo "  FIXED  = $REF_GCaMP"
 echo "  MOVING = $MOV_GCaMP"
 
-OUT_PREF_G="$REGDIR/round${ROUND}_GCaMP_to_ref"
+OUT_PREFIX="$REGDIR/round${ROUND}_GCaMP_to_ref"
 
-# build registration + applyTransforms command for GCaMP
+# build command
 CMD_REG="${ANTSBIN}/antsRegistration \
   -d 3 --float 1 --verbose 1 \
-  -o [${OUT_PREF_G},${OUT_PREF_G}_aligned.nrrd] \
+  -o [${OUT_PREFIX},${OUT_PREFIX}_aligned.nrrd] \
   --interpolation WelchWindowedSinc \
   --winsorize-image-intensities [0,100] \
   --use-histogram-matching 1 \
@@ -85,53 +93,49 @@ ${ANTSBIN}/antsApplyTransforms \
   -d 3 --verbose 1 \
   -r ${REF_GCaMP} \
   -i ${MOV_GCaMP} \
-  -o ${OUT_PREF_G}_aligned.nrrd \
-  -t ${OUT_PREF_G}1Warp.nii.gz \
-  -t ${OUT_PREF_G}0GenericAffine.mat"
+  -o ${OUT_PREFIX}_aligned.nrrd \
+  -t ${OUT_PREFIX}1Warp.nii.gz \
+  -t ${OUT_PREFIX}0GenericAffine.mat"
 
-if [ "$PARTITION" = "test" ]; then
-  echo "==> TEST mode: running interactively on node"
+# submit or run
+if [ "$QUEUE" = "interactive" ]; then
+  echo "==> TEST mode: running interactively"
   eval "$CMD_REG"
 else
   sbatch \
     --mail-type="$MAIL_TYPE" \
     --mail-user="$MAIL_USER" \
-    -p "$PARTITION" \
-    -N 1 -n 1 -c 48 --mem=256G \
-    -t "$WALL_TIME" \
+    -p "$QUEUE" \
+    -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
+    -t "$TIME" \
     -J ants_${EXP}_${FISH}_r${ROUND}_GCaMP \
     --wrap="$CMD_REG" \
     2> "$LOGDIR/GCaMP.err" \
     1> "$LOGDIR/GCaMP.out"
 fi
 
-# now apply transforms to the HCR channels
-echo
-echo "Applying transforms to HCR channels:"
+# now apply transforms to HCR channels
+echo -e "\nApplying transforms to HCR channels:"
 for MOV in "$RAW_CONF"/round${ROUND}_channel*.nrrd; do
   [ -f "$MOV" ] || continue
   NAME=$(basename "${MOV%.*}")
-  echo "  $MOV → $REF_GCaMP"
-  OUT_PREF_C="$REGDIR/${NAME}_to_round${ROUND}"
-
+  echo "  $MOV -> ${NAME}_aligned.nrrd"
   CMD_APP="${ANTSBIN}/antsApplyTransforms \
     -d 3 --verbose 1 \
     -r ${REF_GCaMP} \
     -i ${MOV} \
-    -o ${OUT_PREF_C}_aligned.nrrd \
-    -t ${OUT_PREF_G}1Warp.nii.gz \
-    -t ${OUT_PREF_G}0GenericAffine.mat"
-
-  if [ "$PARTITION" = "test" ]; then
-    echo "==> TEST apply: $CMD_APP"
+    -o ${REGDIR}/${NAME}_aligned.nrrd \
+    -t ${OUT_PREFIX}1Warp.nii.gz \
+    -t ${OUT_PREFIX}0GenericAffine.mat"
+  if [ "$QUEUE" = "interactive" ]; then
     eval "$CMD_APP"
   else
     sbatch \
       --mail-type="$MAIL_TYPE" \
       --mail-user="$MAIL_USER" \
-      -p "$PARTITION" \
-      -N 1 -n 1 -c 48 --mem=256G \
-      -t "$WALL_TIME" \
+      -p "$QUEUE" \
+      -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
+      -t "$TIME" \
       -J ants_${EXP}_${FISH}_r${ROUND}_${NAME} \
       --wrap="$CMD_APP" \
       2> "$LOGDIR/${NAME}.err" \
