@@ -1,29 +1,20 @@
 #!/usr/bin/env bash
 
 # minimal adaptations for new folder structure on Curnagl HPC
-# usage: bash ants_cluster_adapt.sh [Experiment] [FishID] [Round] [Partition]
+# usage: bash ants_cluster_adapt.sh EXP ROUND PARTITION FISH1 [FISH2 ...]
 
-# --- user settings & defaults ---
 ANTSPATH="$HOME/ANTs/antsInstallExample/install/bin"
 export ANTSPATH
 ANTSBIN="$ANTSPATH"
 WALL_TIME="24:00:00"
-
-# SBATCH mail notifications
 MAIL_TYPE="END,FAIL"
 MAIL_USER="danin.dharmaperwira@unil.ch"
 
-# parse args or prompt
 if [ $# -lt 4 ]; then
   echo "Usage: $0 EXP ROUND PARTITION FISH1 [FISH2 ...]" >&2
-  read -p "Enter experiment name: " EXP
-  read -p "Enter round number (1 or 2): " ROUND
-  read -p "Enter partition (test, short, long): " PARTITION
-  read -p "Enter fish IDs (space-separated): " -a FISH_IDS
   exit 1
 fi
 
-# first three args are always experiment, round, partition
 EXP=$1; shift
 ROUND=$1; shift
 PARTITION=$1; shift
@@ -32,24 +23,16 @@ FISH_IDS=( "$@" )
 echo "Will register these fish in experiment $EXP, round $ROUND on partition $PARTITION:"
 printf "  %s\n" "${FISH_IDS[@]}"
 
-# now loop over each fish
 for FISH in "${FISH_IDS[@]}"; do
   echo "===== Processing subject $FISH ====="
-  # determine resources
+
   if [ "$PARTITION" = "test" ]; then
-    echo "==> TEST mode: using interactive queue (1 CPU, 8G, 1h)"
-    QUEUE="interactive"
-    CPUS=1
-    MEM="8G"
-    TIME="1:00:00"
+    QUEUE="interactive"; CPUS=1; MEM="8G"; TIME="1:00:00"
+    echo "==> TEST mode: interactive (1 CPU, 8G, 1h)"
   else
-    QUEUE="$PARTITION"
-    CPUS=48
-    MEM="256G"
-    TIME="$WALL_TIME"
+    QUEUE="$PARTITION"; CPUS=48; MEM="256G"; TIME="$WALL_TIME"
   fi
 
-  # define directories
   BASE="$SCRATCH/experiments/$EXP/subjects/$FISH"
   RAW_ANAT="$BASE/raw/anatomy_2P"
   RAW_CONF="$BASE/raw/confocal_round${ROUND}"
@@ -128,7 +111,7 @@ for FISH in "${FISH_IDS[@]}"; do
 
   # now apply transforms to HCR channels
   echo -e "\nApplying transforms to HCR channels:"
-  for MOV in "$RAW_CONF"/round${ROUND}_channel*.nrrd; do
+  for MOV in "$RAW_CONF"/round${ROUND}_HCR_channel*.nrrd; do
     [ -f "$MOV" ] || continue
     NAME=$(basename "${MOV%.*}")
     echo "  $MOV -> ${NAME}_aligned.nrrd"
@@ -153,4 +136,6 @@ for FISH in "${FISH_IDS[@]}"; do
         2> "$LOGDIR/${NAME}.err" \
         1> "$LOGDIR/${NAME}.out"
     fi
+  done
+
 done
