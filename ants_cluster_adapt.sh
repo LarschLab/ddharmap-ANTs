@@ -21,11 +21,6 @@ else
   EXP="$1"; ROUND="$2"; PARTITION="$3"; FISH_IDS=( "${@:4}" )
 fi
 
-EXP=$1; shift
-ROUND=$1; shift
-PARTITION=$1; shift
-FISH_IDS=( "$@" )
-
 echo "Will register these fish in experiment $EXP, round $ROUND on partition $PARTITION:"
 printf "  %s\n" "${FISH_IDS[@]}"
 
