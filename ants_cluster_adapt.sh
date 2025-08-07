@@ -12,7 +12,13 @@ MAIL_USER="danin.dharmaperwira@unil.ch"
 
 if [ $# -lt 4 ]; then
   echo "Usage: $0 EXP ROUND PARTITION FISH1 [FISH2 ...]" >&2
+  read -p "EXP: " EXP
+  read -p "ROUND: " ROUND
+  read -p "PARTITION: " PARTITION
+  read -p "FISH IDs (space-separated): " FISH_IDS
   exit 1
+else
+  EXP="$1"; ROUND="$2"; PARTITION="$3"; FISH_IDS=( "${@:4}" )
 fi
 
 EXP=$1; shift
@@ -62,7 +68,7 @@ for FISH in "${FISH_IDS[@]}"; do
   OUT_PREFIX="$REGDIR/round${ROUND}_GCaMP_to_ref"
 
   # build command
-  CMD_REG="${ANTSBIN}/antsRegistration \
+  CMD_ALL="${ANTSBIN}/antsRegistration \
     -d 3 --float 1 --verbose 1 \
     -o [${OUT_PREFIX},${OUT_PREFIX}_aligned.nrrd] \
     --interpolation WelchWindowedSinc \
@@ -92,10 +98,22 @@ for FISH in "${FISH_IDS[@]}"; do
     -t ${OUT_PREFIX}1Warp.nii.gz \
     -t ${OUT_PREFIX}0GenericAffine.mat"
 
+  # append HCR channels before submission
+  for MOV in "$RAW_CONF"/round${ROUND}_HCR_channel*.nrrd; do
+    [ -f "$MOV" ] || continue
+    NAME=$(basename "${MOV%.*}")
+    CMD_ALL+=" && ${ANTSBIN}/antsApplyTransforms \
+      -d 3 --verbose 1 \
+      -r ${REF_GCaMP} \
+      -i ${MOV} \
+      -o ${REGDIR}/${NAME}_aligned.nrrd \
+      -t ${OUT_PREFIX}1Warp.nii.gz \
+      -t ${OUT_PREFIX}0GenericAffine.mat"
+  done
+
   # submit or run
   if [ "$QUEUE" = "interactive" ]; then
-    echo "==> TEST mode: running interactively"
-    eval "$CMD_REG"
+    eval "$CMD_ALL"
   else
     sbatch \
       --mail-type="$MAIL_TYPE" \
@@ -103,39 +121,11 @@ for FISH in "${FISH_IDS[@]}"; do
       -p "$QUEUE" \
       -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
       -t "$TIME" \
-      -J ants_${EXP}_${FISH}_r${ROUND}_GCaMP \
-      --wrap="$CMD_REG" \
-      2> "$LOGDIR/GCaMP.err" \
-      1> "$LOGDIR/GCaMP.out"
+      -J ants_${EXP}_${FISH}_r${ROUND}_all \
+      --wrap="$CMD_ALL" \
+      2> "$LOGDIR/registration_and_transform.err" \
+      1> "$LOGDIR/registration_and_transform.out"
   fi
 
-  # now apply transforms to HCR channels
-  echo -e "\nApplying transforms to HCR channels:"
-  for MOV in "$RAW_CONF"/round${ROUND}_HCR_channel*.nrrd; do
-    [ -f "$MOV" ] || continue
-    NAME=$(basename "${MOV%.*}")
-    echo "  $MOV -> ${NAME}_aligned.nrrd"
-    CMD_APP="${ANTSBIN}/antsApplyTransforms \
-      -d 3 --verbose 1 \
-      -r ${REF_GCaMP} \
-      -i ${MOV} \
-      -o ${REGDIR}/${NAME}_aligned.nrrd \
-      -t ${OUT_PREFIX}1Warp.nii.gz \
-      -t ${OUT_PREFIX}0GenericAffine.mat"
-    if [ "$QUEUE" = "interactive" ]; then
-      eval "$CMD_APP"
-    else
-      sbatch \
-        --mail-type="$MAIL_TYPE" \
-        --mail-user="$MAIL_USER" \
-        -p "$QUEUE" \
-        -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
-        -t "$TIME" \
-        -J ants_${EXP}_${FISH}_r${ROUND}_${NAME} \
-        --wrap="$CMD_APP" \
-        2> "$LOGDIR/${NAME}.err" \
-        1> "$LOGDIR/${NAME}.out"
-    fi
-  done
 
 done
