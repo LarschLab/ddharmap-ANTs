@@ -5,16 +5,9 @@
 set -euo pipefail
 
 # ---------- Find ANTs binaries ----------
-if command -v antsRegistration >/dev/null 2>&1; then
-  ANTSBIN="$(dirname "$(command -v antsRegistration)")"
-elif [[ -n "${ANTSPATH:-}" && -x "$ANTSPATH/antsRegistration" ]]; then
-  ANTSBIN="$ANTSPATH"; export PATH="$ANTSBIN:$PATH"
-elif [[ -x "/opt/homebrew/bin/antsRegistration" ]]; then
-  ANTSBIN="/opt/homebrew/bin"; export PATH="$ANTSBIN:$PATH"
-else
-  print -u2 "Could not find antsRegistration. Put ANTs on PATH or set ANTSPATH."
-  exit 1
-fi
+export ANTSPATH="/Users/ddharmap/ANTs/antsInstallExample/install/bin"
+export PATH="$ANTSPATH:$PATH"
+ANTSBIN="$ANTSPATH"
 
 # ---------- Args (interactive fallback) ----------
 typeset EXP ROUND
@@ -56,33 +49,33 @@ for FISH in "${FISH_IDS[@]}"; do
   LOGDIR="$REGDIR/logs"
   mkdir -p "$FIXED" "$REGDIR" "$LOGDIR"
 
-  # --------- Determine reference for round ----------
-  # For round 1, prefer fixed/anatomy_2P_ref_GCaMP.nrrd; if missing, link from anatomy_2P/anatomy_2P_GCaMP.nrrd
+  # --------- Determine reference for this round ----------
   if [[ "$ROUND" == "1" ]]; then
+    # For round 1, keep using the anatomy reference as FIXED
     REF_GCaMP="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
     if [[ ! -f "$REF_GCaMP" ]]; then
+      # Make sure anatomy_2P/anatomy_2P_GCaMP.nrrd exists, then link it as the round1 fixed
       if [[ -f "$ANAT_DIR/anatomy_2P_GCaMP.nrrd" ]]; then
         ln -sf "$ANAT_DIR/anatomy_2P_GCaMP.nrrd" "$REF_GCaMP"
-        print "Linked reference: $REF_GCaMP -> anatomy_2P_GCaMP.nrrd"
+        print "Linked anatomy ref: $REF_GCaMP -> $ANAT_DIR/anatomy_2P_GCaMP.nrrd"
       else
-        print -u2 "Missing anatomy ref: $ANAT_DIR/anatomy_2P_GCaMP.nrrd"
-        exit 1
+        print -u2 "Missing anatomy ref: $ANAT_DIR/anatomy_2P_GCaMP.nrrd"; exit 1
       fi
     fi
   else
-    # For later rounds, use fixed/round1_ref_GCaMP.nrrd; if missing, try to reuse prior aligned GCaMP from reg/
+    # For later rounds, FIXED is the RAW round1 GCaMP (not the aligned one)
     REF_GCaMP="$FIXED/round1_ref_GCaMP.nrrd"
     if [[ ! -f "$REF_GCaMP" ]]; then
-      CAND="$BASE/reg/round1_GCaMP_to_ref_aligned.nrrd"
-      if [[ -f "$CAND" ]]; then
-        ln -sf "$CAND" "$REF_GCaMP"
-        print "Linked: $REF_GCaMP -> $CAND"
+      SRC="$BASE/confocal_round1/round1_GCaMP.nrrd"
+      if [[ -f "$SRC" ]]; then
+        ln -sf "$SRC" "$REF_GCaMP"
+        print "Linked round1 ref: $REF_GCaMP -> $SRC"
       else
-        print -u2 "Missing $REF_GCaMP and no prior aligned round1 GCaMP at $CAND"
-        exit 1
+        print -u2 "Missing round1 GCaMP to use as ref: $SRC"; exit 1
       fi
     fi
   fi
+
 
   # --------- Moving image for this round ----------
   MOV_GCaMP="$CONF_DIR/round${ROUND}_GCaMP.nrrd"
@@ -142,11 +135,4 @@ for FISH in "${FISH_IDS[@]}"; do
     1> "$LOGDIR/${JOBNAME}.out" \
     2> "$LOGDIR/${JOBNAME}.err"
 
-  # --------- After round 1: make the round1 reference for future rounds ----------
-  if [[ "$ROUND" == "1" && ! -f "$FIXED/round1_ref_GCaMP.nrrd" ]]; then
-    cp -f "${OUT_PREFIX}_aligned.nrrd" "$FIXED/round1_ref_GCaMP.nrrd"
-    print "Wrote: $FIXED/round1_ref_GCaMP.nrrd"
-  fi
-
-  print "Done: $JOBNAME"
 done
