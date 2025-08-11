@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sync_nas_to_work.sh
-# Copies HCR/2P data from NAS into your $WORK folder under a specific experiment,
-# creating per-experiment, per-subject raw + fixed layout for ANTs.
+# Copies HCR/2P data from NAS into your $WORK folder,
+# creating the data/raw + data/fixed layout for ANTs.
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ mkdir -p "$EXP_DIR"
 echo "Using experiment directory: $EXP_DIR"
 
 for fish in "$@"; do
-  echo "\n=== Processing $fish for experiment $EXP_NAME ==="
+  echo -e "\n=== Processing $fish for experiment $EXP_NAME ==="
 
   SRC_DIR="$NAS_BASE/$EXP_NAME/$fish"
   if [[ ! -d "$SRC_DIR" ]]; then
@@ -40,11 +40,9 @@ for fish in "$@"; do
   FIXED_DST="$EXP_DIR/subjects/$fish/fixed"
 
   # Create target dirs
-  mkdir -p "$RAW_DST/anatomy_2P" \
-           "$RAW_DST/confocal_round1" \
-           "$FIXED_DST"
+  mkdir -p "$RAW_DST/anatomy_2P" "$FIXED_DST"
 
-  # Copy raw acquisitions
+  # Copy raw anatomy_2P
   echo "Copying raw anatomy_2P from $SRC_DIR/anatomy_2P to $RAW_DST/anatomy_2P..."
   if [[ -d "$SRC_DIR/anatomy_2P" ]]; then
     cp "$SRC_DIR/anatomy_2P"/*.nrrd "$RAW_DST/anatomy_2P/"
@@ -52,12 +50,16 @@ for fish in "$@"; do
     echo "Warning: anatomy_2P folder missing in $SRC_DIR."
   fi
 
-  echo "Copying raw confocal_round1 from $SRC_DIR/confocal_round1 to $RAW_DST/confocal_round1..."
-  if [[ -d "$SRC_DIR/confocal_round1" ]]; then
-    cp "$SRC_DIR/confocal_round1"/*.nrrd "$RAW_DST/confocal_round1/"
-  else
-    echo "Warning: confocal_round1 folder missing in $SRC_DIR."
-  fi
+  # Copy any confocal_round* folders
+  for confocal_dir in "$SRC_DIR"/confocal_round*; do
+    if [[ -d "$confocal_dir" ]]; then
+      round_name=$(basename "$confocal_dir")
+      mkdir -p "$RAW_DST/$round_name"
+      echo "Copying raw $round_name from $confocal_dir to $RAW_DST/$round_name..."
+      cp "$confocal_dir"/*.nrrd "$RAW_DST/$round_name/" || \
+        echo "Warning: no .nrrd files found in $confocal_dir."
+    fi
+  done
 
   # Setup fixed references for ANTs
   echo "Setting up fixed references in $FIXED_DST..."
@@ -78,4 +80,4 @@ for fish in "$@"; do
   echo "Finished $fish"
 done
 
-echo "\nAll done! Experiment '$EXP_NAME' folder structure created under '$WORK_BASE'."
+echo -e "\nAll done! Your data/subjects folders are ready for ANTs."
