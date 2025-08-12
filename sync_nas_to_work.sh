@@ -8,6 +8,7 @@ set -euo pipefail
 # Base paths (override with env vars if needed)
 NAS_BASE="${NAS:-$HOME/NAS}/imaging/CIF/Analysis"
 WORK_BASE="${WORK:-$HOME/WORK}/experiments"
+SCRATCH_BASE="${SCRATCH:-$HOME/SCRATCH}/experiments"   # ADDED
 
 usage() {
   echo "Usage: $0 <experiment_name> <fishID1> [fishID2 ...]"
@@ -20,9 +21,11 @@ shift
 
 # Define experiment directory under WORK_BASE
 EXP_DIR="$WORK_BASE/$EXP_NAME"
+SCRATCH_EXP_DIR="$SCRATCH_BASE/$EXP_NAME"              # ADDED
 
 # Create experiment folder if missing
 mkdir -p "$EXP_DIR"
+mkdir -p "$SCRATCH_EXP_DIR/subjects"                   # ADDED
 
 echo "Using experiment directory: $EXP_DIR"
 
@@ -76,6 +79,10 @@ for fish in "$@"; do
   else
     echo "Error: round1_GCaMP.nrrd not found in raw confocal_round1. Skipping fixed copy."
   fi
+
+  # Mirror this fish to SCRATCH (from WORK)                          # ADDED
+  mkdir -p "$SCRATCH_EXP_DIR/subjects/$fish"                          # ADDED
+  cp -a "$EXP_DIR/subjects/$fish/." "$SCRATCH_EXP_DIR/subjects/$fish/" # ADDED
 
   echo "Finished $fish"
 done
