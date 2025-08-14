@@ -10,13 +10,15 @@ WALL_TIME="24:00:00"
 MAIL_TYPE="END,FAIL"
 MAIL_USER="danin.dharmaperwira@unil.ch"
 
+# --- args ---
 if [ $# -lt 4 ]; then
   echo "Usage: $0 EXP ROUND PARTITION FISH1 [FISH2 ...]" >&2
-  read -p "EXP: " EXP
-  read -p "ROUND: " ROUND
-  read -p "PARTITION: " PARTITION
-  read -p "FISH IDs (space-separated): " FISH_IDS
-  exit 1
+  read -r -p "EXP: " EXP
+  read -r -p "ROUND: " ROUND
+  read -r -p "PARTITION: " PARTITION
+  read -r -p "FISH IDs (space-separated): " FISH_LINE
+  # convert the line into an array (NO exit here!)
+  read -r -a FISH_IDS <<< "$FISH_LINE"
 else
   EXP="$1"; ROUND="$2"; PARTITION="$3"; FISH_IDS=( "${@:4}" )
 fi
