@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
-
-# minimal adaptations for new folder structure on Curnagl HPC
-# usage: bash ants_cluster_adapt.sh EXP ROUND PARTITION FISH1 [FISH2 ...]
+# usage: bash ants_param.sh EXP ROUND PARTITION FISH1 [FISH2 ...]
+# Runs a 2-phase registration: (A) rigid+affine once, (B) SyN sweeps reusing the affine.
+# Submits one SLURM job per fish and writes clean per-job logs under reg/logs/.
 
 ANTSPATH="$HOME/ANTs/antsInstallExample/install/bin"
 export ANTSPATH
 ANTSBIN="$ANTSPATH"
+
 WALL_TIME="24:00:00"
 MAIL_TYPE="END,FAIL"
 MAIL_USER="danin.dharmaperwira@unil.ch"
 
-# --- args ---
+# --- args (interactive fallback; no early exit) ---
 if [ $# -lt 4 ]; then
   echo "Usage: $0 EXP ROUND PARTITION FISH1 [FISH2 ...]" >&2
   read -r -p "EXP: " EXP
   read -r -p "ROUND: " ROUND
-  read -r -p "PARTITION: " PARTITION
+  read -r -p "PARTITION (e.g., cpu or test): " PARTITION
   read -r -p "FISH IDs (space-separated): " FISH_LINE
-  # convert the line into an array (NO exit here!)
   read -r -a FISH_IDS <<< "$FISH_LINE"
 else
-  EXP="$1"; ROUND="$2"; PARTITION="$3"; FISH_IDS=( "${@:4}" )
+  EXP="$1"; ROUND="$2"; PARTITION="$3"; shift 3
+  FISH_IDS=( "$@" )
 fi
 
 echo "Will register these fish in experiment $EXP, round $ROUND on partition $PARTITION:"
@@ -56,10 +57,10 @@ for FISH in "${FISH_IDS[@]}"; do
 
   # sanity check
   if [ ! -f "$REF_GCaMP" ]; then
-    echo "Error: reference not found: $REF_GCaMP" >&2; exit 1; fi
+    echo "Error: reference not found: $REF_GCaMP" >&2; continue; fi
   MOV_GCaMP="$RAW_CONF/round${ROUND}_GCaMP.nrrd"
   if [ ! -f "$MOV_GCaMP" ]; then
-    echo "Error: moving GCaMP not found: $MOV_GCaMP" >&2; exit 1; fi
+    echo "Error: moving GCaMP not found: $MOV_GCaMP" >&2; continue; fi
 
   echo "Registering GCaMP (two-phase: affine, then SyN sweep):"
   echo "  FIXED  = $REF_GCaMP"
@@ -67,99 +68,126 @@ for FISH in "${FISH_IDS[@]}"; do
 
   OUT_PREFIX="$REGDIR/round${ROUND}_GCaMP_to_ref"
 
-  ##############################################################################
-  # Build one big command string to run inside a single job
-  ##############################################################################
+  # ---------- Build a per-fish job script (robust logging & shell) ----------
+  JOBNAME="ants_${EXP}_${FISH}_r${ROUND}_sweep"
+  JOBSCRIPT="$LOGDIR/${JOBNAME}.sh"
 
-  CMD_ALL="set -euo pipefail
+  cat > "$JOBSCRIPT" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
 
-  echo '--- Phase A: rigid+affine (linear only) ---'
-  ${ANTSBIN}/antsRegistration \
-    -d 3 --float 1 --verbose 1 \
-    -o [${OUT_PREFIX},${OUT_PREFIX}_affineAligned.nrrd] \
-    --interpolation WelchWindowedSinc \
-    --winsorize-image-intensities [0,100] \
-    --use-histogram-matching 1 \
-    -r [${REF_GCaMP},${MOV_GCaMP},1] \
-    -t rigid[0.1] \
-    -m MI[${REF_GCaMP},${MOV_GCaMP},1,32,Regular,0.25] \
-    -c [200x200x200x200,1e-6,10] \
-    --shrink-factors 12x8x4x2 \
-    --smoothing-sigmas 4x3x2x1vox \
-    -t Affine[0.1] \
-    -m MI[${REF_GCaMP},${MOV_GCaMP},1,32,Regular,0.25] \
-    -c [200x200x200x200,1e-6,10] \
-    --shrink-factors 12x8x4x2 \
-    --smoothing-sigmas 4x3x2x1vox
+echo "Host: \$(hostname)"
+echo "Start: \$(date)"
 
-  if [ ! -f ${OUT_PREFIX}0GenericAffine.mat ]; then
-    echo 'ERROR: Missing affine file ${OUT_PREFIX}0GenericAffine.mat' >&2; exit 2
-  fi
 
-  echo '--- Phase B: SyN sweep (reusing affine) ---'"
+echo "--- Phase A: rigid+affine ---"
+"${ANTSBIN}/antsRegistration" \
+  -d 3 --float 1 --verbose 1 \
+  -o [${OUT_PREFIX},${OUT_PREFIX}_affineAligned.nrrd] \
+  --interpolation WelchWindowedSinc \
+  --winsorize-image-intensities [0,100] \
+  --use-histogram-matching 1 \
+  -r [${REF_GCaMP},${MOV_GCaMP},1] \
+  -t rigid[0.1] \
+  -m MI[${REF_GCaMP},${MOV_GCaMP},1,32,Regular,0.25] \
+  -c [200x200x200x200,1e-6,10] \
+  --shrink-factors 12x8x4x2 \
+  --smoothing-sigmas 4x3x2x1vox \
+  -t Affine[0.1] \
+  -m MI[${REF_GCaMP},${MOV_GCaMP},1,32,Regular,0.25] \
+  -c [200x200x200x200,1e-6,10] \
+  --shrink-factors 12x8x4x2 \
+  --smoothing-sigmas 4x3x2x1vox
 
-  # loop over SyN steps; for each, run SyN-only then apply to GCaMP + channels
+if [ ! -f "${OUT_PREFIX}0GenericAffine.mat" ]; then
+  echo "ERROR: Missing affine file ${OUT_PREFIX}0GenericAffine.mat" >&2
+  exit 2
+fi
+
+echo "--- Phase B: SyN sweep (reusing affine) ---"
+EOF
+
+  # append SyN sweeps
   for PAIR in "${SYN_STEPS[@]}"; do
     GS="${PAIR%%:*}"
     TAG="${PAIR##*:}"
-
-    # prefixes per sweep
     SWEEP_PREFIX="${OUT_PREFIX}_${TAG}"
 
-    CMD_ALL+="
+    cat >> "$JOBSCRIPT" <<EOF
+echo ">> SyN gradientStep=${GS} (${TAG})"
+"${ANTSBIN}/antsRegistration" \
+  -d 3 --float 1 --verbose 1 \
+  --initial-moving-transform ${OUT_PREFIX}0GenericAffine.mat \
+  -o [${SWEEP_PREFIX},${SWEEP_PREFIX}_synAligned.nrrd] \
+  --interpolation WelchWindowedSinc \
+  --winsorize-image-intensities [0,100] \
+  --use-histogram-matching 1 \
+  -t SyN[${GS},6,0.1] \
+  -m CC[${REF_GCaMP},${MOV_GCaMP},1,4] \
+  -c [200x200x200x200x10,1e-8,10] \
+  --shrink-factors 12x8x4x2x1 \
+  --smoothing-sigmas 4x3x2x1x0vox
 
-    echo '>> SyN gradientStep=${GS} (${TAG})'
-    ${ANTSBIN}/antsRegistration \
-      -d 3 --float 1 --verbose 1 \
-      -o [${SWEEP_PREFIX},${SWEEP_PREFIX}_synAligned.nrrd] \
-      --interpolation WelchWindowedSinc \
-      --winsorize-image-intensities [0,100] \
-      --use-histogram-matching 1 \
-      -r [${OUT_PREFIX}0GenericAffine.mat] \
-      -t SyN[${GS},6,0.1] \
-      -m CC[${REF_GCaMP},${MOV_GCaMP},1,4] \
-      -c [200x200x200x200x10,1e-8,10] \
-      --shrink-factors 12x8x4x2x1 \
-      --smoothing-sigmas 4x3x2x1x0vox
+# Apply to GCaMP
+"${ANTSBIN}/antsApplyTransforms" \
+  -d 3 --verbose 1 \
+  -r ${REF_GCaMP} \
+  -i ${MOV_GCaMP} \
+  -o ${SWEEP_PREFIX}_aligned.nrrd \
+  -t ${SWEEP_PREFIX}0Warp.nii.gz \
+  -t ${OUT_PREFIX}0GenericAffine.mat
 
-    # Apply (warp, affine) to the GCaMP itself for consistency
-    ${ANTSBIN}/antsApplyTransforms \
-      -d 3 --verbose 1 \
-      -r ${REF_GCaMP} \
-      -i ${MOV_GCaMP} \
-      -o ${SWEEP_PREFIX}_aligned.nrrd \
-      -t ${SWEEP_PREFIX}0Warp.nii.gz \
-      -t ${OUT_PREFIX}0GenericAffine.mat
-
-    # Apply to all HCR channels in this round
-    for MOV in ${RAW_CONF}/round${ROUND}_HCR_channel*.nrrd; do
-      [ -f \"\$MOV\" ] || continue
-      NAME=\$(basename \"\${MOV%.*}\")
-      ${ANTSBIN}/antsApplyTransforms \
-        -d 3 --verbose 1 \
-        -r ${REF_GCaMP} \
-        -i \"\$MOV\" \
-        -o ${REGDIR}/\${NAME}_${TAG}_aligned.nrrd \
-        -t ${SWEEP_PREFIX}0Warp.nii.gz \
-        -t ${OUT_PREFIX}0GenericAffine.mat
-    done
-    "
+# Apply to all HCR channels
+had_hcr=0
+for MOV in ${RAW_CONF}/round${ROUND}_HCR_channel*.nrrd; do
+  [ -f "\$MOV" ] || continue
+  had_hcr=1
+  NAME=\$(basename "\${MOV%.*}")
+  "${ANTSBIN}/antsApplyTransforms" \
+    -d 3 --verbose 1 \
+    -r ${REF_GCaMP} \
+    -i "\$MOV" \
+    -o ${REGDIR}/\${NAME}_${TAG}_aligned.nrrd \
+    -t ${SWEEP_PREFIX}0Warp.nii.gz \
+    -t ${OUT_PREFIX}0GenericAffine.mat
+done
+if [ "\$had_hcr" -eq 0 ]; then
+  echo "Note: no HCR channels found in ${RAW_CONF}"
+fi
+EOF
   done
 
-  # submit or run
+  cat >> "$JOBSCRIPT" <<'EOF'
+echo "End: $(date)"
+EOF
+
+  chmod +x "$JOBSCRIPT"
+
+  # ---------- Submit or run ----------
   if [ "$QUEUE" = "interactive" ]; then
-    eval "$CMD_ALL"
+    # Run synchronously (test partition)
+    bash "$JOBSCRIPT" \
+      1> "$LOGDIR/${JOBNAME}.out" \
+      2> "$LOGDIR/${JOBNAME}.err"
+    status=$?
+    if [ $status -eq 0 ]; then
+      echo "✅ Finished $JOBNAME (interactive). Logs: $LOGDIR/${JOBNAME}.out"
+    else
+      echo "❌ Failed $JOBNAME (interactive). See: $LOGDIR/${JOBNAME}.err"
+    fi
   else
+    # Submit to SLURM with proper job log files
     sbatch \
       --mail-type="$MAIL_TYPE" \
       --mail-user="$MAIL_USER" \
       -p "$QUEUE" \
       -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
       -t "$TIME" \
-      -J ants_${EXP}_${FISH}_r${ROUND}_sweep \
-      --wrap="$CMD_ALL" \
-      2> "$LOGDIR/registration_and_transform.err" \
-      1> "$LOGDIR/registration_and_transform.out"
+      -J "$JOBNAME" \
+      --output="$LOGDIR/%x.%j.out" \
+      --error="$LOGDIR/%x.%j.err" \
+      "$JOBSCRIPT"
+    echo "Submitted $JOBNAME. Logs will be in $LOGDIR/%x.%j.{out,err}"
   fi
 
 done
