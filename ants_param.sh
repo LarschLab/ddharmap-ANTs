@@ -27,8 +27,8 @@ fi
 echo "Will register these fish in experiment $EXP, round $ROUND on partition $PARTITION:"
 printf "  %s\n" "${FISH_IDS[@]}"
 
-# SyN sweep values (value:tag) -> tags avoid dots in filenames
-SYN_STEPS=("0.10:gs0100" "0.15:gs0150" "0.20:gs0200" "0.25:gs0250")
+# Sweep updateFieldSigma with gradStep fixed at 0.25
+UFIELD_STEPS=("2.0:uf0200" "4.0:uf0400")
 
 for FISH in "${FISH_IDS[@]}"; do
   echo "===== Processing subject $FISH ====="
@@ -108,36 +108,38 @@ echo "--- Phase B: SyN sweep (reusing affine) ---"
 EOF
 
   # append SyN sweeps
-  for PAIR in "${SYN_STEPS[@]}"; do
-    GS="${PAIR%%:*}"
-    TAG="${PAIR##*:}"
-    SWEEP_PREFIX="${OUT_PREFIX}_${TAG}"
+  for PAIR in "${UFIELD_STEPS[@]}"; do
+  UF="${PAIR%%:*}"         # updateFieldSigma (e.g., 2.0, 4.0)
+  TAG="${PAIR##*:}"        # tag for filenames (uf0200, uf0400)
+  SWEEP_PREFIX="${OUT_PREFIX}_${TAG}"
 
-    cat >> "$JOBSCRIPT" <<EOF
-echo ">> SyN gradientStep=${GS} (${TAG})"
+  cat >> "$JOBSCRIPT" <<EOF
+echo ">> SyN gradStep=0.25, updateFieldSigma=${UF} (${TAG})"
 "${ANTSBIN}/antsRegistration" \
   -d 3 --float 1 --verbose 1 \
-  --initial-moving-transform ${OUT_PREFIX}0GenericAffine.mat \
+  --initial-moving-transform ${AFFINE} \
   -o [${SWEEP_PREFIX},${SWEEP_PREFIX}_synAligned.nrrd] \
   --interpolation WelchWindowedSinc \
   --winsorize-image-intensities [0,100] \
   --use-histogram-matching 1 \
-  -t SyN[${GS},6,0.1] \
+  -t SyN[0.25,${UF},0.1] \
   -m CC[${REF_GCaMP},${MOV_GCaMP},1,4] \
   -c [200x200x200x200x10,1e-8,10] \
   --shrink-factors 12x8x4x2x1 \
   --smoothing-sigmas 4x3x2x1x0vox
 
-# Apply to GCaMP
-"${ANTSBIN}/antsApplyTransforms" \
-  -d 3 --verbose 1 \
-  -r ${REF_GCaMP} \
-  -i ${MOV_GCaMP} \
-  -o ${SWEEP_PREFIX}_aligned.nrrd \
-  -t ${SWEEP_PREFIX}0Warp.nii.gz \
-  -t ${OUT_PREFIX}0GenericAffine.mat
+# Pick the warp file emitted when using an initial transform (usually 1Warp)
+WARP="${SWEEP_PREFIX}1Warp.nii.gz"
+if [ ! -f "\$WARP" ]; then WARP="${SWEEP_PREFIX}0Warp.nii.gz"; fi
+if [ ! -f "\$WARP" ]; then
+  echo "ERROR: missing warp for ${SWEEP_PREFIX} (tried 1Warp/0Warp)" >&2
+  exit 3
+fi
 
-# Apply to all HCR channels
+# For GCaMP, avoid redundant reslice: link our conventional name to synAligned
+ln -sf "${SWEEP_PREFIX}_synAligned.nrrd" "${SWEEP_PREFIX}_aligned.nrrd"
+
+# Apply to all HCR channels (with high-quality interpolation)
 had_hcr=0
 for MOV in ${RAW_CONF}/round${ROUND}_HCR_channel*.nrrd; do
   [ -f "\$MOV" ] || continue
@@ -145,17 +147,18 @@ for MOV in ${RAW_CONF}/round${ROUND}_HCR_channel*.nrrd; do
   NAME=\$(basename "\${MOV%.*}")
   "${ANTSBIN}/antsApplyTransforms" \
     -d 3 --verbose 1 \
+    --interpolation WelchWindowedSinc \
     -r ${REF_GCaMP} \
     -i "\$MOV" \
     -o ${REGDIR}/\${NAME}_${TAG}_aligned.nrrd \
-    -t ${SWEEP_PREFIX}0Warp.nii.gz \
-    -t ${OUT_PREFIX}0GenericAffine.mat
+    -t "\$WARP" \
+    -t ${AFFINE}
 done
 if [ "\$had_hcr" -eq 0 ]; then
   echo "Note: no HCR channels found in ${RAW_CONF}"
 fi
 EOF
-  done
+done
 
   cat >> "$JOBSCRIPT" <<'EOF'
 echo "End: $(date)"
