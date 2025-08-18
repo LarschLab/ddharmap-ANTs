@@ -8,7 +8,7 @@ set -euo pipefail
 # Base paths (override with env vars if needed)
 NAS_BASE="${NAS:-$HOME/NAS}/imaging/CIF/Analysis"
 WORK_BASE="${WORK:-$HOME/WORK}/experiments"
-SCRATCH_BASE="${SCRATCH:-$HOME/SCRATCH}/experiments"   # ADDED
+: "${SCRATCH_BASE:=${SCRATCH:-$HOME/SCRATCH}/experiments}"
 
 usage() {
   echo "Usage: $0 <experiment_name> <fishID1> [fishID2 ...]"
