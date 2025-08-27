@@ -80,9 +80,8 @@ for f in "${FISH_IDS[@]}"; do
   [[ -n "$f" ]] || continue
   FISH_SERIALIZED+="$f"$'\n'
 done
-
-# Make a shell-escaped $'...' string so newlines survive in the job
-FISH_ESCAPED=$'('"$(printf "%q" "$FISH_SERIALIZED")"')'   # yields $'L331_f01\nL395_f06\n...'
+# Make a shell-escaped $'...' string so newlines survive
+FISH_ESCAPED=$'('"$(printf "%q" "$FISH_SERIALIZED")"')'
 
 cat > "$JOB" <<EOF
 #!/usr/bin/env bash
@@ -101,11 +100,79 @@ echo "ANTs bin : \$ANTSPATH"
 echo "Threads  : \${SLURM_CPUS_PER_TASK:-1}"
 echo "FIXED    : \$REF_AVG_2P"
 
-# --- helpers ---
-$(declare -f pick_moving_gcamp)
-$(declare -f gather_hcr_channels)
-$(declare -f register_pair)
-$(declare -f apply_to_image)
+# --- helpers (embedded) ---
+pick_moving_gcamp() {
+  local d="\$1" r="\$2"
+  shopt -s nullglob
+  local cands=(
+    "\$d"/*_round\${r}_channel1_*GCaMP*.nrrd
+    "\$d"/*_round\${r}_*GCaMP*.nrrd
+    "\$d"/round\${r}_GCaMP.nrrd
+    "\$d"/round\${r}_*channel*GCaMP*.nrrd
+    "\$d"/round\${r}_*GCaMP*.nrrd
+  )
+  shopt -u nullglob
+  local f
+  for f in "\${cands[@]}"; do
+    [[ -f "\$f" ]] && { printf "%s" "\$f"; return 0; }
+  done
+  return 1
+}
+
+gather_hcr_channels() {
+  local d="\$1" r="\$2"
+  local out=()
+  shopt -s nullglob
+  local nfmt=( "\$d"/*_round\${r}_channel[2-9]_*.nrrd )
+  out+=( "\${nfmt[@]}" )
+  local ofmt=( "\$d"/round\${r}_HCR_channel*.nrrd "\$d"/round\${r}_channel*.nrrd "\$d"/round\${r}_HCR_*.nrrd )
+  local f
+  for f in "\${ofmt[@]}"; do
+    [[ -f "\$f" ]] || continue
+    [[ "\$f" == *GCaMP* ]] && continue
+    out+=( "\$f" )
+  done
+  shopt -u nullglob
+  printf "%s\n" "\${out[@]}"
+}
+
+register_pair() {
+  local fx="\$1" mv="\$2" op="\$3"
+  echo "  antsRegistration -> \$op"
+  "\$ANTSPATH/antsRegistration" \\
+    -d 3 --float 1 --verbose 1 \\
+    -o ["\$op","\${op}_aligned.nrrd"] \\
+    --interpolation WelchWindowedSinc \\
+    --winsorize-image-intensities [0,100] \\
+    --use-histogram-matching 1 \\
+    -r ["\$fx","\$mv",1] \\
+    -t Rigid[0.1] \\
+      -m MI["\$fx","\$mv",1,32,Regular,0.25] \\
+      -c [200x200x100,1e-6,10] \\
+      --shrink-factors 8x4x2 \\
+      --smoothing-sigmas 3x2x1vox \\
+    -t Affine[0.1] \\
+      -m MI["\$fx","\$mv",1,32,Regular,0.25] \\
+      -c [200x200x100,1e-6,10] \\
+      --shrink-factors 8x4x2 \\
+      --smoothing-sigmas 3x2x1vox \\
+    -t SyN[0.25,6,0.1] \\
+      -m CC["\$fx","\$mv",1,4] \\
+      -c [200x200x100x20,1e-8,10] \\
+      --shrink-factors 8x4x2x1 \\
+      --smoothing-sigmas 3x2x1x0vox
+}
+
+apply_to_image() {
+  local ref="\$1" op="\$2" mv="\$3" out="\$4"
+  "\$ANTSPATH/antsApplyTransforms" \\
+    -d 3 --verbose 1 \\
+    -r "\$ref" \\
+    -i "\$mv" \\
+    -o "\$out" \\
+    -t "\${op}1Warp.nii.gz" \\
+    -t "\${op}0GenericAffine.mat"
+}
 
 # ---- main loop over fish ----
 while IFS= read -r FISH; do
@@ -118,6 +185,7 @@ while IFS= read -r FISH; do
   LOGDIR="\$REGDIR/logs"
   mkdir -p "\$REGDIR" "\$LOGDIR"
 
+  # 1) 2P anatomy -> average 2P
   MOV_2P="\$FIXEDDIR/anatomy_2P_ref_GCaMP.nrrd"
   if [[ ! -f "\$MOV_2P" ]]; then
     echo "ERROR: Missing 2P anatomy (moving): \$MOV_2P"
@@ -131,6 +199,7 @@ while IFS= read -r FISH; do
   OP_2P="\$REGDIR/2P_to_avg2p_"
   register_pair "\$REF_AVG_2P" "\$MOV_2P" "\$OP_2P"
 
+  # 2) All rounds -> average 2P
   RAW_BASE="\$BASE/raw"
   shopt -s nullglob
   ROUND_DIRS=( "\$RAW_BASE"/confocal_round* )
@@ -170,6 +239,7 @@ while IFS= read -r FISH; do
     done
   done
 
+  # 3) Canonical name for 2P in avg space
   if [[ -f "\${OP_2P}_aligned.nrrd" ]]; then
     cp -f "\${OP_2P}_aligned.nrrd" "\$REGDIR/anatomy_2P_in_avg2p.nrrd"
   fi
@@ -179,6 +249,7 @@ done <<< "\$FISH_LIST"
 EOF
 
 chmod +x "$JOB"
+
 
 
 # -------- Submit or run --------
