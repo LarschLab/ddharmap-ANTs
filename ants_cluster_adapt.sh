@@ -1,43 +1,41 @@
 #!/usr/bin/env bash
-# ants_register.sh  (interactive)
+# ants_register.sh  (interactive; new naming-aware)
 #
-# Uses compute-side layout:
+# SCRATCH layout:
 #   $SCRATCH/experiments/subjects/<FishID>/{raw,fixed,reg}
 #
-# Prompts for: ROUND, PARTITION, FISH IDs (space-separated).
-# ROUND=1  -> fixed/anatomy_2P_ref_GCaMP.nrrd
-# ROUND>1  -> fixed/round1_ref_GCaMP.nrrd
+# Prompts for: ROUND, PARTITION, Fish IDs (space-separated)
 #
-# Moving GCaMP auto-detect in raw/confocal_round<ROUND>/:
-#   prefer: round<ROUND}_GCaMP.nrrd
-#   else:   *channel*GCaMP*.nrrd
-#   else:   *GCaMP*.nrrd
+# Fixed reference:
+#   ROUND=1  -> fixed/anatomy_2P_ref_GCaMP.nrrd
+#   ROUND>1  -> fixed/round1_ref_GCaMP.nrrd
 #
-# All HCR channels in that folder are transformed:
-#   round<ROUND>_HCR_channel*.nrrd, round<ROUND>_channel*.nrrd, round<ROUND>_HCR_*.nrrd
+# Moving GCaMP (new format first, then fallback to old):
+#   <Fish>_round<R>_channel1_*GCaMP*.nrrd
+#   <Fish>_round<R>_*GCaMP*.nrrd
+#   round<R>_GCaMP.nrrd
+#   round<R>_*channel*GCaMP*.nrrd
 #
-# ENV you likely already have:
-#   SCRATCH=/scratch/<user>
-#   ANTSPATH=$HOME/ANTs/antsInstallExample/install/bin
-# Optional:
-#   MAIL_USER=<your@email>   MAIL_TYPE="END,FAIL"
-#   CPUS=48  MEM=256G        (cluster defaults when not in test mode)
+# HCR/other channels to transform (exclude GCaMP):
+#   <Fish>_round<R>_channel[2-9]_*.nrrd
+#   (fallback: round<R>_HCR_channel*.nrrd, round<R>_channel*.nrrd, round<R>_HCR_*.nrrd minus any *GCaMP*)
+#
+# Optional env:
+#   ANTSPATH (default: $HOME/ANTs/antsInstallExample/install/bin)
+#   MAIL_USER, MAIL_TYPE, CPUS, MEM
 
 set -euo pipefail
 
-# -------- ANTs path --------
 ANTSPATH="${ANTSPATH:-$HOME/ANTs/antsInstallExample/install/bin}"
 export ANTSPATH
 ANTSBIN="$ANTSPATH"
 
-# -------- Defaults --------
 WALL_TIME="24:00:00"
 MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
-MAIL_USER="${MAIL_USER:-$(whoami)@example.com}"
+MAIL_USER="danin.dharmaperwira@unil.ch"
 
-# -------- Prompts --------
 read -rp "ROUND (e.g., 1 or 2): " ROUND
-read -rp "PARTITION (e.g., test | normal | gpu | other): " PARTITION
+read -rp "PARTITION (e.g., test | cpu | normal | gpu | other): " PARTITION
 read -rp "Fish IDs (space-separated): " FISH_LINE
 # shellcheck disable=SC2206
 FISH_IDS=( $FISH_LINE )
@@ -57,51 +55,96 @@ else
   TIME="$WALL_TIME"
 fi
 
-# -------- Per-fish jobs --------
+# ---------- helpers ----------
+pick_moving_gcamp() {
+  # args: dir round
+  local d="$1" r="$2"
+  shopt -s nullglob
+  # New-format, most specific first
+  local cands=(
+    "$d"/*_round${r}_channel1_*GCaMP*.nrrd
+    "$d"/*_round${r}_*GCaMP*.nrrd
+    # Old-format fallbacks
+    "$d"/round${r}_GCaMP.nrrd
+    "$d"/round${r}_*channel*GCaMP*.nrrd
+    "$d"/round${r}_*GCaMP*.nrrd
+  )
+  shopt -u nullglob
+  local f
+  for f in "${cands[@]}"; do
+    [[ -f "$f" ]] && { printf "%s" "$f"; return 0; }
+  done
+  return 1
+}
+
+list_hcr_channels() {
+  # args: dir round
+  local d="$1" r="$2"
+  local out=()
+  shopt -s nullglob
+  # New-format first: non-GCaMP channels [2..9]
+  local nfmt=( "$d"/*_round${r}_channel[2-9]_*.nrrd )
+  out+=( "${nfmt[@]}" )
+  # Fallback patterns (old names)
+  local ofmt=( "$d"/round${r}_HCR_channel*.nrrd "$d"/round${r}_channel*.nrrd "$d"/round${r}_HCR_*.nrrd )
+  # Filter out any *GCaMP* from fallbacks
+  local f
+  for f in "${ofmt[@]}"; do
+    [[ -f "$f" ]] || continue
+    if [[ "$f" == *GCaMP* ]]; then
+      continue
+    fi
+    out+=( "$f" )
+  done
+  shopt -u nullglob
+  printf "%s\n" "${out[@]}"
+}
+
+# ---------- per fish ----------
 for FISH in "${FISH_IDS[@]}"; do
   [[ -n "$FISH" ]] || continue
   echo "===== Processing subject $FISH (round $ROUND, partition $PARTITION) ====="
 
   BASE="$SCRATCH/experiments/subjects/$FISH"
-  RAW_ANAT="$BASE/raw/anatomy_2P"
   RAW_CONF="$BASE/raw/confocal_round${ROUND}"
   FIXED="$BASE/fixed"
   REGDIR="$BASE/reg"
   LOGDIR="$REGDIR/logs"
 
+  if [[ ! -d "$BASE" ]]; then
+    echo "ERROR: Subject not staged on SCRATCH: $BASE"
+    echo "Available subjects under $SCRATCH/experiments/subjects:"
+    ls -1 "$SCRATCH/experiments/subjects" | sed 's/^/  - /'
+    continue
+  fi
   mkdir -p "$REGDIR" "$LOGDIR"
 
-  # Choose fixed reference
+  # choose fixed reference
   if [[ "$ROUND" -eq 1 ]]; then
     REF_GC="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
   else
     REF_GC="$FIXED/round1_ref_GCaMP.nrrd"
   fi
   if [[ ! -f "$REF_GC" ]]; then
-    echo "ERROR: Missing fixed reference: $REF_GC"; continue
+    echo "ERROR: Missing fixed reference: $REF_GC"
+    echo "Present in $FIXED/:"
+    ls -1 "$FIXED" 2>/dev/null | sed 's/^/  - /' || true
+    continue
   fi
 
-  # Pick moving GCaMP robustly
-  pick_moving_gcamp() {
-    local d="$1" r="$2"
-    if [[ -f "$d/round${r}_GCaMP.nrrd" ]]; then
-      printf "%s" "$d/round${r}_GCaMP.nrrd"; return 0
-    fi
-    shopt -s nullglob
-    local cands=( "$d"/round${r}_*channel*GCaMP*.nrrd "$d"/round${r}_*GCaMP*.nrrd )
-    shopt -u nullglob
-    if (( ${#cands[@]} )); then
-      printf "%s" "${cands[0]}"; return 0
-    fi
-    return 1
-  }
+  # moving GCaMP detection (new/old formats)
   if ! MOV_GC="$(pick_moving_gcamp "$RAW_CONF" "$ROUND")"; then
-    echo "ERROR: Could not find moving GCaMP in $RAW_CONF"; continue
+    echo "ERROR: Could not find moving GCaMP in $RAW_CONF"
+    echo "Contents of $RAW_CONF:"
+    ls -1 "$RAW_CONF" 2>/dev/null | sed 's/^/  - /' || true
+    continue
   fi
+  echo "  FIXED  = $REF_GC"
+  echo "  MOVING = $MOV_GC"
 
   OUT_PREFIX="$REGDIR/round${ROUND}_GCaMP_to_ref"
 
-  # Write per-fish job script (space-safe)
+  # Build job script (space-safe)
   JOB="$REGDIR/job_r${ROUND}.sh"
   cat > "$JOB" <<EOF
 #!/usr/bin/env bash
@@ -110,9 +153,6 @@ export ANTSPATH="$ANTSBIN"
 export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
 export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
 
-echo "ANTs bin: \$ANTSPATH"
-echo "Threads : \${SLURM_CPUS_PER_TASK:-1}"
-
 REF_GC="$REF_GC"
 MOV_GC="$MOV_GC"
 OUT_PREFIX="$OUT_PREFIX"
@@ -120,7 +160,10 @@ RAW_CONF="$RAW_CONF"
 REGDIR="$REGDIR"
 ROUND="$ROUND"
 
-# 1) Register GCaMP (moving) to fixed reference and write aligned GCaMP
+echo "ANTs bin: \$ANTSPATH"
+echo "Threads : \${SLURM_CPUS_PER_TASK:-1}"
+
+# 1) Register GCaMP (moving) to fixed reference
 "\$ANTSPATH/antsRegistration" \\
   -d 3 --float 1 --verbose 1 \\
   -o ["\$OUT_PREFIX","\${OUT_PREFIX}_aligned.nrrd"] \\
@@ -152,9 +195,17 @@ ROUND="$ROUND"
   -t "\${OUT_PREFIX}1Warp.nii.gz" \\
   -t "\${OUT_PREFIX}0GenericAffine.mat"
 
-# 2) Apply transforms to all HCR channels for this round
+# 2) Apply transforms to all non-GCaMP channels for this round
 shopt -s nullglob
-channels=( "\$RAW_CONF"/round\${ROUND}_HCR_channel*.nrrd "\$RAW_CONF"/round\${ROUND}_channel*.nrrd "\$RAW_CONF"/round\${ROUND}_HCR_*.nrrd )
+# new-format non-GCaMP channels
+channels=( "\$RAW_CONF"/*_round\${ROUND}_channel[2-9]_*.nrrd )
+# fallbacks (older names), minus any *GCaMP*
+fallback=( "\$RAW_CONF"/round\${ROUND}_HCR_channel*.nrrd "\$RAW_CONF"/round\${ROUND}_channel*.nrrd "\$RAW_CONF"/round\${ROUND}_HCR_*.nrrd )
+for f in "\${fallback[@]}"; do
+  [[ -f "\$f" ]] || continue
+  [[ "\$f" == *GCaMP* ]] && continue
+  channels+=( "\$f" )
+done
 shopt -u nullglob
 
 for MOV in "\${channels[@]}"; do
@@ -175,7 +226,6 @@ echo "Done."
 EOF
   chmod +x "$JOB"
 
-  # Submit or run
   if [[ "$QUEUE" == "interactive" ]]; then
     echo "Running interactively for $FISH ..."
     bash "$JOB"
