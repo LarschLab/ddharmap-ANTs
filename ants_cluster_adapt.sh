@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ants_register.sh  (interactive; new naming-aware)
+# ants_register_multi.sh  (interactive; single job for multiple fish)
 #
 # SCRATCH layout:
 #   $SCRATCH/experiments/subjects/<FishID>/{raw,fixed,reg}
@@ -10,18 +10,21 @@
 #   ROUND=1  -> fixed/anatomy_2P_ref_GCaMP.nrrd
 #   ROUND>1  -> fixed/round1_ref_GCaMP.nrrd
 #
-# Moving GCaMP (new format first, then fallback to old):
+# Moving GCaMP detection (new format first, then fallbacks):
 #   <Fish>_round<R>_channel1_*GCaMP*.nrrd
 #   <Fish>_round<R>_*GCaMP*.nrrd
 #   round<R>_GCaMP.nrrd
 #   round<R>_*channel*GCaMP*.nrrd
+#   round<R>_*GCaMP*.nrrd
 #
 # HCR/other channels to transform (exclude GCaMP):
 #   <Fish>_round<R>_channel[2-9]_*.nrrd
-#   (fallback: round<R>_HCR_channel*.nrrd, round<R>_channel*.nrrd, round<R>_HCR_*.nrrd minus any *GCaMP*)
+#   + fallbacks: round<R>_HCR_channel*.nrrd, round<R>_channel*.nrrd, round<R>_HCR_*.nrrd (minus *GCaMP*)
 #
-# Optional env:
-#   ANTSPATH (default: $HOME/ANTs/antsInstallExample/install/bin)
+# ENV you likely already have:
+#   SCRATCH=/scratch/<user>
+#   ANTSPATH=$HOME/ANTs/antsInstallExample/install/bin
+# Optional:
 #   MAIL_USER, MAIL_TYPE, CPUS, MEM
 
 set -euo pipefail
@@ -34,15 +37,14 @@ WALL_TIME="24:00:00"
 MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
 MAIL_USER="danin.dharmaperwira@unil.ch"
 
+# -------- Prompts --------
 read -rp "ROUND (e.g., 1 or 2): " ROUND
 read -rp "PARTITION (e.g., test | cpu | normal | gpu | other): " PARTITION
 read -rp "Fish IDs (space-separated): " FISH_LINE
 # shellcheck disable=SC2206
 FISH_IDS=( $FISH_LINE )
 
-if [[ -z "${SCRATCH:-}" ]]; then
-  echo "ERROR: SCRATCH env not set."; exit 2
-fi
+[[ -n "${SCRATCH:-}" ]] || { echo "ERROR: SCRATCH env not set."; exit 2; }
 
 # SLURM resources
 if [[ "$PARTITION" == "test" ]]; then
@@ -55,7 +57,39 @@ else
   TIME="$WALL_TIME"
 fi
 
-# ---------- helpers ----------
+# -------- Build ONE job script that loops over all fish --------
+JOBDIR="$SCRATCH/experiments/_jobs"
+mkdir -p "$JOBDIR"
+STAMP="$(date +%Y%m%d_%H%M%S)"
+JOB="$JOBDIR/ants_r${ROUND}_${STAMP}.sh"
+
+# Serialize fish list safely
+FISH_SERIALIZED=""
+for f in "${FISH_IDS[@]}"; do
+  [[ -n "$f" ]] || continue
+  FISH_SERIALIZED+="$f"$'\n'
+done
+
+cat > "$JOB" <<'EOS'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---- Runtime env (in-job) ----
+ANTSPATH="${ANTSPATH:-$HOME/ANTs/antsInstallExample/install/bin}"
+export ANTSPATH
+export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
+
+# Inputs injected below:
+ROUND="__ROUND__"
+SCRATCH_BASE="${SCRATCH:?SCRATCH env not set}"
+FISH_LIST=$'__FISH_LIST__'
+
+echo "ANTs bin : $ANTSPATH"
+echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
+echo "ROUND    : $ROUND"
+
+# --- helpers ---
 pick_moving_gcamp() {
   # args: dir round
   local d="$1" r="$2"
@@ -77,17 +111,14 @@ pick_moving_gcamp() {
   return 1
 }
 
-list_hcr_channels() {
+gather_hcr_channels() {
   # args: dir round
   local d="$1" r="$2"
   local out=()
   shopt -s nullglob
-  # New-format first: non-GCaMP channels [2..9]
   local nfmt=( "$d"/*_round${r}_channel[2-9]_*.nrrd )
   out+=( "${nfmt[@]}" )
-  # Fallback patterns (old names)
   local ofmt=( "$d"/round${r}_HCR_channel*.nrrd "$d"/round${r}_channel*.nrrd "$d"/round${r}_HCR_*.nrrd )
-  # Filter out any *GCaMP* from fallbacks
   local f
   for f in "${ofmt[@]}"; do
     [[ -f "$f" ]] || continue
@@ -100,23 +131,16 @@ list_hcr_channels() {
   printf "%s\n" "${out[@]}"
 }
 
-# ---------- per fish ----------
-for FISH in "${FISH_IDS[@]}"; do
+# ---- main loop over fish ----
+while IFS= read -r FISH; do
   [[ -n "$FISH" ]] || continue
-  echo "===== Processing subject $FISH (round $ROUND, partition $PARTITION) ====="
+  echo "===== Processing $FISH ====="
 
-  BASE="$SCRATCH/experiments/subjects/$FISH"
+  BASE="$SCRATCH_BASE/experiments/subjects/$FISH"
   RAW_CONF="$BASE/raw/confocal_round${ROUND}"
   FIXED="$BASE/fixed"
   REGDIR="$BASE/reg"
   LOGDIR="$REGDIR/logs"
-
-  if [[ ! -d "$BASE" ]]; then
-    echo "ERROR: Subject not staged on SCRATCH: $BASE"
-    echo "Available subjects under $SCRATCH/experiments/subjects:"
-    ls -1 "$SCRATCH/experiments/subjects" | sed 's/^/  - /'
-    continue
-  fi
   mkdir -p "$REGDIR" "$LOGDIR"
 
   # choose fixed reference
@@ -144,102 +168,86 @@ for FISH in "${FISH_IDS[@]}"; do
 
   OUT_PREFIX="$REGDIR/round${ROUND}_GCaMP_to_ref"
 
-  # Build job script (space-safe)
-  JOB="$REGDIR/job_r${ROUND}.sh"
-  cat > "$JOB" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-export ANTSPATH="$ANTSBIN"
-export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
-export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
+  # 1) Registration (writes transforms + aligned GCaMP)
+  "$ANTSPATH/antsRegistration" \
+    -d 3 --float 1 --verbose 1 \
+    -o ["$OUT_PREFIX","${OUT_PREFIX}_aligned.nrrd"] \
+    --interpolation WelchWindowedSinc \
+    --winsorize-image-intensities [0,100] \
+    --use-histogram-matching 1 \
+    -r ["$REF_GC","$MOV_GC",1] \
+    -t rigid[0.1] \
+    -m MI["$REF_GC","$MOV_GC",1,32,Regular,0.25] \
+    -c [200x200x200x200,1e-6,10] \
+    --shrink-factors 12x8x4x2 \
+    --smoothing-sigmas 4x3x2x1vox \
+    -t Affine[0.1] \
+    -m MI["$REF_GC","$MOV_GC",1,32,Regular,0.25] \
+    -c [200x200x200x200,1e-6,10] \
+    --shrink-factors 12x8x4x2 \
+    --smoothing-sigmas 4x3x2x1vox \
+    -t SyN[0.1,6,0.1] \
+    -m CC["$REF_GC","$MOV_GC",1,4] \
+    -c [200x200x200x200x10,1e-8,10] \
+    --shrink-factors 12x8x4x2x1 \
+    --smoothing-sigmas 4x3x2x1x0vox
 
-REF_GC="$REF_GC"
-MOV_GC="$MOV_GC"
-OUT_PREFIX="$OUT_PREFIX"
-RAW_CONF="$RAW_CONF"
-REGDIR="$REGDIR"
-ROUND="$ROUND"
+  # (optional) second write is redundant, but kept as a no-op confirmation pattern:
+  "$ANTSPATH/antsApplyTransforms" \
+    -d 3 --verbose 1 \
+    -r "$REF_GC" \
+    -i "$MOV_GC" \
+    -o "${OUT_PREFIX}_aligned.nrrd" \
+    -t "${OUT_PREFIX}1Warp.nii.gz" \
+    -t "${OUT_PREFIX}0GenericAffine.mat"
 
-echo "ANTs bin: \$ANTSPATH"
-echo "Threads : \${SLURM_CPUS_PER_TASK:-1}"
-
-# 1) Register GCaMP (moving) to fixed reference
-"\$ANTSPATH/antsRegistration" \\
-  -d 3 --float 1 --verbose 1 \\
-  -o ["\$OUT_PREFIX","\${OUT_PREFIX}_aligned.nrrd"] \\
-  --interpolation WelchWindowedSinc \\
-  --winsorize-image-intensities [0,100] \\
-  --use-histogram-matching 1 \\
-  -r ["\$REF_GC","\$MOV_GC",1] \\
-  -t rigid[0.1] \\
-  -m MI["\$REF_GC","\$MOV_GC",1,32,Regular,0.25] \\
-  -c [200x200x200x200,1e-6,10] \\
-  --shrink-factors 12x8x4x2 \\
-  --smoothing-sigmas 4x3x2x1vox \\
-  -t Affine[0.1] \\
-  -m MI["\$REF_GC","\$MOV_GC",1,32,Regular,0.25] \\
-  -c [200x200x200x200,1e-6,10] \\
-  --shrink-factors 12x8x4x2 \\
-  --smoothing-sigmas 4x3x2x1vox \\
-  -t SyN[0.1,6,0.1] \\
-  -m CC["\$REF_GC","\$MOV_GC",1,4] \\
-  -c [200x200x200x200x10,1e-8,10] \\
-  --shrink-factors 12x8x4x2x1 \\
-  --smoothing-sigmas 4x3x2x1x0vox
-
-"\$ANTSPATH/antsApplyTransforms" \\
-  -d 3 --verbose 1 \\
-  -r "\$REF_GC" \\
-  -i "\$MOV_GC" \\
-  -o "\${OUT_PREFIX}_aligned.nrrd" \\
-  -t "\${OUT_PREFIX}1Warp.nii.gz" \\
-  -t "\${OUT_PREFIX}0GenericAffine.mat"
-
-# 2) Apply transforms to all non-GCaMP channels for this round
-shopt -s nullglob
-# new-format non-GCaMP channels
-channels=( "\$RAW_CONF"/*_round\${ROUND}_channel[2-9]_*.nrrd )
-# fallbacks (older names), minus any *GCaMP*
-fallback=( "\$RAW_CONF"/round\${ROUND}_HCR_channel*.nrrd "\$RAW_CONF"/round\${ROUND}_channel*.nrrd "\$RAW_CONF"/round\${ROUND}_HCR_*.nrrd )
-for f in "\${fallback[@]}"; do
-  [[ -f "\$f" ]] || continue
-  [[ "\$f" == *GCaMP* ]] && continue
-  channels+=( "\$f" )
-done
-shopt -u nullglob
-
-for MOV in "\${channels[@]}"; do
-  [ -f "\$MOV" ] || continue
-  base=\$(basename "\$MOV")
-  out="\$REGDIR/\${base%.*}_aligned.nrrd"
-  echo "Transforming: \$base -> \$(basename "\$out")"
-  "\$ANTSPATH/antsApplyTransforms" \\
-    -d 3 --verbose 1 \\
-    -r "\$REF_GC" \\
-    -i "\$MOV" \\
-    -o "\$out" \\
-    -t "\${OUT_PREFIX}1Warp.nii.gz" \\
-    -t "\${OUT_PREFIX}0GenericAffine.mat"
-done
-
-echo "Done."
-EOF
-  chmod +x "$JOB"
-
-  if [[ "$QUEUE" == "interactive" ]]; then
-    echo "Running interactively for $FISH ..."
-    bash "$JOB"
-  else
-    sbatch \
-      --mail-type="$MAIL_TYPE" \
-      --mail-user="$MAIL_USER" \
-      -p "$QUEUE" \
-      -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
-      -t "$TIME" \
-      -J "ants_${FISH}_r${ROUND}" \
-      -o "$LOGDIR/ants_${FISH}_r${ROUND}.out" \
-      -e "$LOGDIR/ants_${FISH}_r${ROUND}.err" \
-      "$JOB"
+  # 2) Apply transforms to all non-GCaMP channels for this round
+  mapfile -t CHANNELS < <(gather_hcr_channels "$RAW_CONF" "$ROUND")
+  if (( ${#CHANNELS[@]} == 0 )); then
+    echo "  (no non-GCaMP channels found to transform in $RAW_CONF)"
   fi
+  for MOV in "${CHANNELS[@]}"; do
+    base="$(basename "$MOV")"
+    out="$REGDIR/${base%.*}_aligned.nrrd"
+    echo "  Transforming: $base -> $(basename "$out")"
+    "$ANTSPATH/antsApplyTransforms" \
+      -d 3 --verbose 1 \
+      -r "$REF_GC" \
+      -i "$MOV" \
+      -o "$out" \
+      -t "${OUT_PREFIX}1Warp.nii.gz" \
+      -t "${OUT_PREFIX}0GenericAffine.mat"
+  done
 
+  echo "===== Done $FISH ====="
 done
+EOS
+
+# inject variables (ROUND + fish list) safely
+sed -i "s|__ROUND__|$ROUND|g" "$JOB"
+# Escape backslashes and slashes in the fish list
+FISH_ESCAPED="$(printf "%s" "$FISH_SERIALIZED" | sed -e 's/[&/\]/\\&/g')"
+# shellcheck disable=SC2016
+sed -i "s|__FISH_LIST__|$FISH_ESCAPED|g" "$JOB"
+
+chmod +x "$JOB"
+
+# -------- Submit or run --------
+if [[ "$QUEUE" == "interactive" ]]; then
+  echo "Running interactively..."
+  bash "$JOB"
+else
+  sbatch \
+    --mail-type="$MAIL_TYPE" \
+    --mail-user="$MAIL_USER" \
+    -p "$QUEUE" \
+    -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
+    -t "$TIME" \
+    -J "ants_multi_r${ROUND}" \
+    -o "$JOBDIR/ants_multi_r${ROUND}_${STAMP}.out" \
+    -e "$JOBDIR/ants_multi_r${ROUND}_${STAMP}.err" \
+    "$JOB"
+  echo "Submitted single job for fish: ${FISH_IDS[*]}"
+  echo "  Job script: $JOB"
+  echo "  Logs: $JOBDIR/ants_multi_r${ROUND}_${STAMP}.{out,err}"
+fi
