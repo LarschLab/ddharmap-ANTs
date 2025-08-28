@@ -51,7 +51,8 @@ cp_glob() {
   local pattern="$1" dest="$2"
   mkdir -p "$dest"
   shopt -s nullglob
-  local files=( $pattern )
+  # space-safe glob expansion
+  mapfile -t files < <(compgen -G "$pattern")
   shopt -u nullglob
   if (( ${#files[@]} )); then
     cp -a "${files[@]}" "$dest/"
@@ -98,25 +99,25 @@ for fish in "$@"; do
     continue
   fi
 
-  # --- 1) Mirror preprocessed → WORK ---
+  # --- 1) Mirror preprocessed → WORK (fish-only) ---
   WORK_FISH_PREPROC="$WORK_SUBJECTS_DIR/$fish/02_reg/00_preprocessing"
   echo "Syncing preprocessed → WORK: $WORK_FISH_PREPROC"
   mkdir -p "$WORK_FISH_PREPROC"/{2p_anatomy,r1,rn}
 
   if [[ -d "$PREPROC_ROOT/2p_anatomy" ]]; then
-    cp_glob "$PREPROC_ROOT/2p_anatomy/"'*.nrrd' "$WORK_FISH_PREPROC/2p_anatomy"
+    cp_glob "$PREPROC_ROOT/2p_anatomy/${fish}_*.nrrd" "$WORK_FISH_PREPROC/2p_anatomy"
   else
     echo "  WARN: no 2p_anatomy/ in $PREPROC_ROOT"
   fi
 
   if [[ -d "$PREPROC_ROOT/r1" ]]; then
-    cp_glob "$PREPROC_ROOT/r1/"'*.nrrd' "$WORK_FISH_PREPROC/r1"
+    cp_glob "$PREPROC_ROOT/r1/${fish}_*.nrrd" "$WORK_FISH_PREPROC/r1"
   else
     echo "  WARN: no r1/ in $PREPROC_ROOT"
   fi
 
   if [[ -d "$PREPROC_ROOT/rn" ]]; then
-    cp_glob "$PREPROC_ROOT/rn/"'*.nrrd' "$WORK_FISH_PREPROC/rn"
+    cp_glob "$PREPROC_ROOT/rn/${fish}_*.nrrd" "$WORK_FISH_PREPROC/rn"
   else
     echo "  INFO: no rn/ in $PREPROC_ROOT (single round?)"
   fi
@@ -133,6 +134,9 @@ for fish in "$@"; do
   cp_glob "$WORK_FISH_PREPROC/2p_anatomy/"'*.nrrd' "$RAW_DIR/anatomy_2P"
   cp_glob "$WORK_FISH_PREPROC/r1/"'*.nrrd'         "$RAW_DIR/confocal_round1"
   cp_glob "$WORK_FISH_PREPROC/rn/"'*.nrrd'         "$RAW_DIR/confocal_round2"
+
+  # keep SCRATCH/raw pristine: only files for this fish
+  find "$RAW_DIR" -type f ! -name "${fish}_*.nrrd" -delete || true
 
   # Fixed references
   if [[ -f "$RAW_DIR/anatomy_2P/anatomy_2P_GCaMP.nrrd" ]]; then
