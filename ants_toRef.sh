@@ -2,33 +2,18 @@
 # ants_register_to_avg2p.sh  (interactive; single job for multiple fish)
 #
 # Goal:
-#   For each fish, register the 2P anatomy and ALL rounds to an average 2P reference.
+#   For each fish, register the 2P anatomy AND all rounds to an average 2P reference.
 #
 # Reference (FIXED):
 #   Default: /scratch/ddharmap/refBrains/ref_05_LB_Perrino_2p/average_2p.nrrd
 #   Override with: export REF_AVG_2P=/path/to/average_2p.nrrd
 #
-# SCRATCH layout (assumed):
-#   $SCRATCH/experiments/subjects/<FishID>/{raw,fixed,reg}
+# Expected layout:
+#   $SCRATCH/experiments/subjects/<FishID>/{raw,fixed,reg_to_avg2p}
+#   Rounds are auto-detected under: raw/confocal_round*/
 #
-# Moving discovery:
-#   - 2P anatomy: fixed/anatomy_2P_ref_GCaMP.nrrd  (required)
-#   - Auto-detect all rounds as: raw/confocal_round*/
-#   - Per-round GCaMP (most-specific first, then fallbacks):
-#       <Fish>_round<R>_channel1_*GCaMP*.nrrd
-#       <Fish>_round<R>_*GCaMP*.nrrd
-#       round<R>_GCaMP.nrrd
-#       round<R>_*channel*GCaMP*.nrrd
-#       round<R>_*GCaMP*.nrrd
-#   - Per-round non-GCaMP (HCR/others), exclude *GCaMP*:
-#       <Fish>_round<R>_channel[2-9]_*.nrrd
-#       round<R>_HCR_channel*.nrrd
-#       round<R>_channel*.nrrd
-#       round<R>_HCR_*.nrrd
-#
-# Registration:
-#   antsRegistration: Rigid + Affine (MI), SyN (CC) with SyN step = 0.25
-#   antsApplyTransforms: apply computed transforms to GCaMP + other channels
+# Registration (antsRegistration): Rigid + Affine (MI), SyN (CC) with SyN step = 0.25
+# Transforms are then applied to: per-round GCaMP + non-GCaMP (HCR/other) channels
 #
 # ENV you likely already have:
 #   SCRATCH=/scratch/<user>
@@ -42,6 +27,7 @@ ANTSPATH="${ANTSPATH:-$HOME/ANTs/antsInstallExample/install/bin}"
 export ANTSPATH
 ANTSBIN="$ANTSPATH"
 
+# Default average 2P reference (can be overridden via env)
 REF_AVG_2P="${REF_AVG_2P:-/scratch/ddharmap/refBrains/ref_05_LB_Perrino_2p/average_2p.nrrd}"
 
 WALL_TIME="24:00:00"
@@ -74,15 +60,6 @@ mkdir -p "$JOBDIR"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 JOB="$JOBDIR/ants_to_avg2p_${STAMP}.sh"
 
-# Serialize fish list with literal newlines
-FISH_SERIALIZED=""
-for f in "${FISH_IDS[@]}"; do
-  [[ -n "$f" ]] || continue
-  FISH_SERIALIZED+="$f"$'\n'
-done
-# Make a shell-escaped $'...' string so newlines survive
-FISH_ESCAPED=$'('"$(printf "%q" "$FISH_SERIALIZED")"')'
-
 cat > "$JOB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -94,13 +71,13 @@ export OMP_NUM_THREADS="\${SLURM_CPUS_PER_TASK:-1}"
 
 SCRATCH_BASE="\${SCRATCH:?SCRATCH env not set}"
 REF_AVG_2P="$REF_AVG_2P"
-FISH_LIST=$FISH_ESCAPED
 
 echo "ANTs bin : \$ANTSPATH"
 echo "Threads  : \${SLURM_CPUS_PER_TASK:-1}"
 echo "FIXED    : \$REF_AVG_2P"
 
 # --- helpers (embedded) ---
+# 1) Find the round's GCaMP (lenient fallback at end)
 pick_moving_gcamp() {
   local d="\$1" r="\$2"
   shopt -s nullglob
@@ -110,6 +87,8 @@ pick_moving_gcamp() {
     "\$d"/round\${r}_GCaMP.nrrd
     "\$d"/round\${r}_*channel*GCaMP*.nrrd
     "\$d"/round\${r}_*GCaMP*.nrrd
+    # lenient: any GCaMP in the round dir (for misnamed round index)
+    "\$d"/*GCaMP*.nrrd
   )
   shopt -u nullglob
   local f
@@ -119,58 +98,67 @@ pick_moving_gcamp() {
   return 1
 }
 
+# 2) Collect non-GCaMP channels (HCR/others), robust patterns
 gather_hcr_channels() {
   local d="\$1" r="\$2"
   local out=()
   shopt -s nullglob
-  local nfmt=( "\$d"/*_round\${r}_channel[2-9]_*.nrrd )
-  out+=( "\${nfmt[@]}" )
-  local ofmt=( "\$d"/round\${r}_HCR_channel*.nrrd "\$d"/round\${r}_channel*.nrrd "\$d"/round\${r}_HCR_*.nrrd )
+  # New-format (allow channel1..9 and HCR prefix)
+  out+=( "\$d"/*_round\${r}_channel[1-9]_*.nrrd )
+  out+=( "\$d"/*_round\${r}_HCR_channel*.nrrd )
+  # Old-format fallbacks
+  out+=( "\$d"/round\${r}_HCR_channel*.nrrd "\$d"/round\${r}_channel*.nrrd "\$d"/round\${r}_HCR_*.nrrd )
+  shopt -u nullglob
+  # Exclude any GCaMP
+  local keep=()
   local f
-  for f in "\${ofmt[@]}"; do
+  for f in "\${out[@]}"; do
     [[ -f "\$f" ]] || continue
     [[ "\$f" == *GCaMP* ]] && continue
-    out+=( "\$f" )
+    keep+=( "\$f" )
   done
-  shopt -u nullglob
-  printf "%s\n" "\${out[@]}"
+  printf "%s\n" "\${keep[@]}"
 }
 
+# 3) Register a pair and tee output to a log (returns nonzero on failure)
 register_pair() {
-  local fx="\$1" mv="\$2" op="\$3"
-  echo "  antsRegistration -> \$op"
-  "\$ANTSPATH/antsRegistration" \\
-    -d 3 --float 1 --verbose 1 \\
-    -o ["\$op","\${op}_aligned.nrrd"] \\
-    --interpolation WelchWindowedSinc \\
-    --winsorize-image-intensities [0,100] \\
-    --use-histogram-matching 1 \\
-    -r ["\$fx","\$mv",1] \\
-    -t Rigid[0.1] \\
-      -m MI["\$fx","\$mv",1,32,Regular,0.25] \\
-      -c [200x200x100,1e-6,10] \\
-      --shrink-factors 8x4x2 \\
-      --smoothing-sigmas 3x2x1vox \\
-    -t Affine[0.1] \\
-      -m MI["\$fx","\$mv",1,32,Regular,0.25] \\
-      -c [200x200x100,1e-6,10] \\
-      --shrink-factors 8x4x2 \\
-      --smoothing-sigmas 3x2x1vox \\
-    -t SyN[0.25,6,0.1] \\
-      -m CC["\$fx","\$mv",1,4] \\
-      -c [200x200x100x20,1e-8,10] \\
-      --shrink-factors 8x4x2x1 \\
-      --smoothing-sigmas 3x2x1x0vox
+  local fx="\$1" mv="\$2" op="\$3" log="\${4:-/dev/null}"
+  {
+    echo "antsRegistration -> \$op"
+    "\$ANTSPATH/antsRegistration" \
+      -d 3 --float 1 --verbose 1 \
+      -o ["\$op","\${op}_aligned.nrrd"] \
+      --interpolation WelchWindowedSinc \
+      --winsorize-image-intensities [0,100] \
+      --use-histogram-matching 1 \
+      -r ["\$fx","\$mv",1] \
+      -t Rigid[0.1] \
+        -m MI["\$fx","\$mv",1,32,Regular,0.25] \
+        -c [200x200x100,1e-6,10] \
+        --shrink-factors 8x4x2 \
+        --smoothing-sigmas 3x2x1vox \
+      -t Affine[0.1] \
+        -m MI["\$fx","\$mv",1,32,Regular,0.25] \
+        -c [200x200x100,1e-6,10] \
+        --shrink-factors 8x4x2 \
+        --smoothing-sigmas 3x2x1vox \
+      -t SyN[0.25,6,0.1] \
+        -m CC["\$fx","\$mv",1,4] \
+        -c [200x200x100x20,1e-8,10] \
+        --shrink-factors 8x4x2x1 \
+        --smoothing-sigmas 3x2x1x0vox
+  } >"\$log" 2>&1
 }
 
+# 4) Apply transforms to an image
 apply_to_image() {
   local ref="\$1" op="\$2" mv="\$3" out="\$4"
-  "\$ANTSPATH/antsApplyTransforms" \\
-    -d 3 --verbose 1 \\
-    -r "\$ref" \\
-    -i "\$mv" \\
-    -o "\$out" \\
-    -t "\${op}1Warp.nii.gz" \\
+  "\$ANTSPATH/antsApplyTransforms" \
+    -d 3 --verbose 1 \
+    -r "\$ref" \
+    -i "\$mv" \
+    -o "\$out" \
+    -t "\${op}1Warp.nii.gz" \
     -t "\${op}0GenericAffine.mat"
 }
 
@@ -188,7 +176,7 @@ while IFS= read -r FISH; do
   # 1) 2P anatomy -> average 2P
   MOV_2P="\$FIXEDDIR/anatomy_2P_ref_GCaMP.nrrd"
   if [[ ! -f "\$MOV_2P" ]]; then
-    echo "ERROR: Missing 2P anatomy (moving): \$MOV_2P"
+    echo "ERROR: Missing 2P anatomy (moving): \$MOV_2P" | tee -a "\$LOGDIR/errors.log"
     ls -1 "\$FIXEDDIR" 2>/dev/null | sed 's/^/  - /' || true
     echo "Skipping \$FISH."
     continue
@@ -197,7 +185,10 @@ while IFS= read -r FISH; do
   echo "  MOVING (2P)   : \$MOV_2P"
 
   OP_2P="\$REGDIR/2P_to_avg2p_"
-  register_pair "\$REF_AVG_2P" "\$MOV_2P" "\$OP_2P"
+  if ! register_pair "\$REF_AVG_2P" "\$MOV_2P" "\$OP_2P" "\$LOGDIR/2P_to_avg2p.log"; then
+    echo "ERROR: 2P->avg registration failed for \$FISH (see \$LOGDIR/2P_to_avg2p.log). Skipping fish." | tee -a "\$LOGDIR/errors.log"
+    continue
+  fi
 
   # 2) All rounds -> average 2P
   RAW_BASE="\$BASE/raw"
@@ -210,7 +201,7 @@ while IFS= read -r FISH; do
 
   for RDIR in "\${ROUND_DIRS[@]}"; do
     RNAME="\$(basename "\$RDIR")"
-    if [[ "\$RNAME" =~ ^confocal_round([0-9]+)\$ ]]; then
+    if [[ "\$RNAME" =~ ^confocal_round([0-9]+)$ ]]; then
       R="\${BASH_REMATCH[1]}"
     else
       echo "  Skipping nonstandard round dir: \$RDIR"
@@ -219,13 +210,16 @@ while IFS= read -r FISH; do
     echo "---- Round \$R ----"
 
     if ! MOV_GC="\$(pick_moving_gcamp "\$RDIR" "\$R")"; then
-      echo "  ERROR: Could not find moving GCaMP in \$RDIR"
+      echo "  ERROR: Could not find moving GCaMP in \$RDIR" | tee -a "\$LOGDIR/errors.log"
       ls -1 "\$RDIR" 2>/dev/null | sed 's/^/    - /' || true
       continue
     fi
     echo "  MOVING (GCaMP): \$MOV_GC"
     OP_R="\$REGDIR/round\${R}_GCaMP_to_avg2p_"
-    register_pair "\$REF_AVG_2P" "\$MOV_GC" "\$OP_R"
+    if ! register_pair "\$REF_AVG_2P" "\$MOV_GC" "\$OP_R" "\$LOGDIR/round\${R}_GCaMP_to_avg2p.log"; then
+      echo "  ERROR: round \$R registration failed (see log). Skipping round." | tee -a "\$LOGDIR/errors.log"
+      continue
+    fi
 
     mapfile -t CHANNELS < <(gather_hcr_channels "\$RDIR" "\$R")
     if (( \${#CHANNELS[@]} == 0 )); then
@@ -245,12 +239,19 @@ while IFS= read -r FISH; do
   fi
 
   echo "===== Done \$FISH ====="
-done <<< "\$FISH_LIST"
+# The fish list will be appended below via a literal heredoc
+done <<'FISH_EOF'
 EOF
 
+# Append fish IDs as the heredoc payload (avoids sed/escaping issues)
+{
+  for f in "${FISH_IDS[@]}"; do
+    [[ -n "$f" ]] && printf '%s\n' "$f"
+  done
+  echo "FISH_EOF"
+} >> "$JOB"
+
 chmod +x "$JOB"
-
-
 
 # -------- Submit or run --------
 if [[ "$QUEUE" == "interactive" ]]; then
