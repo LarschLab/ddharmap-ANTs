@@ -20,6 +20,7 @@
 # - We DO NOT copy anything to NAS/02_reg/00_preprocessing. Those inputs already exist there.
 # - We DO copy aligned volumes to NAS (02_reg/06_total-ref/aligned/roundN/...) and 08_2pa-ref/aligned/.
 # - Requires: bash, rsync, readlink, stat, sed
+# - NAS filenames are prefixed with the fishID (e.g., L331_f01_round2_GCaMP_to_ref_1Warp.nii.gz). Existing names that already start with fishID_ are not double-prefixed.
 
 set -euo pipefail
 IFS=$'
@@ -66,6 +67,20 @@ done
 log() { echo -e "$*"; }
 run() { if (( DRY_RUN )); then printf 'DRY:'; printf ' %q' "$@"; echo; else "$@"; fi }
 ensure_dir() { if (( DRY_RUN )); then echo "DRY: mkdir -p \"$1\""; else mkdir -p "$1"; fi }
+
+# Ensure every file in a directory starts with the fishID_ prefix
+ensure_fish_prefix_in_dir() {
+  local dir="$1" fish="$2"
+  shopt -s nullglob
+  for p in "$dir"/*; do
+    [[ -f "$p" ]] || continue
+    local b="$(basename "$p")"
+    [[ "$b" == ${fish}_* ]] && continue
+    run rsync -a --protect-args "$p" "$dir/${fish}_$b"
+    if (( ! DRY_RUN )); then rm -f -- "$p"; fi
+  done
+  shopt -u nullglob
+}
 
 # Prefer top-level subjects/<fish>, else find legacy matches and pick best.
 find_subject_dir() {
@@ -173,6 +188,10 @@ for fish in "${FISH_IDS[@]}"; do
   copy_rename "$TWO_P_SRC_DIR/2P_to_avg2p_1InverseWarp.nii.gz"    "$TWO_P_DST_TM" 'to_avg2p_' 'to_ref_'
   copy_rename "$TWO_P_SRC_DIR/logs/2P_to_avg2p.log"               "$TWO_P_DST_LOG" 'to_avg2p'  'to_ref'
   copy_rename "$TWO_P_SRC_DIR/anatomy_2P_in_avg2p.nrrd"           "$TWO_P_DST_ALI" '_in_avg2p' '_in_ref'
+  # Ensure fishID prefix on NAS outputs for 2P step
+  ensure_fish_prefix_in_dir "$TWO_P_DST_TM" "$fish"
+  ensure_fish_prefix_in_dir "$TWO_P_DST_LOG" "$fish"
+  ensure_fish_prefix_in_dir "$TWO_P_DST_ALI" "$fish"
 
   # 2) Round-wise transforms + logs (04_r1-ref, 05_rN-ref)
   shopt -s nullglob
@@ -198,6 +217,9 @@ for fish in "${FISH_IDS[@]}"; do
     copy_rename "$SCRATCH_SUBJ/reg_to_avg2p/round${R}_GCaMP_to_avg2p_1Warp.nii.gz"          "$DST_TM" 'to_avg2p_' 'to_ref_'
     copy_rename "$SCRATCH_SUBJ/reg_to_avg2p/round${R}_GCaMP_to_avg2p_1InverseWarp.nii.gz"    "$DST_TM" 'to_avg2p_' 'to_ref_'
     copy_rename "$SCRATCH_SUBJ/reg_to_avg2p/logs/round${R}_GCaMP_to_avg2p.log" "$DST_LOG" 'to_avg2p' 'to_ref'
+    # Ensure fishID prefix on per-round transforms/logs
+    ensure_fish_prefix_in_dir "$DST_TM" "$fish"
+    ensure_fish_prefix_in_dir "$DST_LOG" "$fish"
   done
 
   # 3) Aligned volumes into 06_total-ref/aligned/roundN
@@ -222,6 +244,11 @@ for fish in "${FISH_IDS[@]}"; do
     DST_ROUND="$ALI_ROOT/round${RND}"
     ensure_dir "$DST_ROUND"
     copy_rename "$f" "$DST_ROUND" 'to_avg2p' 'to_ref'
+  done
+  # Pass to ensure fishID prefix in each round folder under aligned
+  for d in "$ALI_ROOT"/*; do
+    [[ -d "$d" ]] || continue
+    ensure_fish_prefix_in_dir "$d" "$fish"
   done
   shopt -u nullglob
 
