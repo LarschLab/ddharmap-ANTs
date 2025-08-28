@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # usage: bash ants_sweep_rigid_gc_r1_to_2p.sh PARTITION FISH1 [FISH2 ...]
-# Rigid-only parameter sweep of the gradient step (GCaMP only), mapping R1 -> 2P.
-# Sweeps: Rigid[<gradStep>] with gradStep in {0.15, 0.20, 0.25}
+# Rigid-only parameter sweep (GCaMP), mapping R1 -> 2P.
+# Sweeps: Rigid[gradStep] with gradStep in {0.15, 0.20, 0.25}
 
 set -euo pipefail
+shopt -s nullglob
 
 ANTSPATH="$HOME/ANTs/antsInstallExample/install/bin"
 export ANTSPATH
@@ -32,7 +33,7 @@ if [ "$PARTITION" = "test" ]; then
   QUEUE="interactive"; CPUS=1; MEM="8G"; TIME="1:00:00"
   echo "==> TEST mode: interactive (1 CPU, 8G, 1h)"
 else
-  QUEUE="$PARTITION"; CPUS=48; MEM="256G"; TIME="$WALL_TIME"
+  QUEUE="$PARTITION"; CPUS=8; MEM="32G"; TIME="$WALL_TIME"
 fi
 
 # Sweep rigid gradient step
@@ -41,16 +42,35 @@ RIGID_STEPS=("0.15:gs015" "0.20:gs020" "0.25:gs025")
 for FISH in "${FISH_IDS[@]}"; do
   echo "===== Processing subject $FISH ====="
 
-  BASE="${SCRATCH:-$HOME/SCRATCH}/experiments/subjects/$FISH"
-  RAW_CONF="$BASE/raw/confocal_round1"    # R1 only
+  BASE="${SCRATCH:-$HOME/SCRATCH}/subjects/$FISH"
+  RAW_CONF="$BASE/raw/confocal_round1"
   FIXED="$BASE/fixed"
   REGDIR="$BASE/reg"
   LOGDIR="$REGDIR/logs"
   mkdir -p "$REGDIR" "$LOGDIR"
 
-  # Fixed = 2P anatomy ref; Moving = round1 GCaMP
+  # Fixed = 2P anatomy ref
   REF_GCaMP="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
-  MOV_GCaMP="$RAW_CONF/round1_GCaMP.nrrd"
+
+  # Moving = round1 GCaMP, try common names, then unique glob
+  if [ -f "$RAW_CONF/${FISH}_round1_channel1_GCaMP.nrrd" ]; then
+    MOV_GCaMP="$RAW_CONF/${FISH}_round1_channel1_GCaMP.nrrd"
+  elif [ -f "$RAW_CONF/${FISH}_round1_GCaMP.nrrd" ]; then
+    MOV_GCaMP="$RAW_CONF/${FISH}_round1_GCaMP.nrrd"
+  else
+    candidates=( "$RAW_CONF"/*round1*GCaMP*.nrrd )
+    if [ ${#candidates[@]} -eq 1 ]; then
+      MOV_GCaMP="${candidates[0]}"
+    elif [ ${#candidates[@]} -gt 1 ]; then
+      echo "ERROR: Multiple possible moving files for $FISH:"
+      printf '  - %s\n' "${candidates[@]}"
+      echo "       Please standardize or remove extras."
+      continue
+    else
+      echo "ERROR: No round1 GCaMP found for $FISH under $RAW_CONF"
+      continue
+    fi
+  fi
 
   # sanity checks
   missing=0
@@ -74,25 +94,25 @@ echo "Moving: ${MOV_GCaMP}"
 EOF
 
   for PAIR in "${RIGID_STEPS[@]}"; do
-    GS="${PAIR%%:*}"     # gradient step
-    TAG="${PAIR##*:}"    # gs015, gs020, gs025
-    SWEEP_PREFIX="${OUT_PREFIX_BASE}_${TAG}"
+    GS="\${PAIR%%:*}"     # gradient step
+    TAG="\${PAIR##*:}"    # gs015, gs020, gs025
+    SWEEP_PREFIX="\${OUT_PREFIX_BASE}_\${TAG}"
 
     cat >> "$JOBSCRIPT" <<EOF
-echo ">> Rigid[${GS}]  (${TAG})"
+echo ">> Rigid[\${GS}]  (\${TAG})"
 "${ANTSBIN}/antsRegistration" \
   -d 3 --float 1 --verbose 1 \
-  -o [${SWEEP_PREFIX},${SWEEP_PREFIX}_rigidAligned.nrrd] \
+  -o [\${SWEEP_PREFIX},\${SWEEP_PREFIX}_rigidAligned.nrrd] \
   --interpolation WelchWindowedSinc \
   --winsorize-image-intensities [0,100] \
   --use-histogram-matching 1 \
-  -t Rigid[${GS}] \
+  -t Rigid[\${GS}] \
   -m CC[${REF_GCaMP},${MOV_GCaMP},1,4] \
   -c [1000x500x250,1e-8,10] \
   --shrink-factors 8x4x2 \
   --smoothing-sigmas 3x2x1vox
 
-ln -sf "${SWEEP_PREFIX}_rigidAligned.nrrd" "${SWEEP_PREFIX}_aligned.nrrd"
+ln -sf "\${SWEEP_PREFIX}_rigidAligned.nrrd" "\${SWEEP_PREFIX}_aligned.nrrd"
 EOF
   done
 
