@@ -167,6 +167,8 @@ for fish in "${FISH_IDS[@]}"; do
   fi
   NAS_REG_ROOT="$NAS_SUBJ_ROOT/02_reg"
 
+  REG_DIR="$SCRATCH_SUBJ/reg"
+
   # ---- Preflight ----
   if [[ ! -d "$SCRATCH_SUBJ/reg_to_avg2p" ]]; then
     log "  WARN: No reg_to_avg2p in $SCRATCH_SUBJ; skipping." | tee -a "$SUMMARY"
@@ -264,42 +266,35 @@ for fish in "${FISH_IDS[@]}"; do
   done
   shopt -u nullglob
 
-  # 4) WITHIN-FISH registrations from reg/ -> NAS 01/02
-  REG_DIR="$SCRATCH_SUBJ/reg"
+  # 4) ---- WITHIN-FISH aligned volumes (NRRDs) -> NAS ----
   if [[ -d "$REG_DIR" ]]; then
-    # 4a) round1 -> 2P (01_r1-2p)
-    R1_TM="$NAS_REG_ROOT/01_r1-2p/matrices"
-    R1_LOG="$NAS_REG_ROOT/01_r1-2p/logs"
-    ensure_dir "$R1_TM"; ensure_dir "$R1_LOG"
-    copy_rename_prefix "$REG_DIR/round1_GCaMP_to_ref0GenericAffine.mat" "$R1_TM" "$fish" 'to_ref' 'to_2p'
-    copy_rename_prefix "$REG_DIR/round1_GCaMP_to_ref1Warp.nii.gz"          "$R1_TM" "$fish" 'to_ref' 'to_2p'
-    copy_rename_prefix "$REG_DIR/round1_GCaMP_to_ref1InverseWarp.nii.gz"    "$R1_TM" "$fish" 'to_ref' 'to_2p'
-    # logs (copy any r1 logs)
-    if [[ -d "$REG_DIR/logs" ]]; then
-      run rsync -a --protect-args "$REG_DIR/logs/" "$R1_LOG/"
-      ensure_fish_prefix_in_dir "$R1_LOG" "$fish"
-    fi
-
-    # 4b) roundN -> r1 (02_rn-r1)
+    # 01_r1-2p/aligned : round1 aligned in 2P space
+    R1_ALI="$NAS_REG_ROOT/01_r1-2p/aligned"
+    ensure_dir "$R1_ALI"
     shopt -s nullglob
-    mapfile -t RN_MATS < <(ls -1 "$REG_DIR"/round[2-9]*_GCaMP_to_ref0GenericAffine.mat 2>/dev/null || true)
-    shopt -u nullglob
-    for mat in "${RN_MATS[@]}"; do
-      b="$(basename "$mat")"
-      [[ "$b" =~ ^round([0-9]+)_ ]] || { log "  WARN: cannot parse round from $b"; continue; }
-      R="${BASH_REMATCH[1]}"
-      RN_TM="$NAS_REG_ROOT/02_rn-r1/transMatrices/round${R}"
-      RN_LOG="$NAS_REG_ROOT/02_rn-r1/logs"
-      ensure_dir "$RN_TM"; ensure_dir "$RN_LOG"
-      copy_rename_prefix "$REG_DIR/round${R}_GCaMP_to_ref0GenericAffine.mat" "$RN_TM" "$fish" 'to_ref' 'to_r1'
-      copy_rename_prefix "$REG_DIR/round${R}_GCaMP_to_ref1Warp.nii.gz"          "$RN_TM" "$fish" 'to_ref' 'to_r1'
-      copy_rename_prefix "$REG_DIR/round${R}_GCaMP_to_ref1InverseWarp.nii.gz"    "$RN_TM" "$fish" 'to_ref' 'to_r1'
-      # copy logs too
-      if [[ -d "$REG_DIR/logs" ]]; then
-        run rsync -a --protect-args "$REG_DIR/logs/" "$RN_LOG/"
-        ensure_fish_prefix_in_dir "$RN_LOG" "$fish"
-      fi
+    for f in "$REG_DIR"/round1_*_aligned.nrrd "$REG_DIR"/*_round1_*_aligned.nrrd; do
+      [[ -f "$f" ]] || continue
+      # rename: *_aligned.nrrd -> *_in_2p.nrrd + fishID_ prefix
+      copy_rename_prefix "$f" "$R1_ALI" "$fish" '_aligned\.nrrd$' '_in_2p.nrrd'
     done
+    ensure_fish_prefix_in_dir "$R1_ALI" "$fish"
+
+    # 02_rn-r1/aligned/roundN : roundN aligned in r1 space
+    for f in "$REG_DIR"/round[2-9]_*_aligned.nrrd "$REG_DIR"/*_round[2-9]_*_aligned.nrrd; do
+      [[ -f "$f" ]] || continue
+      fb="$(basename "$f")"
+      if [[ "$fb" =~ round([0-9]+) ]]; then
+        R="${BASH_REMATCH[1]}"
+      else
+        R="misc"
+      fi
+      RN_ALI="$NAS_REG_ROOT/02_rn-r1/aligned/round${R}"
+      ensure_dir "$RN_ALI"
+      # rename: *_aligned.nrrd -> *_in_r1.nrrd + fishID_ prefix
+      copy_rename_prefix "$f" "$RN_ALI" "$fish" '_aligned\.nrrd$' '_in_r1.nrrd'
+      ensure_fish_prefix_in_dir "$RN_ALI" "$fish"
+    done
+    shopt -u nullglob
   fi
 
   log "  Finished $fish"
