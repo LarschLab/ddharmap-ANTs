@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# usage: bash ants_sweep_only_gc.sh EXP ROUND PARTITION FISH1 [FISH2 ...]
-# SyN-only parameter sweep reusing an existing affine; GCaMP only (no HCR applies).
-# Expects: reg/round${ROUND}_GCaMP_to_ref0GenericAffine.mat
+# usage: bash ants_sweep_rigid_gc_r1_to_2p.sh PARTITION FISH1 [FISH2 ...]
+# Rigid-only parameter sweep of the gradient step (GCaMP only), mapping R1 -> 2P.
+# Sweeps: Rigid[<gradStep>] with gradStep in {0.15, 0.20, 0.25}
 
 set -euo pipefail
 
@@ -14,19 +14,17 @@ MAIL_TYPE="END,FAIL"
 MAIL_USER="danin.dharmaperwira@unil.ch"
 
 # --- args (prompt if missing; no early exit) ---
-if [ $# -lt 4 ]; then
-  echo "Usage: $0 EXP ROUND PARTITION FISH1 [FISH2 ...]" >&2
-  read -r -p "EXP: " EXP
-  read -r -p "ROUND: " ROUND
+if [ $# -lt 2 ]; then
+  echo "Usage: $0 PARTITION FISH1 [FISH2 ...]" >&2
   read -r -p "PARTITION (e.g., cpu or test): " PARTITION
   read -r -p "FISH IDs (space-separated): " FISH_LINE
   read -r -a FISH_IDS <<< "$FISH_LINE"
 else
-  EXP="$1"; ROUND="$2"; PARTITION="$3"; shift 3
+  PARTITION="$1"; shift
   FISH_IDS=( "$@" )
 fi
 
-echo "SyN-only (GCaMP only) for experiment $EXP, round $ROUND on partition $PARTITION:"
+echo "Rigid sweep (GCaMP; R1 -> 2P) on partition $PARTITION:"
 printf "  %s\n" "${FISH_IDS[@]}"
 
 # resources per fish/job
@@ -37,38 +35,31 @@ else
   QUEUE="$PARTITION"; CPUS=48; MEM="256G"; TIME="$WALL_TIME"
 fi
 
-# Sweep updateFieldSigma; fixed gradStep=0.25, totalFieldSigma=0.1
-UFIELD_STEPS=("2.0:uf0200" "4.0:uf0400")
-# add "5.0:uf0500" if you want X=5.0 as well
+# Sweep rigid gradient step
+RIGID_STEPS=("0.15:gs015" "0.20:gs020" "0.25:gs025")
 
 for FISH in "${FISH_IDS[@]}"; do
   echo "===== Processing subject $FISH ====="
 
-  BASE="$SCRATCH/experiments/$EXP/subjects/$FISH"
-  RAW_CONF="$BASE/raw/confocal_round${ROUND}"
+  BASE="${SCRATCH:-$HOME/SCRATCH}/experiments/subjects/$FISH"
+  RAW_CONF="$BASE/raw/confocal_round1"    # R1 only
   FIXED="$BASE/fixed"
   REGDIR="$BASE/reg"
   LOGDIR="$REGDIR/logs"
   mkdir -p "$REGDIR" "$LOGDIR"
 
-  # fixed selection: round1 uses anatomy ref; later uses round1 ref
-  if [ "$ROUND" -eq 1 ]; then
-    REF_GCaMP="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
-  else
-    REF_GCaMP="$FIXED/round1_ref_GCaMP.nrrd"
-  fi
-  MOV_GCaMP="$RAW_CONF/round${ROUND}_GCaMP.nrrd"
-  AFFINE="${REGDIR}/round${ROUND}_GCaMP_to_ref0GenericAffine.mat"
+  # Fixed = 2P anatomy ref; Moving = round1 GCaMP
+  REF_GCaMP="$FIXED/anatomy_2P_ref_GCaMP.nrrd"
+  MOV_GCaMP="$RAW_CONF/round1_GCaMP.nrrd"
 
   # sanity checks
   missing=0
   [ -f "$REF_GCaMP" ] || { echo "Missing fixed:  $REF_GCaMP" >&2; missing=1; }
   [ -f "$MOV_GCaMP" ] || { echo "Missing moving: $MOV_GCaMP" >&2; missing=1; }
-  [ -f "$AFFINE"   ] || { echo "Missing affine: $AFFINE (run Phase A first)" >&2; missing=1; }
   [ $missing -eq 0 ] || { echo "Skipping $FISH due to missing inputs."; continue; }
 
-  OUT_PREFIX="$REGDIR/round${ROUND}_GCaMP_to_ref"
-  JOBNAME="ants_${EXP}_${FISH}_r${ROUND}_sweepOnly_GC"
+  OUT_PREFIX_BASE="$REGDIR/round1_GCaMP_to_ref_rigid"
+  JOBNAME="ants_${FISH}_r1_sweepRigid_GC"
   JOBSCRIPT="$LOGDIR/${JOBNAME}.sh"
 
   # ---------- per-fish job script ----------
@@ -77,32 +68,31 @@ for FISH in "${FISH_IDS[@]}"; do
 set -euo pipefail
 echo "Host: \$(hostname)"
 echo "Start: \$(date)"
-echo "Using affine: ${AFFINE}"
+echo "Fixed : ${REF_GCaMP}"
+echo "Moving: ${MOV_GCaMP}"
 
 EOF
 
-  for PAIR in "${UFIELD_STEPS[@]}"; do
-    UF="${PAIR%%:*}"       # updateFieldSigma
-    TAG="${PAIR##*:}"      # uf0200, uf0400
-    SWEEP_PREFIX="${OUT_PREFIX}_${TAG}"
+  for PAIR in "${RIGID_STEPS[@]}"; do
+    GS="${PAIR%%:*}"     # gradient step
+    TAG="${PAIR##*:}"    # gs015, gs020, gs025
+    SWEEP_PREFIX="${OUT_PREFIX_BASE}_${TAG}"
 
     cat >> "$JOBSCRIPT" <<EOF
-echo ">> SyN[0.25, ${UF}, 0.1]  (${TAG})"
+echo ">> Rigid[${GS}]  (${TAG})"
 "${ANTSBIN}/antsRegistration" \
   -d 3 --float 1 --verbose 1 \
-  --initial-moving-transform ${AFFINE} \
-  -o [${SWEEP_PREFIX},${SWEEP_PREFIX}_synAligned.nrrd] \
+  -o [${SWEEP_PREFIX},${SWEEP_PREFIX}_rigidAligned.nrrd] \
   --interpolation WelchWindowedSinc \
   --winsorize-image-intensities [0,100] \
   --use-histogram-matching 1 \
-  -t SyN[0.25,${UF},0.1] \
+  -t Rigid[${GS}] \
   -m CC[${REF_GCaMP},${MOV_GCaMP},1,4] \
-  -c [200x200x200x200x10,1e-8,10] \
-  --shrink-factors 12x8x4x2x1 \
-  --smoothing-sigmas 4x3x2x1x0vox
+  -c [1000x500x250,1e-8,10] \
+  --shrink-factors 8x4x2 \
+  --smoothing-sigmas 3x2x1vox
 
-# Keep a conventional name for the GCaMP without re-resampling:
-ln -sf "${SWEEP_PREFIX}_synAligned.nrrd" "${SWEEP_PREFIX}_aligned.nrrd"
+ln -sf "${SWEEP_PREFIX}_rigidAligned.nrrd" "${SWEEP_PREFIX}_aligned.nrrd"
 EOF
   done
 
