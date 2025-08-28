@@ -82,6 +82,18 @@ ensure_fish_prefix_in_dir() {
   shopt -u nullglob
 }
 
+# Copy with rename + fish prefix: SRC -> DST_DIR/(sed s/from/to/) and ensure "<fish>_" prefix
+copy_rename_prefix() {
+  local src="$1" dst_dir="$2" fish="$3" from_pat="$4" to_repl="$5"
+  [[ -f "$src" ]] || { log "  (skip missing) $src"; return 0; }
+  ensure_dir "$dst_dir"
+  local base new
+  base="$(basename "$src")"
+  new="$(printf '%s' "$base" | sed "s/${from_pat}/${to_repl}/")"
+  [[ "$new" == ${fish}_* ]] || new="${fish}_$new"
+  run rsync -a --protect-args "$src" "$dst_dir/$new"
+}
+
 # Prefer top-level subjects/<fish>, else find legacy matches and pick best.
 find_subject_dir() {
   local fish="$1"
