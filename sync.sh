@@ -1,173 +1,362 @@
 #!/usr/bin/env bash
-# sync_preprocessed_to_compute.sh
-# Pulls ONLY preprocessed data from NAS (02_reg/00_preprocessing)
-# into WORK (mirrors 02_reg/00_preprocessing) and prepares SCRATCH
-# at experiments/subjects/<FishID>/{raw,fixed,reg} for ANTs.
-# Also writes a .origin.json for traceability and future sync-back.
+# sync_nas_compute_integrated.sh
 #
-# ENV in ~/.bashrc:
-#   NAS=/nas/FAC/FBM/CIG/jlarsch/default/D2c/07\ Data
-#   WORK=/work/FAC/FBM/CIG/jlarsch/default/Danin
-#   SCRATCH=/scratch/ddharmap
+# One script that:
+#  (A) PULL:   NAS (02_reg/00_preprocessing) -> WORK mirror -> stage SCRATCH/{raw,fixed,reg}
+#  (B) PUSH:   SCRATCH/reg images -> WORK/_canonical (rename to <fish>_<source>_in_<space>.nrrd)
+#              -> NAS 02_reg/<stage> (copy ONLY if the exact file is missing unless --force)
 #
-# USAGE (updated):
-#   $0 <user> <fishID1> [fishID2 ...]
-# Example:
-#   $0 Matilde L331_f01 L395_f10
+# It also integrates:
+#  - Smart SCRATCH subject discovery (preferred .../experiments/subjects/<fish>, with legacy)
+#  - NAS path resolution via SCRATCH/nas symlink or .nas_path, with --nas-project-root fallback
+#  - --dry-run, --force, optional --with-matrices and --with-logs
 #
-# <user> must be a subfolder under $NAS (e.g., Matilde or Alejandro).
+# Canonical name:  <fishID>_<source>_in_<space>.nrrd   where <space> ∈ {2p, ref, r1}
+# Stage mapping:
+#   round1_*_in_2p.nrrd         -> 02_reg/01_r1-2p/aligned
+#   round2_*_in_r1.nrrd         -> 02_reg/02_rn-r1/aligned
+#   round2_*_in_2p.nrrd         -> 02_reg/03_rn-2p/aligned
+#   round1_*_in_ref.nrrd        -> 02_reg/04_r1-ref/
+#   round2_*_in_ref.nrrd        -> 02_reg/05_r2-ref/
+#   anatomy_2P_in_ref.nrrd      -> 02_reg/08_2pa-ref/aligned
+#
+# Notes:
+# - PULL needs a NAS subject root. We try to infer it from SCRATCH/<fish>/{nas symlink|.nas_path}.
+#   If SCRATCH subject doesn't exist yet (first-time pull), provide --owner or --nas-project-root.
+# - PUSH does not overwrite on NAS unless --force.
+#
+# Requirements: bash, rsync, readlink, sed, stat
 
 set -euo pipefail
+IFS=$'\n\t'
 
-# ---------- Config ----------
-NAS_BASE="${NAS:?NAS env var is required}"                 # /nas/.../07 Data
-WORK_SUBJECTS_DIR="${WORK:-$HOME/WORK}/experiments/subjects"
-SCRATCH_SUBJECTS_DIR="${SCRATCH:-$HOME/SCRATCH}/experiments/subjects"
+# ------------------------ Defaults / ENV ------------------------
+NAS_DEFAULT="${NAS:-}"    # May be empty; we prefer nas symlink/.nas_path or --nas-project-root/--owner
+WORK_BASE="${WORK:-$HOME/WORK}/experiments"
+SCRATCH_BASE="${SCRATCH:-/scratch/$USER}/experiments"
+
+# ------------------------ Args ------------------------
+MODE="both"        # pull | push | both
+FORCE=0
+DRY=0
+WITH_MATRICES=0
+WITH_LOGS=0
+NAS_PROJECT_ROOT="${NAS_PROJECT_ROOT:-}"  # optional
+OWNER=""
 
 usage() {
   cat <<USAGE
-Usage: $0 <user> <fishID1> [fishID2 ...]
-  <user> must match a directory under \$NAS (e.g., Matilde, Alejandro)
+Usage: $0 [--pull|--push] [--force] [--dry-run] [--with-matrices] [--with-logs]
+          [--nas-project-root PATH] [--owner NAME]
+          <fishID1> [fishID2 ...]
 
-Example:
-  $0 Matilde L331_f01 L395_f10
+Modes (default: both):
+  --pull              Only NAS -> WORK -> SCRATCH
+  --push              Only SCRATCH -> WORK/_canonical -> NAS
+
+Options:
+  --force             Overwrite existing files/folders at destinations
+  --dry-run           Print actions, do not write
+  --with-matrices     On push, also copy transforms into NAS/transMatrices
+  --with-logs         On push, also copy logs into NAS/logs
+  --nas-project-root  Fallback NAS project root (e.g. "/nas/.../07 Data/Matilde")
+  --owner NAME        Use \$NAS/NAME/<fish> as NAS subject root if not resolvable from SCRATCH
+
 USAGE
   exit 1
 }
-[[ $# -ge 2 ]] || usage
 
-OWNER="$1"; shift
-OWNER_DIR="$NAS_BASE/$OWNER"
-[[ -d "$OWNER_DIR" ]] || { echo "ERROR: Owner directory not found: $OWNER_DIR"; exit 2; }
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --pull) MODE="pull"; shift ;;
+    --push) MODE="push"; shift ;;
+    --force) FORCE=1; shift ;;
+    --dry-run) DRY=1; shift ;;
+    --with-matrices) WITH_MATRICES=1; shift ;;
+    --with-logs) WITH_LOGS=1; shift ;;
+    --nas-project-root) shift; NAS_PROJECT_ROOT="${1:-}"; [[ -n "$NAS_PROJECT_ROOT" ]] || { echo "ERR: --nas-project-root needs a path" >&2; exit 2; }; shift ;;
+    --owner) shift; OWNER="${1:-}"; [[ -n "$OWNER" ]] || { echo "ERR: --owner needs a name" >&2; exit 2; }; shift ;;
+    -h|--help) usage ;;
+    --*) echo "ERR: unknown option $1" >&2; usage ;;
+    *) args+=( "$1" ); shift ;;
+  esac
+done
+[[ ${#args[@]} -ge 1 ]] || usage
+FISH_IDS=( "${args[@]}" )
 
-mkdir -p "$WORK_SUBJECTS_DIR" "$SCRATCH_SUBJECTS_DIR"
-echo "Compute roots:"
-echo "  WORK   : $WORK_SUBJECTS_DIR"
-echo "  SCRATCH: $SCRATCH_SUBJECTS_DIR"
-echo "NAS owner: $OWNER  ($OWNER_DIR)"
+STAMP="$(date +%Y%m%d_%H%M%S)"
+LOGROOT="$SCRATCH_BASE/batch_logs"
+MASTER_LOG="$LOGROOT/sync_integrated_${STAMP}.log"
+mkdir -p "$LOGROOT"
 
-# ---------- Helpers ----------
-cp_glob() {
-  local pattern="$1" dest="$2"
-  mkdir -p "$dest"
-  shopt -s nullglob
-  # space-safe glob expansion
-  mapfile -t files < <(compgen -G "$pattern")
-  shopt -u nullglob
-  if (( ${#files[@]} )); then
-    cp -a "${files[@]}" "$dest/"
-  else
-    echo "  (no files for pattern: $pattern)"
-  fi
+log(){ echo "[$(date -Iseconds)] $*" | tee -a "$MASTER_LOG"; }
+run(){ if (( DRY )); then printf 'DRY:'; printf ' %q' "$@"; echo; else "$@"; fi; }
+
+# rsync helper honoring DRY and FORCE
+rsync_cp() {
+  local add=( -a --no-owner --no-group --chmod=ugo=rwX )
+  (( DRY )) && add+=( -n )
+  (( FORCE )) || add+=( --ignore-existing )
+  rsync "${add[@]}" "$@"
 }
 
-write_origin_json() {
-  local fish_id="$1" nas_fish_root="$2"
-  local now_utc; now_utc="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-  local here
-  for here in \
-      "$WORK_SUBJECTS_DIR/$fish_id" \
-      "$SCRATCH_SUBJECTS_DIR/$fish_id" \
-      "$nas_fish_root"
-  do
-    mkdir -p "$here"
-    cat > "$here/.origin.json" <<JSON
-{
-  "fish_id": "$fish_id",
-  "nas_owner": "$OWNER",
-  "nas_fish_root": "$nas_fish_root",
-  "created_utc": "$now_utc",
-  "created_by": "${USER:-unknown}"
-}
-JSON
+dir_has_files(){ shopt -s nullglob dotglob; local a=("$1"/*); shopt -u nullglob dotglob; (( ${#a[@]} > 0 )); }
+ensure_dir(){ (( DRY )) && echo "DRY: mkdir -p $1" || mkdir -p "$1"; }
+
+# ------------------------ Discovery helpers ------------------------
+
+# Preferred subject dir under SCRATCH: experiments/subjects/<fish>
+# Fallback: experiments/*/subjects/<fish> (pick the one with newest reg or any if none)
+find_subject_dir() {
+  local fish="$1"
+  local top="$SCRATCH_BASE/subjects/$fish"
+  [[ -d "$top" ]] && { printf '%s' "$top"; return 0; }
+
+  mapfile -t cand < <(ls -d "$SCRATCH_BASE"/*/subjects/"$fish" 2>/dev/null || true)
+  (( ${#cand[@]} )) || return 1
+  if (( ${#cand[@]} == 1 )); then printf '%s' "${cand[0]}"; return 0; fi
+
+  # Choose the one with the most recently modified reg/ (or reg_to_avg2p legacy)
+  local best="" best_m=0 m
+  for c in "${cand[@]}"; do
+    if [[ -d "$c/reg" ]]; then m=$(stat -c %Y "$c/reg" 2>/dev/null || echo 0)
+    elif [[ -d "$c/reg_to_avg2p" ]]; then m=$(stat -c %Y "$c/reg_to_avg2p" 2>/dev/null || echo 0)
+    else m=0; fi
+    if (( m > best_m )); then best_m=$m; best="$c"; fi
   done
+  [[ -n "$best" ]] && { printf '%s' "$best"; return 0; }
+  printf '%s' "${cand[0]}"
 }
 
-# ---------- Main ----------
-for fish in "$@"; do
-  echo -e "\n=== Preparing $fish (owner: $OWNER) ==="
-  NAS_FISH_ROOT="$OWNER_DIR/$fish"
-  if [[ ! -d "$NAS_FISH_ROOT" ]]; then
-    echo "ERROR: Fish directory not found on NAS: $NAS_FISH_ROOT  (skipping)"
-    continue
-  fi
+# Resolve NAS subject root (…/<fish>) from SCRATCH subject's nas symlink or .nas_path,
+# or fallback to --nas-project-root/<fish>, or $NAS/<owner>/<fish>
+resolve_nas_subject_root() {
+  local subj="$1" fish="$2"
+  local ln="$subj/nas" file="$subj/.nas_path" dest=""
+  if [[ -L "$ln" ]]; then dest="$(readlink -f "$ln" || true)"; [[ -n "$dest" ]] && { printf '%s' "$dest"; return 0; }; fi
+  if [[ -f "$file" ]]; then dest="$(<"$file")"; dest="${dest%%[$'\r\n']*}"; [[ -n "$dest" ]] && { printf '%s' "$dest"; return 0; }; fi
+  if [[ -n "$NAS_PROJECT_ROOT" ]]; then printf '%s' "$NAS_PROJECT_ROOT/$fish"; return 0; fi
+  if [[ -n "$NAS_DEFAULT" && -n "$OWNER" ]]; then printf '%s' "$NAS_DEFAULT/$OWNER/$fish"; return 0; fi
+  return 1
+}
 
-  PREPROC_ROOT="$NAS_FISH_ROOT/02_reg/00_preprocessing"
-  if [[ ! -d "$PREPROC_ROOT" ]]; then
-    echo "ERROR: Missing preprocessed root: $PREPROC_ROOT"
-    echo "       Expected 2p_anatomy/, r1/, rn/ under it. Skipping $fish."
-    continue
-  fi
+# ------------------------ PULL (NAS -> WORK -> SCRATCH) ------------------------
 
-  # --- 1) Mirror preprocessed → WORK (fish-only) ---
-  WORK_FISH_PREPROC="$WORK_SUBJECTS_DIR/$fish/02_reg/00_preprocessing"
-  echo "Syncing preprocessed → WORK: $WORK_FISH_PREPROC"
-  mkdir -p "$WORK_FISH_PREPROC"/{2p_anatomy,r1,rn}
+pull_one() {
+  local fish="$1"
+  log "=== PULL: $fish ==="
 
-  if [[ -d "$PREPROC_ROOT/2p_anatomy" ]]; then
-    cp_glob "$PREPROC_ROOT/2p_anatomy/${fish}_*.nrrd" "$WORK_FISH_PREPROC/2p_anatomy"
+  # If SCRATCH subject exists, use it to resolve NAS; else rely on --nas-project-root or --owner
+  local SCR_SUBJ NAS_SUBJ PRE
+  if SCR_SUBJ="$(find_subject_dir "$fish" 2>/dev/null)"; then
+    NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null || true)"
   else
-    echo "  WARN: no 2p_anatomy/ in $PREPROC_ROOT"
+    SCR_SUBJ="$SCRATCH_BASE/subjects/$fish"  # will be created
+    NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null || true)"
   fi
 
-  if [[ -d "$PREPROC_ROOT/r1" ]]; then
-    cp_glob "$PREPROC_ROOT/r1/${fish}_*.nrrd" "$WORK_FISH_PREPROC/r1"
-  else
-    echo "  WARN: no r1/ in $PREPROC_ROOT"
+  if [[ -z "${NAS_SUBJ:-}" || ! -d "$NAS_SUBJ" ]]; then
+    log "  ERROR: Cannot resolve NAS subject root for $fish. Provide --nas-project-root or --owner + NAS." ; return 0
   fi
 
-  if [[ -d "$PREPROC_ROOT/rn" ]]; then
-    cp_glob "$PREPROC_ROOT/rn/${fish}_*.nrrd" "$WORK_FISH_PREPROC/rn"
-  else
-    echo "  INFO: no rn/ in $PREPROC_ROOT (single round?)"
+  PRE="$NAS_SUBJ/02_reg/00_preprocessing"
+  if [[ ! -d "$PRE" ]]; then log "  WARN: ${PRE} missing; nothing to pull."; return 0; fi
+
+  local WORK_PRE="$WORK_BASE/subjects/$fish/02_reg/00_preprocessing"
+  local RAW="$SCR_SUBJ/raw" FIXED="$SCR_SUBJ/fixed" REG="$SCR_SUBJ/reg"
+
+  # 1) Mirror preprocessing to WORK (idempotent)
+  ensure_dir "$WORK_PRE"
+  for sub in 2p_anatomy r1 rn; do
+    [[ -d "$PRE/$sub" ]] || { log "  INFO: no $sub in preprocessing"; continue; }
+    ensure_dir "$WORK_PRE/$sub"
+    rsync_cp "$PRE/$sub/" "$WORK_PRE/$sub/"
+  done
+
+  # 2) Stage SCRATCH raw/fixed/reg
+  ensure_dir "$RAW/anatomy_2P"; rsync_cp "$WORK_PRE/2p_anatomy/" "$RAW/anatomy_2P/" || true
+  ensure_dir "$RAW/confocal_round1"; rsync_cp "$WORK_PRE/r1/" "$RAW/confocal_round1/" || true
+  ensure_dir "$RAW/confocal_round2"; rsync_cp "$WORK_PRE/rn/" "$RAW/confocal_round2/" || true
+  ensure_dir "$FIXED" "$REG/logs"
+
+  # Fixed references copied straight into canonical filenames (no temp rename)
+  shopt -s nullglob
+  local g1=( "$RAW/anatomy_2P/"*GCaMP*.nrrd )
+  local g2=( "$RAW/confocal_round1/"*GCaMP*.nrrd )
+  shopt -u nullglob
+  if (( FORCE )) || [[ ! -f "$FIXED/anatomy_2P_ref_GCaMP.nrrd" ]]; then
+    [[ ${#g1[@]} -gt 0 ]] && rsync_cp "${g1[0]}" "$FIXED/anatomy_2P_ref_GCaMP.nrrd"
+  fi
+  if (( FORCE )) || [[ ! -f "$FIXED/round1_ref_GCaMP.nrrd" ]]; then
+    [[ ${#g2[@]} -gt 0 ]] && rsync_cp "${g2[0]}" "$FIXED/round1_ref_GCaMP.nrrd"
   fi
 
-  # --- 2) Build SCRATCH raw/fixed/reg from WORK ---
-  SCRATCH_FISH_DIR="$SCRATCH_SUBJECTS_DIR/$fish"
-  RAW_DIR="$SCRATCH_FISH_DIR/raw"
-  FIXED_DIR="$SCRATCH_FISH_DIR/fixed"
-  REG_DIR="$SCRATCH_FISH_DIR/reg"
+  # Trace
+  if (( ! DRY )); then
+    cat > "$NAS_SUBJ/.origin.json" <<JSON
+{"fish_id":"$fish","synced_from":"$SCR_SUBJ","synced_utc":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")","synced_by":"${USER:-unknown}","script":"sync_nas_compute_integrated.sh"}
+JSON
+  fi
 
-  echo "Preparing SCRATCH layout at $SCRATCH_FISH_DIR"
-  mkdir -p "$RAW_DIR/anatomy_2P" "$RAW_DIR/confocal_round1" "$RAW_DIR/confocal_round2" "$FIXED_DIR" "$REG_DIR/logs"
+  log "  ✔ Pull completed for $fish"
+}
 
-  cp_glob "$WORK_FISH_PREPROC/2p_anatomy/"'*.nrrd' "$RAW_DIR/anatomy_2P"
-  cp_glob "$WORK_FISH_PREPROC/r1/"'*.nrrd'         "$RAW_DIR/confocal_round1"
-  cp_glob "$WORK_FISH_PREPROC/rn/"'*.nrrd'         "$RAW_DIR/confocal_round2"
+# ------------------------ Canonicalize (SCRATCH -> WORK/_canonical) ------------------------
 
-  # keep SCRATCH/raw pristine: only files for this fish
-  find "$RAW_DIR" -type f ! -name "${fish}_*.nrrd" -delete || true
+canonicalize_images_from_scratch() {
+  local fish="$1"
+  local SCR_SUBJ
+  if ! SCR_SUBJ="$(find_subject_dir "$fish" 2>/dev/null)"; then
+    log "  WARN: no SCRATCH subject for $fish; skip canonicalization"; return 0
+  fi
+  local REG="$SCR_SUBJ/reg"
+  [[ -d "$REG" ]] || { log "  INFO: $REG missing; nothing to canonicalize"; return 0; }
 
-  # Fixed references
-  if [[ -f "$RAW_DIR/anatomy_2P/anatomy_2P_GCaMP.nrrd" ]]; then
-    cp -a "$RAW_DIR/anatomy_2P/anatomy_2P_GCaMP.nrrd" "$FIXED_DIR/anatomy_2P_ref_GCaMP.nrrd"
-  else
-    shopt -s nullglob
-    gc=( "$RAW_DIR/anatomy_2P/"*GCaMP*.nrrd )
-    shopt -u nullglob
-    if (( ${#gc[@]} )); then
-      cp -a "${gc[0]}" "$FIXED_DIR/anatomy_2P_ref_GCaMP.nrrd"
+  log "=== CANONICALIZE: $fish ==="
+  local CANON="$WORK_BASE/subjects/$fish/02_reg/_canonical"
+  local STAGE="$WORK_BASE/subjects/$fish/02_reg/_staging"
+  ensure_dir "$STAGE" "$CANON"
+
+  shopt -s nullglob
+  local imgs=( "$REG/"*.nrrd )
+  shopt -u nullglob
+  (( ${#imgs[@]} )) || { log "  (no *.nrrd in $REG)"; return 0; }
+
+  # Stage copy
+  rsync_cp "${imgs[@]}" "$STAGE/"
+
+  # Canonical renames
+  shopt -s nullglob
+  for f in "$STAGE/"*.nrrd; do
+    local base out
+    base="$(basename "$f")"; out="$base"
+
+    # Normalize various outputs to final suffixes
+    out="${out/_to_ref__aligned/_in_ref}"
+    out="${out/_to_ref_aligned/_in_ref}"
+    out="$(echo "$out" | sed -E 's/_to_ref(_[^.]*)?_aligned\.nrrd$/_in_ref.nrrd/')"  # to_ref..._aligned -> _in_ref
+
+    out="$(echo "$out" | sed -E 's/_aligned_2P\.nrrd$/_in_2p.nrrd/')"                # *_aligned_2P -> _in_2p
+    out="$(echo "$out" | sed -E 's/_to_2p([^.]*)?_aligned\.nrrd$/_in_2p.nrrd/')"      # *_to_2p..._aligned -> _in_2p
+    out="$(echo "$out" | sed -E 's/_to_r1([^.]*)?_aligned\.nrrd$/_in_r1.nrrd/')"      # *_to_r1..._aligned -> _in_r1
+
+    # Ensure fish prefix
+    [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
+
+    # Require one of the in_ suffixes
+    if [[ ! "$out" =~ _in_(2p|ref|r1)\.nrrd$ ]]; then
+      log "  WARN: not canonical: $base (kept as-is)"; out="${fish}_$base"
+    fi
+
+    # Write canonical file (skip if exists unless --force)
+    local dst="$CANON/$out"
+    if (( FORCE )) || [[ ! -f "$dst" ]]; then
+      rsync_cp "$f" "$dst"
+      log "  + $base -> $out"
     else
-      echo "  WARN: no GCaMP anatomy found for fixed ref"
+      log "  SKIP existing canonical: $out"
+    fi
+  done
+  shopt -u nullglob
+}
+
+# ------------------------ PUBLISH (WORK/_canonical -> NAS) ------------------------
+
+publish_canonical_to_nas() {
+  local fish="$1"
+  local SCR_SUBJ NAS_SUBJ
+  if ! SCR_SUBJ="$(find_subject_dir "$fish" 2>/dev/null)"; then
+    log "  WARN: cannot publish $fish (no SCRATCH subject)"; return 0
+  fi
+  if ! NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null)"; then
+    log "  WARN: cannot resolve NAS for $fish; skip publish"; return 0
+  fi
+  local CANON="$WORK_BASE/subjects/$fish/02_reg/_canonical"
+  [[ -d "$CANON" ]] || { log "  INFO: no canonical dir for $fish; skip publish"; return 0; }
+
+  log "=== PUBLISH: $fish ==="
+  local ROOT="$NAS_SUBJ/02_reg"
+  ensure_dir "$ROOT"
+
+  stage_dirs() {
+    local s="$1"
+    ensure_dir "$ROOT/$s" "$ROOT/$s/aligned" "$ROOT/$s/transMatrices" "$ROOT/$s/logs"
+  }
+
+  shopt -s nullglob
+  for f in "$CANON/"*.nrrd; do
+    local bn dest stage sub="aligned"
+    bn="$(basename "$f")"
+
+    if [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" ]]; then
+      stage="08_2pa-ref"; sub="aligned"
+    elif [[ "$bn" =~ _round1_.*_in_2p\.nrrd$ ]]; then
+      stage="01_r1-2p"; sub="aligned"
+    elif [[ "$bn" =~ _round2_.*_in_r1\.nrrd$ ]]; then
+      stage="02_rn-r1"; sub="aligned"
+    elif [[ "$bn" =~ _round2_.*_in_2p\.nrrd$ ]]; then
+      stage="03_rn-2p"; sub="aligned"
+    elif [[ "$bn" =~ _round1_.*_in_ref\.nrrd$ ]]; then
+      stage="04_r1-ref"; sub="."
+    elif [[ "$bn" =~ _round2_.*_in_ref\.nrrd$ ]]; then
+      stage="05_r2-ref"; sub="."
+    else
+      log "  WARN: no stage mapping for $bn (skipped)"; continue
+    fi
+
+    stage_dirs "$stage"
+    if [[ "$sub" == "." ]]; then
+      dest="$ROOT/$stage/$bn"
+    else
+      dest="$ROOT/$stage/$sub/$bn"
+    fi
+
+    if (( FORCE )) || [[ ! -f "$dest" ]]; then
+      rsync_cp "$f" "$dest"
+      log "  → $stage/${sub/./(root)}/$bn"
+    else
+      log "  SKIP (exists): $stage/${sub/./(root)}/$bn"
+    fi
+  done
+  shopt -u nullglob
+
+  # Optional: transforms/logs from SCRATCH/reg -> NAS/transMatrices|logs
+  if (( WITH_MATRICES || WITH_LOGS )); then
+    local REG="$SCR_SUBJ/reg"
+    if [[ -d "$REG" ]]; then
+      (( WITH_MATRICES )) && {
+        ensure_dir "$ROOT/04_r1-ref/transMatrices"
+        rsync_cp "$REG/"*GenericAffine.mat "$ROOT/04_r1-ref/transMatrices/" || true
+        rsync_cp "$REG/"*Warp.nii.gz "$ROOT/04_r1-ref/transMatrices/" || true
+        rsync_cp "$REG/"*InverseWarp.nii.gz "$ROOT/04_r1-ref/transMatrices/" || true
+      }
+      (( WITH_LOGS )) && {
+        ensure_dir "$ROOT/04_r1-ref/logs"
+        rsync_cp "$REG/logs/" "$ROOT/04_r1-ref/logs/" || true
+      }
     fi
   fi
 
-  if compgen -G "$RAW_DIR/confocal_round1/"'*channel1*_GCaMP*.nrrd' > /dev/null; then
-    first_r1="$(ls "$RAW_DIR/confocal_round1/"*channel1*_GCaMP*.nrrd | head -n1)"
-    cp -a "$first_r1" "$FIXED_DIR/round1_ref_GCaMP.nrrd"
-  elif compgen -G "$RAW_DIR/confocal_round1/"'*GCaMP*.nrrd' > /dev/null; then
-    first_r1="$(ls "$RAW_DIR/confocal_round1/"*GCaMP*.nrrd | head -n1)"
-    cp -a "$first_r1" "$FIXED_DIR/round1_ref_GCaMP.nrrd"
-  else
-    echo "  WARN: no GCaMP r1 file found for fixed ref"
-  fi
+  log "  ✔ Publish completed for $fish"
+}
 
-  # --- 3) Traceability & convenience ---
-  write_origin_json "$fish" "$NAS_FISH_ROOT"
-  ln -snf "$NAS_FISH_ROOT" "$SCRATCH_FISH_DIR/nas" || true
-  ln -snf "$NAS_FISH_ROOT" "$WORK_SUBJECTS_DIR/$fish/nas" || true
+# ------------------------ Main ------------------------
 
-  echo "Finished $fish"
+echo "Compute roots:
+  WORK   : $WORK_BASE
+  SCRATCH: $SCRATCH_BASE
+Mode     : $MODE   Force=$FORCE  DryRun=$DRY  Matrices=$WITH_MATRICES Logs=$WITH_LOGS
+Log file : $MASTER_LOG"
+
+for fish in "${FISH_IDS[@]}"; do
+  [[ "$MODE" == "pull" || "$MODE" == "both" ]] && pull_one "$fish"
+  # Push flow (your requested order):
+  # 1) copy from SCRATCH -> WORK/_staging
+  # 2) rename to canonical in WORK/_canonical
+  # 3) check NAS & copy if missing
+  canonicalize_images_from_scratch "$fish"
+  [[ "$MODE" == "push" || "$MODE" == "both" ]] && publish_canonical_to_nas "$fish"
 done
 
-echo -e "\nDone. Preprocessed data mirrored to WORK and staged for ANTs on SCRATCH."
+log "All done."
