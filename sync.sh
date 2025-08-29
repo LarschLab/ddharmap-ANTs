@@ -141,46 +141,88 @@ resolve_nas_subject_root() {
   return 1
 }
 
+json_get_key() {
+  local file="$1" key="$2"
+  [[ -f "$file" ]] || return 1
+  sed -n -E "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p" "$file" | head -n1
+}
+
+resolve_nas_from_scratch_origin() {
+  local scratch_subj="$1" fish="$2"
+  local p_link="$scratch_subj/nas"
+  local p_json="$scratch_subj/.origin.json"
+  local p_txt="$scratch_subj/.nas_path"
+
+  if [[ -L "$p_link" ]]; then
+    local t; t="$(readlink -f "$p_link" || true)"
+    [[ -n "$t" && -d "$t" ]] && { printf '%s' "$t"; return 0; }
+  fi
+  if [[ -f "$p_json" ]]; then
+    local t; t="$(json_get_key "$p_json" nas_subject_root || true)"
+    [[ -z "$t" ]] && t="$(json_get_key "$p_json" nas_fish_root || true)"
+    [[ -n "$t" && -d "$t" ]] && { printf '%s' "$t"; return 0; }
+  fi
+  if [[ -f "$p_txt" ]]; then
+    local t; t="$(head -n1 "$p_txt")"
+    [[ -n "$t" && -d "$t" ]] && { printf '%s' "$t"; return 0; }
+  fi
+  # fallbacks if you insist (won't be needed when nas symlink exists)
+  if [[ -n "$NAS_PROJECT_ROOT" ]]; then printf '%s' "$NAS_PROJECT_ROOT/$fish"; return 0; fi
+  if [[ -n "$NAS_DEFAULT" && -n "$OWNER" ]]; then printf '%s' "$NAS_DEFAULT/$OWNER/$fish"; return 0; fi
+  return 1
+}
+
 # ------------------------ PULL (NAS -> WORK -> SCRATCH) ------------------------
 
 pull_one() {
   local fish="$1"
   log "=== PULL: $fish ==="
 
-  # If SCRATCH subject exists, use it to resolve NAS; else rely on --nas-project-root or --owner
+  # --- Resolve SCRATCH subject + NAS subject ---
   local SCR_SUBJ NAS_SUBJ PRE
   if SCR_SUBJ="$(find_subject_dir "$fish" 2>/dev/null)"; then
-    NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null || true)"
+    : # found existing SCRATCH subject
   else
-    SCR_SUBJ="$SCRATCH_BASE/subjects/$fish"  # will be created
-    NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null || true)"
+    SCR_SUBJ="$SCRATCH_BASE/subjects/$fish"   # will be created
   fi
-
+  # Resolve NAS using SCRATCH hints (nas symlink / .origin.json / .nas_path) or fallbacks
+  NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null || true)"
   if [[ -z "${NAS_SUBJ:-}" || ! -d "$NAS_SUBJ" ]]; then
-    log "  ERROR: Cannot resolve NAS subject root for $fish. Provide --nas-project-root or --owner + NAS." ; return 0
+    log "  ERROR: Cannot resolve NAS subject root for $fish. Provide --nas-project-root or --owner + NAS."
+    return 0
+  fi
+  PRE="$NAS_SUBJ/02_reg/00_preprocessing"
+  if [[ ! -d "$PRE" ]]; then
+    log "  WARN: ${PRE} missing; nothing to pull."
+    return 0
   fi
 
-  PRE="$NAS_SUBJ/02_reg/00_preprocessing"
-  if [[ ! -d "$PRE" ]]; then log "  WARN: ${PRE} missing; nothing to pull."; return 0; fi
-
-  local WORK_PRE="$WORK_BASE/subjects/$fish/02_reg/00_preprocessing"
+  # --- Target dirs ---
+  local WORK_SUBJ="$WORK_BASE/subjects/$fish"
+  local WORK_PRE="$WORK_SUBJ/02_reg/00_preprocessing"
   local RAW="$SCR_SUBJ/raw" FIXED="$SCR_SUBJ/fixed" REG="$SCR_SUBJ/reg"
 
-  # 1) Mirror preprocessing to WORK (idempotent)
+  # Ensure the subject roots exist (safe in dry-run: printed only)
+  ensure_dir "$SCR_SUBJ" "$WORK_SUBJ"
+
+  # --- 1) Mirror preprocessing to WORK (idempotent, no overwrite unless --force) ---
   ensure_dir "$WORK_PRE"
   for sub in 2p_anatomy r1 rn; do
-    [[ -d "$PRE/$sub" ]] || { log "  INFO: no $sub in preprocessing"; continue; }
-    ensure_dir "$WORK_PRE/$sub"
-    rsync_cp "$PRE/$sub/" "$WORK_PRE/$sub/"
+    if [[ -d "$PRE/$sub" ]]; then
+      ensure_dir "$WORK_PRE/$sub"
+      rsync_cp "$PRE/$sub/" "$WORK_PRE/$sub/"
+    else
+      log "  INFO: no $sub in preprocessing"
+    fi
   done
 
-  # 2) Stage SCRATCH raw/fixed/reg
-  ensure_dir "$RAW/anatomy_2P"; rsync_cp "$WORK_PRE/2p_anatomy/" "$RAW/anatomy_2P/" || true
-  ensure_dir "$RAW/confocal_round1"; rsync_cp "$WORK_PRE/r1/" "$RAW/confocal_round1/" || true
-  ensure_dir "$RAW/confocal_round2"; rsync_cp "$WORK_PRE/rn/" "$RAW/confocal_round2/" || true
+  # --- 2) Stage SCRATCH raw/fixed/reg from WORK ---
+  ensure_dir "$RAW/anatomy_2P";    rsync_cp "$WORK_PRE/2p_anatomy/" "$RAW/anatomy_2P/" || true
+  ensure_dir "$RAW/confocal_round1"; rsync_cp "$WORK_PRE/r1/"         "$RAW/confocal_round1/" || true
+  ensure_dir "$RAW/confocal_round2"; rsync_cp "$WORK_PRE/rn/"         "$RAW/confocal_round2/" || true
   ensure_dir "$FIXED" "$REG/logs"
 
-  # Fixed references copied straight into canonical filenames (no temp rename)
+  # Fixed references -> canonical names (skip if already present unless --force)
   shopt -s nullglob
   local g1=( "$RAW/anatomy_2P/"*GCaMP*.nrrd )
   local g2=( "$RAW/confocal_round1/"*GCaMP*.nrrd )
@@ -192,10 +234,19 @@ pull_one() {
     [[ ${#g2[@]} -gt 0 ]] && rsync_cp "${g2[0]}" "$FIXED/round1_ref_GCaMP.nrrd"
   fi
 
-  # Trace
+  # --- 3) Record origin on SCRATCH for future pushes (owner-aware) ---
   if (( ! DRY )); then
-    cat > "$NAS_SUBJ/.origin.json" <<JSON
-{"fish_id":"$fish","synced_from":"$SCR_SUBJ","synced_utc":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")","synced_by":"${USER:-unknown}","script":"sync_nas_compute_integrated.sh"}
+    ln -sfn "$NAS_SUBJ" "$SCR_SUBJ/nas"
+    cat > "$SCR_SUBJ/.origin.json" <<JSON
+{
+  "fish_id": "$fish",
+  "nas_subject_root": "$NAS_SUBJ",
+  "work_subject_root": "$WORK_SUBJ",
+  "scratch_subject_root": "$SCR_SUBJ",
+  "created_utc": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "created_by": "${USER:-unknown}",
+  "script": "sync_nas_compute_integrated.sh"
+}
 JSON
   fi
 
@@ -208,72 +259,87 @@ canonicalize_images_from_scratch() {
   local fish="$1"
   local SCR_SUBJ
   if ! SCR_SUBJ="$(find_subject_dir "$fish" 2>/dev/null)"; then
-    log "  WARN: no SCRATCH subject for $fish; skip canonicalization"; return 0
+    log "  WARN: no SCRATCH subject for $fish; skip canonicalization"
+    return 0
   fi
   local REG="$SCR_SUBJ/reg"
-  [[ -d "$REG" ]] || { log "  INFO: $REG missing; nothing to canonicalize"; return 0; }
+  if [[ ! -d "$REG" ]]; then
+    log "  INFO: $REG missing; nothing to canonicalize"
+    return 0
+  fi
 
   log "=== CANONICALIZE: $fish ==="
   local CANON="$WORK_BASE/subjects/$fish/02_reg/_canonical"
   local STAGE="$WORK_BASE/subjects/$fish/02_reg/_staging"
-  ensure_dir "$STAGE" "$CANON"
+  ensure_dir "$CANON" "$STAGE"
 
-  shopt -s nullglob
-  local imgs=( "$REG/"*.nrrd )
-  shopt -u nullglob
-  (( ${#imgs[@]} )) || { log "  (no *.nrrd in $REG)"; return 0; }
+  # 1) Gather candidates directly from SCRATCH/reg (recursive)
+  shopt -s nullglob globstar
+  local imgs=( "$REG"/**/*.nrrd "$REG"/*.nrrd )
+  shopt -u globstar
+  if (( ${#imgs[@]} == 0 )); then
+    log "  INFO: no *.nrrd under $REG (nothing to canonicalize)"
+    return 0
+  fi
 
-  # Stage copy
+  # 2) Optionally stage-copy (no harm if dry-run no-ops)
   rsync_cp "${imgs[@]}" "$STAGE/"
 
-  # Canonical renames
-  shopt -s nullglob
-  for f in "$STAGE/"*.nrrd; do
+  # 3) Canonicalize from the imgs list (not from _staging)
+  local made=0
+  for f in "${imgs[@]}"; do
     local base out
-    base="$(basename "$f")"; out="$base"
+    base="$(basename "$f")"
+    out="$base"
 
-    # Normalize various outputs to final suffixes
-    out="${out/_to_ref__aligned/_in_ref}"
-    out="${out/_to_ref_aligned/_in_ref}"
-    out="$(echo "$out" | sed -E 's/_to_ref(_[^.]*)?_aligned\.nrrd$/_in_ref.nrrd/')"  # to_ref..._aligned -> _in_ref
-
-    out="$(echo "$out" | sed -E 's/_aligned_2P\.nrrd$/_in_2p.nrrd/')"                # *_aligned_2P -> _in_2p
-    out="$(echo "$out" | sed -E 's/_to_2p([^.]*)?_aligned\.nrrd$/_in_2p.nrrd/')"      # *_to_2p..._aligned -> _in_2p
-    out="$(echo "$out" | sed -E 's/_to_r1([^.]*)?_aligned\.nrrd$/_in_r1.nrrd/')"      # *_to_r1..._aligned -> _in_r1
-
-    # Ensure fish prefix
-    [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
-
-    # Require one of the in_ suffixes
-    if [[ ! "$out" =~ _in_(2p|ref|r1)\.nrrd$ ]]; then
-      log "  WARN: not canonical: $base (kept as-is)"; out="${fish}_$base"
+    # already canonical? just ensure fish prefix
+    if [[ "$out" =~ _in_(ref|2p|r1)\.nrrd$ ]]; then
+      [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
+    else
+      # normalize common patterns to canonical suffixes
+      out="${out/_to_ref__aligned/_in_ref}"
+      out="${out/_to_ref_aligned/_in_ref}"
+      out="$(echo "$out" | sed -E 's/_to_ref(_[^.]*)?_aligned\.nrrd$/_in_ref.nrrd/')"
+      out="$(echo "$out" | sed -E 's/_aligned_2P\.nrrd$/_in_2p.nrrd/')"
+      out="$(echo "$out" | sed -E 's/_to_2p([^.]*)?_aligned\.nrrd$/_in_2p.nrrd/')"
+      out="$(echo "$out" | sed -E 's/_to_r1([^.]*)?_aligned\.nrrd$/_in_r1.nrrd/')"
+      [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
+      # last resort: make it ref
+      [[ "$out" =~ _in_(ref|2p|r1)\.nrrd$ ]] || out="${out%.nrrd}_in_ref.nrrd"
     fi
 
-    # Write canonical file (skip if exists unless --force)
     local dst="$CANON/$out"
     if (( FORCE )) || [[ ! -f "$dst" ]]; then
       rsync_cp "$f" "$dst"
-      log "  + $base -> $out"
+      log "  + $base -> $(basename "$dst")"
+      ((made++))
     else
-      log "  SKIP existing canonical: $out"
+      log "  SKIP existing canonical: $(basename "$dst")"
     fi
   done
-  shopt -u nullglob
+
+  (( made > 0 )) || log "  INFO: canonicalization produced no new files for $fish"
 }
 
 # ------------------------ PUBLISH (WORK/_canonical -> NAS) ------------------------
 
 publish_canonical_to_nas() {
   local fish="$1"
-  local SCR_SUBJ NAS_SUBJ
+  local SCR_SUBJ
   if ! SCR_SUBJ="$(find_subject_dir "$fish" 2>/dev/null)"; then
     log "  WARN: cannot publish $fish (no SCRATCH subject)"; return 0
   fi
-  if ! NAS_SUBJ="$(resolve_nas_subject_root "$SCR_SUBJ" "$fish" 2>/dev/null)"; then
-    log "  WARN: cannot resolve NAS for $fish; skip publish"; return 0
+
+  local NAS_SUBJ
+  if ! NAS_SUBJ="$(resolve_nas_from_scratch_origin "$SCR_SUBJ" "$fish")"; then
+    log "  WARN: cannot resolve NAS for $fish from SCRATCH origin; skip publish"; return 0
   fi
+
   local CANON="$WORK_BASE/subjects/$fish/02_reg/_canonical"
-  [[ -d "$CANON" ]] || { log "  INFO: no canonical dir for $fish; skip publish"; return 0; }
+  if [[ ! -d "$CANON" ]]; then
+    log "  INFO: no canonical dir for $fish; skip publish"
+    return 0
+  fi
 
   log "=== PUBLISH: $fish ==="
   local ROOT="$NAS_SUBJ/02_reg"
