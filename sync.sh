@@ -93,16 +93,31 @@ mkdir -p "$LOGROOT"
 log(){ echo "[$(date -Iseconds)] $*" | tee -a "$MASTER_LOG"; }
 run(){ if (( DRY )); then printf 'DRY:'; printf ' %q' "$@"; echo; else "$@"; fi; }
 
-# rsync helper honoring DRY and FORCE
 rsync_cp() {
   local add=( -a --no-owner --no-group --chmod=ugo=rwX )
-  (( DRY )) && add+=( -n )
+  local dst="${@: -1}"
+
+  if (( DRY )); then
+    # Avoid rsync errors under -n that trip set -e
+    echo "DRY: rsync ${add[*]} ${*:1:$#-1} -> $dst"
+    return 0
+  fi
+
   (( FORCE )) || add+=( --ignore-existing )
   rsync "${add[@]}" "$@"
 }
 
 dir_has_files(){ shopt -s nullglob dotglob; local a=("$1"/*); shopt -u nullglob dotglob; (( ${#a[@]} > 0 )); }
-ensure_dir(){ (( DRY )) && echo "DRY: mkdir -p $1" || mkdir -p "$1"; }
+ensure_dir() {
+  local p
+  for p in "$@"; do
+    if (( DRY )); then
+      echo "DRY: mkdir -p $p"
+    else
+      mkdir -p "$p"
+    fi
+  done
+}
 
 # ------------------------ Discovery helpers ------------------------
 
@@ -262,9 +277,12 @@ canonicalize_images_from_scratch() {
     log "  WARN: no SCRATCH subject for $fish; skip canonicalization"
     return 0
   fi
+
   local REG="$SCR_SUBJ/reg"
-  if [[ ! -d "$REG" ]]; then
-    log "  INFO: $REG missing; nothing to canonicalize"
+  local REG_AVG="$SCR_SUBJ/reg_to_avg2p"
+
+  if [[ ! -d "$REG" && ! -d "$REG_AVG" ]]; then
+    log "  INFO: neither $REG nor $REG_AVG exists; nothing to canonicalize"
     return 0
   fi
 
@@ -273,38 +291,63 @@ canonicalize_images_from_scratch() {
   local STAGE="$WORK_BASE/subjects/$fish/02_reg/_staging"
   ensure_dir "$CANON" "$STAGE"
 
-  # 1) Gather candidates directly from SCRATCH/reg (recursive)
+  # Gather candidates from BOTH reg/ and reg_to_avg2p/
   shopt -s nullglob globstar
-  local imgs=( "$REG"/**/*.nrrd "$REG"/*.nrrd )
+  local imgs=()
+  [[ -d "$REG"     ]] && imgs+=( "$REG"/**/*.nrrd "$REG"/*.nrrd )
+  [[ -d "$REG_AVG" ]] && imgs+=( "$REG_AVG"/**/*.nrrd "$REG_AVG"/*.nrrd )
   shopt -u globstar
+
   if (( ${#imgs[@]} == 0 )); then
-    log "  INFO: no *.nrrd under $REG (nothing to canonicalize)"
+    log "  INFO: no *.nrrd found in reg or reg_to_avg2p"
     return 0
   fi
 
-  # 2) Optionally stage-copy (no harm if dry-run no-ops)
-  rsync_cp "${imgs[@]}" "$STAGE/"
+  # Stage-copy (skip in dry-run to avoid rsync chdir errors)
+  if (( ! DRY )); then
+    rsync_cp "${imgs[@]}" "$STAGE/"
+  else
+    echo "DRY: stage ${#imgs[@]} files -> $STAGE/"
+  fi
 
-  # 3) Canonicalize from the imgs list (not from _staging)
   local made=0
   for f in "${imgs[@]}"; do
     local base out
     base="$(basename "$f")"
     out="$base"
 
-    # already canonical? just ensure fish prefix
-    if [[ "$out" =~ _in_(ref|2p|r1)\.nrrd$ ]]; then
+    # Already canonical?
+    if [[ "$out" =~ ^${fish}_.*_in_(ref|2p|r1)\.nrrd$ ]]; then
       [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
     else
-      # normalize common patterns to canonical suffixes
+      # ------------- avg2p -> ref normalizations (from reg_to_avg2p) -------------
+      # e.g., L395_f10_round1_channel2_sst1_1_in_avg2p.nrrd -> ..._in_ref.nrrd
+      out="${out/_in_avg2p.nrrd/_in_ref.nrrd}"
+      # e.g., round1_GCaMP_to_avg2p__aligned.nrrd -> round1_GCaMP_in_ref.nrrd
+      out="${out/_to_avg2p__aligned.nrrd/_in_ref.nrrd}"
+
+      # ------------- other explicit patterns -------------
+      # classic ref/2p/r1 patterns
       out="${out/_to_ref__aligned/_in_ref}"
       out="${out/_to_ref_aligned/_in_ref}"
       out="$(echo "$out" | sed -E 's/_to_ref(_[^.]*)?_aligned\.nrrd$/_in_ref.nrrd/')"
       out="$(echo "$out" | sed -E 's/_aligned_2P\.nrrd$/_in_2p.nrrd/')"
       out="$(echo "$out" | sed -E 's/_to_2p([^.]*)?_aligned\.nrrd$/_in_2p.nrrd/')"
       out="$(echo "$out" | sed -E 's/_to_r1([^.]*)?_aligned\.nrrd$/_in_r1.nrrd/')"
+
+      # Simple "*_aligned.nrrd" from reg/ (no to_* hint)
+      if [[ "$out" =~ ^${fish}_round1_.*_aligned\.nrrd$ ]]; then
+        out="${out/_aligned.nrrd/_in_2p.nrrd}"
+      elif [[ "$out" =~ ^${fish}_round2_.*_aligned\.nrrd$ ]]; then
+        out="${out/_aligned.nrrd/_in_r1.nrrd}"
+      elif [[ "$out" =~ ^${fish}_round[12]_GCaMP_to_ref_aligned\.nrrd$ ]]; then
+        out="${out/_aligned.nrrd/_in_ref.nrrd}"
+      fi
+
+      # Ensure fish prefix
       [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
-      # last resort: make it ref
+
+      # Last resort: assume ref
       [[ "$out" =~ _in_(ref|2p|r1)\.nrrd$ ]] || out="${out%.nrrd}_in_ref.nrrd"
     fi
 
@@ -351,21 +394,44 @@ publish_canonical_to_nas() {
   }
 
   shopt -s nullglob
+
+  # ----- aligned NRRDs -----
   for f in "$CANON/"*.nrrd; do
-    local bn dest stage sub="aligned"
+    local bn stage sub="aligned" dest
     bn="$(basename "$f")"
 
+    # Per-channel ref-space stacks -> 06_total-ref/aligned/roundN/
+    # e.g., L395_f10_round1_channel2_sst1_1_in_ref.nrrd
+    if [[ "$bn" =~ ^${fish}_round([0-9]+)_channel[0-9]+_.*_in_ref\.nrrd$ ]]; then
+      local R="${BASH_REMATCH[1]}"
+      stage="06_total-ref"
+      stage_dirs "$stage"
+      ensure_dir "$ROOT/$stage/aligned/round${R}"
+      dest="$ROOT/$stage/aligned/round${R}/$bn"
+      if (( FORCE )) || [[ ! -f "$dest" ]]; then
+        rsync_cp "$f" "$dest"; log "  → $stage/aligned/round${R}/$bn"
+      else
+        log "  SKIP (exists): $stage/aligned/round${R}/$bn"
+      fi
+      continue
+    fi
+
+    # 2P anatomy in ref
     if [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" ]]; then
       stage="08_2pa-ref"; sub="aligned"
-    elif [[ "$bn" =~ _round1_.*_in_2p\.nrrd$ ]]; then
+    # r1-2p
+    elif [[ "$bn" =~ ^${fish}_round1_.*_in_2p\.nrrd$ ]]; then
       stage="01_r1-2p"; sub="aligned"
-    elif [[ "$bn" =~ _round2_.*_in_r1\.nrrd$ ]]; then
+    # rn-r1
+    elif [[ "$bn" =~ ^${fish}_round2_.*_in_r1\.nrrd$ ]]; then
       stage="02_rn-r1"; sub="aligned"
-    elif [[ "$bn" =~ _round2_.*_in_2p\.nrrd$ ]]; then
+    # rn-2p (if you produce those)
+    elif [[ "$bn" =~ ^${fish}_round2_.*_in_2p\.nrrd$ ]]; then
       stage="03_rn-2p"; sub="aligned"
-    elif [[ "$bn" =~ _round1_.*_in_ref\.nrrd$ ]]; then
+    # round GCaMP in ref (root of stage)
+    elif [[ "$bn" =~ ^${fish}_round1_.*_in_ref\.nrrd$ ]]; then
       stage="04_r1-ref"; sub="."
-    elif [[ "$bn" =~ _round2_.*_in_ref\.nrrd$ ]]; then
+    elif [[ "$bn" =~ ^${fish}_round2_.*_in_ref\.nrrd$ ]]; then
       stage="05_r2-ref"; sub="."
     else
       log "  WARN: no stage mapping for $bn (skipped)"; continue
@@ -385,25 +451,48 @@ publish_canonical_to_nas() {
       log "  SKIP (exists): $stage/${sub/./(root)}/$bn"
     fi
   done
-  shopt -u nullglob
 
-  # Optional: transforms/logs from SCRATCH/reg -> NAS/transMatrices|logs
+  # ----- optional matrices/logs from reg_to_avg2p (rename to *_to_ref_*) -----
   if (( WITH_MATRICES || WITH_LOGS )); then
-    local REG="$SCR_SUBJ/reg"
-    if [[ -d "$REG" ]]; then
-      (( WITH_MATRICES )) && {
-        ensure_dir "$ROOT/04_r1-ref/transMatrices"
-        rsync_cp "$REG/"*GenericAffine.mat "$ROOT/04_r1-ref/transMatrices/" || true
-        rsync_cp "$REG/"*Warp.nii.gz "$ROOT/04_r1-ref/transMatrices/" || true
-        rsync_cp "$REG/"*InverseWarp.nii.gz "$ROOT/04_r1-ref/transMatrices/" || true
-      }
-      (( WITH_LOGS )) && {
-        ensure_dir "$ROOT/04_r1-ref/logs"
-        rsync_cp "$REG/logs/" "$ROOT/04_r1-ref/logs/" || true
-      }
+    local REG_AVG="$SCR_SUBJ/reg_to_avg2p"
+    if [[ -d "$REG_AVG" ]]; then
+      if (( WITH_MATRICES )); then
+        # 2P → ref (08_2pa-ref/transMatrices)
+        stage_dirs "08_2pa-ref"
+        for m in "$REG_AVG"/2P_to_avg2p_0GenericAffine.mat \
+                 "$REG_AVG"/2P_to_avg2p_1Warp.nii.gz \
+                 "$REG_AVG"/2P_to_avg2p_1InverseWarp.nii.gz; do
+          [[ -f "$m" ]] || continue
+          local bn="$(basename "$m")"
+          bn="${bn/to_avg2p_/to_ref_}"
+          rsync_cp "$m" "$ROOT/08_2pa-ref/transMatrices/${fish}_$bn"
+        done
+
+        # roundN GCaMP → ref (04/05_transMatrices)
+        for m in "$REG_AVG"/round*_GCaMP_to_avg2p_0GenericAffine.mat \
+                 "$REG_AVG"/round*_GCaMP_to_avg2p_1Warp.nii.gz \
+                 "$REG_AVG"/round*_GCaMP_to_avg2p_1InverseWarp.nii.gz; do
+          [[ -f "$m" ]] || continue
+          local b="$(basename "$m")"
+          local r; if [[ "$b" =~ ^round([0-9]+)_ ]]; then r="${BASH_REMATCH[1]}"; else r="1"; fi
+          local bn="${b/to_avg2p_/to_ref_}"
+          local stage="04_r1-ref"; [[ "$r" != "1" ]] && stage="05_r${r}-ref"
+          stage_dirs "$stage"
+          rsync_cp "$m" "$ROOT/$stage/transMatrices/${fish}_$bn"
+        done
+      fi
+
+      if (( WITH_LOGS )); then
+        # Copy logs from reg_to_avg2p/logs to the closest stage; keep filenames
+        if [[ -d "$REG_AVG/logs" ]]; then
+          stage_dirs "08_2pa-ref"
+          rsync_cp "$REG_AVG/logs/" "$ROOT/08_2pa-ref/logs/"
+        fi
+      fi
     fi
   fi
 
+  shopt -u nullglob
   log "  ✔ Publish completed for $fish"
 }
 
