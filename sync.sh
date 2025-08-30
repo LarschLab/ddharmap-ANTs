@@ -93,7 +93,6 @@ ensure_dir() {
   done
 }
 rsync_cp() {
-  # rsync wrapper that’s dry-run safe and respects --force
   local add=( -a --no-owner --no-group --chmod=ugo=rwX )
   (( FORCE )) || add+=( --ignore-existing )
   if (( DRY )); then
@@ -105,49 +104,32 @@ rsync_cp() {
 find_scratch_subj() {
   local fish="$1" top="$SCRATCH_BASE/subjects/$fish"
   [[ -d "$top" ]] && { echo "$top"; return 0; }
-  # legacy fallback: pick most recent with reg or reg_to_avg2p
   mapfile -t cand < <(ls -d "$SCRATCH_BASE"/*/subjects/"$fish" 2>/dev/null || true)
   if (( ${#cand[@]} )); then
     local best="" best_m=0 m
     for c in "${cand[@]}"; do
-      if [[ -d "$c/reg" ]]; then m=$(stat -c %Y "$c/reg" 2>/dev/null || echo 0)
+      if   [[ -d "$c/reg" ]];          then m=$(stat -c %Y "$c/reg" 2>/dev/null || echo 0)
       elif [[ -d "$c/reg_to_avg2p" ]]; then m=$(stat -c %Y "$c/reg_to_avg2p" 2>/dev/null || echo 0)
       else m=0; fi
       (( m > best_m )) && { best_m=$m; best="$c"; }
     done
     [[ -n "$best" ]] && { echo "$best"; return 0; }
   fi
-  # default new subject path
   echo "$top"
 }
 resolve_nas_subject() {
-  # Prefer SCRATCH/nas symlink or .origin.json → nas_subject_root
   local subj="$1" fish="$2"
   if [[ -L "$subj/nas" ]]; then
     local t; t="$(readlink -f "$subj/nas" || true)"
     [[ -n "$t" && -d "$t" ]] && { echo "$t"; return 0; }
   fi
   if [[ -f "$subj/.origin.json" ]]; then
-    local t; t="$(sed -n -E 's/.*"nas_subject_root"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$subj/.origin.json" | head -n1)"
+    local t; t="$(sed -n -E 's/.*"nas_subject_root"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p' "$subj/.origin.json" | head -n1)"
     [[ -n "$t" && -d "$t" ]] && { echo "$t"; return 0; }
   fi
-  # First-time pull: use --nas-project-root or --owner + NAS
-  if [[ -n "$NAS_PROJECT_ROOT" ]]; then
-    echo "$NAS_PROJECT_ROOT/$fish"; return 0
-  fi
-  if [[ -n "$NAS_BASE" && -n "$OWNER" ]]; then
-    echo "$NAS_BASE/$OWNER/$fish"; return 0
-  fi
+  if [[ -n "$NAS_PROJECT_ROOT" ]]; then echo "$NAS_PROJECT_ROOT/$fish"; return 0; fi
+  if [[ -n "$NAS_BASE" && -n "$OWNER" ]]; then echo "$NAS_BASE/$OWNER/$fish"; return 0; fi
   return 1
-}
-# Route helper: given round number, return NAS stage folder
-stage_for_round() {
-  local r="$1"
-  if [[ "$r" == "1" ]]; then
-    printf '%s' "04_r1-ref"
-  else
-    printf '%s' "05_r${r}-ref"
-  fi
 }
 
 # ---------- PULL ----------
@@ -219,7 +201,23 @@ JSON
   log "  ✔ pulled $fish"
 }
 
-# ---------- CANONICALIZE ----------
+# ---------- NEW: mirror SCRATCH → WORK/reg (safety/visibility before push) ----------
+mirror_to_work_one() {
+  local fish="$1"
+  local SCR_SUBJ; SCR_SUBJ="$(find_scratch_subj "$fish")"
+  local WORK_SUBJ="$WORK_BASE/subjects/$fish"
+  ensure_dir "$WORK_SUBJ"
+  if [[ -d "$SCR_SUBJ/reg" ]]; then
+    ensure_dir "$WORK_SUBJ/reg"
+    rsync_cp "$SCR_SUBJ/reg/" "$WORK_SUBJ/reg/"
+  fi
+  if [[ -d "$SCR_SUBJ/reg_to_avg2p" ]]; then
+    ensure_dir "$WORK_SUBJ/reg_to_avg2p"
+    rsync_cp "$SCR_SUBJ/reg_to_avg2p/" "$WORK_SUBJ/reg_to_avg2p/"
+  fi
+}
+
+# ---------- CANONICALIZE (NRRDs + MATRICES; logs excluded) ----------
 canonicalize_one() {
   local fish="$1"
   log "=== CANONICALIZE $fish ==="
@@ -233,23 +231,32 @@ canonicalize_one() {
   local CANON="$WORK_BASE/subjects/$fish/02_reg/_canonical"
   ensure_dir "$CANON"
 
-  # NEW (no duplicates)
+  # Collect only NRRDs + transform files (mat/nii.gz). Do NOT include logs here.
   shopt -s nullglob globstar
   local files=()
-  [[ -d "$REG"     ]] && files+=( "$REG"/**/*.nrrd )
-  [[ -d "$REG_AVG" ]] && files+=( "$REG_AVG"/**/*.nrrd )
+  [[ -d "$REG"     ]] && files+=( "$REG"/**/*.nrrd "$REG"/**/*GenericAffine.mat "$REG"/**/*Warp.nii.gz "$REG"/**/*InverseWarp.nii.gz )
+  [[ -d "$REG_AVG" ]] && files+=( "$REG_AVG"/**/*.nrrd "$REG_AVG"/**/*GenericAffine.mat "$REG_AVG"/**/*Warp.nii.gz "$REG_AVG"/**/*InverseWarp.nii.gz )
   shopt -u globstar
-  (( ${#files[@]} )) || { log "  INFO: no nrrd files found"; return 0; }
+  (( ${#files[@]} )) || { log "  INFO: nothing to canonicalize"; return 0; }
 
   for src in "${files[@]}"; do
     local base="$(basename "$src")"
     local out="$base"
 
-    # avg2p → ref (standardize)
+    # --- SPECIAL-CASE FIRST: GCaMP aligned from SCRATCH/.../reg/ are relative refs ---
+    # round1_GCaMP_to_ref_aligned.nrrd  => _in_2p.nrrd
+    # round2_GCaMP_to_ref_aligned.nrrd  => _in_r1.nrrd
+    if [[ "$src" == *"/reg/"* ]]; then
+        if [[ "$base" =~ ^round1_GCaMP_to_ref_aligned\.nrrd$ ]]; then
+        out="${fish}_round1_GCaMP_in_2p.nrrd"
+        elif [[ "$base" =~ ^round2_GCaMP_to_ref_aligned\.nrrd$ ]]; then
+        out="${fish}_round2_GCaMP_in_r1.nrrd"
+        fi
+    fi
+
+    # ---------- NRRD renaming (generic) ----------
     out="${out/_in_avg2p.nrrd/_in_ref.nrrd}"
     out="${out/_to_avg2p__aligned.nrrd/_in_ref.nrrd}"
-
-    # explicit to_* → _in_ref/_in_2p/_in_r1
     out="${out/_to_ref__aligned/_in_ref}"
     out="${out/_to_ref_aligned/_in_ref}"
     out="$(echo "$out" | sed -E 's/_to_ref(_[^.]*)?_aligned\.nrrd$/_in_ref.nrrd/')"
@@ -257,27 +264,26 @@ canonicalize_one() {
     out="$(echo "$out" | sed -E 's/_to_2p([^.]*)?_aligned\.nrrd$/_in_2p.nrrd/')"
     out="$(echo "$out" | sed -E 's/_to_r1([^.]*)?_aligned\.nrrd$/_in_r1.nrrd/')"
 
-    # simple *_aligned.nrrd from reg/ (use round to infer)
+    # infer for generic per-channel aligned in reg/
     if [[ "$out" =~ ^${fish}_round1_.*_aligned\.nrrd$ ]]; then
-      out="${out/_aligned.nrrd/_in_2p.nrrd}"
+        out="${out/_aligned.nrrd/_in_2p.nrrd}"
     elif [[ "$out" =~ ^${fish}_round2_.*_aligned\.nrrd$ ]]; then
-      out="${out/_aligned.nrrd/_in_r1.nrrd}"
-    elif [[ "$out" =~ ^${fish}_round[12]_GCaMP_to_ref_aligned\.nrrd$ ]]; then
-      out="${out/_aligned.nrrd/_in_ref.nrrd}"
+        out="${out/_aligned.nrrd/_in_r1.nrrd}"
     fi
 
-    # Special-case: in reg/, GCaMP_to_ref_aligned is actually relative
-    # r1 → in_2p, r2 → in_r1
-    if [[ "$src" == */reg/round1_GCaMP_to_ref_aligned.nrrd ]]; then
-      out="$(echo "$out" | sed -E 's/_in_ref\.nrrd$/_in_2p.nrrd/')"
-    elif [[ "$src" == */reg/round2_GCaMP_to_ref_aligned.nrrd ]]; then
-      out="$(echo "$out" | sed -E 's/_in_ref\.nrrd$/_in_r1.nrrd/')"
+    # ---------- MATRICES (mat/nii.gz) ----------
+    if [[ "$base" == *GenericAffine.mat || "$base" == *Warp.nii.gz || "$base" == *InverseWarp.nii.gz ]]; then
+      if [[ "$src" == *"/reg_to_avg2p/"* ]]; then
+        # global: to_avg2p → to_ref
+        out="${out/to_avg2p_/to_ref_}"
+        [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
+      else
+        # relative reg/: round1 → in_2p, round2 → in_r1
+        if   [[ "$out" =~ ^round1_GCaMP_to_ref ]]; then out="${out/round1_GCaMP_to_ref/round1_GCaMP_in_2p}"
+        elif [[ "$out" =~ ^round2_GCaMP_to_ref ]]; then out="${out/round2_GCaMP_to_ref/round2_GCaMP_in_r1}"; fi
+        [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
+      fi
     fi
-
-    # fish prefix
-    [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
-    # last-resort guarantee of suffix
-    [[ "$out" =~ _in_(ref|2p|r1)\.nrrd$ ]] || out="${out%.nrrd}_in_ref.nrrd"
 
     local dst="$CANON/$out"
     if (( FORCE )) || [[ ! -f "$dst" ]]; then
@@ -289,77 +295,65 @@ canonicalize_one() {
   done
 }
 
+# ---------- STAGE MATRICES & LOGS into WORK stage folders ----------
 stage_mats_logs_one() {
   local fish="$1"
   local SCR_SUBJ; SCR_SUBJ="$(find_scratch_subj "$fish")"
   [[ -n "$SCR_SUBJ" ]] || { log "  WARN: no SCRATCH subject; skip mats/logs staging"; return 0; }
-
   local REG="$SCR_SUBJ/reg"
   local REG_AVG="$SCR_SUBJ/reg_to_avg2p"
   local REG_WORK="$WORK_BASE/subjects/$fish/02_reg"
 
-  # --------- from reg_to_avg2p (rename to *_to_ref_* and prefix fish) ---------
+  # ---- from reg/ (relative: 01/02) ----
+  if [[ -d "$REG" ]]; then
+    ensure_dir "$REG_WORK/01_r1-2p/transMatrices" "$REG_WORK/02_rn-r1/transMatrices"
+    shopt -s nullglob
+    for m in "$REG"/round*_GCaMP_to_ref*GenericAffine.mat "$REG"/round*_GCaMP_to_ref*Warp.nii.gz "$REG"/round*_GCaMP_to_ref*InverseWarp.nii.gz; do
+      [[ -f "$m" ]] || continue
+      b="$(basename "$m")"
+      r="1"; [[ "$b" =~ ^round([0-9]+)_ ]] && r="${BASH_REMATCH[1]}"
+      stg="01_r1-2p"; [[ "$r" != "1" ]] && stg="02_rn-r1"
+      rsync_cp "$m" "$REG_WORK/$stg/transMatrices/${fish}_$b"
+    done
+    # logs → split by _rN (default r1)
+    if [[ -d "$REG/logs" ]]; then
+      for lf in "$REG/logs/"*; do
+        [[ -f "$lf" ]] || continue
+        bn="$(basename "$lf")"
+        stg="01_r1-2p"; [[ "$bn" =~ _r([0-9]+) && "${BASH_REMATCH[1]}" != "1" ]] && stg="02_rn-r1"
+        ensure_dir "$REG_WORK/$stg/logs"
+        rsync_cp "$lf" "$REG_WORK/$stg/logs/$bn"
+      done
+    fi
+    shopt -u nullglob
+  fi
+
+  # ---- from reg_to_avg2p/ (global ref: 08 / 04 / 05) ----
   if [[ -d "$REG_AVG" ]]; then
-    # 2P → ref  -> 08_2pa-ref/transMatrices
     ensure_dir "$REG_WORK/08_2pa-ref/transMatrices"
     shopt -s nullglob
+    # 2P → ref
     for m in "$REG_AVG"/2P_to_avg2p_*; do
       [[ -f "$m" ]] || continue
-      bn="$(basename "$m")"
-      bn="${bn/to_avg2p_/to_ref_}"
+      bn="$(basename "$m")"; bn="${bn/to_avg2p_/to_ref_}"
       rsync_cp "$m" "$REG_WORK/08_2pa-ref/transMatrices/${fish}_$bn"
     done
-
-    # roundN GCaMP → ref -> 04_r1-ref or 05_rN-ref/transMatrices
+    # roundN GCaMP → ref
     for m in "$REG_AVG"/round*_GCaMP_to_avg2p_*; do
       [[ -f "$m" ]] || continue
       b="$(basename "$m")"
-      if [[ "$b" =~ ^round([0-9]+)_ ]]; then R="${BASH_REMATCH[1]}"; else R="1"; fi
-      stg="$(stage_for_round "$R")"
-      ensure_dir "$REG_WORK/$stg/transMatrices"
+      r="1"; [[ "$b" =~ ^round([0-9]+)_ ]] && r="${BASH_REMATCH[1]}"
       bn="${b/to_avg2p_/to_ref_}"
+      stg="04_r1-ref"; [[ "$r" != "1" ]] && stg="05_r${r}-ref"
+      ensure_dir "$REG_WORK/$stg/transMatrices"
       rsync_cp "$m" "$REG_WORK/$stg/transMatrices/${fish}_$bn"
     done
-    shopt -u nullglob
-
-    # logs from reg_to_avg2p -> 08_2pa-ref/logs (keep filenames)
+    # logs (global)
     if [[ -d "$REG_AVG/logs" ]]; then
       ensure_dir "$REG_WORK/08_2pa-ref/logs"
       rsync_cp "$REG_AVG/logs/" "$REG_WORK/08_2pa-ref/logs/"
     fi
-  fi
-
-  # --------- from reg (already *_to_ref*, normalize underscore; logs → stages) ---------
-  if [[ -d "$REG" ]]; then
-    # roundN transforms in reg/
-    shopt -s nullglob
-    for m in "$REG"/round*_GCaMP_to_ref*; do
-      [[ -f "$m" ]] || continue
-      b="$(basename "$m")"
-      if [[ "$b" =~ ^round([0-9]+)_ ]]; then R="${BASH_REMATCH[1]}"; else R="1"; fi
-      stg="$(stage_for_round "$R")"
-      ensure_dir "$REG_WORK/$stg/transMatrices"
-      # Ensure "_to_ref_0..." (insert underscore if missing)
-      bn="$(echo "$b" | sed -E 's/_to_ref([01])/_to_ref_\1/')"
-      rsync_cp "$m" "$REG_WORK/$stg/transMatrices/${fish}_$bn"
-    done
     shopt -u nullglob
-
-    # logs from reg/logs -> split by _rN, default to r1
-    if [[ -d "$REG/logs" ]]; then
-      shopt -s nullglob
-      for lf in "$REG/logs/"*; do
-        bn="$(basename "$lf")"
-        if [[ "$bn" =~ _r([0-9]+) ]]; then
-          stg="$(stage_for_round "${BASH_REMATCH[1]}")"
-        else
-          stg="04_r1-ref"
-        fi
-        ensure_dir "$REG_WORK/$stg/logs"
-        rsync_cp "$lf" "$REG_WORK/$stg/logs/$bn"
-      done
-      shopt -u nullglob
-    fi
   fi
 }
 
@@ -447,13 +441,15 @@ publish_one() {
 
 # ---------- MAIN ----------
 echo "Roots:
-  NAS     : ${NAS_BASE:-"(not used unless first pull + --owner)"}
+  NAS     : ${NAS_BASE:-"(not used unless first pull + --owner)"} 
   WORK    : $WORK_BASE
   SCRATCH : $SCRATCH_BASE
 Mode=$MODE  Force=$FORCE  Dry=$DRY  Owner=${OWNER:-"-"}  NAS_ROOT=${NAS_PROJECT_ROOT:-"-"}"
 
 for fish in "${FISH_IDS[@]}"; do
   [[ "$MODE" == "pull" || "$MODE" == "both" ]] && pull_one "$fish"
+  # Mirror reg trees into WORK before canonicalizing/publishing
+  [[ "$MODE" == "push" || "$MODE" == "both" ]] && mirror_to_work_one "$fish"
   canonicalize_one "$fish"
   stage_mats_logs_one "$fish"
   [[ "$MODE" == "push" || "$MODE" == "both" ]] && publish_one "$fish"
