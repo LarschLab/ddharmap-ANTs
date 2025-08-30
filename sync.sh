@@ -140,6 +140,15 @@ resolve_nas_subject() {
   fi
   return 1
 }
+# Route helper: given round number, return NAS stage folder
+stage_for_round() {
+  local r="$1"
+  if [[ "$r" == "1" ]]; then
+    printf '%s' "04_r1-ref"
+  else
+    printf '%s' "05_r${r}-ref"
+  fi
+}
 
 # ---------- PULL ----------
 pull_one() {
@@ -257,6 +266,14 @@ canonicalize_one() {
       out="${out/_aligned.nrrd/_in_ref.nrrd}"
     fi
 
+    # Special-case: in reg/, GCaMP_to_ref_aligned is actually relative
+    # r1 → in_2p, r2 → in_r1
+    if [[ "$src" == */reg/round1_GCaMP_to_ref_aligned.nrrd ]]; then
+      out="$(echo "$out" | sed -E 's/_in_ref\.nrrd$/_in_2p.nrrd/')"
+    elif [[ "$src" == */reg/round2_GCaMP_to_ref_aligned.nrrd ]]; then
+      out="$(echo "$out" | sed -E 's/_in_ref\.nrrd$/_in_r1.nrrd/')"
+    fi
+
     # fish prefix
     [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
     # last-resort guarantee of suffix
@@ -270,6 +287,80 @@ canonicalize_one() {
       log "  = exists: $(basename "$dst")"
     fi
   done
+}
+
+stage_mats_logs_one() {
+  local fish="$1"
+  local SCR_SUBJ; SCR_SUBJ="$(find_scratch_subj "$fish")"
+  [[ -n "$SCR_SUBJ" ]] || { log "  WARN: no SCRATCH subject; skip mats/logs staging"; return 0; }
+
+  local REG="$SCR_SUBJ/reg"
+  local REG_AVG="$SCR_SUBJ/reg_to_avg2p"
+  local REG_WORK="$WORK_BASE/subjects/$fish/02_reg"
+
+  # --------- from reg_to_avg2p (rename to *_to_ref_* and prefix fish) ---------
+  if [[ -d "$REG_AVG" ]]; then
+    # 2P → ref  -> 08_2pa-ref/transMatrices
+    ensure_dir "$REG_WORK/08_2pa-ref/transMatrices"
+    shopt -s nullglob
+    for m in "$REG_AVG"/2P_to_avg2p_*; do
+      [[ -f "$m" ]] || continue
+      bn="$(basename "$m")"
+      bn="${bn/to_avg2p_/to_ref_}"
+      rsync_cp "$m" "$REG_WORK/08_2pa-ref/transMatrices/${fish}_$bn"
+    done
+
+    # roundN GCaMP → ref -> 04_r1-ref or 05_rN-ref/transMatrices
+    for m in "$REG_AVG"/round*_GCaMP_to_avg2p_*; do
+      [[ -f "$m" ]] || continue
+      b="$(basename "$m")"
+      if [[ "$b" =~ ^round([0-9]+)_ ]]; then R="${BASH_REMATCH[1]}"; else R="1"; fi
+      stg="$(stage_for_round "$R")"
+      ensure_dir "$REG_WORK/$stg/transMatrices"
+      bn="${b/to_avg2p_/to_ref_}"
+      rsync_cp "$m" "$REG_WORK/$stg/transMatrices/${fish}_$bn"
+    done
+    shopt -u nullglob
+
+    # logs from reg_to_avg2p -> 08_2pa-ref/logs (keep filenames)
+    if [[ -d "$REG_AVG/logs" ]]; then
+      ensure_dir "$REG_WORK/08_2pa-ref/logs"
+      rsync_cp "$REG_AVG/logs/" "$REG_WORK/08_2pa-ref/logs/"
+    fi
+  fi
+
+  # --------- from reg (already *_to_ref*, normalize underscore; logs → stages) ---------
+  if [[ -d "$REG" ]]; then
+    # roundN transforms in reg/
+    shopt -s nullglob
+    for m in "$REG"/round*_GCaMP_to_ref*; do
+      [[ -f "$m" ]] || continue
+      b="$(basename "$m")"
+      if [[ "$b" =~ ^round([0-9]+)_ ]]; then R="${BASH_REMATCH[1]}"; else R="1"; fi
+      stg="$(stage_for_round "$R")"
+      ensure_dir "$REG_WORK/$stg/transMatrices"
+      # Ensure "_to_ref_0..." (insert underscore if missing)
+      bn="$(echo "$b" | sed -E 's/_to_ref([01])/_to_ref_\1/')"
+      rsync_cp "$m" "$REG_WORK/$stg/transMatrices/${fish}_$bn"
+    done
+    shopt -u nullglob
+
+    # logs from reg/logs -> split by _rN, default to r1
+    if [[ -d "$REG/logs" ]]; then
+      shopt -s nullglob
+      for lf in "$REG/logs/"*; do
+        bn="$(basename "$lf")"
+        if [[ "$bn" =~ _r([0-9]+) ]]; then
+          stg="$(stage_for_round "${BASH_REMATCH[1]}")"
+        else
+          stg="04_r1-ref"
+        fi
+        ensure_dir "$REG_WORK/$stg/logs"
+        rsync_cp "$lf" "$REG_WORK/$stg/logs/$bn"
+      done
+      shopt -u nullglob
+    fi
+  fi
 }
 
 # ---------- PUBLISH ----------
@@ -334,6 +425,23 @@ publish_one() {
     fi
   done
   shopt -u nullglob
+  # Publish staged transMatrices & logs mirrored from WORK → NAS
+  local WORK_02="$WORK_BASE/subjects/$fish/02_reg"
+  shopt -s nullglob
+  for stgdir in "$WORK_02"/*; do
+    [[ -d "$stgdir" ]] || continue
+    stg="$(basename "$stgdir")"
+
+    if [[ -d "$stgdir/transMatrices" ]]; then
+      ensure_dir "$ROOT/$stg/transMatrices"
+      rsync_cp "$stgdir/transMatrices/" "$ROOT/$stg/transMatrices/"
+    fi
+    if [[ -d "$stgdir/logs" ]]; then
+      ensure_dir "$ROOT/$stg/logs"
+      rsync_cp "$stgdir/logs/" "$ROOT/$stg/logs/"
+    fi
+  done
+  shopt -u nullglob
   log "  ✔ published $fish"
 }
 
@@ -347,6 +455,7 @@ Mode=$MODE  Force=$FORCE  Dry=$DRY  Owner=${OWNER:-"-"}  NAS_ROOT=${NAS_PROJECT_
 for fish in "${FISH_IDS[@]}"; do
   [[ "$MODE" == "pull" || "$MODE" == "both" ]] && pull_one "$fish"
   canonicalize_one "$fish"
+  stage_mats_logs_one "$fish"
   [[ "$MODE" == "push" || "$MODE" == "both" ]] && publish_one "$fish"
 done
 
