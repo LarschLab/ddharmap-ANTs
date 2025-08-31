@@ -134,12 +134,12 @@ register_pair() {
       -r ["\$fx","\$mv",1] \
       -t Rigid[0.1] \
         -m MI["\$fx","\$mv",1,32,Regular,0.25] \
-        -c [200x200x100,1e-6,10] \
+        -c [200x200x100,1e-8,10] \
         --shrink-factors 8x4x2 \
         --smoothing-sigmas 3x2x1vox \
       -t Affine[0.1] \
         -m MI["\$fx","\$mv",1,32,Regular,0.25] \
-        -c [200x200x100,1e-6,10] \
+        -c [200x200x100,1e-8,10] \
         --shrink-factors 8x4x2 \
         --smoothing-sigmas 3x2x1vox \
       -t SyN[0.25,6,0.1] \
