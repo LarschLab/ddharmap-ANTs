@@ -68,9 +68,8 @@ export ANTSPATH
 export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
-SCRATCH_BASE="${SCRATCH:?SCRATCH env not set}"
-REF_AVG_2P="__REF_AVG_2P__"
-ALIGN_ROUNDS="${ALIGN_ROUNDS:-0}"   # 0 = off (default), 1 = also align per-round channels
+SCRATCH_BASE="\${SCRATCH:?SCRATCH env not set}"
+REF_AVG_2P="$REF_AVG_2P"
 
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
