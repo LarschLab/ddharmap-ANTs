@@ -1,30 +1,9 @@
 #!/usr/bin/env bash
 # ants_register_to_avg2p.sh  (interactive; single job for multiple fish)
-#
-# Goal (now default):
-#   For each fish, register the 2P anatomy to an average 2P reference.
-#   (Round channel alignment is disabled by default; enable with ALIGN_ROUNDS=1)
-#
-# Reference (FIXED):
-#   Default: /scratch/ddharmap/refBrains/ref_05_LB_Perrino_2p/average_2p.nrrd
-#   Override with: export REF_AVG_2P=/path/to/average_2p.nrrd
-#
-# Expected layout:
-#   $SCRATCH/experiments/subjects/<FishID>/{raw,fixed,reg_to_avg2p}
-#
-# Registration (antsRegistration): Rigid + Affine (MI), SyN (CC) with SyN step = 0.25
-#
-# ENV you likely already have:
-#   SCRATCH=/scratch/<user>
-#   ANTSPATH=$HOME/ANTs/antsInstallExample/install/bin
-# Optional:
-#   REF_AVG_2P, MAIL_USER, MAIL_TYPE, CPUS, MEM, ALIGN_ROUNDS(=0|1)
-
 set -euo pipefail
 
 ANTSPATH="${ANTSPATH:-$HOME/ANTs/antsInstallExample/install/bin}"
 export ANTSPATH
-ANTSBIN="$ANTSPATH"
 
 # Default average 2P reference (can be overridden via env)
 REF_AVG_2P="${REF_AVG_2P:-/scratch/ddharmap/refBrains/ref_05_LB_Perrino_2p/average_2p.nrrd}"
@@ -33,16 +12,13 @@ WALL_TIME="24:00:00"
 MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
 MAIL_USER="${MAIL_USER:-danin.dharmaperwira@unil.ch}"
 
-# -------- Prompts --------
 read -rp "PARTITION (e.g., test | cpu | normal | gpu | other): " PARTITION
 read -rp "Fish IDs (space-separated): " FISH_LINE
-# shellcheck disable=SC2206
 FISH_IDS=( $FISH_LINE )
 
 [[ -n "${SCRATCH:-}" ]] || { echo "ERROR: SCRATCH env not set."; exit 2; }
 [[ -f "$REF_AVG_2P" ]] || { echo "ERROR: Average 2P reference not found: $REF_AVG_2P"; exit 2; }
 
-# SLURM resources
 if [[ "$PARTITION" == "test" ]]; then
   QUEUE="interactive"; CPUS=1; MEM="8G"; TIME="00:30:00"
   echo "==> TEST mode: interactive (1 CPU, 8G, 30m)"
@@ -53,7 +29,6 @@ else
   TIME="$WALL_TIME"
 fi
 
-# -------- Build ONE job script that loops over all fish --------
 JOBDIR="$SCRATCH/experiments/_jobs"
 mkdir -p "$JOBDIR"
 STAMP="$(date +%Y%m%d_%H%M%S)"
@@ -69,15 +44,25 @@ export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
 SCRATCH_BASE="${SCRATCH:?SCRATCH env not set}"
-REF_AVG_2P="__REF_AVG_2P__"
-ALIGN_ROUNDS="${ALIGN_ROUNDS:-0}"   # 0 = off (default), 1 = also align per-round channels
+
+# --- robust REF inside job ---
+REF_AVG_2P_DEFAULT="__REF_AVG_2P__"
+# if $REF_AVG_2P already exported in job env, keep it; otherwise use default placeholder (to be sed-replaced).
+REF_AVG_2P="${REF_AVG_2P:-$REF_AVG_2P_DEFAULT}"
+
+ALIGN_ROUNDS="${ALIGN_ROUNDS:-0}"   # 0 = off (default)
+
+# fail early if the reference file still isn't real (e.g., sed didn't replace)
+if [[ ! -f "$REF_AVG_2P" ]]; then
+  echo "ERROR: Average 2P reference not found in job: $REF_AVG_2P"
+  exit 3
+fi
 
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
-echo "FIXED    : $REF_AVG_2P"
+echo "Atlas    : $REF_AVG_2P (moving)"
 echo "Rounds   : $([ "$ALIGN_ROUNDS" = "1" ] && echo "ENABLED" || echo "DISABLED")"
 
-# --- helpers (embedded) ---
 register_pair() {
   local fx="$1" mv="$2" op="$3" log="${4:-/dev/null}"
   {
@@ -107,64 +92,71 @@ register_pair() {
   } >"$log" 2>&1
 }
 
-# ---- main loop over fish ----
+apply_inverse_to_image() {
+  local ref="$1" op="$2" img="$3" out="$4"
+  "$ANTSPATH/antsApplyTransforms" \
+    -d 3 --verbose 1 \
+    -r "$ref" \
+    -i "$img" \
+    -o "$out" \
+    -t "${op}1InverseWarp.nii.gz" \
+    -t ["${op}0GenericAffine.mat",1]
+}
+
 while IFS= read -r FISH; do
   [[ -n "$FISH" ]] || continue
   echo "===== Processing $FISH ====="
 
   BASE="$SCRATCH_BASE/experiments/subjects/$FISH"
   FIXEDDIR="$BASE/fixed"
-  REGDIR="$BASE/reg_to_avg2p"
+  REGDIR="$BASE/reg_to_avg2p_inverse"
   LOGDIR="$REGDIR/logs"
   mkdir -p "$REGDIR" "$LOGDIR"
 
-  # 1) 2P anatomy -> average 2P
-  MOV_2P="$FIXEDDIR/anatomy_2P_ref_GCaMP.nrrd"
-  if [[ ! -f "$MOV_2P" ]]; then
-    echo "ERROR: Missing 2P anatomy (moving): $MOV_2P" | tee -a "$LOGDIR/errors.log"
+  FISH_2P="$FIXEDDIR/anatomy_2P_ref_GCaMP.nrrd"
+  if [[ ! -f "$FISH_2P" ]]; then
+    echo "ERROR: Missing fish 2P anatomy: $FISH_2P" | tee -a "$LOGDIR/errors.log"
     ls -1 "$FIXEDDIR" 2>/dev/null | sed 's/^/  - /' || true
     echo "Skipping $FISH."
     continue
   fi
-  echo "  FIXED (avg 2P): $REF_AVG_2P"
-  echo "  MOVING (2P)   : $MOV_2P"
 
-  OP_2P="$REGDIR/2P_to_avg2p_"
-  if ! register_pair "$REF_AVG_2P" "$MOV_2P" "$OP_2P" "$LOGDIR/2P_to_avg2p.log"; then
-    echo "ERROR: 2P->avg registration failed for $FISH (see $LOGDIR/2P_to_avg2p.log). Skipping fish." | tee -a "$LOGDIR/errors.log"
+  echo "  FIXED  (fish 2P): $FISH_2P"
+  echo "  MOVING   (atlas): $REF_AVG_2P"
+
+  OP_2P="$REGDIR/avg2p_to_fish2p_"
+  if ! register_pair "$FISH_2P" "$REF_AVG_2P" "$OP_2P" "$LOGDIR/avg2p_to_fish2p.log"; then
+    echo "ERROR: Registration (atlas->fish) failed for $FISH (see $LOGDIR/avg2p_to_fish2p.log). Skipping fish." | tee -a "$LOGDIR/errors.log"
     continue
   fi
 
-  # 2) (optional, disabled by default) All rounds -> average 2P
-  if [[ "$ALIGN_ROUNDS" == "1" ]]; then
-    echo "  Rounds alignment ENABLED, proceeding..."
-    # -- previous per-round code block would go here if re-enabled --
-    :
-  else
-    echo "  Rounds alignment DISABLED (set ALIGN_ROUNDS=1 to enable)."
-  fi
+  OUT_FISH_IN_ATLAS="$REGDIR/anatomy_2P_in_avg2p.nrrd"
+  apply_inverse_to_image "$REF_AVG_2P" "$OP_2P" "$FISH_2P" "$OUT_FISH_IN_ATLAS"
 
-  # 3) Canonical name for 2P in avg space
-  if [[ -f "${OP_2P}_aligned.nrrd" ]]; then
-    cp -f "${OP_2P}_aligned.nrrd" "$REGDIR/anatomy_2P_in_avg2p.nrrd"
-  fi
-
+  echo "  Rounds alignment DISABLED (ALIGN_ROUNDS=1 would need inverse-flow edits)."
   echo "===== Done $FISH ====="
 done <<'FISH_EOF'
 __FISH_LIST__
 FISH_EOF
 EOS
 
-# inject variables safely
+# Inject absolute path (still do this; but job now survives even if it fails)
 sed -i "s|__REF_AVG_2P__|$REF_AVG_2P|g" "$JOB"
-# Append fish IDs as the heredoc payload
-sed -i "/__FISH_LIST__/r /dev/stdin" "$JOB" <<<"$(printf '%s\n' "${FISH_IDS[@]}")"
-sed -i "s/__FISH_LIST__//" "$JOB"
+
+# --- Inject fish list into the heredoc placeholder ---
+tmpfish="$(mktemp)"
+printf '%s\n' "${FISH_IDS[@]}" > "$tmpfish"
+# Replace the single line __FISH_LIST__ with the content of $tmpfish
+sed -i -e "/__FISH_LIST__/{
+  r $tmpfish
+  d
+}" "$JOB"
+rm -f "$tmpfish"
 
 chmod +x "$JOB"
 
-# -------- Submit or run --------
-if [[ "$QUEUE" == "interactive" ]]; then
+# Submit or run
+if [[ "${PARTITION}" == "test" ]]; then
   echo "Running interactively..."
   bash "$JOB"
 else
@@ -174,7 +166,7 @@ else
     -p "$QUEUE" \
     -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
     -t "$TIME" \
-    -J "ants_to_avg2p" \
+    -J "ants_to_avg2p_inv" \
     -o "$JOBDIR/ants_to_avg2p_${STAMP}.out" \
     -e "$JOBDIR/ants_to_avg2p_${STAMP}.err" \
     "$JOB"
