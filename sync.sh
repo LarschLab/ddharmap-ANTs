@@ -243,6 +243,13 @@ canonicalize_one() {
     local base="$(basename "$src")"
     local out="$base"
 
+    # Keep these two distinct
+    if [[ "$base" == "2P_to_avg2p__aligned.nrrd" ]]; then
+      out="${fish}_2P_in_ref.nrrd"
+    elif [[ "$base" == "anatomy_2P_in_avg2p.nrrd" ]]; then
+      out="${fish}_anatomy_2P_in_ref.nrrd"
+    fi
+
     # --- SPECIAL-CASE FIRST: GCaMP aligned from SCRATCH/.../reg/ are relative refs ---
     # round1_GCaMP_to_ref_aligned.nrrd  => _in_2p.nrrd
     # round2_GCaMP_to_ref_aligned.nrrd  => _in_r1.nrrd
@@ -382,8 +389,8 @@ publish_one() {
       local R="${BASH_REMATCH[1]}"
       stage="06_total-ref"; ensure_dir "$ROOT/$stage/aligned/round${R}"
       dest="$ROOT/$stage/aligned/round${R}/$bn"
-    # anatomy_2P in ref
-    elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" ]]; then
+    # 2P anatomy (either name) → 08_2pa-ref/aligned
+    elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" || "$bn" == "${fish}_2P_in_ref.nrrd" ]]; then
       stage="08_2pa-ref"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
     # round1 in 2p
