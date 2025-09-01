@@ -77,19 +77,19 @@ register_pair() {
       -r ["$fx","$mv",1] \
       -t Rigid[0.1] \
         -m MI["$fx","$mv",1,32,Regular,0.25] \
-        -c [200x200x100,1e-8,10] \
-        --shrink-factors 8x4x2 \
-        --smoothing-sigmas 3x2x1vox \
+        -c [200x200x200x0,1e-8,10] \
+        --shrink-factors 12x8x4x2 \
+        --smoothing-sigmas 4x3x2x1vox \
       -t Affine[0.1] \
         -m MI["$fx","$mv",1,32,Regular,0.25] \
-        -c [200x200x100,1e-8,10] \
-        --shrink-factors 8x4x2 \
-        --smoothing-sigmas 3x2x1vox \
+        -c [200x200x200x0,1e-8,10] \
+        --shrink-factors 12x8x4x2 \
+        --smoothing-sigmas 4x3x2x1vox \
       -t SyN[0.25,6,0.1] \
         -m CC["$fx","$mv",1,4] \
-        -c [200x200x100x20,1e-8,10] \
-        --shrink-factors 8x4x2x1 \
-        --smoothing-sigmas 3x2x1x0vox
+        -c [200x200x200x200x10,1e-7,10] \
+        --shrink-factors 12x8x4x2x1 \
+        --smoothing-sigmas 4x3x2x1x0vox
   } >"$log" 2>&1
 }
 
