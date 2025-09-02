@@ -69,11 +69,6 @@ for f in "${FISH_IDS[@]}"; do
   FISH_SERIALIZED+="$f"$'\n'
 done
 
-JOBDIR="$SCRATCH/experiments/_jobs"
-mkdir -p "$JOBDIR"
-STAMP="$(date +%Y%m%d_%H%M%S)"
-JOB="$JOBDIR/ants_r${ROUND}_${STAMP}.sh"
-
 # NEW: save fish list to a sidecar file next to the job script
 FISH_FILE="$JOB.fish"
 printf '%s' "$FISH_SERIALIZED" > "$FISH_FILE"
@@ -94,9 +89,6 @@ FISH_FILE="__FISH_FILE__"
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
 echo "ROUND    : $ROUND"
-
-# Read fish list at runtime (preserves newlines safely)
-FISH_LIST="$(cat "$FISH_FILE")"
 
 # --- helpers ---
 pick_moving_gcamp() {
@@ -182,7 +174,7 @@ while IFS= read -r FISH; do
     -d 3 --float 1 --verbose 1 \
     -o ["$OUT_PREFIX","${OUT_PREFIX}_aligned.nrrd"] \
     --interpolation WelchWindowedSinc \
-    --winsorize-image-intensities [0,100] \
+    --winsorize-image-intensities [0.025,0.975] \
     --use-histogram-matching 1 \
     -r ["$REF_GC","$MOV_GC",1] \
     -t rigid[0.1] \
@@ -229,13 +221,11 @@ while IFS= read -r FISH; do
   done
 
   echo "===== Done $FISH ====="
-done <<< "$FISH_LIST"
+done < "$FISH_FILE"
 EOS
 
-# Inject ROUND
+# Inject ROUND and the fish file path
 sed -i "s|__ROUND__|$ROUND|g" "$JOB"
-
-# Inject the fish file path (no special chars expected beyond /)
 sed -i "s|__FISH_FILE__|$FISH_FILE|g" "$JOB"
 
 chmod +x "$JOB"
