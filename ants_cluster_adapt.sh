@@ -63,31 +63,40 @@ mkdir -p "$JOBDIR"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 JOB="$JOBDIR/ants_r${ROUND}_${STAMP}.sh"
 
-# Serialize fish list safely
 FISH_SERIALIZED=""
 for f in "${FISH_IDS[@]}"; do
   [[ -n "$f" ]] || continue
   FISH_SERIALIZED+="$f"$'\n'
 done
 
+JOBDIR="$SCRATCH/experiments/_jobs"
+mkdir -p "$JOBDIR"
+STAMP="$(date +%Y%m%d_%H%M%S)"
+JOB="$JOBDIR/ants_r${ROUND}_${STAMP}.sh"
+
+# NEW: save fish list to a sidecar file next to the job script
+FISH_FILE="$JOB.fish"
+printf '%s' "$FISH_SERIALIZED" > "$FISH_FILE"
+
 cat > "$JOB" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ---- Runtime env (in-job) ----
 ANTSPATH="${ANTSPATH:-$HOME/ANTs/antsInstallExample/install/bin}"
 export ANTSPATH
 export ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
-# Inputs injected below:
 ROUND="__ROUND__"
 SCRATCH_BASE="${SCRATCH:?SCRATCH env not set}"
-FISH_LIST=$'__FISH_LIST__'
+FISH_FILE="__FISH_FILE__"
 
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
 echo "ROUND    : $ROUND"
+
+# Read fish list at runtime (preserves newlines safely)
+FISH_LIST="$(cat "$FISH_FILE")"
 
 # --- helpers ---
 pick_moving_gcamp() {
@@ -220,15 +229,14 @@ while IFS= read -r FISH; do
   done
 
   echo "===== Done $FISH ====="
-done
+done <<< "$FISH_LIST"
 EOS
 
-# inject variables (ROUND + fish list) safely
+# Inject ROUND
 sed -i "s|__ROUND__|$ROUND|g" "$JOB"
-# Escape backslashes and slashes in the fish list
-FISH_ESCAPED="$(printf "%s" "$FISH_SERIALIZED" | sed -e 's/[&/\]/\\&/g')"
-# shellcheck disable=SC2016
-sed -i "s|__FISH_LIST__|$FISH_ESCAPED|g" "$JOB"
+
+# Inject the fish file path (no special chars expected beyond /)
+sed -i "s|__FISH_FILE__|$FISH_FILE|g" "$JOB"
 
 chmod +x "$JOB"
 
