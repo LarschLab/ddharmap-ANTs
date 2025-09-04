@@ -10,7 +10,7 @@ REF_AVG_2P="${REF_AVG_2P:-/scratch/ddharmap/refBrains/ref_05_LB_Perrino_2p/avera
 
 # Fixed manifest location (no flags)
 [[ -n "${SCRATCH:-}" ]] || { echo "ERROR: SCRATCH env not set."; exit 2; }
-MANIFEST_DIR="${MANIFEST_DIR:-$NAS/Danin/regManifest}"
+MANIFEST_DIR="${MANIFEST_DIR:-${NAS:-}/Danin/regManifest}"
 MANIFEST_CSV="${MANIFEST_CSV:-$MANIFEST_DIR/regManifest.csv}"
 
 WALL_TIME="24:00:00"
@@ -28,9 +28,28 @@ done
 
 read -rp "PARTITION (e.g., test | cpu | normal | gpu | other): " PARTITION
 
+# -------- Manifest discovery (with clear feedback) --------
+# Search order: explicit MANIFEST_CSV -> MANIFEST_DIR/regManifest.csv -> $SCRATCH/regManifest.csv -> $SCRATCH/experiments/_manifests/register_pairs.csv
+CANDIDATES=()
+[[ -n "${MANIFEST_CSV:-}" ]] && CANDIDATES+=("$MANIFEST_CSV")
+[[ -n "${MANIFEST_DIR:-}" ]] && CANDIDATES+=("$MANIFEST_DIR/regManifest.csv")
+CANDIDATES+=("$SCRATCH/regManifest.csv" "$SCRATCH/experiments/_manifests/register_pairs.csv")
+
+FOUND_MANIFEST=""
+for p in "${CANDIDATES[@]}"; do
+  if [[ -n "$p" && -f "$p" ]]; then FOUND_MANIFEST="$p"; break; fi
+done
+
+if [[ -n "$FOUND_MANIFEST" ]]; then
+  echo "Manifest: FOUND at $FOUND_MANIFEST"
+else
+  echo "Manifest: NOT FOUND. Looked in:"
+  for p in "${CANDIDATES[@]}"; do echo "  - $p"; done
+fi
+
 # Only ask for fish if NO manifest is present (legacy behavior)
 FISH_IDS=()
-if [[ ! -f "$MANIFEST_CSV" ]]; then
+if [[ -z "$FOUND_MANIFEST" ]]; then
   read -rp "Fish IDs (space-separated): " FISH_LINE
   FISH_IDS=( $FISH_LINE )
   # In legacy mode we need REF_AVG_2P
@@ -55,9 +74,9 @@ JOB="$JOBDIR/ants_to_avg2p_${STAMP}.sh"
 # If manifest exists: copy it for provenance and compute checksum
 JOB_MANIFEST=""
 JOB_MANIFEST_SHA=""
-if [[ -f "$MANIFEST_CSV" ]]; then
+if [[ -n "$FOUND_MANIFEST" ]]; then
   JOB_MANIFEST="$JOBDIR/manifest_${STAMP}.csv"
-  cp -f "$MANIFEST_CSV" "$JOB_MANIFEST"
+  cp -f "$FOUND_MANIFEST" "$JOB_MANIFEST"
   if command -v sha256sum >/dev/null 2>&1; then
     JOB_MANIFEST_SHA="$(sha256sum "$JOB_MANIFEST" | awk '{print $1}')"
   elif command -v shasum >/dev/null 2>&1; then
@@ -82,7 +101,7 @@ REF_AVG_2P="${REF_AVG_2P:-$REF_AVG_2P_DEFAULT}"
 
 MANIFEST_CSV="__MANIFEST_CSV__"
 MANIFEST_SHA256="__MANIFEST_SHA256__"
-DRY_RUN="${DRY_RUN:-__DRY_RUN__}"
+DRY_RUN="__DRY_RUN__"
 
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
@@ -141,16 +160,50 @@ register_pair() {
 resolve_role_path() {
   local fish="$1"
   local role="${2,,}"  # lowercase
+
+  # helper: return first existing file from a candidate list
+  _first_existing() {
+    local f
+    for f in "$@"; do
+      [[ -f "$f" ]] && { echo "$f"; return 0; }
+    done
+    echo ""
+    return 1
+  }
+
   case "$role" in
     anatomy_2p)
-      echo "$SCRATCH_BASE/experiments/subjects/$fish/fixed/anatomy_2P_ref_GCaMP.nrrd"
+      # Prefer new raw/anatomy_2P layout, fall back to legacy fixed/
+      _first_existing \
+        "$SCRATCH_BASE/experiments/subjects/$fish/raw/anatomy_2P/${fish}_anatomy_2P_GCaMP.nrrd" \
+        "$SCRATCH_BASE/experiments/subjects/$fish/fixed/anatomy_2P_ref_GCaMP.nrrd"
       ;;
+
     avg_2p)
       echo "$REF_AVG_2P"
       ;;
+
     confocal_r1)
-      echo "$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round1/round1_GCaMP.nrrd"
+      # Canonical: raw/confocal_round1/<fish>_round1_channel1_GCaMP.nrrd
+      # Plus a few safe fallbacks in the same folder
+      local dir="$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round1"
+      _first_existing \
+        "$dir/${fish}_round1_channel1_GCaMP.nrrd" \
+        "$dir/${fish}_round1_*GCaMP*.nrrd" \
+        "$dir/round1_*GCaMP*.nrrd" \
+        "$dir/*GCaMP*.nrrd"
       ;;
+
+    # Optional but harmless: round 2 support, same pattern
+    confocal_r2|confocal_round2)
+      local dir2="$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round2"
+      _first_existing \
+        "$dir2/${fish}_round2_channel1_GCaMP.nrrd" \
+        "$dir2/${fish}_round2_*GCaMP*.nrrd" \
+        "$dir2/round2_*GCaMP*.nrrd" \
+        "$dir2/*GCaMP*.nrrd"
+      ;;
+
     *)
       echo ""
       return 2
@@ -166,18 +219,30 @@ echo "row_idx,moving_fish,moving_role,fixed_fish,fixed_role,moving_path,fixed_pa
 if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
   echo "===== CSV mode: reading ${MANIFEST_CSV} ====="
 
-  row=0
-  while IFS=',' read -r moving_fish moving_role fixed_fish fixed_role mov_override fix_override; do
-    row=$((row+1))
-    moving_fish="${moving_fish%$'\r'}"
+    row=0
+  # Read raw lines so we can normalize BOM/CRLF and support tabs; also process last line w/o newline.
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    # Normalize:
+    #  - strip UTF-8 BOM if present
+    #  - drop \r (Windows CRLF)
+    #  - treat tabs as commas (just in case)
+    raw="${raw#$'\ufeff'}"
+    raw="${raw//$'\r'/}"
+    raw="${raw//$'\t'/,}"
 
-    # Skip header, comments, blank lines
-    [[ -z "${moving_fish// }" ]] && continue
-    [[ "${moving_fish:0:1}" == "#" ]] && continue
+    # Skip blanks and comments
+    [[ -z "${raw//[ ,]/}" ]] && continue
+    [[ "${raw:0:1}" == "#" ]] && continue
+
+    # Split into 6 fields
+    IFS=',' read -r moving_fish moving_role fixed_fish fixed_role mov_override fix_override <<< "$raw"
+
+    # Skip header row
     if [[ "${moving_fish,,}" == "moving_fish_id" ]]; then
       continue
     fi
 
+    row=$((row+1))
     local_mrole="${moving_role,,}"
     local_frole="${fixed_role,,}"
 
@@ -207,18 +272,10 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     echo "  Fixed  [$local_frole] : ${fixed_bucket} -> $FIX"
 
     status="OK"
+    [[ -z "${MOV:-}" || ! -f "$MOV" ]] && { echo "ERROR: Missing MOVING file: $MOV" >&2; status="ERROR_MOVING"; }
+    [[ -z "${FIX:-}" || ! -f "$FIX" ]] && { echo "ERROR: Missing FIXED file: $FIX" >&2; status="${status},ERROR_FIXED"; }
 
-    if [[ -z "${MOV:-}" || ! -f "$MOV" ]]; then
-      echo "ERROR: Missing MOVING file: $MOV" >&2
-      status="ERROR_MOVING"
-    fi
-    if [[ -z "${FIX:-}" || ! -f "$FIX" ]]; then
-      echo "ERROR: Missing FIXED file: $FIX" >&2
-      status="${status},ERROR_FIXED"
-    fi
-
-    # Write resolved line early
-    outprefix=""
+    # Output prefix (unchanged)
     if [[ "$local_mrole" == "anatomy_2p" && "$local_frole" == "avg_2p" ]]; then
       outprefix="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg_to_avg2p/2P_to_avg2p_"
     else
@@ -226,14 +283,12 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     fi
     echo "$row,$moving_fish,$local_mrole,$fixed_bucket,$local_frole,$MOV,$FIX,$outprefix,$status" >> "$RESOLVED"
 
-    # Skip execution on error rows
     [[ "$status" == "OK" ]] || continue
 
-    # Output layout + run
+    # Run (unchanged)
     if [[ "$local_mrole" == "anatomy_2p" && "$local_frole" == "avg_2p" ]]; then
       REGDIR="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg_to_avg2p"
-      LOGDIR="$REGDIR/logs"
-      mkdir -p "$LOGDIR"
+      LOGDIR="$REGDIR/logs"; mkdir -p "$LOGDIR"
       OP="$outprefix"
       if ! register_pair "$FIX" "$MOV" "$OP" "$LOGDIR/2P_to_avg2p.log"; then
         echo "ERROR: Registration failed (2P->avg2p) for $moving_fish. See $LOGDIR/2P_to_avg2p.log" >&2
@@ -244,8 +299,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
       fi
     else
       REGDIR="$(dirname "$outprefix")"
-      LOGDIR="$REGDIR/logs"
-      mkdir -p "$LOGDIR"
+      LOGDIR="$REGDIR/logs"; mkdir -p "$LOGDIR"
       if ! register_pair "$FIX" "$MOV" "$outprefix" "$LOGDIR/main.log"; then
         echo "ERROR: Registration failed for $moving_fish ($local_mrole) → ${fixed_bucket} ($local_frole). See $LOGDIR/main.log" >&2
         continue
@@ -254,6 +308,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
 
     echo "OK: $moving_fish ($local_mrole) → ${fixed_bucket} ($local_frole)"
   done < "$MANIFEST_CSV"
+
 
   echo "Resolved manifest written: $RESOLVED"
   exit 0
