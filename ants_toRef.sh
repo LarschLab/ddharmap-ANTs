@@ -72,7 +72,7 @@ register_pair() {
       -d 3 --float 1 --verbose 1 \
       -o ["$op","${op}_aligned.nrrd"] \
       --interpolation WelchWindowedSinc \
-      --winsorize-image-intensities [0,100] \
+      --winsorize-image-intensities [0.05,0.95] \
       --use-histogram-matching 1 \
       -r ["$fx","$mv",1] \
       -t Rigid[0.1] \
