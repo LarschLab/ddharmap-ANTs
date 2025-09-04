@@ -10,8 +10,8 @@ REF_AVG_2P="${REF_AVG_2P:-/scratch/ddharmap/refBrains/ref_05_LB_Perrino_2p/avera
 
 # Fixed manifest location (no flags)
 [[ -n "${SCRATCH:-}" ]] || { echo "ERROR: SCRATCH env not set."; exit 2; }
-MANIFEST_DIR="${MANIFEST_DIR:-$SCRATCH/experiments/_manifests}"
-MANIFEST_CSV="${MANIFEST_CSV:-$MANIFEST_DIR/register_pairs.csv}"
+MANIFEST_DIR="${MANIFEST_DIR:-$NAS/Danin/regManifest}"
+MANIFEST_CSV="${MANIFEST_CSV:-$MANIFEST_DIR/regManifest.csv}"
 
 WALL_TIME="24:00:00"
 MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
