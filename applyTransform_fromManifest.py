@@ -15,6 +15,7 @@ INTERPOLATOR = "welchWindowedSinc" # or "linear", "bspline", etc.
 from pathlib import Path
 import pandas as pd
 import ants  # must be ANTsPy (package name: antspyx)
+from tqdm import tqdm 
 
 def main():
     manifest_path = Path(MANIFEST_PATH)
@@ -35,11 +36,12 @@ def main():
     print(f"[apply] rows={len(df)}  stacks={stacks_dir}  transforms={xforms_dir}  out={out_dir}")
     print(f"[apply] use_ref_grid={USE_REFERENCE_GRID}  interp={INTERPOLATOR}")
 
-    for i, row in df.iterrows():
-        moving_fn = str(row["moving_filename"]).strip()
-        affine_fn = str(row["affine_mat"]).strip()
-        warp_fn   = str(row["warp_nl"]).strip()
-        ref_fn    = str(row["reference_filename"]).strip()
+    # Wrap the loop with tqdm for a progress bar
+    for i, row in enumerate(tqdm(df.itertuples(index=False), total=len(df), desc="Transforming")):
+        moving_fn = str(row.moving_filename).strip()
+        affine_fn = str(row.affine_mat).strip()
+        warp_fn   = str(row.warp_nl).strip()
+        ref_fn    = str(row.reference_filename).strip()
 
         moving_p = stacks_dir / moving_fn
         affine_p = xforms_dir / affine_fn

@@ -35,7 +35,8 @@ ANTSBIN="$ANTSPATH"
 
 WALL_TIME="24:00:00"
 MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
-MAIL_USER="danin.dharmaperwira@unil.ch"
+# MAIL_USER: set your email for SLURM notifications, or export MAIL_USER before running
+MAIL_USER="${MAIL_USER:-danin.dharmaperwira@unil.ch}"
 
 # -------- Prompts --------
 read -rp "ROUND (e.g., 1 or 2): " ROUND
@@ -73,6 +74,7 @@ done
 FISH_FILE="$JOB.fish"
 printf '%s' "$FISH_SERIALIZED" > "$FISH_FILE"
 
+# Use a quoted heredoc delimiter to disable variable and command substitution in the job script template.
 cat > "$JOB" <<'EOS'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -202,23 +204,8 @@ while IFS= read -r FISH; do
     -t "${OUT_PREFIX}1Warp.nii.gz" \
     -t "${OUT_PREFIX}0GenericAffine.mat"
 
-  # 2) Apply transforms to all non-GCaMP channels for this round
-  mapfile -t CHANNELS < <(gather_hcr_channels "$RAW_CONF" "$ROUND")
-  if (( ${#CHANNELS[@]} == 0 )); then
-    echo "  (no non-GCaMP channels found to transform in $RAW_CONF)"
-  fi
-  for MOV in "${CHANNELS[@]}"; do
-    base="$(basename "$MOV")"
-    out="$REGDIR/${base%.*}_aligned.nrrd"
-    echo "  Transforming: $base -> $(basename "$out")"
-    "$ANTSPATH/antsApplyTransforms" \
-      -d 3 --verbose 1 \
-      -r "$REF_GC" \
-      -i "$MOV" \
-      -o "$out" \
-      -t "${OUT_PREFIX}1Warp.nii.gz" \
-      -t "${OUT_PREFIX}0GenericAffine.mat"
-  done
+  # Skipping transform application to non-GCaMP channels as per new requirements
+  # Only GCaMP channel is transformed after registration
 
   echo "===== Done $FISH ====="
 done < "$FISH_FILE"
