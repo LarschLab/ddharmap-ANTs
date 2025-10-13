@@ -53,8 +53,8 @@ if [[ "$PARTITION" == "test" ]]; then
   echo "==> TEST mode: interactive (1 CPU, 8G, 30m)"
 else
   QUEUE="$PARTITION"
-  CPUS="${CPUS:-48}"
-  MEM="${MEM:-256G}"
+  CPUS="${CPUS:-34}"
+  MEM="${MEM:-128G}"
   TIME="$WALL_TIME"
 fi
 
