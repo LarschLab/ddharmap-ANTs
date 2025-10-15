@@ -127,8 +127,22 @@ resolve_nas_subject() {
     local t; t="$(sed -n -E 's/.*"nas_subject_root"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p' "$subj/.origin.json" | head -n1)"
     [[ -n "$t" && -d "$t" ]] && { echo "$t"; return 0; }
   fi
-  if [[ -n "$NAS_PROJECT_ROOT" ]]; then echo "$NAS_PROJECT_ROOT/$fish"; return 0; fi
-  if [[ -n "$NAS_BASE" && -n "$OWNER" ]]; then echo "$NAS_BASE/$OWNER/$fish"; return 0; fi
+  # Explicit override wins
+  if [[ -n "$NAS_PROJECT_ROOT" ]]; then
+    echo "$NAS_PROJECT_ROOT/$fish"
+    return 0
+  fi
+  # Owner-based defaults
+  if [[ -n "$NAS_BASE" && -n "$OWNER" ]]; then
+    # Special-case: Matilde subjects live under an extra 'Microscopy/' level
+    if [[ "$OWNER" == "Matilde" ]]; then
+      echo "$NAS_BASE/$OWNER/Microscopy/$fish"
+      return 0
+    fi
+    # Generic case for all other owners
+    echo "$NAS_BASE/$OWNER/$fish"
+    return 0
+  fi
   return 1
 }
 
