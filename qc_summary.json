@@ -1,0 +1,9 @@
+{
+  "N_total": 191,
+  "N_within_gate": 0,
+  "frac_within_gate": 0.0,
+  "median_um": NaN,
+  "p90_um": NaN,
+  "method": "nn",
+  "max_distance_um": 5.0
+}
