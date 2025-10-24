@@ -1,9 +1,10 @@
 {
-  "N_total": 191,
-  "N_within_gate": 0,
-  "frac_within_gate": 0.0,
-  "median_um": NaN,
-  "p90_um": NaN,
-  "method": "nn",
-  "max_distance_um": 5.0
+  "n_pairs": 184,
+  "within_gate": 68,
+  "within_gate_frac": 0.3695652173913043,
+  "mean_um": 8.625155938930538,
+  "median_um": 6.543797859264881,
+  "p90_um": 16.8430609945727,
+  "p95_um": 20.93157808695196,
+  "max_um": 48.931771080874086
 }
