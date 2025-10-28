@@ -1,7 +1,7 @@
 {
   "n_pairs": 184,
-  "within_gate": 68,
-  "within_gate_frac": 0.3695652173913043,
+  "within_gate": 141,
+  "within_gate_frac": 0.7663043478260869,
   "mean_um": 8.625155938930538,
   "median_um": 6.543797859264881,
   "p90_um": 16.8430609945727,
