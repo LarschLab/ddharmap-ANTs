@@ -1,2 +1,0 @@
-dataset,file,path,exists,size_MB,modified,shape,ndim,dtype,min_label,max_label,n_cells,voxel_um,FOV_um,n_voxels,anisotropy_z_over_y
-2P (mCherry),L427_f02_anatomy_2P_cort_seg_anis1.npy,/Users/ddharmap/dataProcessing/2p_HCR/data/L427_f02/L427_f02_anatomy_2P_cort_seg_anis1.npy,True,2756.266395,2025-10-06 09:32:37,"(196, 750, 750)",3,uint16,0,939,939,"(2.0, 0.650622, 0.650622)","(392.0, 487.967, 487.967)",110250000,3.0739815130751804
