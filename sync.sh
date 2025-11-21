@@ -264,6 +264,23 @@ canonicalize_one() {
       out="${fish}_anatomy_2P_in_ref.nrrd"
     fi
 
+    # New role-based outputs (confocal_r1→confocal_r2, confocal_r2→anatomy_2p)
+    if [[ "$src" == *"/confocal_r1_to_confocal_r2/"* ]]; then
+      case "$base" in
+        *__aligned.nrrd)        out="${fish}_round1_GCaMP_in_r2.nrrd" ;;
+        *_0GenericAffine.mat)   out="${fish}_round1_GCaMP_to_r2_0GenericAffine.mat" ;;
+        *_1Warp.nii.gz)         out="${fish}_round1_GCaMP_to_r2_1Warp.nii.gz" ;;
+        *_1InverseWarp.nii.gz)  out="${fish}_round1_GCaMP_to_r2_1InverseWarp.nii.gz" ;;
+      esac
+    elif [[ "$src" == *"/confocal_r2_to_anatomy_2p/"* ]]; then
+      case "$base" in
+        *__aligned.nrrd)        out="${fish}_round2_GCaMP_in_2p.nrrd" ;;
+        *_0GenericAffine.mat)   out="${fish}_round2_GCaMP_to_2p_0GenericAffine.mat" ;;
+        *_1Warp.nii.gz)         out="${fish}_round2_GCaMP_to_2p_1Warp.nii.gz" ;;
+        *_1InverseWarp.nii.gz)  out="${fish}_round2_GCaMP_to_2p_1InverseWarp.nii.gz" ;;
+      esac
+    fi
+
     # --- SPECIAL-CASE FIRST: GCaMP aligned from SCRATCH/.../reg/ are relative refs ---
     # round1_GCaMP_to_ref_aligned.nrrd  => _in_2p.nrrd
     # round2_GCaMP_to_ref_aligned.nrrd  => _in_r1.nrrd
@@ -349,6 +366,52 @@ stage_mats_logs_one() {
     shopt -u nullglob
   fi
 
+  # ---- new role-based: r1 -> r2 ----
+  if [[ -d "$REG/confocal_r1_to_confocal_r2" ]]; then
+    ensure_dir "$REG_WORK/02_r1-r2/transMatrices"
+    shopt -s nullglob globstar
+    for m in "$REG/confocal_r1_to_confocal_r2"/**/*0GenericAffine.mat "$REG/confocal_r1_to_confocal_r2"/**/*1Warp.nii.gz "$REG/confocal_r1_to_confocal_r2"/**/*1InverseWarp.nii.gz; do
+      [[ -f "$m" ]] || continue
+      bn=""
+      case "$(basename "$m")" in
+        *_0GenericAffine.mat)  bn="${fish}_round1_GCaMP_to_r2_0GenericAffine.mat" ;;
+        *_1Warp.nii.gz)        bn="${fish}_round1_GCaMP_to_r2_1Warp.nii.gz" ;;
+        *_1InverseWarp.nii.gz) bn="${fish}_round1_GCaMP_to_r2_1InverseWarp.nii.gz" ;;
+        *) continue ;;
+      esac
+      rsync_cp "$m" "$REG_WORK/02_r1-r2/transMatrices/$bn"
+    done
+    for lf in "$REG/confocal_r1_to_confocal_r2"/**/logs/*; do
+      [[ -f "$lf" ]] || continue
+      ensure_dir "$REG_WORK/02_r1-r2/logs"
+      rsync_cp "$lf" "$REG_WORK/02_r1-r2/logs/$(basename "$lf")"
+    done
+    shopt -u globstar nullglob
+  fi
+
+  # ---- new role-based: r2 -> 2p ----
+  if [[ -d "$REG/confocal_r2_to_anatomy_2p" ]]; then
+    ensure_dir "$REG_WORK/03_rn-2p/transMatrices"
+    shopt -s nullglob globstar
+    for m in "$REG/confocal_r2_to_anatomy_2p"/**/*0GenericAffine.mat "$REG/confocal_r2_to_anatomy_2p"/**/*1Warp.nii.gz "$REG/confocal_r2_to_anatomy_2p"/**/*1InverseWarp.nii.gz; do
+      [[ -f "$m" ]] || continue
+      bn=""
+      case "$(basename "$m")" in
+        *_0GenericAffine.mat)  bn="${fish}_round2_GCaMP_to_2p_0GenericAffine.mat" ;;
+        *_1Warp.nii.gz)        bn="${fish}_round2_GCaMP_to_2p_1Warp.nii.gz" ;;
+        *_1InverseWarp.nii.gz) bn="${fish}_round2_GCaMP_to_2p_1InverseWarp.nii.gz" ;;
+        *) continue ;;
+      esac
+      rsync_cp "$m" "$REG_WORK/03_rn-2p/transMatrices/$bn"
+    done
+    for lf in "$REG/confocal_r2_to_anatomy_2p"/**/logs/*; do
+      [[ -f "$lf" ]] || continue
+      ensure_dir "$REG_WORK/03_rn-2p/logs"
+      rsync_cp "$lf" "$REG_WORK/03_rn-2p/logs/$(basename "$lf")"
+    done
+    shopt -u globstar nullglob
+  fi
+
   # ---- from reg_to_avg2p/ (global ref: 08 / 04 / 05) ----
   if [[ -d "$REG_AVG" ]]; then
     ensure_dir "$REG_WORK/08_2pa-ref/transMatrices"
@@ -406,6 +469,10 @@ publish_one() {
     # 2P anatomy (either name) → 08_2pa-ref/aligned
     elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" || "$bn" == "${fish}_2P_in_ref.nrrd" ]]; then
       stage="08_2pa-ref"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
+    # round1 in r2 (new direction)
+    elif [[ "$bn" =~ ^${fish}_round1_.*_in_r2\.nrrd$ ]]; then
+      stage="02_r1-r2"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
     # round1 in 2p
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_2p\.nrrd$ ]]; then
