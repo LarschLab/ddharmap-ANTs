@@ -1,0 +1,34 @@
+{
+  "CONF_LABEL_TIFF": {
+    "path": "/Volumes/jlarsch/default/D2c/07_Data/Danin/Cellpose/trainingCort/hcr_test/L427_f02_round1_channel2_cort_gauss_cp_masks.tif",
+    "exists": true,
+    "size_bytes": 1617280,
+    "modified": "2025-10-23 13:26:03"
+  },
+  "CONF_NRRD_PATH": {
+    "path": "/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L427_f02/02_reg/00_preprocessing/r1/L427_f02_round1_channel2_cort.nrrd",
+    "exists": true,
+    "size_bytes": 650117402,
+    "modified": "2025-09-19 15:17:45"
+  },
+  "TWOP_NRRD_PATH": {
+    "path": "/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L427_f02/02_reg/00_preprocessing/2p_anatomy/L427_f02_anatomy_2P_cort.nrrd",
+    "exists": true,
+    "size_bytes": 220500279,
+    "modified": "2025-09-23 17:07:36"
+  },
+  "WARP_PATH": {
+    "path": "/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L427_f02/02_reg/01_r1-2p/transMatrices/L427_f02_round1_GCaMP_to_ref1Warp.nii.gz",
+    "exists": true,
+    "size_bytes": 1200748659,
+    "modified": "2025-09-23 20:12:27"
+  },
+  "AFFINE_PATH": {
+    "path": "/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L427_f02/02_reg/01_r1-2p/transMatrices/L427_f02_round1_GCaMP_to_ref0GenericAffine.mat",
+    "exists": true,
+    "size_bytes": 132,
+    "modified": "2025-09-23 20:11:55"
+  },
+  "INVERT_AFFINE": false,
+  "ANTsPy_version": "0.6.1"
+}
