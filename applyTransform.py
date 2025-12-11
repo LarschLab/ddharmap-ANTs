@@ -3,8 +3,9 @@
 applyTransform.py
 
 Two modes:
-- Default scan mode: prompt for owner/fish, find non-GCaMP HCR .nrrd files in 02_reg/00_preprocessing/{r1,rn},
-  and apply R1->2P or RN->R1 transforms discovered under 02_reg.
+- Default scan mode: prompt for owner/fish, read best_rounds.csv to pick the anchor round, find non-GCaMP HCR .nrrd
+  files in 02_reg/00_preprocessing/{rbest,rn}, and apply best->2P, rn->best, and rn->2P (chained) transforms discovered
+  under 02_reg.
 - Manifest mode: read an explicit CSV and apply exactly the transform chains you list (supports chaining like r1->r2->2p).
 
 CLI:
@@ -36,6 +37,7 @@ import datetime
 import concurrent.futures
 import multiprocessing
 import argparse
+import re
 
 def prompt_owner_and_fishid(nas_root):
     """
@@ -71,6 +73,7 @@ def prompt_owner_and_fishid(nas_root):
 # ========= USER CONFIGURABLE PARAMETERS =========
 NAS_ROOT = "/Volumes/jlarsch/default/D2c/07_Data"  # Root NAS directory
 MANIFEST_CSV_DEFAULT = "/Volumes/jlarsch/default/D2c/07_Data/Danin/regManifest/transformManifest.csv"
+BEST_ROUNDS_CSV = "/Volumes/jlarsch/default/D2c/07_Data/Danin/best_rounds.csv"
 USE_REFERENCE_GRID = True                          # Use reference image as output grid
 INTERPOLATOR = "welchWindowedSinc"                # Interpolator for ANTs
 # =================================================
@@ -83,50 +86,178 @@ def find_fish_dirs(nas_root, owner):
     fish_root = get_owner_root(nas_root, owner)
     return [d for d in fish_root.iterdir() if d.is_dir() and not d.name.startswith('.')]
 
-def find_hcr_channels(preproc_dir, fish_id, round_num):
+def parse_round_val(val, default):
     """
-    Finds all non-GCaMP HCR channel .nrrd files for a given fish and round.
-    <fish_id> should include the letter prefix (e.g., 'L427_f01').
-    Only files matching <fish_id>_round<round_num>_channel*.nrrd and not containing 'GCaMP'.
+    Convert round strings like 'r2' or '2' to an int. Return default on failure.
     """
-    round_dir = preproc_dir / ('r1' if round_num == 1 else 'rn')
+    try:
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            digits = re.findall(r"\d+", val)
+            if digits:
+                return int(digits[0])
+    except Exception:
+        pass
+    return default
+
+def load_best_rounds(csv_path):
+    """
+    Load best_rounds.csv mapping fish_id -> {best_round, num_rounds, owner}.
+    Returns a dict keyed by fish_id.
+    """
+    csv_path = Path(csv_path)
+    if not csv_path.exists():
+        print(f"[WARN] best_rounds.csv not found at {csv_path}; falling back to round1 defaults.")
+        return {}
+    df = pd.read_csv(csv_path, dtype=str, encoding="utf-8-sig")
+    best_map = {}
+    for _, row in df.iterrows():
+        fish_id = str(row.get("fish_id", "")).strip()
+        if not fish_id:
+            continue
+        best_round = parse_round_val(row.get("best_round", "1"), 1)
+        num_rounds = parse_round_val(row.get("num_rounds", best_round), best_round)
+        owner = str(row.get("owner", "")).strip()
+        best_map[fish_id] = {
+            "best_round": best_round,
+            "num_rounds": num_rounds,
+            "owner": owner
+        }
+    return best_map
+
+def get_round_dir(preproc_dir, round_num, best_round):
+    """
+    Resolve the preprocessing directory for a given round under the new layout.
+    Best round uses 'rbest'; others use 'rn'.
+    """
+    return preproc_dir / ("rbest" if round_num == best_round else "rn")
+
+def find_hcr_channels(preproc_dir, fish_id, round_num, best_round):
+    """
+    Finds all non-GCaMP HCR channel .nrrd files for a given fish and round in the new layout.
+    """
+    round_dir = get_round_dir(preproc_dir, round_num, best_round)
     if not round_dir.exists():
         return []
     return [f for f in round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd") if "GCaMP" not in f.name]
 
-def find_transforms(reg_dir, fish_id, round_num):
+def find_best_to_2p_transforms(reg_dir, fish_id, best_round):
     """
-    Finds the affine and warp transformation matrices for the given fish and round.
-    <fish_id> should include the letter prefix (e.g., 'L427_f01').
-    For r1: looks in 01_r1-2p/transMatrices
-    For rn: looks in 02_rn-r1/transMatrices
-    Returns (affine, warp, stage_folder_name)
+    Find best->2P transforms under 01_rbest-2p/transMatrices.
     """
-    stg = "01_r1-2p" if round_num == 1 else "02_rn-r1"
+    stg = "01_rbest-2p"
     tm_dir = reg_dir / stg / "transMatrices"
     if not tm_dir.exists():
         return None, None, stg
-    affine = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_ref0GenericAffine.mat"))
-    warp = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_ref1Warp.nii.gz"))
+    affine = list(tm_dir.glob(f"{fish_id}_round{best_round}_GCaMP_to_2p_0GenericAffine.mat"))
+    warp = list(tm_dir.glob(f"{fish_id}_round{best_round}_GCaMP_to_2p_1Warp.nii.gz"))
     if affine and warp:
         return affine[0], warp[0], stg
     return None, None, stg
 
-def find_reference(fish_dir, round_num):
+def find_round_to_best_transforms(reg_dir, fish_id, round_num, best_round):
     """
-    Finds the reference image for the given round.
-    <fish_id> should include the letter prefix (e.g., 'L427_f01').
-    For r1: 02_reg/00_preprocessing/2p_anatomy/<fish_id>_anatomy_2P_GCaMP.nrrd
-    For rn: 02_reg/00_preprocessing/r1/<fish_id>_round1_channel1_GCaMP.nrrd
-    Returns the Path if found, else None.
+    Find round->best transforms under 02_rn-rbest/transMatrices.
     """
-    preproc_dir = fish_dir / "02_reg" / "00_preprocessing"
-    fish_id = fish_dir.name
-    if round_num == 1:
-        ref = preproc_dir / "2p_anatomy" / f"{fish_id}_anatomy_2P_GCaMP.nrrd"
-    else:
-        ref = preproc_dir / "r1" / f"{fish_id}_round1_channel1_GCaMP.nrrd"
+    stg = "02_rn-rbest"
+    tm_dir = reg_dir / stg / "transMatrices"
+    if not tm_dir.exists():
+        return None, None, stg
+    affine = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_r{best_round}_0GenericAffine.mat"))
+    warp = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_r{best_round}_1Warp.nii.gz"))
+    if affine and warp:
+        return affine[0], warp[0], stg
+    return None, None, stg
+
+def find_reference_2p(preproc_dir, fish_id):
+    """
+    Anatomy 2P reference for best->2P.
+    """
+    ref = preproc_dir / "2p_anatomy" / f"{fish_id}_anatomy_2P_GCaMP.nrrd"
     return ref if ref.exists() else None
+
+def find_best_round_reference(preproc_dir, fish_id, best_round):
+    """
+    Best-round GCaMP reference used for rn->best transforms.
+    """
+    round_dir = get_round_dir(preproc_dir, best_round, best_round)
+    candidates = [
+        round_dir / f"{fish_id}_round{best_round}_channel1_GCaMP.nrrd",
+        round_dir / f"{fish_id}_round{best_round}_GCaMP.nrrd",
+    ]
+    chan_glob = list(round_dir.glob(f"{fish_id}_round{best_round}_channel*_GCaMP*.nrrd"))
+    candidates.extend(chan_glob)
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return None
+
+def normalize_gene(gene_raw):
+    """
+    Turn gene_probe into gene.probe if possible.
+    """
+    gene = gene_raw
+    m_gene = re.match(r"(.+)_([0-9]+)$", gene)
+    if m_gene:
+        gene = f"{m_gene.group(1)}.{m_gene.group(2)}"
+    return gene
+
+def list_round_channels(preproc_dir, fish_id, round_num, best_round):
+    """
+    Enumerate expected non-GCaMP channels for a round (from preprocessing).
+    Returns list of dicts with channel, gene, path, mtime.
+    """
+    round_dir = get_round_dir(preproc_dir, round_num, best_round)
+    if not round_dir.exists():
+        return []
+    channels = []
+    for f in round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd"):
+        if "GCaMP" in f.name:
+            continue
+        m = re.search(r"_channel(\d+)_", f.name)
+        if not m:
+            continue
+        ch_num = int(m.group(1))
+        base = f.stem
+        try:
+            gene_part = base.split(f"channel{ch_num}_", 1)[1]
+        except Exception:
+            gene_part = ""
+        gene = normalize_gene(gene_part)
+        channels.append({
+            "channel": ch_num,
+            "gene": gene,
+            "path": f,
+            "mtime": f.stat().st_mtime
+        })
+    # Deduplicate by channel, keep first (sorted by channel)
+    seen = set()
+    deduped = []
+    for entry in sorted(channels, key=lambda x: x["channel"]):
+        if entry["channel"] in seen:
+            continue
+        seen.add(entry["channel"])
+        deduped.append(entry)
+    return deduped
+
+def find_output_for_channel(aligned_dir, fish_id, round_num, ch_num, suffix):
+    """
+    Find an aligned output for a specific channel/round/suffix (e.g., suffix='2p' or 'r2').
+    Returns (Path or None, gene, mtime).
+    """
+    pattern = f"{fish_id}_round{round_num}_channel{ch_num}_*_in_{suffix}.nrrd"
+    matches = list(aligned_dir.glob(pattern))
+    if not matches:
+        return None, "", None
+    out_file = max(matches, key=lambda f: f.stat().st_mtime)
+    base = out_file.stem
+    suffix_tag = f"_in_{suffix}"
+    if base.endswith(suffix_tag):
+        base = base[: -len(suffix_tag)]
+    gene_part = base.split(f"channel{ch_num}_", 1)[1] if f"channel{ch_num}_" in base else ""
+    gene = normalize_gene(gene_part)
+    return out_file, gene, out_file.stat().st_mtime
 
 def get_owner_root(nas_root, owner):
     """
@@ -162,71 +293,103 @@ def main():
         mode = "manifest"
 
     # Set up metadata file paths in Danin folder
-    NAS_ROOT = "/Volumes/jlarsch/default/D2c/07_Data"
     danin_dir = Path(NAS_ROOT) / "Danin"
     danin_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = danin_dir / "transManifest.csv"  # append-only, one row per transformation event
     metadata_path = danin_dir / "transMetadata.csv"  # one row per fishid, TRUE/FALSE and date for each transformation
 
-    # Read existing transMetadata.csv if present
-    if metadata_path.exists():
-        meta_df = pd.read_csv(metadata_path, dtype=str).set_index('fish_id')
-    else:
-        meta_df = pd.DataFrame(columns=[
-            'fish_id', 'r1->2p', 'r1->2p_date', 'rn->r1', 'rn->r1_date'
-        ]).set_index('fish_id')
+    best_rounds_map = load_best_rounds(BEST_ROUNDS_CSV)
     owner = None
     selected_fishids = []
+    jobs = []
+    manifest_rows = []  # for appending to transManifest.csv (only actual transformations)
+    fish_best_info = {}  # cache best_round/num_rounds per fish for metadata
+
     if mode == "scan":
         owner, selected_fishids = prompt_owner_and_fishid(NAS_ROOT)
-    jobs = []
-    # Track per-fish status for metadata
-    fish_status = {fish_id: {'r1->2p': 'not_found', 'rn->r1': 'not_found', 'last_error': ''} for fish_id in selected_fishids}
-    manifest_rows = []  # for appending to transManifest.csv (only actual transformations)
-
-    # Helper: get all expected channels for a fish and round (including GCaMP)
-    def get_expected_channels(preproc_dir, fish_id, round_num):
-        round_dir = preproc_dir / ('r1' if round_num == 1 else 'rn')
-        if not round_dir.exists():
-            return []
-        # All channel files for this round
-        return [f.stem for f in round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd")]
-
-    if mode == "scan":
         for fish_id in selected_fishids:
+            best_info = best_rounds_map.get(fish_id, {"best_round": 1, "num_rounds": 1, "owner": owner or ""})
+            best_round = parse_round_val(best_info.get("best_round", 1), 1)
+            num_rounds = parse_round_val(best_info.get("num_rounds", best_round), best_round)
+            num_rounds = max(num_rounds, best_round)
+            fish_best_info[fish_id] = {"best_round": best_round, "num_rounds": num_rounds}
+
             fish_dir = get_owner_root(NAS_ROOT, owner) / fish_id
             preproc_dir = fish_dir / "02_reg" / "00_preprocessing"
             reg_dir = fish_dir / "02_reg"
             if not preproc_dir.exists() or not reg_dir.exists():
                 print(f"[DEBUG] Skipping {fish_id}: missing preprocessing or reg directory.")
-                fish_status[fish_id]['last_error'] = 'missing preprocessing or reg directory'
                 continue
 
-            for round_num, colname in zip([1, 2], ['r1->2p', 'rn->r1']):
-                hcr_files = find_hcr_channels(preproc_dir, fish_id, round_num)
-                if not hcr_files:
-                    print(f"[DEBUG] No HCR channels found for {fish_id} round {round_num}.")
-                    fish_status[fish_id][colname] = 'not_found'
-                    continue
-                affine, warp, stg = find_transforms(reg_dir, fish_id, round_num)
-                ref = find_reference(fish_dir, round_num)
-                if not (affine and warp and ref):
-                    print(f"[DEBUG] Missing transform or reference for {fish_id} round {round_num}.")
-                    fish_status[fish_id][colname] = 'not_found'
-                    continue
-                aligned_dir = reg_dir / stg / "aligned"
+            best_ref_2p = find_reference_2p(preproc_dir, fish_id)
+            best_ref_round = find_best_round_reference(preproc_dir, fish_id, best_round)
+            best_affine, best_warp, stg_best = find_best_to_2p_transforms(reg_dir, fish_id, best_round)
+            best_hcr_files = find_hcr_channels(preproc_dir, fish_id, best_round, best_round)
+            if best_hcr_files and best_affine and best_warp and best_ref_2p:
+                aligned_dir = reg_dir / stg_best / "aligned"
                 if not dry_run:
                     aligned_dir.mkdir(parents=True, exist_ok=True)
+                for hcr_file in best_hcr_files:
+                    jobs.append({
+                        "moving": hcr_file,
+                        "transformlist": [str(best_warp), str(best_affine)],
+                        "reference": best_ref_2p,
+                        "out_dir": aligned_dir,
+                        "out_name": f"{hcr_file.stem}_in_2p.nrrd",
+                        "fish_id": fish_id,
+                        "round": best_round,
+                        "colname": f"r{best_round}->2p",
+                        "target_suffix": "2p"
+                    })
+            else:
+                print(f"[DEBUG] Missing best->2p prerequisites for {fish_id} (round {best_round}).")
+
+            for round_num in range(1, num_rounds + 1):
+                if round_num == best_round:
+                    continue
+                hcr_files = find_hcr_channels(preproc_dir, fish_id, round_num, best_round)
+                if not hcr_files:
+                    print(f"[DEBUG] No HCR channels found for {fish_id} round {round_num}.")
+                    continue
+
+                affine_rb, warp_rb, stg_rb = find_round_to_best_transforms(reg_dir, fish_id, round_num, best_round)
+                if not (affine_rb and warp_rb and best_ref_round):
+                    print(f"[DEBUG] Missing rn->best prerequisites for {fish_id} round {round_num}.")
+                    continue
+                aligned_dir_rb = reg_dir / stg_rb / "aligned"
+                if not dry_run:
+                    aligned_dir_rb.mkdir(parents=True, exist_ok=True)
                 for hcr_file in hcr_files:
                     jobs.append({
                         "moving": hcr_file,
-                        "transformlist": [str(warp), str(affine)],
-                        "reference": ref,
-                        "out_dir": aligned_dir,
+                        "transformlist": [str(warp_rb), str(affine_rb)],
+                        "reference": best_ref_round,
+                        "out_dir": aligned_dir_rb,
+                        "out_name": f"{hcr_file.stem}_in_r{best_round}.nrrd",
                         "fish_id": fish_id,
                         "round": round_num,
-                        "colname": colname
+                        "colname": f"r{round_num}->r{best_round}",
+                        "target_suffix": f"r{best_round}"
                     })
+
+                if best_affine and best_warp and best_ref_2p:
+                    aligned_dir_rn2p = reg_dir / "03_rn-2p" / "aligned"
+                    if not dry_run:
+                        aligned_dir_rn2p.mkdir(parents=True, exist_ok=True)
+                    for hcr_file in hcr_files:
+                        jobs.append({
+                            "moving": hcr_file,
+                            "transformlist": [str(best_warp), str(best_affine), str(warp_rb), str(affine_rb)],
+                            "reference": best_ref_2p,
+                            "out_dir": aligned_dir_rn2p,
+                            "out_name": f"{hcr_file.stem}_in_2p.nrrd",
+                            "fish_id": fish_id,
+                            "round": round_num,
+                            "colname": f"r{round_num}->2p",
+                            "target_suffix": "2p"
+                        })
+                else:
+                    print(f"[DEBUG] Skipping rn->2p for {fish_id} round {round_num}: missing best->2p transforms or reference.")
     else:
         if not manifest_csv_path:
             print("[ERROR] --manifest-csv is required in manifest mode.")
@@ -282,16 +445,13 @@ def main():
     def process_job(job):
         RED = "\033[91m"
         RESET = "\033[0m"
-        out_name = job.get("out_name", f"{job['moving'].stem}_in_{'2p' if job.get('round',1)==1 else 'r1'}.nrrd")
+        out_name = job.get("out_name") or f"{job['moving'].stem}_transformed.nrrd"
         out_path = job["out_dir"] / out_name
-        # Shorten path for info/debug output: print from <owner>/*
         def short_path(p):
-            p = str(p)
             try:
-                idx = p.index(f"/{owner}/")
-                return p[idx+1:]
+                return str(Path(p).relative_to(NAS_ROOT))
             except Exception:
-                return p
+                return str(p)
         now = datetime.datetime.now().isoformat(timespec='seconds')
         user = getpass.getuser()
         host = socket.gethostname()
@@ -348,161 +508,117 @@ def main():
             results.append(res)
 
     if mode == "scan":
-        # Update fish_status and metadata for transMetadata.csv
-        # For each fish, scan aligned folders for all expected output files (including GCaMP), and mark as TRUE/FALSE
-        import re
-        channel_id_re = re.compile(r"channel(\d+)_([^_]+)")
-        # Track all channel columns for ordering, as dicts to sort by channel number
-        r1_cols, r2_cols = dict(), dict()
-        import re as _re
-        for fish_id in fish_status:
-            fish_dir = Path(NAS_ROOT) / owner / fish_id
+        col_order = ['best_round', 'num_rounds', 'best_to_2p', 'best_to_2p_date']
+        meta_rows = {}
+
+        def ensure_col(col):
+            if col not in col_order:
+                col_order.append(col)
+
+        for fish_id in selected_fishids:
+            best_info = fish_best_info.get(fish_id, {"best_round": 1, "num_rounds": 1})
+            best_round = best_info.get("best_round", 1)
+            num_rounds = best_info.get("num_rounds", best_round)
+            num_rounds = max(num_rounds, best_round)
+            fish_dir = get_owner_root(NAS_ROOT, owner) / fish_id
             preproc_dir = fish_dir / "02_reg" / "00_preprocessing"
             reg_dir = fish_dir / "02_reg"
-            for round_num, stg in zip([1, 2], ["01_r1-2p", "02_rn-r1"]):
-                aligned_dir = reg_dir / stg / "aligned"
+            if not preproc_dir.exists() or not reg_dir.exists():
+                print(f"[DEBUG] Skipping metadata for {fish_id}: missing preprocessing or reg directory.")
+                continue
+
+            row = {
+                "best_round": f"r{best_round}",
+                "num_rounds": str(num_rounds),
+                "best_to_2p": "",
+                "best_to_2p_date": ""
+            }
+
+            for round_num in range(1, num_rounds + 1):
                 round_label = f"r{round_num}"
-                # For each channel number, look for any aligned file matching the pattern
-                for ch_num in range(1, 10):  # assume up to 9 channels; adjust as needed
-                    pattern = f"{fish_id}_round{round_num}_channel{ch_num}_*_in_{'2p' if round_num==1 else 'r1'}.nrrd"
-                    matches = list(aligned_dir.glob(pattern))
-                    if matches:
-                        # Use the most recent file if multiple
-                        out_file = max(matches, key=lambda f: f.stat().st_mtime)
-                        # Extract gene and probe from filename
-                        m = _re.match(rf"{fish_id}_round{round_num}_channel{ch_num}_([A-Za-z0-9]+)_([0-9]+)_in_({'2p' if round_num==1 else 'r1'})\.nrrd", out_file.name)
-                        if m:
-                            gene = f"{m.group(1)}.{m.group(2)}"
-                        else:
-                            # fallback: try just gene
-                            m2 = _re.match(rf"{fish_id}_round{round_num}_channel{ch_num}_([A-Za-z0-9]+)_in_({'2p' if round_num==1 else 'r1'})\.nrrd", out_file.name)
-                            gene = m2.group(1) if m2 else ''
-                        id_col = f"{round_label}_ch{ch_num}_id"
-                        status_col = f"{round_label}_ch{ch_num}_status"
-                        if id_col not in meta_df.columns:
-                            meta_df[id_col] = ''
-                        if status_col not in meta_df.columns:
-                            meta_df[status_col] = ''
-                        meta_df.loc[fish_id, id_col] = gene
-                        meta_df.loc[fish_id, status_col] = 'TRUE'
-                        # Set date column to latest mtime for this round
-                        if f"{round_label}_date" not in meta_df.columns:
-                            meta_df[f"{round_label}_date"] = ''
-                        mtime = out_file.stat().st_mtime
-                        prev = meta_df.loc[fish_id, f"{round_label}_date"]
-                        if not prev or (isinstance(prev, str) and prev == '') or (isinstance(prev, float) and mtime > prev):
-                            meta_df.loc[fish_id, f"{round_label}_date"] = datetime.datetime.fromtimestamp(mtime).isoformat(timespec='seconds')
-                        # Track for ordering
-                        if round_num == 1:
-                            r1_cols[ch_num] = (id_col, status_col)
-                        else:
-                            r2_cols[ch_num] = (id_col, status_col)
-                    else:
-                        id_col = f"{round_label}_ch{ch_num}_id"
-                        status_col = f"{round_label}_ch{ch_num}_status"
-                        if id_col not in meta_df.columns:
-                            meta_df[id_col] = ''
-                        if status_col not in meta_df.columns:
-                            meta_df[status_col] = ''
-                        meta_df.loc[fish_id, status_col] = 'FALSE'
-                # GCaMP channel (not transformed by this script, just check presence)
-                gcamp_patterns = [
-                    f"{fish_id}_round{round_num}_GCaMP*_in_{'2p' if round_num==1 else 'r1'}.nrrd",
-                    f"{fish_id}_round{round_num}_channel*_GCaMP*_in_{'2p' if round_num==1 else 'r1'}.nrrd"
-                ]
-                gcamp_files = []
-                for pat in gcamp_patterns:
-                    gcamp_files.extend(aligned_dir.glob(pat))
-                for gcamp in gcamp_files:
-                    # Try to extract channel number if present
-                    m = channel_id_re.search(gcamp.name)
-                    if m:
-                        ch_num, gene = m.groups()
-                    else:
-                        ch_num, gene = '1', 'GCaMP'  # fallback
-                    gene = gene.replace('.nrrd','')
-                    m_gene = _re.match(r"(.+)_([0-9]+)$", gene)
-                    if m_gene:
-                        gene = f"{m_gene.group(1)}.{m_gene.group(2)}"
-                    id_col = f"{round_label}_ch{ch_num}_id"
-                    status_col = f"{round_label}_ch{ch_num}_status"
-                    if id_col not in meta_df.columns:
-                        meta_df[id_col] = ''
-                    if status_col not in meta_df.columns:
-                        meta_df[status_col] = ''
-                    meta_df.loc[fish_id, id_col] = gene
-                    meta_df.loc[fish_id, status_col] = 'TRUE'
-                    if f"{round_label}_date" not in meta_df.columns:
-                        meta_df[f"{round_label}_date"] = ''
-                    mtime = gcamp.stat().st_mtime
-                    prev = meta_df.loc[fish_id, f"{round_label}_date"]
-                    if not prev or (isinstance(prev, str) and prev == '') or (isinstance(prev, float) and mtime > prev):
-                        meta_df.loc[fish_id, f"{round_label}_date"] = datetime.datetime.fromtimestamp(mtime).isoformat(timespec='seconds')
-                    if round_num == 1:
-                        r1_cols[int(ch_num)] = (id_col, status_col)
-                    else:
-                        r2_cols[int(ch_num)] = (id_col, status_col)
-                # GCaMP channel (not transformed by this script, just check presence)
-                # Match both with and without channel number
-                gcamp_patterns = [
-                    f"{fish_id}_round{round_num}_GCaMP*_in_{'2p' if round_num==1 else 'r1'}.nrrd",
-                    f"{fish_id}_round{round_num}_channel*_GCaMP*_in_{'2p' if round_num==1 else 'r1'}.nrrd"
-                ]
-                gcamp_files = []
-                for pat in gcamp_patterns:
-                    gcamp_files.extend(aligned_dir.glob(pat))
-                for gcamp in gcamp_files:
-                    # Try to extract channel number if present
-                    m = channel_id_re.search(gcamp.name)
-                    if m:
-                        ch_num, gene = m.groups()
-                    else:
-                        ch_num, gene = '1', 'GCaMP'  # fallback
-                    gene = gene.replace('.nrrd','')
-                    m_gene = _re.match(r"(.+)_([0-9]+)$", gene)
-                    if m_gene:
-                        gene = f"{m_gene.group(1)}.{m_gene.group(2)}"
-                    id_col = f"{round_label}_ch{ch_num}_id"
-                    status_col = f"{round_label}_ch{ch_num}_status"
-                    if id_col not in meta_df.columns:
-                        meta_df[id_col] = ''
-                    if status_col not in meta_df.columns:
-                        meta_df[status_col] = ''
-                    meta_df.loc[fish_id, id_col] = gene
-                    meta_df.loc[fish_id, status_col] = 'TRUE'
-                    if f"{round_label}_date" not in meta_df.columns:
-                        meta_df[f"{round_label}_date"] = ''
-                    mtime = gcamp.stat().st_mtime
-                    prev = meta_df.loc[fish_id, f"{round_label}_date"]
-                    if not prev or (isinstance(prev, str) and prev == '') or (isinstance(prev, float) and mtime > prev):
-                        meta_df.loc[fish_id, f"{round_label}_date"] = datetime.datetime.fromtimestamp(mtime).isoformat(timespec='seconds')
-                    if round_num == 1:
-                        r1_cols[int(ch_num)] = (id_col, status_col)
-                    else:
-                        r2_cols[int(ch_num)] = (id_col, status_col)
+                to_best_col = f"{round_label}_to_best"
+                to_best_date_col = f"{to_best_col}_date"
+                to_2p_col = f"{round_label}_to_2p"
+                to_2p_date_col = f"{to_2p_col}_date"
+                for c in [to_best_col, to_best_date_col, to_2p_col, to_2p_date_col]:
+                    ensure_col(c)
 
-        # Fill r1->2p and rn->r1 columns: TRUE if any *_status for that round is TRUE, FALSE if all are FALSE, else blank
-        for fish_id in meta_df.index:
-            for round_num, col, status_cols in zip([1,2], ['r1->2p','rn->r1'], [r1_cols, r2_cols]):
-                vals = [meta_df.loc[fish_id, status] for _, status in sorted(status_cols.values()) if status in meta_df.columns]
-                if any(v == 'TRUE' for v in vals):
-                    meta_df.loc[fish_id, col] = 'TRUE'
-                elif all(v == 'FALSE' for v in vals) and vals:
-                    meta_df.loc[fish_id, col] = 'FALSE'
+                expected_channels = list_round_channels(preproc_dir, fish_id, round_num, best_round)
+
+                # rn->best (best round uses raw channels as TRUE)
+                statuses_best = []
+                latest_best_mtime = None
+                if round_num == best_round:
+                    for ch in expected_channels:
+                        col_id = f"{round_label}_best_ch{ch['channel']}_id"
+                        col_status = f"{round_label}_best_ch{ch['channel']}_status"
+                        ensure_col(col_id)
+                        ensure_col(col_status)
+                        row[col_id] = ch["gene"]
+                        row[col_status] = 'TRUE'
+                        statuses_best.append('TRUE')
+                        latest_best_mtime = max(latest_best_mtime, ch["mtime"]) if latest_best_mtime else ch["mtime"]
+                    row[to_best_col] = 'TRUE' if statuses_best else ''
+                    row[to_best_date_col] = datetime.datetime.fromtimestamp(latest_best_mtime).isoformat(timespec='seconds') if latest_best_mtime else ''
                 else:
-                    meta_df.loc[fish_id, col] = ''
+                    aligned_dir = reg_dir / "02_rn-rbest" / "aligned"
+                    for ch in expected_channels:
+                        col_id = f"{round_label}_best_ch{ch['channel']}_id"
+                        col_status = f"{round_label}_best_ch{ch['channel']}_status"
+                        ensure_col(col_id)
+                        ensure_col(col_status)
+                        out_file, gene_out, mtime = find_output_for_channel(aligned_dir, fish_id, round_num, ch["channel"], suffix=f"r{best_round}")
+                        if out_file:
+                            row[col_id] = gene_out or ch["gene"]
+                            row[col_status] = 'TRUE'
+                            statuses_best.append('TRUE')
+                            latest_best_mtime = max(latest_best_mtime, mtime) if latest_best_mtime else mtime
+                        else:
+                            row[col_id] = row.get(col_id, ch["gene"])
+                            row[col_status] = 'FALSE'
+                            statuses_best.append('FALSE')
+                    if statuses_best:
+                        row[to_best_col] = 'TRUE' if any(s == 'TRUE' for s in statuses_best) else 'FALSE'
+                        row[to_best_date_col] = datetime.datetime.fromtimestamp(latest_best_mtime).isoformat(timespec='seconds') if latest_best_mtime else ''
 
-        # Order columns: fish_id, r1->2p, r1->2p_date, rn->r1, rn->r1_date, all r1_ch*_id/status, all r2_ch*_id/status, sorted by channel number
-        r1_flat = [col for pair in [r1_cols[k] for k in sorted(r1_cols)] for col in pair]
-        r2_flat = [col for pair in [r2_cols[k] for k in sorted(r2_cols)] for col in pair]
-        ordered_cols = ['r1->2p','r1->2p_date','rn->r1','rn->r1_date'] + r1_flat + r2_flat
-        # Remove duplicate fish_id column if present
-        if 'fish_id' in meta_df.columns:
-            meta_df = meta_df.drop(columns=['fish_id'])
-        meta_df = meta_df.reindex(columns=ordered_cols)
-        meta_df.index.name = 'fish_id'
-        meta_df.to_csv(metadata_path)
-        print(f"[INFO] Metadata written to {metadata_path}")
+                # to 2P (best round uses 01_rbest-2p, others 03_rn-2p)
+                aligned_dir_2p = reg_dir / ("01_rbest-2p" if round_num == best_round else "03_rn-2p") / "aligned"
+                statuses_2p = []
+                latest_2p_mtime = None
+                for ch in expected_channels:
+                    col_id = f"{round_label}_2p_ch{ch['channel']}_id"
+                    col_status = f"{round_label}_2p_ch{ch['channel']}_status"
+                    ensure_col(col_id)
+                    ensure_col(col_status)
+                    out_file, gene_out, mtime = find_output_for_channel(aligned_dir_2p, fish_id, round_num, ch["channel"], suffix="2p")
+                    if out_file:
+                        row[col_id] = gene_out or ch["gene"]
+                        row[col_status] = 'TRUE'
+                        statuses_2p.append('TRUE')
+                        latest_2p_mtime = max(latest_2p_mtime, mtime) if latest_2p_mtime else mtime
+                    else:
+                        row[col_id] = row.get(col_id, ch["gene"])
+                        row[col_status] = 'FALSE'
+                        statuses_2p.append('FALSE')
+                if statuses_2p:
+                    row[to_2p_col] = 'TRUE' if any(s == 'TRUE' for s in statuses_2p) else 'FALSE'
+                    row[to_2p_date_col] = datetime.datetime.fromtimestamp(latest_2p_mtime).isoformat(timespec='seconds') if latest_2p_mtime else ''
+                if round_num == best_round:
+                    if statuses_2p:
+                        row["best_to_2p"] = row[to_2p_col]
+                        row["best_to_2p_date"] = row[to_2p_date_col]
+
+            meta_rows[fish_id] = row
+
+        if meta_rows:
+            meta_df = pd.DataFrame.from_dict(meta_rows, orient="index")
+            meta_df = meta_df.reindex(columns=col_order)
+            meta_df.index.name = 'fish_id'
+            meta_df.fillna('', inplace=True)
+            meta_df.to_csv(metadata_path)
+            print(f"[INFO] Metadata written to {metadata_path}")
+        else:
+            print("[INFO] No metadata rows to write.")
 
     # Append to transManifest.csv (append-only, one row per transformation event, only for actual transformations)
     manifest_df = pd.DataFrame(manifest_rows)
@@ -515,4 +631,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-#!/usr/bin/env python3
