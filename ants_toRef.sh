@@ -283,6 +283,10 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     fi
     echo "$row,$moving_fish,$local_mrole,$fixed_bucket,$local_frole,$MOV,$FIX,$outprefix,$status" >> "$RESOLVED"
 
+    if [[ "$status" == "OK" ]]; then
+      echo "REG: ${moving_fish} ${local_mrole} -> ${fixed_bucket} ${local_frole}"
+    fi
+
     [[ "$status" == "OK" ]] || continue
 
     # Run (unchanged)

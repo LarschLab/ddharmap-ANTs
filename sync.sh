@@ -3,15 +3,17 @@
 #
 # WHAT IT DOES
 #   PULL:
-#     NAS/<owner>/<fish>/02_reg/00_preprocessing  → WORK mirror (same tree)
-#     WORK mirror → SCRATCH/raw + SCRATCH/fixed (plus nas symlink + .origin.json)
+#     NAS/<owner>/<fish>/02_reg/00_preprocessing → WORK mirror (2p_anatomy + rbest + rn; keeps r1 as fallback)
+#     WORK mirror → SCRATCH/raw + SCRATCH/fixed:
+#       rbest → confocal_round1, rn → confocal_round2, plus nas symlink + .origin.json
 #   CANONICALIZE:
 #     Read SCRATCH/reg (+ optional SCRATCH/reg_to_avg2p)
 #     Write canonical files into WORK/subjects/<fish>/02_reg/_canonical:
-#       <fish>_<source>_in_<space>.nrrd, where <space> ∈ {2p, r1, ref}
+#       <fish>_<source>_in_<space>.nrrd, where <space> ∈ {2p, ref, r1/r2 legacy round labels}
 #   PUBLISH:
 #     Use SCRATCH/<fish>/nas symlink (truth) to find NAS/<owner>/<fish>
-#     Copy canonical files → proper NAS/02_reg stage folders (no overwrite unless --force)
+#     Copy canonical files → NAS/02_reg stages:
+#       01_rbest-2p, 02_rn-rbest, 03_rn-2p, 04_r1-ref, 05_r2-ref, 06_total-ref, 08_2pa-ref
 #
 # USAGE
 #   sync_min.sh [--pull|--push|--both] [--owner NAME | --nas-project-root PATH]
@@ -40,6 +42,10 @@ IFS=$'\n\t'
 NAS_BASE="${NAS:-}"        # e.g. /nas/.../07 Data   (used with --owner on first pull)
 WORK_BASE="${WORK:-$HOME/WORK}/experiments"
 SCRATCH_BASE="${SCRATCH:-/scratch/$USER}/experiments"
+# Stage names (NAS/WORK)
+STAGE_RBEST_2P="01_rbest-2p"
+STAGE_RN_RBEST="02_rn-rbest"
+STAGE_RN_2P="03_rn-2p"
 
 # ---------- CLI ----------
 MODE="both"                # pull | push | both
@@ -62,6 +68,9 @@ Options:
   --nas-project-root P Alternative base path like ".../07 Data/Matilde" (overrides --owner)
   --force              Allow overwrites at destinations
   --dry-run            Print actions without writing
+Notes:
+  - 00_preprocessing now expects rbest (best round) and rn (remaining rounds). r1 is still accepted as a fallback.
+  - rbest is treated as "round1" downstream; rn populates round2+ paths on SCRATCH/NAS.
 USAGE
   exit 1
 }
@@ -165,9 +174,9 @@ pull_one() {
   local WORK_PRE="$WORK_SUBJ/02_reg/00_preprocessing"
   local RAW="$SCR_SUBJ/raw" FIXED="$SCR_SUBJ/fixed"
 
-  # 1) Mirror preprocessing to WORK
+  # 1) Mirror preprocessing to WORK (rbest + rn; keep r1 for legacy)
   ensure_dir "$WORK_PRE"
-  for sub in 2p_anatomy r1 rn; do
+  for sub in 2p_anatomy rbest r1 rn; do
     if [[ -d "$PRE/$sub" ]]; then
       ensure_dir "$WORK_PRE/$sub"
       rsync_cp "$PRE/$sub/" "$WORK_PRE/$sub/"
@@ -176,10 +185,21 @@ pull_one() {
     fi
   done
 
+  # Choose best-round source (rbest preferred; r1 legacy fallback)
+  local BEST_SRC=""
+  if [[ -d "$WORK_PRE/rbest" ]]; then
+    BEST_SRC="$WORK_PRE/rbest"
+  elif [[ -d "$WORK_PRE/r1" ]]; then
+    BEST_SRC="$WORK_PRE/r1"
+    log "  INFO: rbest missing; using r1 as best-round fallback."
+  else
+    log "  WARN: no rbest/r1 found under 00_preprocessing."
+  fi
+
   # 2) Stage SCRATCH raw/fixed (respect names for downstream)
   ensure_dir "$RAW/anatomy_2P" "$RAW/confocal_round1" "$RAW/confocal_round2" "$FIXED"
   [[ -d "$WORK_PRE/2p_anatomy" ]] && rsync_cp "$WORK_PRE/2p_anatomy/" "$RAW/anatomy_2P/" || true
-  [[ -d "$WORK_PRE/r1"         ]] && rsync_cp "$WORK_PRE/r1/"         "$RAW/confocal_round1/" || true
+  [[ -n "$BEST_SRC"           ]] && rsync_cp "$BEST_SRC/"             "$RAW/confocal_round1/" || true
   [[ -d "$WORK_PRE/rn"         ]] && rsync_cp "$WORK_PRE/rn/"         "$RAW/confocal_round2/" || true
 
   # Fixed refs (first GCaMP found; skip if already present unless --force)
@@ -342,15 +362,15 @@ stage_mats_logs_one() {
   local REG_AVG="$SCR_SUBJ/reg_to_avg2p"
   local REG_WORK="$WORK_BASE/subjects/$fish/02_reg"
 
-  # ---- from reg/ (relative: 01/02) ----
+  # ---- from reg/ (relative: best vs remaining) ----
   if [[ -d "$REG" ]]; then
-    ensure_dir "$REG_WORK/01_r1-2p/transMatrices" "$REG_WORK/02_rn-r1/transMatrices"
+    ensure_dir "$REG_WORK/$STAGE_RBEST_2P/transMatrices" "$REG_WORK/$STAGE_RN_RBEST/transMatrices"
     shopt -s nullglob
     for m in "$REG"/round*_GCaMP_to_ref*GenericAffine.mat "$REG"/round*_GCaMP_to_ref*Warp.nii.gz "$REG"/round*_GCaMP_to_ref*InverseWarp.nii.gz; do
       [[ -f "$m" ]] || continue
       b="$(basename "$m")"
       r="1"; [[ "$b" =~ ^round([0-9]+)_ ]] && r="${BASH_REMATCH[1]}"
-      stg="01_r1-2p"; [[ "$r" != "1" ]] && stg="02_rn-r1"
+      stg="$STAGE_RBEST_2P"; [[ "$r" != "1" ]] && stg="$STAGE_RN_RBEST"
       rsync_cp "$m" "$REG_WORK/$stg/transMatrices/${fish}_$b"
     done
     # logs → split by _rN (default r1)
@@ -358,7 +378,7 @@ stage_mats_logs_one() {
       for lf in "$REG/logs/"*; do
         [[ -f "$lf" ]] || continue
         bn="$(basename "$lf")"
-        stg="01_r1-2p"; [[ "$bn" =~ _r([0-9]+) && "${BASH_REMATCH[1]}" != "1" ]] && stg="02_rn-r1"
+        stg="$STAGE_RBEST_2P"; [[ "$bn" =~ _r([0-9]+) && "${BASH_REMATCH[1]}" != "1" ]] && stg="$STAGE_RN_RBEST"
         ensure_dir "$REG_WORK/$stg/logs"
         rsync_cp "$lf" "$REG_WORK/$stg/logs/$bn"
       done
@@ -368,7 +388,7 @@ stage_mats_logs_one() {
 
   # ---- new role-based: r1 -> r2 ----
   if [[ -d "$REG/confocal_r1_to_confocal_r2" ]]; then
-    ensure_dir "$REG_WORK/02_r1-r2/transMatrices"
+    ensure_dir "$REG_WORK/$STAGE_RN_RBEST/transMatrices"
     shopt -s nullglob globstar
     for m in "$REG/confocal_r1_to_confocal_r2"/**/*0GenericAffine.mat "$REG/confocal_r1_to_confocal_r2"/**/*1Warp.nii.gz "$REG/confocal_r1_to_confocal_r2"/**/*1InverseWarp.nii.gz; do
       [[ -f "$m" ]] || continue
@@ -379,19 +399,19 @@ stage_mats_logs_one() {
         *_1InverseWarp.nii.gz) bn="${fish}_round1_GCaMP_to_r2_1InverseWarp.nii.gz" ;;
         *) continue ;;
       esac
-      rsync_cp "$m" "$REG_WORK/02_r1-r2/transMatrices/$bn"
+      rsync_cp "$m" "$REG_WORK/$STAGE_RN_RBEST/transMatrices/$bn"
     done
     for lf in "$REG/confocal_r1_to_confocal_r2"/**/logs/*; do
       [[ -f "$lf" ]] || continue
-      ensure_dir "$REG_WORK/02_r1-r2/logs"
-      rsync_cp "$lf" "$REG_WORK/02_r1-r2/logs/$(basename "$lf")"
+      ensure_dir "$REG_WORK/$STAGE_RN_RBEST/logs"
+      rsync_cp "$lf" "$REG_WORK/$STAGE_RN_RBEST/logs/$(basename "$lf")"
     done
     shopt -u globstar nullglob
   fi
 
   # ---- new role-based: r2 -> 2p ----
   if [[ -d "$REG/confocal_r2_to_anatomy_2p" ]]; then
-    ensure_dir "$REG_WORK/03_rn-2p/transMatrices"
+    ensure_dir "$REG_WORK/$STAGE_RN_2P/transMatrices"
     shopt -s nullglob globstar
     for m in "$REG/confocal_r2_to_anatomy_2p"/**/*0GenericAffine.mat "$REG/confocal_r2_to_anatomy_2p"/**/*1Warp.nii.gz "$REG/confocal_r2_to_anatomy_2p"/**/*1InverseWarp.nii.gz; do
       [[ -f "$m" ]] || continue
@@ -402,12 +422,12 @@ stage_mats_logs_one() {
         *_1InverseWarp.nii.gz) bn="${fish}_round2_GCaMP_to_2p_1InverseWarp.nii.gz" ;;
         *) continue ;;
       esac
-      rsync_cp "$m" "$REG_WORK/03_rn-2p/transMatrices/$bn"
+      rsync_cp "$m" "$REG_WORK/$STAGE_RN_2P/transMatrices/$bn"
     done
     for lf in "$REG/confocal_r2_to_anatomy_2p"/**/logs/*; do
       [[ -f "$lf" ]] || continue
-      ensure_dir "$REG_WORK/03_rn-2p/logs"
-      rsync_cp "$lf" "$REG_WORK/03_rn-2p/logs/$(basename "$lf")"
+      ensure_dir "$REG_WORK/$STAGE_RN_2P/logs"
+      rsync_cp "$lf" "$REG_WORK/$STAGE_RN_2P/logs/$(basename "$lf")"
     done
     shopt -u globstar nullglob
   fi
@@ -470,21 +490,21 @@ publish_one() {
     elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" || "$bn" == "${fish}_2P_in_ref.nrrd" ]]; then
       stage="08_2pa-ref"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
-    # round1 in r2 (new direction)
-    elif [[ "$bn" =~ ^${fish}_round1_.*_in_r2\.nrrd$ ]]; then
-      stage="02_r1-r2"; ensure_dir "$ROOT/$stage/aligned"
+    # round1 in other confocal rounds (best → rn)
+    elif [[ "$bn" =~ ^${fish}_round1_.*_in_r[0-9]+\.nrrd$ ]]; then
+      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
     # round1 in 2p
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_2p\.nrrd$ ]]; then
-      stage="01_r1-2p"; ensure_dir "$ROOT/$stage/aligned"
+      stage="$STAGE_RBEST_2P"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
-    # round2 in r1
-    elif [[ "$bn" =~ ^${fish}_round2_.*_in_r1\.nrrd$ ]]; then
-      stage="02_rn-r1"; ensure_dir "$ROOT/$stage/aligned"
+    # remaining rounds in rbest
+    elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_r1\.nrrd$ ]]; then
+      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
-    # round2 in 2p (if present)
-    elif [[ "$bn" =~ ^${fish}_round2_.*_in_2p\.nrrd$ ]]; then
-      stage="03_rn-2p"; ensure_dir "$ROOT/$stage/aligned"
+    # remaining rounds in 2p (if present)
+    elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_2p\.nrrd$ ]]; then
+      stage="$STAGE_RN_2P"; ensure_dir "$ROOT/$stage/aligned"
       dest="$ROOT/$stage/aligned/$bn"
     # round1 ref (stage root)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_ref\.nrrd$ ]]; then
