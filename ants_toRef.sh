@@ -183,25 +183,26 @@ resolve_role_path() {
       echo "$REF_AVG_2P"
       ;;
 
-    confocal_r1)
-      # Canonical: raw/confocal_round1/<fish>_round1_channel1_GCaMP.nrrd
-      # Plus a few safe fallbacks in the same folder
-      local dir="$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round1"
-      _first_existing \
-        "$dir/${fish}_round1_channel1_GCaMP.nrrd" \
-        "$dir/${fish}_round1_*GCaMP*.nrrd" \
-        "$dir/round1_*GCaMP*.nrrd" \
-        "$dir/*GCaMP*.nrrd"
-      ;;
+    confocal_r*|confocal_round*)
+      # Support any round number in a consistent layout.
+      local round=""
+      if [[ "$role" =~ ^confocal_r([0-9]+)$ ]]; then
+        round="${BASH_REMATCH[1]}"
+      elif [[ "$role" =~ ^confocal_round([0-9]+)$ ]]; then
+        round="${BASH_REMATCH[1]}"
+      fi
 
-    # Optional but harmless: round 2 support, same pattern
-    confocal_r2|confocal_round2)
-      local dir2="$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round2"
+      if [[ -z "$round" ]]; then
+        echo ""
+        return 2
+      fi
+
+      local dir="$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round${round}"
       _first_existing \
-        "$dir2/${fish}_round2_channel1_GCaMP.nrrd" \
-        "$dir2/${fish}_round2_*GCaMP*.nrrd" \
-        "$dir2/round2_*GCaMP*.nrrd" \
-        "$dir2/*GCaMP*.nrrd"
+        "$dir/${fish}_round${round}_channel1_GCaMP.nrrd" \
+        "$dir/${fish}_round${round}_*GCaMP*.nrrd" \
+        "$dir/round${round}_*GCaMP*.nrrd" \
+        "$dir/*GCaMP*.nrrd"
       ;;
 
     *)
