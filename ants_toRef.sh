@@ -102,12 +102,14 @@ REF_AVG_2P="${REF_AVG_2P:-$REF_AVG_2P_DEFAULT}"
 MANIFEST_CSV="__MANIFEST_CSV__"
 MANIFEST_SHA256="__MANIFEST_SHA256__"
 DRY_RUN="__DRY_RUN__"
+MANIFEST_ROW="${MANIFEST_ROW:-}"
 
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
 if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
   echo "Mode     : CSV"
   echo "Manifest : ${MANIFEST_CSV} (sha256: ${MANIFEST_SHA256})"
+  [[ -n "${MANIFEST_ROW}" ]] && echo "Row only : ${MANIFEST_ROW}"
 else
   echo "Mode     : Legacy interactive (2P -> avg_2p)"
 fi
@@ -213,7 +215,11 @@ resolve_role_path() {
 }
 
 # Write a resolved manifest for provenance
-RESOLVED="$SCRATCH_BASE/experiments/_jobs/manifest_resolved_$(date +%Y%m%d_%H%M%S).csv"
+if [[ -n "${MANIFEST_ROW}" ]]; then
+  RESOLVED="$SCRATCH_BASE/experiments/_jobs/manifest_resolved_row${MANIFEST_ROW}_$(date +%Y%m%d_%H%M%S)_${SLURM_JOB_ID:-local}.csv"
+else
+  RESOLVED="$SCRATCH_BASE/experiments/_jobs/manifest_resolved_$(date +%Y%m%d_%H%M%S).csv"
+fi
 echo "row_idx,moving_fish,moving_role,fixed_fish,fixed_role,moving_path,fixed_path,output_prefix,status" > "$RESOLVED"
 
 # ---------- CSV mode ----------
@@ -244,6 +250,10 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     fi
 
     row=$((row+1))
+    if [[ -n "${MANIFEST_ROW}" && "$row" != "$MANIFEST_ROW" ]]; then
+      continue
+    fi
+    row_tag="row${row}"
     local_mrole="${moving_role,,}"
     local_frole="${fixed_role,,}"
 
@@ -276,11 +286,15 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     [[ -z "${MOV:-}" || ! -f "$MOV" ]] && { echo "ERROR: Missing MOVING file: $MOV" >&2; status="ERROR_MOVING"; }
     [[ -z "${FIX:-}" || ! -f "$FIX" ]] && { echo "ERROR: Missing FIXED file: $FIX" >&2; status="${status},ERROR_FIXED"; }
 
-    # Output prefix (unchanged)
+    # Output prefix (row-scoped to prevent collisions)
     if [[ "$local_mrole" == "anatomy_2p" && "$local_frole" == "avg_2p" ]]; then
-      outprefix="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg_to_avg2p/2P_to_avg2p_"
+      base_dir="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg_to_avg2p"
+      run_dir="$base_dir/$row_tag"
+      outprefix="$run_dir/2P_to_avg2p_"
     else
-      outprefix="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg/${local_mrole}_to_${local_frole}/${fixed_bucket}/${moving_fish}__to__${fixed_bucket}__${local_mrole}_to_${local_frole}_"
+      base_dir="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg/${local_mrole}_to_${local_frole}/${fixed_bucket}"
+      run_dir="$base_dir/$row_tag"
+      outprefix="$run_dir/${moving_fish}__to__${fixed_bucket}__${local_mrole}_to_${local_frole}_"
     fi
     echo "$row,$moving_fish,$local_mrole,$fixed_bucket,$local_frole,$MOV,$FIX,$outprefix,$status" >> "$RESOLVED"
 
@@ -292,7 +306,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
 
     # Run (unchanged)
     if [[ "$local_mrole" == "anatomy_2p" && "$local_frole" == "avg_2p" ]]; then
-      REGDIR="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg_to_avg2p"
+      REGDIR="$run_dir"
       LOGDIR="$REGDIR/logs"; mkdir -p "$LOGDIR"
       OP="$outprefix"
       if ! register_pair "$FIX" "$MOV" "$OP" "$LOGDIR/2P_to_avg2p.log"; then
@@ -303,7 +317,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
         cp -f "${OP}_aligned.nrrd" "$REGDIR/anatomy_2P_in_avg2p.nrrd"
       fi
     else
-      REGDIR="$(dirname "$outprefix")"
+      REGDIR="$run_dir"
       LOGDIR="$REGDIR/logs"; mkdir -p "$LOGDIR"
       if ! register_pair "$FIX" "$MOV" "$outprefix" "$LOGDIR/main.log"; then
         echo "ERROR: Registration failed for $moving_fish ($local_mrole) → ${fixed_bucket} ($local_frole). See $LOGDIR/main.log" >&2
@@ -380,6 +394,55 @@ fi
 chmod +x "$JOB"
 
 # Submit or run
+if [[ -n "${JOB_MANIFEST}" ]]; then
+  row_ids=()
+  row=0
+  while IFS= read -r raw || [[ -n "$raw" ]]; do
+    raw="${raw#$'\ufeff'}"
+    raw="${raw//$'\r'/}"
+    raw="${raw//$'\t'/,}"
+    [[ -z "${raw//[ ,]/}" ]] && continue
+    [[ "${raw:0:1}" == "#" ]] && continue
+    IFS=',' read -r moving_fish moving_role fixed_fish fixed_role mov_override fix_override <<< "$raw"
+    if [[ "${moving_fish,,}" == "moving_fish_id" ]]; then
+      continue
+    fi
+    row=$((row+1))
+    row_ids+=( "$row" )
+  done < "$JOB_MANIFEST"
+
+  if (( ${#row_ids[@]} == 0 )); then
+    echo "Manifest: no rows to submit."
+    exit 0
+  fi
+
+  if [[ "${PARTITION}" == "test" ]]; then
+    for r in "${row_ids[@]}"; do
+      echo "Running row $r interactively..."
+      MANIFEST_ROW="$r" bash "$JOB"
+    done
+  else
+    for r in "${row_ids[@]}"; do
+      sbatch \
+        --export=ALL,MANIFEST_ROW="$r" \
+        --mail-type="$MAIL_TYPE" \
+        --mail-user="$MAIL_USER" \
+        -p "$QUEUE" \
+        -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
+        -t "$TIME" \
+        -J "ants_to_avg2p_r${r}" \
+        -o "$JOBDIR/ants_to_avg2p_${STAMP}_r${r}.out" \
+        -e "$JOBDIR/ants_to_avg2p_${STAMP}_r${r}.err" \
+        "$JOB"
+      echo "Submitted row $r."
+    done
+    echo "  Job script: $JOB"
+    echo "  Manifest snapshot: $JOB_MANIFEST (sha256: ${JOB_MANIFEST_SHA})"
+    echo "  Logs: $JOBDIR/ants_to_avg2p_${STAMP}_r{N}.{out,err}"
+  fi
+  exit 0
+fi
+
 if [[ "${PARTITION}" == "test" ]]; then
   echo "Running interactively..."
   bash "$JOB"
@@ -396,8 +459,5 @@ else
     "$JOB"
   echo "Submitted job."
   echo "  Job script: $JOB"
-  if [[ -n "${JOB_MANIFEST}" ]]; then
-    echo "  Manifest snapshot: $JOB_MANIFEST (sha256: ${JOB_MANIFEST_SHA})"
-  fi
   echo "  Logs: $JOBDIR/ants_to_avg2p_${STAMP}.{out,err}"
 fi
