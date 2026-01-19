@@ -68,6 +68,8 @@ fi
 
 JOBDIR="$SCRATCH/experiments/_jobs"
 mkdir -p "$JOBDIR"
+JOB_CHDIR="${JOB_CHDIR:-$SCRATCH/experiments}"
+mkdir -p "$JOB_CHDIR"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 JOB="$JOBDIR/ants_to_avg2p_${STAMP}.sh"
 
@@ -396,6 +398,9 @@ chmod +x "$JOB"
 # Submit or run
 if [[ -n "${JOB_MANIFEST}" ]]; then
   row_ids=()
+  row_mfish=()
+  row_mrole=()
+  row_frole=()
   row=0
   while IFS= read -r raw || [[ -n "$raw" ]]; do
     raw="${raw#$'\ufeff'}"
@@ -409,6 +414,14 @@ if [[ -n "${JOB_MANIFEST}" ]]; then
     fi
     row=$((row+1))
     row_ids+=( "$row" )
+    moving_fish="${moving_fish//[[:space:]]/}"
+    moving_role="${moving_role//[[:space:]]/}"
+    fixed_role="${fixed_role//[[:space:]]/}"
+    moving_role="${moving_role,,}"
+    fixed_role="${fixed_role,,}"
+    row_mfish[$row]="$moving_fish"
+    row_mrole[$row]="$moving_role"
+    row_frole[$row]="$fixed_role"
   done < "$JOB_MANIFEST"
 
   if (( ${#row_ids[@]} == 0 )); then
@@ -418,23 +431,39 @@ if [[ -n "${JOB_MANIFEST}" ]]; then
 
   if [[ "${PARTITION}" == "test" ]]; then
     for r in "${row_ids[@]}"; do
-      echo "Running row $r interactively..."
-      MANIFEST_ROW="$r" bash "$JOB"
+      mfish="${row_mfish[$r]:-unknown}"
+      mrole="${row_mrole[$r]:-role}"
+      frole="${row_frole[$r]:-role}"
+      job_base="ants_${mfish}_${mrole}_to_${frole}"
+      job_base="$(printf '%s' "$job_base" | tr -c 'A-Za-z0-9_' '_' )"
+      echo "Running row $r (${job_base}_r${r}) interactively..."
+      ( cd "$JOB_CHDIR" && MANIFEST_ROW="$r" bash "$JOB" )
     done
   else
     for r in "${row_ids[@]}"; do
+      mfish="${row_mfish[$r]:-unknown}"
+      mrole="${row_mrole[$r]:-role}"
+      frole="${row_frole[$r]:-role}"
+      job_base="ants_${mfish}_${mrole}_to_${frole}"
+      job_base="$(printf '%s' "$job_base" | tr -c 'A-Za-z0-9_' '_' )"
+      suffix="_r${r}"
+      max_job=120
+      limit=$((max_job - ${#suffix}))
+      (( limit < 1 )) && limit=1
+      job_name="${job_base:0:limit}${suffix}"
       sbatch \
+        --chdir="$JOB_CHDIR" \
         --export=ALL,MANIFEST_ROW="$r" \
         --mail-type="$MAIL_TYPE" \
         --mail-user="$MAIL_USER" \
         -p "$QUEUE" \
         -N 1 -n 1 -c "$CPUS" --mem="$MEM" \
         -t "$TIME" \
-        -J "ants_to_avg2p_r${r}" \
+        -J "$job_name" \
         -o "$JOBDIR/ants_to_avg2p_${STAMP}_r${r}.out" \
         -e "$JOBDIR/ants_to_avg2p_${STAMP}_r${r}.err" \
         "$JOB"
-      echo "Submitted row $r."
+      echo "Submitted row $r as $job_name."
     done
     echo "  Job script: $JOB"
     echo "  Manifest snapshot: $JOB_MANIFEST (sha256: ${JOB_MANIFEST_SHA})"
@@ -445,9 +474,10 @@ fi
 
 if [[ "${PARTITION}" == "test" ]]; then
   echo "Running interactively..."
-  bash "$JOB"
+  ( cd "$JOB_CHDIR" && bash "$JOB" )
 else
   sbatch \
+    --chdir="$JOB_CHDIR" \
     --mail-type="$MAIL_TYPE" \
     --mail-user="$MAIL_USER" \
     -p "$QUEUE" \
