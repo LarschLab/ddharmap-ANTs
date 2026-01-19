@@ -177,9 +177,10 @@ resolve_role_path() {
 
   case "$role" in
     anatomy_2p)
-      # Prefer new raw/anatomy_2P layout, fall back to legacy fixed/
+      # Prefer raw/2pA, fall back to fixed/
       _first_existing \
-        "$SCRATCH_BASE/experiments/subjects/$fish/raw/anatomy_2P/${fish}_anatomy_2P_GCaMP.nrrd" \
+        "$SCRATCH_BASE/experiments/subjects/$fish/raw/2pA/${fish}_anatomy_2P_GCaMP.nrrd" \
+        "$SCRATCH_BASE/experiments/subjects/$fish/raw/2pA/${fish}_anatomy_2p_GCaMP.nrrd" \
         "$SCRATCH_BASE/experiments/subjects/$fish/fixed/anatomy_2P_ref_GCaMP.nrrd"
       ;;
 
@@ -188,7 +189,7 @@ resolve_role_path() {
       ;;
 
     confocal_r*|confocal_round*)
-      # Support any round number in a consistent layout.
+      # Support any round number with Rbest/Rn layout.
       local round=""
       if [[ "$role" =~ ^confocal_r([0-9]+)$ ]]; then
         round="${BASH_REMATCH[1]}"
@@ -201,12 +202,31 @@ resolve_role_path() {
         return 2
       fi
 
-      local dir="$SCRATCH_BASE/experiments/subjects/$fish/raw/confocal_round${round}"
-      _first_existing \
-        "$dir/${fish}_round${round}_channel1_GCaMP.nrrd" \
-        "$dir/${fish}_round${round}_*GCaMP*.nrrd" \
-        "$dir/round${round}_*GCaMP*.nrrd" \
-        "$dir/*GCaMP*.nrrd"
+      local dir_candidates=()
+      if [[ "$round" == "1" ]]; then
+        dir_candidates+=( "$SCRATCH_BASE/experiments/subjects/$fish/raw/Rbest" )
+      else
+        dir_candidates+=( "$SCRATCH_BASE/experiments/subjects/$fish/raw/Rn" )
+      fi
+
+      local dir candidate
+      for dir in "${dir_candidates[@]}"; do
+        [[ -d "$dir" ]] || continue
+        if [[ "$dir" == */Rbest ]]; then
+          candidate="$(_first_existing \
+            "$dir/${fish}_*GCaMP*.nrrd" \
+            "$dir/*GCaMP*.nrrd")"
+        else
+          candidate="$(_first_existing \
+            "$dir/${fish}_round${round}_channel1_GCaMP.nrrd" \
+            "$dir/${fish}_round${round}_*GCaMP*.nrrd" \
+            "$dir/round${round}_*GCaMP*.nrrd" \
+            "$dir/*GCaMP*.nrrd")"
+        fi
+        [[ -n "$candidate" ]] && { echo "$candidate"; return 0; }
+      done
+      echo ""
+      return 2
       ;;
 
     *)
@@ -214,6 +234,48 @@ resolve_role_path() {
       return 2
       ;;
   esac
+}
+
+# Role helpers for output naming
+role_round() {
+  local role="${1,,}"
+  if [[ "$role" =~ ^confocal_r([0-9]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}"; return 0
+  elif [[ "$role" =~ ^confocal_round([0-9]+)$ ]]; then
+    echo "${BASH_REMATCH[1]}"; return 0
+  fi
+  echo ""
+  return 1
+}
+
+role_label() {
+  local role="${1,,}"
+  case "$role" in
+    anatomy_2p) echo "2pA" ;;
+    avg_2p)     echo "ref" ;;
+    confocal_r*|confocal_round*)
+      local r=""; r="$(role_round "$role" || true)"
+      if [[ "$r" == "1" ]]; then echo "rbest"; else echo "r${r}"; fi
+      ;;
+    *) echo "$role" ;;
+  esac
+}
+
+role_group() {
+  local role="${1,,}"
+  case "$role" in
+    anatomy_2p) echo "2pA" ;;
+    avg_2p)     echo "ref" ;;
+    confocal_r*|confocal_round*)
+      local r=""; r="$(role_round "$role" || true)"
+      if [[ "$r" == "1" ]]; then echo "Rbest"; else echo "Rn"; fi
+      ;;
+    *) echo "$role" ;;
+  esac
+}
+
+sanitize_tag() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_'
 }
 
 # Write a resolved manifest for provenance
@@ -288,15 +350,24 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     [[ -z "${MOV:-}" || ! -f "$MOV" ]] && { echo "ERROR: Missing MOVING file: $MOV" >&2; status="ERROR_MOVING"; }
     [[ -z "${FIX:-}" || ! -f "$FIX" ]] && { echo "ERROR: Missing FIXED file: $FIX" >&2; status="${status},ERROR_FIXED"; }
 
-    # Output prefix (row-scoped to prevent collisions)
+    # Output prefix (informative names, row-scoped to prevent collisions)
     if [[ "$local_mrole" == "anatomy_2p" && "$local_frole" == "avg_2p" ]]; then
       base_dir="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg_to_avg2p"
       run_dir="$base_dir/$row_tag"
       outprefix="$run_dir/2P_to_avg2p_"
     else
-      base_dir="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg/${local_mrole}_to_${local_frole}/${fixed_bucket}"
-      run_dir="$base_dir/$row_tag"
-      outprefix="$run_dir/${moving_fish}__to__${fixed_bucket}__${local_mrole}_to_${local_frole}_"
+      moving_label="$(role_label "$local_mrole")"
+      fixed_label="$(role_label "$local_frole")"
+      moving_group="$(role_group "$local_mrole")"
+      fixed_group="$(role_group "$local_frole")"
+      if [[ -n "${fixed_bucket:-}" && "$fixed_bucket" != "$moving_fish" && "$fixed_bucket" != "global" ]]; then
+        fixed_label="${fixed_label}_${fixed_bucket}"
+      fi
+      run_tag_base="$(sanitize_tag "${moving_label}_to_${fixed_label}")"
+      run_tag="${run_tag_base}_row${row}"
+      group_dir="$(sanitize_tag "${moving_group}_to_${fixed_group}")"
+      run_dir="$SCRATCH_BASE/experiments/subjects/$moving_fish/reg/${group_dir}/${run_tag}"
+      outprefix="$run_dir/${run_tag}_"
     fi
     echo "$row,$moving_fish,$local_mrole,$fixed_bucket,$local_frole,$MOV,$FIX,$outprefix,$status" >> "$RESOLVED"
 
