@@ -3,17 +3,17 @@
 #
 # WHAT IT DOES
 #   PULL:
-#     NAS/<owner>/<fish>/02_reg/00_preprocessing → WORK mirror (2p_anatomy + rbest + rn; keeps r1 as fallback)
+#     NAS/<owner>/<fish>/02_reg/00_preprocessing → WORK mirror (2p_anatomy + rbest + rn)
 #     WORK mirror → SCRATCH/raw + SCRATCH/fixed:
-#       rbest → confocal_round1, rn → confocal_round2, plus nas symlink + .origin.json
+#       2p_anatomy → raw/2pA, rbest → raw/Rbest, rn → raw/Rn, plus nas symlink + .origin.json
 #   CANONICALIZE:
 #     Read SCRATCH/reg (+ optional SCRATCH/reg_to_avg2p)
 #     Write canonical files into WORK/subjects/<fish>/02_reg/_canonical:
-#       <fish>_<source>_in_<space>.nrrd, where <space> ∈ {2p, ref, r1/r2 legacy round labels}
+#       <fish>_<source>_in_<space>.nrrd, where <space> ∈ {2p, ref, round1 (Rbest), roundN (Rn)}
 #   PUBLISH:
 #     Use SCRATCH/<fish>/nas symlink (truth) to find NAS/<owner>/<fish>
 #     Copy canonical files → NAS/02_reg stages:
-#       01_rbest-2p, 02_rn-rbest, 03_rn-2p, 04_r1-ref, 05_r2-ref, 06_total-ref, 08_2pa-ref
+#       01_rbest-2p, 02_rn-rbest, 03_rn-2p, 04_rbest-ref, 05_rn-ref, 06_total-ref, 08_2pa-ref
 #
 # USAGE
 #   sync_min.sh [--pull|--push|--both] [--owner NAME | --nas-project-root PATH]
@@ -69,8 +69,8 @@ Options:
   --force              Allow overwrites at destinations
   --dry-run            Print actions without writing
 Notes:
-  - 00_preprocessing now expects rbest (best round) and rn (remaining rounds). r1 is still accepted as a fallback.
-  - rbest is treated as "round1" downstream; rn populates round2+ paths on SCRATCH/NAS.
+  - 00_preprocessing expects rbest (best round) and rn (remaining rounds).
+  - rbest populates raw/Rbest; rn populates raw/Rn; 2p_anatomy populates raw/2pA.
 USAGE
   exit 1
 }
@@ -117,6 +117,42 @@ extract_row_tag() {
   else
     echo ""
   fi
+}
+extract_run_tag() {
+  local p="$1"
+  if [[ "$p" =~ /reg/[^/]+/([^/]+)/ ]]; then
+    local tag="${BASH_REMATCH[1]}"
+    if [[ "$tag" != "logs" ]]; then
+      echo "$tag"
+      return 0
+    fi
+  fi
+  echo ""
+  return 1
+}
+extract_subtag() {
+  local p="$1" t=""
+  t="$(extract_run_tag "$p")"
+  [[ -n "$t" ]] && { echo "$t"; return 0; }
+  t="$(extract_row_tag "$p")"
+  echo "$t"
+}
+reg_stage_for_path() {
+  local p="$1"
+  if [[ "$p" == *"/Rbest_to_2pA/"* ]]; then
+    echo "$STAGE_RBEST_2P"
+    return 0
+  fi
+  if [[ "$p" == *"/Rn_to_Rbest/"* ]]; then
+    echo "$STAGE_RN_RBEST"
+    return 0
+  fi
+  if [[ "$p" == *"/Rn_to_2pA/"* ]]; then
+    echo "$STAGE_RN_2P"
+    return 0
+  fi
+  echo ""
+  return 1
 }
 find_scratch_subj() {
   local fish="$1" top="$SCRATCH_BASE/subjects/$fish"
@@ -182,9 +218,9 @@ pull_one() {
   local WORK_PRE="$WORK_SUBJ/02_reg/00_preprocessing"
   local RAW="$SCR_SUBJ/raw" FIXED="$SCR_SUBJ/fixed"
 
-  # 1) Mirror preprocessing to WORK (rbest + rn; keep r1 for legacy)
+  # 1) Mirror preprocessing to WORK (rbest + rn)
   ensure_dir "$WORK_PRE"
-  for sub in 2p_anatomy rbest r1 rn; do
+  for sub in 2p_anatomy rbest rn; do
     if [[ -d "$PRE/$sub" ]]; then
       ensure_dir "$WORK_PRE/$sub"
       rsync_cp "$PRE/$sub/" "$WORK_PRE/$sub/"
@@ -193,33 +229,30 @@ pull_one() {
     fi
   done
 
-  # Choose best-round source (rbest preferred; r1 legacy fallback)
+  # Choose best-round source (rbest only)
   local BEST_SRC=""
   if [[ -d "$WORK_PRE/rbest" ]]; then
     BEST_SRC="$WORK_PRE/rbest"
-  elif [[ -d "$WORK_PRE/r1" ]]; then
-    BEST_SRC="$WORK_PRE/r1"
-    log "  INFO: rbest missing; using r1 as best-round fallback."
   else
-    log "  WARN: no rbest/r1 found under 00_preprocessing."
+    log "  WARN: no rbest found under 00_preprocessing."
   fi
 
   # 2) Stage SCRATCH raw/fixed (respect names for downstream)
-  ensure_dir "$RAW/anatomy_2P" "$RAW/confocal_round1" "$RAW/confocal_round2" "$FIXED"
-  [[ -d "$WORK_PRE/2p_anatomy" ]] && rsync_cp "$WORK_PRE/2p_anatomy/" "$RAW/anatomy_2P/" || true
-  [[ -n "$BEST_SRC"           ]] && rsync_cp "$BEST_SRC/"             "$RAW/confocal_round1/" || true
-  [[ -d "$WORK_PRE/rn"         ]] && rsync_cp "$WORK_PRE/rn/"         "$RAW/confocal_round2/" || true
+  ensure_dir "$RAW/2pA" "$RAW/Rbest" "$RAW/Rn" "$FIXED"
+  [[ -d "$WORK_PRE/2p_anatomy" ]] && rsync_cp "$WORK_PRE/2p_anatomy/" "$RAW/2pA/" || true
+  [[ -n "$BEST_SRC"           ]] && rsync_cp "$BEST_SRC/"             "$RAW/Rbest/" || true
+  [[ -d "$WORK_PRE/rn"         ]] && rsync_cp "$WORK_PRE/rn/"         "$RAW/Rn/" || true
 
   # Fixed refs (first GCaMP found; skip if already present unless --force)
   shopt -s nullglob
-  local gA=( "$RAW/anatomy_2P/"*GCaMP*.nrrd )
-  local gR1=( "$RAW/confocal_round1/"*GCaMP*.nrrd )
+  local gA=( "$RAW/2pA/"*GCaMP*.nrrd )
+  local gB=( "$RAW/Rbest/"*GCaMP*.nrrd )
   shopt -u nullglob
   if (( FORCE )) || [[ ! -f "$FIXED/anatomy_2P_ref_GCaMP.nrrd" ]]; then
     [[ ${#gA[@]} -gt 0 ]] && rsync_cp "${gA[0]}" "$FIXED/anatomy_2P_ref_GCaMP.nrrd"
   fi
   if (( FORCE )) || [[ ! -f "$FIXED/round1_ref_GCaMP.nrrd" ]]; then
-    [[ ${#gR1[@]} -gt 0 ]] && rsync_cp "${gR1[0]}" "$FIXED/round1_ref_GCaMP.nrrd"
+    [[ ${#gB[@]} -gt 0 ]] && rsync_cp "${gB[0]}" "$FIXED/round1_ref_GCaMP.nrrd"
   fi
 
   # 3) Traceability on SCRATCH
@@ -284,8 +317,8 @@ canonicalize_one() {
   for src in "${files[@]}"; do
     local base="$(basename "$src")"
     local out="$base"
-    local row_tag=""
-    row_tag="$(extract_row_tag "$src")"
+    local subtag=""
+    subtag="$(extract_subtag "$src")"
 
     # Keep these two distinct
     if [[ "$base" == "2P_to_avg2p__aligned.nrrd" ]]; then
@@ -294,32 +327,38 @@ canonicalize_one() {
       out="${fish}_anatomy_2P_in_ref.nrrd"
     fi
 
-    # New role-based outputs (confocal_r1→confocal_r2, confocal_r2→anatomy_2p)
-    if [[ "$src" == *"/confocal_r1_to_confocal_r2/"* ]]; then
-      case "$base" in
-        *__aligned.nrrd)        out="${fish}_round1_GCaMP_in_r2.nrrd" ;;
-        *_0GenericAffine.mat)   out="${fish}_round1_GCaMP_to_r2_0GenericAffine.mat" ;;
-        *_1Warp.nii.gz)         out="${fish}_round1_GCaMP_to_r2_1Warp.nii.gz" ;;
-        *_1InverseWarp.nii.gz)  out="${fish}_round1_GCaMP_to_r2_1InverseWarp.nii.gz" ;;
-      esac
-    elif [[ "$src" == *"/confocal_r2_to_anatomy_2p/"* ]]; then
-      case "$base" in
-        *__aligned.nrrd)        out="${fish}_round2_GCaMP_in_2p.nrrd" ;;
-        *_0GenericAffine.mat)   out="${fish}_round2_GCaMP_to_2p_0GenericAffine.mat" ;;
-        *_1Warp.nii.gz)         out="${fish}_round2_GCaMP_to_2p_1Warp.nii.gz" ;;
-        *_1InverseWarp.nii.gz)  out="${fish}_round2_GCaMP_to_2p_1InverseWarp.nii.gz" ;;
-      esac
-    fi
-
-    # --- SPECIAL-CASE FIRST: GCaMP aligned from SCRATCH/.../reg/ are relative refs ---
-    # round1_GCaMP_to_ref_aligned.nrrd  => _in_2p.nrrd
-    # round2_GCaMP_to_ref_aligned.nrrd  => _in_r1.nrrd
+    # New reg outputs (Rbest/Rn layout)
     if [[ "$src" == *"/reg/"* ]]; then
-        if [[ "$base" =~ ^round1_GCaMP_to_ref_aligned\.nrrd$ ]]; then
-        out="${fish}_round1_GCaMP_in_2p.nrrd"
-        elif [[ "$base" =~ ^round2_GCaMP_to_ref_aligned\.nrrd$ ]]; then
-        out="${fish}_round2_GCaMP_in_r1.nrrd"
-        fi
+      tag="$base"
+      case "$base" in
+        *__aligned.nrrd)        tag="${base%__aligned.nrrd}" ;;
+        *_0GenericAffine.mat)   tag="${base%_0GenericAffine.mat}" ;;
+        *_1Warp.nii.gz)         tag="${base%_1Warp.nii.gz}" ;;
+        *_1InverseWarp.nii.gz)  tag="${base%_1InverseWarp.nii.gz}" ;;
+      esac
+      tag_lc="${tag,,}"
+      if [[ "$tag_lc" =~ ^(.*)_row[0-9]+$ ]]; then
+        tag_lc="${BASH_REMATCH[1]}"
+      fi
+
+      round=""
+      target=""
+      if [[ "$tag_lc" =~ ^rbest_to_2pa(_.*)?$ ]]; then
+        round="1"; target="2p"
+      elif [[ "$tag_lc" =~ ^r([0-9]+)_to_rbest(_.*)?$ ]]; then
+        round="${BASH_REMATCH[1]}"; target="r1"
+      elif [[ "$tag_lc" =~ ^r([0-9]+)_to_2pa(_.*)?$ ]]; then
+        round="${BASH_REMATCH[1]}"; target="2p"
+      fi
+
+      if [[ -n "$round" && -n "$target" ]]; then
+        case "$base" in
+          *__aligned.nrrd)        out="${fish}_round${round}_GCaMP_in_${target}.nrrd" ;;
+          *_0GenericAffine.mat)   out="${fish}_round${round}_GCaMP_to_${target}_0GenericAffine.mat" ;;
+          *_1Warp.nii.gz)         out="${fish}_round${round}_GCaMP_to_${target}_1Warp.nii.gz" ;;
+          *_1InverseWarp.nii.gz)  out="${fish}_round${round}_GCaMP_to_${target}_1InverseWarp.nii.gz" ;;
+        esac
+      fi
     fi
 
     # ---------- NRRD renaming (generic) ----------
@@ -346,7 +385,7 @@ canonicalize_one() {
         out="${out/to_avg2p_/to_ref_}"
         [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
       else
-        # relative reg/: round1 → in_2p, round2 → in_r1
+        # relative reg/: round1 (Rbest) → in_2p, roundN → in_r1
         if   [[ "$out" =~ ^round1_GCaMP_to_ref ]]; then out="${out/round1_GCaMP_to_ref/round1_GCaMP_in_2p}"
         elif [[ "$out" =~ ^round2_GCaMP_to_ref ]]; then out="${out/round2_GCaMP_to_ref/round2_GCaMP_in_r1}"; fi
         [[ "$out" == ${fish}_* ]] || out="${fish}_$out"
@@ -354,9 +393,9 @@ canonicalize_one() {
     fi
 
     local dst="$CANON/$out"
-    if [[ -n "$row_tag" ]]; then
-      ensure_dir "$CANON/$row_tag"
-      dst="$CANON/$row_tag/$out"
+    if [[ -n "$subtag" ]]; then
+      ensure_dir "$CANON/$subtag"
+      dst="$CANON/$subtag/$out"
     fi
     if (( FORCE )) || [[ ! -f "$dst" ]]; then
       rsync_cp "$src" "$dst"
@@ -376,96 +415,26 @@ stage_mats_logs_one() {
   local REG_AVG="$SCR_SUBJ/reg_to_avg2p"
   local REG_WORK="$WORK_BASE/subjects/$fish/02_reg"
 
-  # ---- from reg/ (relative: best vs remaining) ----
+  # ---- from reg/ (Rbest/Rn layout) ----
   if [[ -d "$REG" ]]; then
     shopt -s nullglob globstar
-    for m in "$REG"/**/round*_GCaMP_to_ref*GenericAffine.mat "$REG"/**/round*_GCaMP_to_ref*Warp.nii.gz "$REG"/**/round*_GCaMP_to_ref*InverseWarp.nii.gz; do
+    for m in "$REG"/**/*0GenericAffine.mat "$REG"/**/*1Warp.nii.gz "$REG"/**/*1InverseWarp.nii.gz; do
       [[ -f "$m" ]] || continue
-      b="$(basename "$m")"
-      r="1"; [[ "$b" =~ ^round([0-9]+)_ ]] && r="${BASH_REMATCH[1]}"
-      stg="$STAGE_RBEST_2P"; [[ "$r" != "1" ]] && stg="$STAGE_RN_RBEST"
-      row_tag="$(extract_row_tag "$m")"
+      stg="$(reg_stage_for_path "$m")"
+      [[ -n "$stg" ]] || continue
+      run_tag="$(extract_run_tag "$m")"
       dest_dir="$REG_WORK/$stg/transMatrices"
-      [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
+      [[ -n "$run_tag" ]] && dest_dir="$dest_dir/$run_tag"
       ensure_dir "$dest_dir"
-      rsync_cp "$m" "$dest_dir/${fish}_$b"
+      rsync_cp "$m" "$dest_dir/${fish}_$(basename "$m")"
     done
-    # logs → split by _rN (default r1)
-    if [[ -d "$REG/logs" ]]; then
-      for lf in "$REG/logs/"*; do
-        [[ -f "$lf" ]] || continue
-        bn="$(basename "$lf")"
-        stg="$STAGE_RBEST_2P"; [[ "$bn" =~ _r([0-9]+) && "${BASH_REMATCH[1]}" != "1" ]] && stg="$STAGE_RN_RBEST"
-        dest_dir="$REG_WORK/$stg/logs"
-        ensure_dir "$dest_dir"
-        rsync_cp "$lf" "$dest_dir/$bn"
-      done
-    fi
-    for lf in "$REG"/row*/logs/*; do
+    for lf in "$REG"/**/logs/*; do
       [[ -f "$lf" ]] || continue
-      bn="$(basename "$lf")"
-      stg="$STAGE_RBEST_2P"; [[ "$bn" =~ _r([0-9]+) && "${BASH_REMATCH[1]}" != "1" ]] && stg="$STAGE_RN_RBEST"
-      row_tag="$(extract_row_tag "$lf")"
+      stg="$(reg_stage_for_path "$lf")"
+      [[ -n "$stg" ]] || continue
+      run_tag="$(extract_run_tag "$lf")"
       dest_dir="$REG_WORK/$stg/logs"
-      [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
-      ensure_dir "$dest_dir"
-      rsync_cp "$lf" "$dest_dir/$bn"
-    done
-    shopt -u globstar nullglob
-  fi
-
-  # ---- new role-based: r1 -> r2 ----
-  if [[ -d "$REG/confocal_r1_to_confocal_r2" ]]; then
-    shopt -s nullglob globstar
-    for m in "$REG/confocal_r1_to_confocal_r2"/**/*0GenericAffine.mat "$REG/confocal_r1_to_confocal_r2"/**/*1Warp.nii.gz "$REG/confocal_r1_to_confocal_r2"/**/*1InverseWarp.nii.gz; do
-      [[ -f "$m" ]] || continue
-      bn=""
-      case "$(basename "$m")" in
-        *_0GenericAffine.mat)  bn="${fish}_round1_GCaMP_to_r2_0GenericAffine.mat" ;;
-        *_1Warp.nii.gz)        bn="${fish}_round1_GCaMP_to_r2_1Warp.nii.gz" ;;
-        *_1InverseWarp.nii.gz) bn="${fish}_round1_GCaMP_to_r2_1InverseWarp.nii.gz" ;;
-        *) continue ;;
-      esac
-      row_tag="$(extract_row_tag "$m")"
-      dest_dir="$REG_WORK/$STAGE_RN_RBEST/transMatrices"
-      [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
-      ensure_dir "$dest_dir"
-      rsync_cp "$m" "$dest_dir/$bn"
-    done
-    for lf in "$REG/confocal_r1_to_confocal_r2"/**/logs/*; do
-      [[ -f "$lf" ]] || continue
-      row_tag="$(extract_row_tag "$lf")"
-      dest_dir="$REG_WORK/$STAGE_RN_RBEST/logs"
-      [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
-      ensure_dir "$dest_dir"
-      rsync_cp "$lf" "$dest_dir/$(basename "$lf")"
-    done
-    shopt -u globstar nullglob
-  fi
-
-  # ---- new role-based: r2 -> 2p ----
-  if [[ -d "$REG/confocal_r2_to_anatomy_2p" ]]; then
-    shopt -s nullglob globstar
-    for m in "$REG/confocal_r2_to_anatomy_2p"/**/*0GenericAffine.mat "$REG/confocal_r2_to_anatomy_2p"/**/*1Warp.nii.gz "$REG/confocal_r2_to_anatomy_2p"/**/*1InverseWarp.nii.gz; do
-      [[ -f "$m" ]] || continue
-      bn=""
-      case "$(basename "$m")" in
-        *_0GenericAffine.mat)  bn="${fish}_round2_GCaMP_to_2p_0GenericAffine.mat" ;;
-        *_1Warp.nii.gz)        bn="${fish}_round2_GCaMP_to_2p_1Warp.nii.gz" ;;
-        *_1InverseWarp.nii.gz) bn="${fish}_round2_GCaMP_to_2p_1InverseWarp.nii.gz" ;;
-        *) continue ;;
-      esac
-      row_tag="$(extract_row_tag "$m")"
-      dest_dir="$REG_WORK/$STAGE_RN_2P/transMatrices"
-      [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
-      ensure_dir "$dest_dir"
-      rsync_cp "$m" "$dest_dir/$bn"
-    done
-    for lf in "$REG/confocal_r2_to_anatomy_2p"/**/logs/*; do
-      [[ -f "$lf" ]] || continue
-      row_tag="$(extract_row_tag "$lf")"
-      dest_dir="$REG_WORK/$STAGE_RN_2P/logs"
-      [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
+      [[ -n "$run_tag" ]] && dest_dir="$dest_dir/$run_tag"
       ensure_dir "$dest_dir"
       rsync_cp "$lf" "$dest_dir/$(basename "$lf")"
     done
@@ -491,7 +460,7 @@ stage_mats_logs_one() {
       b="$(basename "$m")"
       r="1"; [[ "$b" =~ ^round([0-9]+)_ ]] && r="${BASH_REMATCH[1]}"
       bn="${b/to_avg2p_/to_ref_}"
-      stg="04_r1-ref"; [[ "$r" != "1" ]] && stg="05_r${r}-ref"
+      stg="04_rbest-ref"; [[ "$r" != "1" ]] && stg="05_rn-ref"
       row_tag="$(extract_row_tag "$m")"
       dest_dir="$REG_WORK/$stg/transMatrices"
       [[ -n "$row_tag" ]] && dest_dir="$dest_dir/$row_tag"
@@ -531,9 +500,9 @@ publish_one() {
   for f in "$CANON"/**/*.nrrd; do
     [[ -f "$f" ]] || continue
     local bn="$(basename "$f")" dest="" stage="" sub="aligned"
-    local row_tag="" row_path=""
-    row_tag="$(extract_row_tag "$f")"
-    [[ -n "$row_tag" ]] && row_path="/$row_tag"
+    local subtag="" row_path=""
+    subtag="$(extract_subtag "$f")"
+    [[ -n "$subtag" ]] && row_path="/$subtag"
 
     # per-channel in ref → 06_total-ref/aligned/roundN
     if [[ "$bn" =~ ^${fish}_round([0-9]+)_channel[0-9]+_.*_in_ref\.nrrd$ ]]; then
@@ -544,11 +513,11 @@ publish_one() {
     elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" || "$bn" == "${fish}_2P_in_ref.nrrd" ]]; then
       stage="08_2pa-ref"; ensure_dir "$ROOT/$stage${row_path}/aligned"
       dest="$ROOT/$stage${row_path}/aligned/$bn"
-    # round1 in other confocal rounds (best → rn)
+    # rbest in other rounds (best → rn)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_r[0-9]+\.nrrd$ ]]; then
       stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage${row_path}/aligned"
       dest="$ROOT/$stage${row_path}/aligned/$bn"
-    # round1 in 2p
+    # rbest in 2p
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_2p\.nrrd$ ]]; then
       stage="$STAGE_RBEST_2P"; ensure_dir "$ROOT/$stage${row_path}/aligned"
       dest="$ROOT/$stage${row_path}/aligned/$bn"
@@ -560,13 +529,13 @@ publish_one() {
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_2p\.nrrd$ ]]; then
       stage="$STAGE_RN_2P"; ensure_dir "$ROOT/$stage${row_path}/aligned"
       dest="$ROOT/$stage${row_path}/aligned/$bn"
-    # round1 ref (stage root)
+    # rbest ref (stage root)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_ref\.nrrd$ ]]; then
-      stage="04_r1-ref"; ensure_dir "$ROOT/$stage${row_path}"
+      stage="04_rbest-ref"; ensure_dir "$ROOT/$stage${row_path}"
       dest="$ROOT/$stage${row_path}/$bn"
-    # round2 ref (stage root)
-    elif [[ "$bn" =~ ^${fish}_round2_.*_in_ref\.nrrd$ ]]; then
-      stage="05_r2-ref"; ensure_dir "$ROOT/$stage${row_path}"
+    # roundN (N>=2) ref (stage root)
+    elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_ref\.nrrd$ ]]; then
+      stage="05_rn-ref"; ensure_dir "$ROOT/$stage${row_path}"
       dest="$ROOT/$stage${row_path}/$bn"
     else
       log "  WARN: no NAS mapping for $bn (skipped)."
