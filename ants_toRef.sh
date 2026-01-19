@@ -325,7 +325,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     if [[ -n "${mov_override:-}" ]]; then
       MOV="$mov_override"
     else
-      MOV="$(resolve_role_path "$moving_fish" "$local_mrole")"
+      MOV="$(resolve_role_path "$moving_fish" "$local_mrole" || true)"
     fi
 
     # Resolve fixed
@@ -337,7 +337,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
         FIX="$REF_AVG_2P"; fixed_bucket="global"
       else
         if [[ -z "${fixed_fish:-}" ]]; then fixed_fish="$moving_fish"; fi
-        FIX="$(resolve_role_path "$fixed_fish" "$local_frole")"
+        FIX="$(resolve_role_path "$fixed_fish" "$local_frole" || true)"
         fixed_bucket="$fixed_fish"
       fi
     fi
