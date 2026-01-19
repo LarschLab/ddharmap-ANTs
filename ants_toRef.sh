@@ -167,10 +167,18 @@ resolve_role_path() {
 
   # helper: return first existing file from a candidate list
   _first_existing() {
-    local f
-    for f in "$@"; do
-      [[ -f "$f" ]] && { echo "$f"; return 0; }
+    local pat f
+    shopt -s nullglob
+    for pat in "$@"; do
+      if [[ "$pat" == *'*'* || "$pat" == *'?'* || "$pat" == *'['* ]]; then
+        for f in $pat; do
+          [[ -f "$f" ]] && { echo "$f"; shopt -u nullglob; return 0; }
+        done
+      else
+        [[ -f "$pat" ]] && { echo "$pat"; shopt -u nullglob; return 0; }
+      fi
     done
+    shopt -u nullglob
     echo ""
     return 1
   }
