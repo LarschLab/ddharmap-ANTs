@@ -110,6 +110,10 @@ rsync_cp() {
   fi
   rsync "${add[@]}" "$@"
 }
+count_files() {
+  local dir="$1"
+  find "$dir" -type f 2>/dev/null | wc -l | tr -d ' '
+}
 extract_row_tag() {
   local p="$1"
   if [[ "$p" =~ /row([0-9]+)(/|$) ]]; then
@@ -121,6 +125,13 @@ extract_row_tag() {
 extract_run_tag() {
   local p="$1"
   if [[ "$p" =~ /reg/[^/]+/([^/]+)/ ]]; then
+    local tag="${BASH_REMATCH[1]}"
+    if [[ "$tag" != "logs" ]]; then
+      echo "$tag"
+      return 0
+    fi
+  fi
+  if [[ "$p" =~ /_canonical/([^/]+)/ ]]; then
     local tag="${BASH_REMATCH[1]}"
     if [[ "$tag" != "logs" ]]; then
       echo "$tag"
@@ -497,7 +508,16 @@ publish_one() {
   ensure_dir "$ROOT"
 
   shopt -s nullglob globstar
-  for f in "$CANON"/**/*.nrrd; do
+  local nrrds=( "$CANON"/**/*.nrrd )
+  if (( ${#nrrds[@]} == 0 )); then
+    if (( DRY )); then
+      log "  INFO: no canonical NRRDs in $CANON (dry-run doesn't create them)."
+    else
+      log "  INFO: no canonical NRRDs in $CANON."
+    fi
+  else
+    local nrrd_copied=0 nrrd_skipped=0
+    for f in "${nrrds[@]}"; do
     [[ -f "$f" ]] || continue
     local bn="$(basename "$f")" dest="" stage="" sub="aligned"
     local subtag="" row_path=""
@@ -544,11 +564,15 @@ publish_one() {
 
     if (( FORCE )) || [[ ! -f "$dest" ]]; then
       rsync_cp "$f" "$dest"
+      nrrd_copied=$((nrrd_copied + 1))
       log "  → $stage/${dest##*/}"
     else
+      nrrd_skipped=$((nrrd_skipped + 1))
       log "  = exists: $stage/${dest##*/}"
     fi
-  done
+    done
+    log "  INFO: NRRDs: $nrrd_copied copied, $nrrd_skipped skipped."
+  fi
   shopt -u globstar nullglob
   # Publish staged transMatrices & logs mirrored from WORK → NAS
   local WORK_02="$WORK_BASE/subjects/$fish/02_reg"
@@ -558,12 +582,18 @@ publish_one() {
     stg="$(basename "$stgdir")"
 
     if [[ -d "$stgdir/transMatrices" ]]; then
+      local mcount
+      mcount="$(count_files "$stgdir/transMatrices")"
       ensure_dir "$ROOT/$stg/transMatrices"
       rsync_cp "$stgdir/transMatrices/" "$ROOT/$stg/transMatrices/"
+      log "  → $stg/transMatrices (${mcount} files)"
     fi
     if [[ -d "$stgdir/logs" ]]; then
+      local lcount
+      lcount="$(count_files "$stgdir/logs")"
       ensure_dir "$ROOT/$stg/logs"
       rsync_cp "$stgdir/logs/" "$ROOT/$stg/logs/"
+      log "  → $stg/logs (${lcount} files)"
     fi
   done
   shopt -u nullglob
