@@ -110,6 +110,19 @@ rsync_cp() {
   fi
   rsync "${add[@]}" "$@"
 }
+count_files() {
+  local dir="$1"
+  find "$dir" -type f 2>/dev/null | wc -l | tr -d ' '
+}
+extract_stage_tag() {
+  local p="$1"
+  if [[ "$p" =~ /(logs|transMatrices)/([^/]+)/ ]]; then
+    echo "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  echo ""
+  return 1
+}
 extract_row_tag() {
   local p="$1"
   if [[ "$p" =~ /row([0-9]+)(/|$) ]]; then
@@ -121,6 +134,13 @@ extract_row_tag() {
 extract_run_tag() {
   local p="$1"
   if [[ "$p" =~ /reg/[^/]+/([^/]+)/ ]]; then
+    local tag="${BASH_REMATCH[1]}"
+    if [[ "$tag" != "logs" ]]; then
+      echo "$tag"
+      return 0
+    fi
+  fi
+  if [[ "$p" =~ /_canonical/([^/]+)/ ]]; then
     local tag="${BASH_REMATCH[1]}"
     if [[ "$tag" != "logs" ]]; then
       echo "$tag"
@@ -497,46 +517,52 @@ publish_one() {
   ensure_dir "$ROOT"
 
   shopt -s nullglob globstar
-  for f in "$CANON"/**/*.nrrd; do
+  local nrrds=( "$CANON"/**/*.nrrd )
+  if (( ${#nrrds[@]} == 0 )); then
+    if (( DRY )); then
+      log "  INFO: no canonical NRRDs in $CANON (dry-run doesn't create them)."
+    else
+      log "  INFO: no canonical NRRDs in $CANON."
+    fi
+  else
+    local nrrd_copied=0 nrrd_skipped=0
+  for f in "${nrrds[@]}"; do
     [[ -f "$f" ]] || continue
     local bn="$(basename "$f")" dest="" stage="" sub="aligned"
-    local subtag="" row_path=""
-    subtag="$(extract_subtag "$f")"
-    [[ -n "$subtag" ]] && row_path="/$subtag"
 
     # per-channel in ref → 06_total-ref/aligned/roundN
     if [[ "$bn" =~ ^${fish}_round([0-9]+)_channel[0-9]+_.*_in_ref\.nrrd$ ]]; then
       local R="${BASH_REMATCH[1]}"
-      stage="06_total-ref"; ensure_dir "$ROOT/$stage${row_path}/aligned/round${R}"
-      dest="$ROOT/$stage${row_path}/aligned/round${R}/$bn"
+      stage="06_total-ref"; ensure_dir "$ROOT/$stage/aligned/round${R}"
+      dest="$ROOT/$stage/aligned/round${R}/$bn"
     # 2P anatomy (either name) → 08_2pa-ref/aligned
     elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" || "$bn" == "${fish}_2P_in_ref.nrrd" ]]; then
-      stage="08_2pa-ref"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="08_2pa-ref"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # rbest in other rounds (best → rn)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_r[0-9]+\.nrrd$ ]]; then
-      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # rbest in 2p
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_2p\.nrrd$ ]]; then
-      stage="$STAGE_RBEST_2P"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RBEST_2P"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # remaining rounds in rbest
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_r1\.nrrd$ ]]; then
-      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # remaining rounds in 2p (if present)
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_2p\.nrrd$ ]]; then
-      stage="$STAGE_RN_2P"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RN_2P"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # rbest ref (stage root)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_ref\.nrrd$ ]]; then
-      stage="04_rbest-ref"; ensure_dir "$ROOT/$stage${row_path}"
-      dest="$ROOT/$stage${row_path}/$bn"
+      stage="04_rbest-ref"; ensure_dir "$ROOT/$stage"
+      dest="$ROOT/$stage/$bn"
     # roundN (N>=2) ref (stage root)
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_ref\.nrrd$ ]]; then
-      stage="05_rn-ref"; ensure_dir "$ROOT/$stage${row_path}"
-      dest="$ROOT/$stage${row_path}/$bn"
+      stage="05_rn-ref"; ensure_dir "$ROOT/$stage"
+      dest="$ROOT/$stage/$bn"
     else
       log "  WARN: no NAS mapping for $bn (skipped)."
       continue
@@ -544,29 +570,48 @@ publish_one() {
 
     if (( FORCE )) || [[ ! -f "$dest" ]]; then
       rsync_cp "$f" "$dest"
+      nrrd_copied=$((nrrd_copied + 1))
       log "  → $stage/${dest##*/}"
     else
+      nrrd_skipped=$((nrrd_skipped + 1))
       log "  = exists: $stage/${dest##*/}"
     fi
-  done
+    done
+    log "  INFO: NRRDs: $nrrd_copied copied, $nrrd_skipped skipped."
+  fi
   shopt -u globstar nullglob
   # Publish staged transMatrices & logs mirrored from WORK → NAS
   local WORK_02="$WORK_BASE/subjects/$fish/02_reg"
-  shopt -s nullglob
+  shopt -s nullglob globstar
   for stgdir in "$WORK_02"/*; do
     [[ -d "$stgdir" ]] || continue
     stg="$(basename "$stgdir")"
 
     if [[ -d "$stgdir/transMatrices" ]]; then
       ensure_dir "$ROOT/$stg/transMatrices"
-      rsync_cp "$stgdir/transMatrices/" "$ROOT/$stg/transMatrices/"
+      local mcount=0
+      for m in "$stgdir"/transMatrices/**/*; do
+        [[ -f "$m" ]] || continue
+        rsync_cp "$m" "$ROOT/$stg/transMatrices/$(basename "$m")"
+        mcount=$((mcount + 1))
+      done
+      log "  → $stg/transMatrices (${mcount} files)"
     fi
     if [[ -d "$stgdir/logs" ]]; then
       ensure_dir "$ROOT/$stg/logs"
-      rsync_cp "$stgdir/logs/" "$ROOT/$stg/logs/"
+      local lcount=0 tag out
+      for lf in "$stgdir"/logs/**/*; do
+        [[ -f "$lf" ]] || continue
+        tag="$(extract_stage_tag "$lf")"
+        out="$(basename "$lf")"
+        [[ -n "$tag" ]] && out="${tag}_${out}"
+        rsync_cp "$lf" "$ROOT/$stg/logs/$out"
+        lcount=$((lcount + 1))
+      done
+      log "  → $stg/logs (${lcount} files)"
     fi
   done
-  shopt -u nullglob
+  shopt -u globstar nullglob
   log "  ✔ published $fish"
 }
 
