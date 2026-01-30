@@ -520,43 +520,40 @@ publish_one() {
     for f in "${nrrds[@]}"; do
     [[ -f "$f" ]] || continue
     local bn="$(basename "$f")" dest="" stage="" sub="aligned"
-    local subtag="" row_path=""
-    subtag="$(extract_subtag "$f")"
-    [[ -n "$subtag" ]] && row_path="/$subtag"
 
     # per-channel in ref → 06_total-ref/aligned/roundN
     if [[ "$bn" =~ ^${fish}_round([0-9]+)_channel[0-9]+_.*_in_ref\.nrrd$ ]]; then
       local R="${BASH_REMATCH[1]}"
-      stage="06_total-ref"; ensure_dir "$ROOT/$stage${row_path}/aligned/round${R}"
-      dest="$ROOT/$stage${row_path}/aligned/round${R}/$bn"
+      stage="06_total-ref"; ensure_dir "$ROOT/$stage/aligned/round${R}"
+      dest="$ROOT/$stage/aligned/round${R}/$bn"
     # 2P anatomy (either name) → 08_2pa-ref/aligned
     elif [[ "$bn" == "${fish}_anatomy_2P_in_ref.nrrd" || "$bn" == "${fish}_2P_in_ref.nrrd" ]]; then
-      stage="08_2pa-ref"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="08_2pa-ref"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # rbest in other rounds (best → rn)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_r[0-9]+\.nrrd$ ]]; then
-      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # rbest in 2p
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_2p\.nrrd$ ]]; then
-      stage="$STAGE_RBEST_2P"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RBEST_2P"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # remaining rounds in rbest
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_r1\.nrrd$ ]]; then
-      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RN_RBEST"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # remaining rounds in 2p (if present)
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_2p\.nrrd$ ]]; then
-      stage="$STAGE_RN_2P"; ensure_dir "$ROOT/$stage${row_path}/aligned"
-      dest="$ROOT/$stage${row_path}/aligned/$bn"
+      stage="$STAGE_RN_2P"; ensure_dir "$ROOT/$stage/aligned"
+      dest="$ROOT/$stage/aligned/$bn"
     # rbest ref (stage root)
     elif [[ "$bn" =~ ^${fish}_round1_.*_in_ref\.nrrd$ ]]; then
-      stage="04_rbest-ref"; ensure_dir "$ROOT/$stage${row_path}"
-      dest="$ROOT/$stage${row_path}/$bn"
+      stage="04_rbest-ref"; ensure_dir "$ROOT/$stage"
+      dest="$ROOT/$stage/$bn"
     # roundN (N>=2) ref (stage root)
     elif [[ "$bn" =~ ^${fish}_round([2-9][0-9]*)_.*_in_ref\.nrrd$ ]]; then
-      stage="05_rn-ref"; ensure_dir "$ROOT/$stage${row_path}"
-      dest="$ROOT/$stage${row_path}/$bn"
+      stage="05_rn-ref"; ensure_dir "$ROOT/$stage"
+      dest="$ROOT/$stage/$bn"
     else
       log "  WARN: no NAS mapping for $bn (skipped)."
       continue
@@ -576,7 +573,7 @@ publish_one() {
   shopt -u globstar nullglob
   # Publish staged transMatrices & logs mirrored from WORK → NAS
   local WORK_02="$WORK_BASE/subjects/$fish/02_reg"
-  shopt -s nullglob
+  shopt -s nullglob globstar
   for stgdir in "$WORK_02"/*; do
     [[ -d "$stgdir" ]] || continue
     stg="$(basename "$stgdir")"
@@ -596,7 +593,7 @@ publish_one() {
       log "  → $stg/logs (${lcount} files)"
     fi
   done
-  shopt -u nullglob
+  shopt -u globstar nullglob
   log "  ✔ published $fish"
 }
 
