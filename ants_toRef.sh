@@ -17,14 +17,21 @@ WALL_TIME="24:00:00"
 MAIL_TYPE="${MAIL_TYPE:-END,FAIL}"
 MAIL_USER="${MAIL_USER:-danin.dharmaperwira@unil.ch}"
 
-# CLI flags (only --dry-run / -n supported; everything else is ignored)
+# CLI flags (supported: --dry-run / -n, --syn-only, --identity-init)
 DRY_RUN=0
+SYN_ONLY="${SYN_ONLY:-0}"
+INIT_MODE="${INIT_MODE:-com}"  # com | identity (syn-only implies identity)
 for arg in "$@"; do
   case "$arg" in
     --dry-run|-n) DRY_RUN=1 ;;
+    --syn-only) SYN_ONLY=1; INIT_MODE="identity" ;;
+    --identity-init) INIT_MODE="identity" ;;
     *) ;;  # ignore unknown args to keep things simple
   esac
 done
+if [[ "$SYN_ONLY" == "1" && "$INIT_MODE" != "identity" ]]; then
+  INIT_MODE="identity"
+fi
 
 read -rp "PARTITION (e.g., test | cpu | normal | gpu | other): " PARTITION
 
@@ -104,7 +111,13 @@ REF_AVG_2P="${REF_AVG_2P:-$REF_AVG_2P_DEFAULT}"
 MANIFEST_CSV="__MANIFEST_CSV__"
 MANIFEST_SHA256="__MANIFEST_SHA256__"
 DRY_RUN="__DRY_RUN__"
+SYN_ONLY="${SYN_ONLY:-__SYN_ONLY__}"
+INIT_MODE="${INIT_MODE:-__INIT_MODE__}"
 MANIFEST_ROW="${MANIFEST_ROW:-}"
+
+if [[ "$SYN_ONLY" == "1" && "$INIT_MODE" != "identity" ]]; then
+  INIT_MODE="identity"
+fi
 
 echo "ANTs bin : $ANTSPATH"
 echo "Threads  : ${SLURM_CPUS_PER_TASK:-1}"
@@ -116,47 +129,80 @@ else
   echo "Mode     : Legacy interactive (2P -> avg_2p)"
 fi
 echo "Dry-run  : ${DRY_RUN}"
+echo "SyN only : ${SYN_ONLY}"
+echo "Init mode: ${INIT_MODE}"
 
 # ---------- helpers ----------
 register_pair() {
   # Usage: register_pair <fixed> <moving> <outprefix> <logfile>
   local fx="$1" mv="$2" op="$3" log="${4:-/dev/null}"
 
+  local init_label="com"
+  local init_param="1"
+  if [[ "${INIT_MODE}" == "identity" ]]; then
+    init_label="identity"
+    init_param="0"
+  fi
+
   if [[ "$DRY_RUN" == "1" ]]; then
     {
-      echo "[DRY-RUN] antsRegistration"
+      if [[ "$SYN_ONLY" == "1" ]]; then
+        echo "[DRY-RUN] antsRegistration (SyN only, init=${init_label})"
+      else
+        echo "[DRY-RUN] antsRegistration (Rigid+Affine+SyN, init=${init_label})"
+      fi
       echo "  - fixed : $fx"
       echo "  - moving: $mv"
       echo "  - out   : $op"
-      echo "$ANTSPATH/antsRegistration -d 3 --float 1 --verbose 1 -o [$op,${op}_aligned.nrrd] ..."
+      if [[ "$SYN_ONLY" == "1" ]]; then
+        echo "$ANTSPATH/antsRegistration -d 3 --float 1 --verbose 1 -o [$op,${op}_aligned.nrrd] ... -t SyN..."
+      else
+        echo "$ANTSPATH/antsRegistration -d 3 --float 1 --verbose 1 -o [$op,${op}_aligned.nrrd] ... -t Rigid... -t Affine... -t SyN..."
+      fi
     } >"$log" 2>&1
     return 0
   fi
 
   {
-    echo "antsRegistration -> $op"
-    "$ANTSPATH/antsRegistration" \
-      -d 3 --float 1 --verbose 1 \
-      -o ["$op","${op}_aligned.nrrd"] \
-      --interpolation WelchWindowedSinc \
-      --winsorize-image-intensities [0.05,0.95] \
-      --use-histogram-matching 1 \
-      -r ["$fx","$mv",1] \
-      -t Rigid[0.1] \
-        -m MI["$fx","$mv",1,32,Regular,0.25] \
-        -c [200x200x200x0,1e-8,10] \
-        --shrink-factors 12x8x4x2 \
-        --smoothing-sigmas 4x3x2x1vox \
-      -t Affine[0.1] \
-        -m MI["$fx","$mv",1,32,Regular,0.25] \
-        -c [200x200x200x0,1e-8,10] \
-        --shrink-factors 12x8x4x2 \
-        --smoothing-sigmas 4x3x2x1vox \
-      -t SyN[0.25,6,0.1] \
-        -m CC["$fx","$mv",1,4] \
-        -c [200x200x200x200x10,1e-7,10] \
-        --shrink-factors 12x8x4x2x1 \
-        --smoothing-sigmas 4x3x2x1x0vox
+    if [[ "$SYN_ONLY" == "1" ]]; then
+      echo "antsRegistration -> $op (SyN only, init=${init_label})"
+      "$ANTSPATH/antsRegistration" \
+        -d 3 --float 1 --verbose 1 \
+        -o ["$op","${op}_aligned.nrrd"] \
+        --interpolation WelchWindowedSinc \
+        --winsorize-image-intensities [0.05,0.95] \
+        --use-histogram-matching 1 \
+        -r ["$fx","$mv",$init_param] \
+        -t SyN[0.25,6,0.1] \
+          -m CC["$fx","$mv",1,4] \
+          -c [200x200x200x200x10,1e-7,10] \
+          --shrink-factors 12x8x4x2x1 \
+          --smoothing-sigmas 4x3x2x1x0vox
+    else
+      echo "antsRegistration -> $op (init=${init_label})"
+      "$ANTSPATH/antsRegistration" \
+        -d 3 --float 1 --verbose 1 \
+        -o ["$op","${op}_aligned.nrrd"] \
+        --interpolation WelchWindowedSinc \
+        --winsorize-image-intensities [0.05,0.95] \
+        --use-histogram-matching 1 \
+        -r ["$fx","$mv",$init_param] \
+        -t Rigid[0.1] \
+          -m MI["$fx","$mv",1,32,Regular,0.25] \
+          -c [200x200x200x0,1e-8,10] \
+          --shrink-factors 12x8x4x2 \
+          --smoothing-sigmas 4x3x2x1vox \
+        -t Affine[0.1] \
+          -m MI["$fx","$mv",1,32,Regular,0.25] \
+          -c [200x200x200x0,1e-8,10] \
+          --shrink-factors 12x8x4x2 \
+          --smoothing-sigmas 4x3x2x1vox \
+        -t SyN[0.25,6,0.1] \
+          -m CC["$fx","$mv",1,4] \
+          -c [200x200x200x200x10,1e-7,10] \
+          --shrink-factors 12x8x4x2x1 \
+          --smoothing-sigmas 4x3x2x1x0vox
+    fi
   } >"$log" 2>&1
 }
 
@@ -460,6 +506,8 @@ sed -i "s|__REF_AVG_2P__|$REF_AVG_2P|g" "$JOB"
 sed -i "s|__MANIFEST_CSV__|${JOB_MANIFEST}|g" "$JOB"
 sed -i "s|__MANIFEST_SHA256__|${JOB_MANIFEST_SHA}|g" "$JOB"
 sed -i "s|__DRY_RUN__|${DRY_RUN}|g" "$JOB"
+sed -i "s|__SYN_ONLY__|${SYN_ONLY}|g" "$JOB"
+sed -i "s|__INIT_MODE__|${INIT_MODE}|g" "$JOB"
 
 # Inject fish list only if NO manifest (legacy)
 if [[ -z "${JOB_MANIFEST}" ]]; then
