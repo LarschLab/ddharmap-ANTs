@@ -114,15 +114,6 @@ count_files() {
   local dir="$1"
   find "$dir" -type f 2>/dev/null | wc -l | tr -d ' '
 }
-extract_stage_tag() {
-  local p="$1"
-  if [[ "$p" =~ /(logs|transMatrices)/([^/]+)/ ]]; then
-    echo "${BASH_REMATCH[2]}"
-    return 0
-  fi
-  echo ""
-  return 1
-}
 extract_row_tag() {
   local p="$1"
   if [[ "$p" =~ /row([0-9]+)(/|$) ]]; then
@@ -526,7 +517,7 @@ publish_one() {
     fi
   else
     local nrrd_copied=0 nrrd_skipped=0
-  for f in "${nrrds[@]}"; do
+    for f in "${nrrds[@]}"; do
     [[ -f "$f" ]] || continue
     local bn="$(basename "$f")" dest="" stage="" sub="aligned"
 
@@ -588,26 +579,17 @@ publish_one() {
     stg="$(basename "$stgdir")"
 
     if [[ -d "$stgdir/transMatrices" ]]; then
+      local mcount
+      mcount="$(count_files "$stgdir/transMatrices")"
       ensure_dir "$ROOT/$stg/transMatrices"
-      local mcount=0
-      for m in "$stgdir"/transMatrices/**/*; do
-        [[ -f "$m" ]] || continue
-        rsync_cp "$m" "$ROOT/$stg/transMatrices/$(basename "$m")"
-        mcount=$((mcount + 1))
-      done
+      rsync_cp "$stgdir/transMatrices/" "$ROOT/$stg/transMatrices/"
       log "  → $stg/transMatrices (${mcount} files)"
     fi
     if [[ -d "$stgdir/logs" ]]; then
+      local lcount
+      lcount="$(count_files "$stgdir/logs")"
       ensure_dir "$ROOT/$stg/logs"
-      local lcount=0 tag out
-      for lf in "$stgdir"/logs/**/*; do
-        [[ -f "$lf" ]] || continue
-        tag="$(extract_stage_tag "$lf")"
-        out="$(basename "$lf")"
-        [[ -n "$tag" ]] && out="${tag}_${out}"
-        rsync_cp "$lf" "$ROOT/$stg/logs/$out"
-        lcount=$((lcount + 1))
-      done
+      rsync_cp "$stgdir/logs/" "$ROOT/$stg/logs/"
       log "  → $stg/logs (${lcount} files)"
     fi
   done
