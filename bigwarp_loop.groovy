@@ -45,6 +45,8 @@ boolean SAVE_INTENSITY_AS_TIFF = true
 List<String> NAS_ROOT_CANDIDATES = [
         "/Volumes/jlarsch/default/D2c/07_Data",
         "/nas/FAC/FBM/CIG/jlarsch/default/D2c/07_Data",
+        "\\\\nasdcsr.unil.ch\\RECHERCHE\\FAC\\FBM\\CIG\\jlarsch\\default\\D2c\\07_Data",
+        "//nasdcsr.unil.ch/RECHERCHE/FAC/FBM/CIG/jlarsch/default/D2c/07_Data",
 ]
 
 // ------------------------------------------------
