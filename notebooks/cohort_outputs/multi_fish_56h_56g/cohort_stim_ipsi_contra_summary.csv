@@ -1,0 +1,25 @@
+panel,panel_title,gene,n_cells,n_segments,n_trials_per_cell,n_unilateral_events_mode,source_stim_types
+contra_LB,Contra × bout-like,pth2,38,152,4.0,24,"LLB, RLB"
+contra_LB,Contra × bout-like,sst1.1,32,128,4.0,24,"LLB, RLB"
+contra_LB,Contra × bout-like,sst1.2,6,24,4.0,24,LLB
+contra_LB,Contra × bout-like,tac3b,5,20,4.0,24,LLB
+contra_LB,Contra × bout-like,cfos,2,8,4.0,24,LLB
+contra_LB,Contra × bout-like,npy,9,36,4.0,24,LLB
+contra_LC,Contra × continuous,pth2,38,152,4.0,24,"LLC, RLC"
+contra_LC,Contra × continuous,sst1.1,32,128,4.0,24,"LLC, RLC"
+contra_LC,Contra × continuous,sst1.2,6,24,4.0,24,LLC
+contra_LC,Contra × continuous,tac3b,5,20,4.0,24,LLC
+contra_LC,Contra × continuous,cfos,2,8,4.0,24,LLC
+contra_LC,Contra × continuous,npy,9,36,4.0,24,LLC
+ipsi_LB,Ipsi × bout-like,pth2,38,152,4.0,24,"LLB, RLB"
+ipsi_LB,Ipsi × bout-like,sst1.1,32,128,4.0,24,"LLB, RLB"
+ipsi_LB,Ipsi × bout-like,sst1.2,6,24,4.0,24,RLB
+ipsi_LB,Ipsi × bout-like,tac3b,5,20,4.0,24,RLB
+ipsi_LB,Ipsi × bout-like,cfos,2,8,4.0,24,RLB
+ipsi_LB,Ipsi × bout-like,npy,9,36,4.0,24,RLB
+ipsi_LC,Ipsi × continuous,pth2,38,152,4.0,24,"LLC, RLC"
+ipsi_LC,Ipsi × continuous,sst1.1,32,128,4.0,24,"LLC, RLC"
+ipsi_LC,Ipsi × continuous,sst1.2,6,24,4.0,24,RLC
+ipsi_LC,Ipsi × continuous,tac3b,5,20,4.0,24,RLC
+ipsi_LC,Ipsi × continuous,cfos,2,8,4.0,24,RLC
+ipsi_LC,Ipsi × continuous,npy,9,36,4.0,24,RLC

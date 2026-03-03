@@ -1,0 +1,4 @@
+owner,fish_id,fish_dir,ok,n_pairs_in,n_pairs_used,n_pairs_with_side,n_trial_rows,n_trace_segments,fps,notes
+Danin,L395_f11,/Volumes/jlarsch/default/D2c/07_Data/Danin/L395_f11,True,32,32,32,768,512,2.0,ok
+Matilde,L396_f01,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f01,True,21,21,21,504,336,2.0,ok
+Matilde,L396_f04,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f04,True,39,39,39,936,624,2.0,ok
