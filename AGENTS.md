@@ -26,6 +26,16 @@ The primary analysis unit is the functional ROI.
 
 Everything downstream should be derived from one authoritative table with one row per functional ROI. Molecular identity, activity state, BPI, and figure membership are all annotations on that same ROI table.
 
+There is one important exception for identified-cell activity analyses:
+
+- whole-population summaries stay ROI-centric
+- identified-cell activity and trace analyses may use an HCR-centric table keyed by accepted HCR/anatomy labels
+
+That HCR-centric path exists to answer a different question:
+
+- ROI-centric: which anatomy/identity belongs to each functional ROI?
+- HCR-centric: for each identified anatomical cell, is there a functional ROI and is it active?
+
 ## Authoritative Matching Policy
 
 This is the policy that should govern the entire notebook, even if some older cells still reflect an earlier approach.
@@ -49,6 +59,48 @@ In plain language:
 - identity second
 - activity third
 - figures last
+
+## Dual Analysis Paths
+
+The notebook now intentionally supports two analysis paths.
+
+### 1. ROI-Centric Whole-Population Path
+
+This remains the authoritative geometric matching path.
+
+Use it for:
+
+- whole-population QA
+- whole-population activity summaries
+- BPI analyses
+- any figure where one-to-one ROI↔anatomy competition matters
+
+Canonical table:
+
+- `functional_roi_activity_identity.csv`
+
+### 2. HCR-Centric Identified-Cell Activity Path
+
+This path starts from accepted HCR↔anatomy matches, then asks whether the matched anatomy label is represented on functional planes and whether an active or inactive ROI candidate exists.
+
+Use it for:
+
+- identified-cell active vs inactive summaries
+- HCR-focused within-plane vs out-of-plane summaries
+- trace export and stimulus/full-session activity analyses for identified cells
+
+Important rules for this path:
+
+- HCR↔anatomy matching still happens first
+- functional ROI candidates are evaluated using geometry only
+- active ROI candidates are preferred over inactive ROI candidates for identified-cell activity export
+- this path does not use global ROI competition to block an active ROI when an inactive ROI also overlaps the same anatomy label
+- reused ROIs must be flagged explicitly, and downstream averaging should deduplicate by `(gene, plane, func_label)` to avoid double-counting fragmented labels
+
+Canonical tables for this path:
+
+- `hcr_activity_status.csv`
+- `conf_to_func_pairs.csv` for active trace-ready mappings
 
 ## Why This Policy Exists
 
@@ -184,7 +236,7 @@ Key object:
 
 This stage determines which anatomy labels have HCR support and gene identity.
 
-### 6. Legacy Label-First Pair Export
+### 6. HCR-Centric Identified-Cell Activity Mapping
 
 Cells:
 
@@ -192,14 +244,17 @@ Cells:
 
 Purpose:
 
-- export `conf_to_func_pairs.csv`
-- support historical gene-first trace and figure code
-- provide QC and migration reference
+- build `hcr_activity_status.csv`
+- export `conf_to_func_pairs_raw.csv`
+- export a trace-ready `conf_to_func_pairs.csv`
+- support identified-cell activity analyses keyed by accepted HCR/anatomy labels
 
 Important warning:
 
-- this export is not the authoritative source for new analyses
-- it reflects an older label-first path and may disagree with the ROI master table
+- this path is not the authoritative whole-population identity source
+- it is the intended source for HCR-centric identified-cell activity analyses
+- local competition should be restricted to ROI candidates for the accepted anatomy label
+- activity should be reported after local geometric ranking, not used to silently override it
 
 ### 7. Whole-Population Functional-To-Anatomy Matching
 
@@ -268,6 +323,50 @@ Purpose:
 - render BPI/activity diagnostics
 
 These analyses should ultimately derive their cell sets from the same authoritative ROI table, even when they also require trace-level data.
+
+Important note:
+
+- `[51]`, `[56]`, `[56h]`, and `[57]` currently use the HCR-centric identified-cell activity export from `[50]`
+- that export should use local geometry-first competition within each accepted HCR/anatomy label
+- only labels whose local best functional candidate is active should enter the active trace export
+
+## Notebook State Discipline
+
+The notebook should be written to behave deterministically when cells are rerun.
+
+Avoid `globals()`-style configuration and fallback logic:
+
+- do not read config with `globals().get(...)`
+- do not write outputs with `globals()[...] = ...`
+- do not let old in-memory values silently override the current cell's explicit settings
+
+Preferred pattern:
+
+- define an explicit config block at the top of the cell
+- pass values into helpers as function arguments
+- read durable state from saved JSON/CSV files when cross-cell persistence is needed
+- use named variables created by earlier cells directly when they are canonical pipeline outputs
+
+In plain language:
+
+- explicit config is good
+- disk-backed cache is good
+- hidden notebook-state fallback is bad
+
+This matters especially for:
+
+- fish-specific paths
+- matching parameters
+- visualization settings
+- manual QA selections
+
+If a cell needs to expose a result for downstream use, prefer one of these:
+
+- a normal top-level variable assignment in that cell
+- a saved file under the fish output directory
+- a small returned object or dataframe passed forward explicitly
+
+Do not introduce new `globals()`-based override patterns during refactors.
 
 ## Canonical Tables
 
@@ -355,22 +454,24 @@ Role:
 
 Use as a helper only. It is not the primary analysis table.
 
-### 4. Legacy Pair Table
+### 4. HCR-Centric Pair Table
 
-Legacy object:
+Derived object:
 
 - `CONF_FUNC_CSV`
 - CSV: `conf_to_func_pairs.csv`
 
 Role:
 
-- historical label-first export keyed by confocal/anatomy pairs
-- still used by some older figure cells and trace-export code
+- active trace-ready export keyed by accepted HCR/anatomy labels
+- one row per identified label when the local best functional ROI is active
+- used by the identified-cell trace and stimulus-aligned cells
 
 Important warning:
 
-- this table is not the authoritative source for new downstream analyses
-- use it only for legacy figure reproduction, QC, or migration work
+- this table is not the authoritative whole-population identity source
+- use it for identified-cell activity analyses only
+- if whole-population ROI identity is needed, start from `functional_roi_activity_identity.csv` instead
 
 ### 5. Trace Export Metadata
 
@@ -399,6 +500,11 @@ If you are adding a figure or analysis:
 4. Never rebuild identity from scratch in the plotting cell.
 5. Never let a figure silently use a different identity source than the rest of the notebook.
 
+Exception:
+
+- if the figure is explicitly about identified HCR-matched cells being active or inactive, start from `hcr_activity_status.csv` or the active trace-ready `conf_to_func_pairs.csv`
+- in that case, be explicit in the code and figure title that the analysis is HCR-centric rather than ROI-centric
+
 When you need a gene-labeled subset, the logic should be:
 
 - match ROI to anatomy
@@ -416,14 +522,15 @@ The notebook is not fully migrated yet.
 At the time this file was written:
 
 - `[50i]`, `[50ia]`, `[50j]`, and `[50k]` operate on the ROI-level table.
-- `[51]`, `[56]`, `[56h]`, and `[57]` still rely heavily on `conf_to_func_pairs.csv`.
+- `[50]`, `[50e]`, `[51]`, `[56]`, `[56h]`, and `[57]` use the HCR-centric identified-cell activity path.
 
-This means the notebook may still contain historical inconsistencies until those cells are refactored.
+This means the notebook intentionally mixes two paths, but each one has a distinct purpose.
 
 When editing those downstream cells:
 
-- prefer migrating them toward the master ROI table
-- do not copy the old label-first pattern into new code
+- preserve the ROI-centric master path for whole-population analyses
+- preserve the HCR-centric path only for identified-cell activity analyses
+- do not blur the two into an implicit hybrid inside a plotting cell
 
 ## Matching Guidance For Refactors
 
@@ -448,8 +555,10 @@ Many notebook cells reuse cached CSVs and derived files.
 
 If the matching logic changes, treat the following as stale and regenerate them for the current fish:
 
+- `hcr_activity_status.csv`
 - `conf_to_func_pairs_raw.csv`
 - `conf_to_func_pairs.csv`
+- `hcr_func_candidates.csv`
 - `functional_roi_activity_identity.csv`
 - `functional_roi_activity_identity_summary.csv`
 - `functional_roi_activity_identity_by_plane.csv`
