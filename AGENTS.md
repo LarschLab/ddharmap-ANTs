@@ -17,14 +17,27 @@ The intended output is a consistent per-functional-ROI view of:
 - where each ROI sits in anatomy space
 - whether it matches an anatomy label
 - whether that anatomy label has a molecular identity
-- whether the ROI is active or inactive
+- whether the ROI is response-positive, low-activity, or response-unavailable
 - how the ROI behaves in stimulus-aligned and full-session analyses
 
 ## Core Principle
 
 The primary analysis unit is the functional ROI.
 
-Everything downstream should be derived from one authoritative table with one row per functional ROI. Molecular identity, activity state, BPI, and figure membership are all annotations on that same ROI table.
+Everything downstream should be derived from one authoritative table with one row per functional ROI. Molecular identity, Suite2p cell-call provenance, response state, BPI, and figure membership are all annotations on that same ROI table.
+
+Important terminology:
+
+- the Suite2p `iscell` call is a morphology / segmentation QC label and, for the current conservative notebook policy, a practical high-quality-trace gate
+- the response state is a stimulus-locked functional annotation applied to the currently callable ROI subset
+
+Current conservative policy for notebook runs:
+
+- label `iscell=1` ROIs as `Active neurons` in the Suite2p provenance columns
+- label `iscell=0` ROIs as `Low-quality traces` in the Suite2p provenance columns
+- keep all segmented ROIs in the master ROI table
+- for now, mark `iscell=0` ROIs as `response unavailable` in `[50ia]` and exclude them from trace-focused downstream analyses
+- do not describe `iscell=0` as biologically inactive; this is a temporary conservative gate, not a biological conclusion
 
 There is one important exception for identified-cell activity analyses:
 
@@ -34,7 +47,12 @@ There is one important exception for identified-cell activity analyses:
 That HCR-centric path exists to answer a different question:
 
 - ROI-centric: which anatomy/identity belongs to each functional ROI?
-- HCR-centric: for each identified anatomical cell, is there a functional ROI and is it active?
+- HCR-centric: for each identified anatomical cell, is there a functional ROI and is it stimulus-responsive?
+
+Scientific priority for the HCR-centric path:
+
+- recover functional responses for anatomy labels that are identified by at least one accepted HCR marker
+- do not sacrifice that identified-cell response recovery goal just to maximize agreement with the global one-to-one ROI↔anatomy assignment used for whole-population summaries
 
 ## Authoritative Matching Policy
 
@@ -81,11 +99,11 @@ Canonical table:
 
 ### 2. HCR-Centric Identified-Cell Activity Path
 
-This path starts from accepted HCR↔anatomy matches, then asks whether the matched anatomy label is represented on functional planes and whether an active or inactive ROI candidate exists.
+This path starts from accepted HCR↔anatomy matches, then asks whether the matched anatomy label is represented on functional planes and whether a responsive, low-activity, or response-unavailable ROI candidate exists.
 
 Use it for:
 
-- identified-cell active vs inactive summaries
+- identified-cell responsive vs low-activity / unavailable summaries
 - HCR-focused within-plane vs out-of-plane summaries
 - trace export and stimulus/full-session activity analyses for identified cells
 
@@ -93,14 +111,17 @@ Important rules for this path:
 
 - HCR↔anatomy matching still happens first
 - functional ROI candidates are evaluated using geometry only
-- active ROI candidates are preferred over inactive ROI candidates for identified-cell activity export
-- this path does not use global ROI competition to block an active ROI when an inactive ROI also overlaps the same anatomy label
+- response-aware ROI calls come from the master ROI table produced by `[50ia]`
+- responsive ROI candidates are preferred over low-activity or response-unavailable ROI candidates for identified-cell activity export
+- this path does not use global ROI competition to block a responsive ROI when a lower-priority nonresponsive ROI also overlaps the same anatomy label
+- do not replace this path with a simple lookup into the authoritative one-to-one ROI table from `[50i]/[50ia]` when that would suppress a responsive local candidate for an identified anatomy label
+- the ROI-centric master table remains the source of response annotations and whole-population distribution summaries, but it is not a hard ownership constraint for the HCR-centric identified-cell export
 - reused ROIs must be flagged explicitly, and downstream averaging should deduplicate by `(gene, plane, func_label)` to avoid double-counting fragmented labels
 
 Canonical tables for this path:
 
 - `hcr_activity_status.csv`
-- `conf_to_func_pairs.csv` for active trace-ready mappings
+- `conf_to_func_pairs.csv` for response-positive trace-ready mappings
 
 ## Why This Policy Exists
 
@@ -186,14 +207,14 @@ Purpose:
 
 - load Suite2p outputs
 - build label masks for all segmented ROIs
-- mark active vs inactive cells using Suite2p `iscell`
+- mark high-quality vs low-quality traces using Suite2p `iscell`
 - compute dF/F traces for functional ROIs
 
 Key object:
 
 - `suite2p_by_ref_idx`
 
-This is the source of the functional ROI population. Both active and inactive ROIs matter for whole-population analyses.
+This is the source of the functional ROI population. Both high-quality and low-quality-trace ROIs remain in the ROI inventory, even though downstream trace-focused analyses currently gate on `iscell=1`.
 
 ### 4. Segmentation QC And Geometry QA
 
@@ -246,15 +267,19 @@ Purpose:
 
 - build `hcr_activity_status.csv`
 - export `conf_to_func_pairs_raw.csv`
-- export a trace-ready `conf_to_func_pairs.csv`
+- export a response-positive `conf_to_func_pairs.csv`
 - support identified-cell activity analyses keyed by accepted HCR/anatomy labels
 
 Important warning:
 
 - this path is not the authoritative whole-population identity source
 - it is the intended source for HCR-centric identified-cell activity analyses
+- the scientific priority here is to recover responses for accepted HCR-identified anatomy labels, not to maximize global ROI↔anatomy assignment consistency
 - local competition should be restricted to ROI candidates for the accepted anatomy label
-- activity should be reported after local geometric ranking, not used to silently override it
+- response state should be reported after local geometric ranking, not used to silently override geometry
+- do not collapse `[50]` onto the authoritative one-to-one ROI table if that would discard a responsive local candidate for an identified anatomy label
+- `[50]` now depends on the response-aware master ROI table from `[50ia]`; rerun `[50ia]` before rebuilding HCR-centric exports for the current fish
+- HCR status and pair-table `is_active` / `activity_class` fields are now response-aware; Suite2p provenance should be read from `suite2p_is_cell` / `suite2p_activity_class`
 
 ### 7. Whole-Population Functional-To-Anatomy Matching
 
@@ -279,28 +304,36 @@ Cells:
 
 Purpose:
 
-- compute per-ROI activity summaries
-- compute BPI and related activity metrics
+- compute per-ROI stimulus-locked response summaries for the current callable ROI subset while preserving all segmented ROIs in the master table
+- preserve the upstream Suite2p `iscell` call as a separate provenance field
+- compute BPI and related activity metrics only after the response summary is defined
 - merge those fields back into the master ROI table
 
 Important rule:
 
 - BPI is an annotation on already-matched ROIs
 - BPI must not change geometry matching or identity assignment
+- current conservative policy: `iscell=0` rows are labeled `Low-quality traces` and set to `response unavailable`
+- response state for callable ROIs must not be inferred from Suite2p `iscell` alone
 
 ### 9. Population Summary Figures
 
 Cells:
 
+- `[50e]`
 - `[50j]`
 - `[50k]`
 
 Purpose:
 
+- summarize HCR-matched labels by in-plane representation and response state
 - summarize all ROIs by activity and BPI state
 - summarize callable active identified ROIs by gene identity and BPI class
 
-These figures should be pure views of the master ROI table.
+Important note:
+
+- `[50e]` is HCR-centric, but its responsive vs low-activity outer ring should be derived by joining `hcr_activity_status.csv` to the response-aware master ROI table from `[50ia]`
+- `[50j]` and `[50k]` should be pure views of the master ROI table
 
 ### 10. Trace Export And Stimulus-Aligned Analyses
 
@@ -328,7 +361,8 @@ Important note:
 
 - `[51]`, `[56]`, `[56h]`, and `[57]` currently use the HCR-centric identified-cell activity export from `[50]`
 - that export should use local geometry-first competition within each accepted HCR/anatomy label
-- only labels whose local best functional candidate is active should enter the active trace export
+- only labels with a local responsive functional candidate should enter the trace export
+- `[56g]` must derive `low activity` from `[50ia]` response columns, not from ad hoc quantiles or the legacy Suite2p/HCR active flag
 
 ## Notebook State Discipline
 
@@ -385,10 +419,10 @@ Key:
 Role:
 
 - one row per Suite2p ROI
-- includes active and inactive ROIs
+- includes all segmented ROIs, regardless of Suite2p `iscell`
 - includes geometry match status
 - includes anatomy identity
-- after `[50ia]`, also includes BPI and activity annotations
+- after `[50ia]`, also includes response and BPI annotations
 - legacy provenance columns may still exist, but downstream analyses should treat this table as the canonical ROI inventory
 
 Important columns already present in the saved CSV include:
@@ -414,13 +448,26 @@ Important columns already present in the saved CSV include:
   - `identity_gene_count`
   - `has_identity_assigned`
   - `identity_display_label`
-- activity and BPI:
+- Suite2p provenance:
   - `activity_class`
   - `is_active`
+  - `suite2p_activity_class`
+  - `suite2p_is_cell`
+  - current interpretation: `Active neurons` vs `Low-quality traces`
+- response and BPI:
   - `n_bout_trials`
   - `n_cont_trials`
   - `mean_bout_dff`
   - `mean_cont_dff`
+  - `mean_bout_auc_dff`
+  - `mean_cont_auc_dff`
+  - `bout_null_q99_auc`
+  - `cont_null_q99_auc`
+  - `bout_response_pass`
+  - `cont_response_pass`
+  - `response_is_active`
+  - `response_class`
+  - `response_summary_class`
   - `bpi`
   - `bpi_z`
   - `activity_mag`
@@ -437,8 +484,10 @@ Derived object:
 
 Role:
 
-- active ROI subset with BPI-related fields
-- useful for scatter plots and active-only summaries
+- per-ROI response / BPI export produced by `[50ia]`
+- includes the per-ROI response / BPI scoring output used to annotate the master table
+- under the current conservative policy, `iscell=0` rows are retained but marked `response unavailable` / `low_quality_trace`
+- useful for scatter plots and response-threshold diagnostics
 
 This is derived from the master ROI table and must not be treated as an independent identity source.
 
@@ -463,8 +512,8 @@ Derived object:
 
 Role:
 
-- active trace-ready export keyed by accepted HCR/anatomy labels
-- one row per identified label when the local best functional ROI is active
+- response-positive trace-ready export keyed by accepted HCR/anatomy labels
+- one row per identified label when a local responsive functional ROI exists
 - used by the identified-cell trace and stimulus-aligned cells
 
 Important warning:
@@ -491,7 +540,7 @@ If you are adding a figure or analysis:
 
 1. Start from the master ROI table.
 2. Filter rows for the needed subset:
-   - active only
+   - response-positive only
    - identified only
    - callable BPI only
    - specific genes
@@ -500,9 +549,18 @@ If you are adding a figure or analysis:
 4. Never rebuild identity from scratch in the plotting cell.
 5. Never let a figure silently use a different identity source than the rest of the notebook.
 
+When activity semantics matter:
+
+- use `response_is_active`, `response_class`, and the null-tested response columns from `[50ia]`
+- do not use the legacy `activity_class` / `is_active` columns as the sole definition of functional activity
+- if you need the upstream Suite2p classifier, use `suite2p_activity_class` / `suite2p_is_cell` explicitly and label the figure accordingly
+- for the current conservative policy, trace-focused figures should normally filter to `suite2p_is_cell == True` unless they are explicitly about low-quality traces
+- if a figure starts from `hcr_activity_status.csv`, join back to the master ROI table before assigning `responsive`, `low activity`, or similar response-state labels
+- do not define `low activity` from ad hoc quantiles, medians, or other plot-local heuristics when `[50ia]` response calls are available
+
 Exception:
 
-- if the figure is explicitly about identified HCR-matched cells being active or inactive, start from `hcr_activity_status.csv` or the active trace-ready `conf_to_func_pairs.csv`
+- if the figure is explicitly about identified HCR-matched cells being responsive, low-activity, or response-unavailable, start from `hcr_activity_status.csv` or the response-positive `conf_to_func_pairs.csv`
 - in that case, be explicit in the code and figure title that the analysis is HCR-centric rather than ROI-centric
 
 When you need a gene-labeled subset, the logic should be:
@@ -523,6 +581,8 @@ At the time this file was written:
 
 - `[50i]`, `[50ia]`, `[50j]`, and `[50k]` operate on the ROI-level table.
 - `[50]`, `[50e]`, `[51]`, `[56]`, `[56h]`, and `[57]` use the HCR-centric identified-cell activity path.
+- `[50]` is now response-aware by joining the HCR-centric geometry path to the `[50ia]` master ROI table.
+- `[50e]`, `[51]`, `[56]`, `[56g]`, `[56h]`, and `[57]` are expected to consume those response-aware HCR exports and must fail fast if the response columns are missing.
 
 This means the notebook intentionally mixes two paths, but each one has a distinct purpose.
 
@@ -572,6 +632,7 @@ At minimum, rerun:
 - spatial prep and ROI loading cells if upstream references changed
 - HCR warp and HCR-to-anatomy matching cells if confocal geometry changed
 - `[50h]`, `[50i]`, `[50ia]`
+- `[50]` after `[50ia]` if HCR-centric activity exports or figures are needed
 - all downstream figure and trace-analysis cells that consume those outputs
 
 ## Decision Rule When Code And This File Disagree
