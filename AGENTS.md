@@ -316,6 +316,45 @@ Important rule:
 - current conservative policy: `iscell=0` rows are labeled `Low-quality traces` and set to `response unavailable`
 - response state for callable ROIs must not be inferred from Suite2p `iscell` alone
 
+#### Response Classification And BPI Categorization
+
+The `[50ia]` cell performs a **two-stage classification** of each callable ROI:
+
+**Stage 1: Response State Classification**
+
+This determines **which stimuli** a neuron responds to:
+
+- **Responsive neurons**: Pass AUC threshold in either bout or continuous condition (or both)
+- **Low activity**: Fail both bout and continuous thresholds but have sufficient trial counts
+- **Response unavailable**: Insufficient trials or low-quality trace (suite2p_is_cell=False)
+
+This classification is stored in `response_class` and `response_summary_class`.
+
+**Stage 2: BPI Categorization**
+
+This determines the **directional preference** among responsive neurons using BPI = (bout_auc - cont_auc) / (bout_auc + cont_auc):
+
+For neurons passing thresholds in **both** stimulus conditions:
+- |BPI| > 0.10 → bout-responsive or continuous-responsive (strong preference)
+- |BPI| ≤ 0.10 → both-responsive (weak or balanced preference)
+
+For neurons passing thresholds in **only one** stimulus condition:
+- |BPI| ≤ 0.10 → **weak-response** (minimal activity in responding stimulus; indistinguishable from null response)
+- |BPI| > 0.10 → bout-responsive or continuous-responsive (as labeled by stimulus condition)
+
+This classification is stored in `bpi_category` and is visualized using a consistent color scheme across all plots.
+
+**Color Scheme (Synchronized)**
+
+- bout-responsive: #2c7fb8 (Blue)
+- continuous-responsive: #d95f0e (Orange)
+- both-responsive: #d946ef (Magenta)
+- **weak-response: #000000 (Black)** — NEW category for single-responsive neurons with weak BPI
+- low-activity: #9e9e9e (Dark Grey)
+- response-unavailable: #ececec (Light Grey)
+
+This color scheme is synchronized in `[50ia]`, `[50j]`, and `[50l]` to ensure consistency across all population-level figures.
+
 ### 9. Population Summary Figures
 
 Cells:
