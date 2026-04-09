@@ -612,6 +612,32 @@ not:
 
 - start from gene-labeled confocal pairs and treat that as the primary analysis population
 
+## Figure-Making Defaults
+
+When creating or refactoring notebook figures, use these defaults unless a specific panel requires an exception:
+
+1. Typography:
+   - prefer `Aptos (Body)` as default font; use a fallback sans-serif stack if unavailable
+   - panel title font size: `11`
+2. Figure size:
+   - default figure width: `A4_width * 0.8` (A4 landscape width in inches)
+   - reserve side margins so labels/titles do not clip
+3. Axis sharing:
+   - share axes whenever panels are directly comparable (`sharex` within rows and/or `sharey` across matched panels)
+   - only disable sharing with an explicit reason (different units, intentionally different scales, or readability)
+4. Color and condition contrast:
+   - use one canonical semantic palette per analysis
+   - paired conditions (e.g., bout vs continuous) must remain clearly distinguishable (hue/lightness contrast)
+5. Geometry/readability for grouped panels:
+   - parameterize all spacing/size constants at the top of the cell
+   - enforce non-overlap constraints for grouped boxplots and paired-condition lanes
+6. Y-limits:
+   - for auto-scaled panel-level views, set upper limit from data with clearance (for example, `max + 0.1`)
+7. Reproducibility:
+   - use fixed RNG seeds for jittered points
+8. Export:
+   - save publication PNG at `dpi=300`; when needed, also save vector output (PDF/SVG)
+
 ## Current Legacy State
 
 The notebook is not fully migrated yet.
