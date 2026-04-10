@@ -71,16 +71,83 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--z-min", type=int, default=None, help="Inclusive minimum Z slice.")
     parser.add_argument("--z-max", type=int, default=None, help="Inclusive maximum Z slice.")
-    return parser.parse_args()
+    parser.add_argument(
+        "--norm-mode",
+        choices=("robust_asinh", "legacy_percentile"),
+        default="robust_asinh",
+        help="Panel-local normalization mode. Default: robust_asinh",
+    )
+    parser.add_argument(
+        "--norm-black-quantile",
+        type=float,
+        default=10.0,
+        help="Black point percentile over positive subvolume voxels for robust_asinh. Default: 10.0",
+    )
+    parser.add_argument(
+        "--norm-white-quantile",
+        type=float,
+        default=99.5,
+        help="White point percentile over positive subvolume voxels for robust_asinh. Default: 99.5",
+    )
+    parser.add_argument(
+        "--norm-gain",
+        type=float,
+        default=10.0,
+        help="Asinh gain for robust_asinh. Default: 10.0",
+    )
+    parser.add_argument(
+        "--norm-soft-clip",
+        type=float,
+        default=4.0,
+        help="Soft clip in scaled units before asinh compression for robust_asinh. Default: 4.0",
+    )
+    args = parser.parse_args()
+    if not (0.0 <= args.norm_black_quantile < args.norm_white_quantile < 100.0):
+        raise ValueError(
+            "Invalid normalization quantiles: require 0 <= --norm-black-quantile < --norm-white-quantile < 100."
+        )
+    if args.norm_gain <= 0:
+        raise ValueError("Invalid normalization gain: --norm-gain must be > 0.")
+    if args.norm_soft_clip < 1.0:
+        raise ValueError("Invalid normalization soft clip: --norm-soft-clip must be >= 1.")
+    return args
 
 
-def norm01(img: np.ndarray) -> np.ndarray:
-    img = np.asarray(img, dtype=np.float32)
-    m, M = np.percentile(img, (1, 99))
-    if M <= m:
-        M = float(img.max())
-        m = float(img.min())
-    return np.clip((img - m) / (M - m + 1e-6), 0.0, 1.0)
+def legacy_percentile_norm01(mip: np.ndarray) -> np.ndarray:
+    mip = np.asarray(mip, dtype=np.float32)
+    black, white = np.percentile(mip, (1, 99))
+    if white <= black:
+        white = float(mip.max())
+        black = float(mip.min())
+    return np.clip((mip - black) / (white - black + 1e-6), 0.0, 1.0)
+
+
+def robust_asinh_norm(
+    subvolume: np.ndarray,
+    mip: np.ndarray,
+    black_q: float = 10.0,
+    white_q: float = 99.5,
+    gain: float = 10.0,
+    soft_clip: float = 4.0,
+) -> tuple[np.ndarray, float | None, float | None]:
+    subvolume = np.asarray(subvolume, dtype=np.float32)
+    mip = np.asarray(mip, dtype=np.float32)
+    positive = subvolume[subvolume > 0]
+    if positive.size == 0:
+        return np.zeros_like(mip, dtype=np.float32), None, None
+
+    black = float(np.percentile(positive, black_q))
+    white = float(np.percentile(positive, white_q))
+    if white <= black:
+        black = float(positive.min())
+        white = float(positive.max())
+    if white <= black:
+        return np.zeros_like(mip, dtype=np.float32), black, white
+
+    scaled = np.maximum((mip - black) / (white - black + 1e-6), 0.0)
+    scaled = np.clip(scaled, 0.0, soft_clip)
+    display = np.arcsinh(gain * scaled) / np.arcsinh(gain * soft_clip)
+    return np.asarray(display, dtype=np.float32), black, white
 
 
 def read_volume(path: Path) -> np.ndarray:
@@ -180,6 +247,15 @@ def volume_mip(arr: np.ndarray, z_min: int, z_max: int) -> np.ndarray:
     return np.asarray(arr[z_min : z_max + 1].max(axis=0), dtype=np.float32)
 
 
+def z_subvolume(arr: np.ndarray, z_min: int, z_max: int) -> np.ndarray:
+    if arr.ndim != 3:
+        raise ValueError(f"Expected a 3D volume, got shape {arr.shape}")
+    z_size = int(arr.shape[0])
+    if z_min < 0 or z_max >= z_size:
+        raise ValueError(f"Z window {z_min}..{z_max} is out of bounds for volume shape {arr.shape}")
+    return np.asarray(arr[z_min : z_max + 1], dtype=np.float32)
+
+
 def pseudocolor(img: np.ndarray, rgb: np.ndarray) -> np.ndarray:
     out = np.zeros((img.shape[0], img.shape[1], 3), dtype=np.float32)
     out[..., 0] = img * rgb[0]
@@ -188,7 +264,16 @@ def pseudocolor(img: np.ndarray, rgb: np.ndarray) -> np.ndarray:
     return out
 
 
-def render_figure(panel_specs: list[list[dict[str, object]]], z_min: int, z_max: int) -> tuple[plt.Figure, tuple[int, int, int]]:
+def render_figure(
+    panel_specs: list[list[dict[str, object]]],
+    z_min: int,
+    z_max: int,
+    norm_mode: str,
+    norm_black_quantile: float,
+    norm_white_quantile: float,
+    norm_gain: float,
+    norm_soft_clip: float,
+) -> tuple[plt.Figure, tuple[int, int, int], list[list[dict[str, object]]]]:
     volumes: list[np.ndarray] = []
     for row in panel_specs:
         for spec in row:
@@ -200,13 +285,41 @@ def render_figure(panel_specs: list[list[dict[str, object]]], z_min: int, z_max:
     volume_shape = next(iter(shape_set))
 
     colored_panels: list[list[np.ndarray]] = []
+    panel_norm_stats: list[list[dict[str, object]]] = []
     for row_idx, row in enumerate(panel_specs):
         colored_row: list[np.ndarray] = []
+        stats_row: list[dict[str, object]] = []
         for spec in row:
             arr = read_volume(spec["path"])  # type: ignore[arg-type]
-            mip = volume_mip(arr, z_min, z_max)
-            colored_row.append(pseudocolor(norm01(mip), ROW_LUTS[row_idx]))
+            sub = z_subvolume(arr, z_min, z_max)
+            mip = np.asarray(sub.max(axis=0), dtype=np.float32)
+            if norm_mode == "legacy_percentile":
+                display = legacy_percentile_norm01(mip)
+                black, white = np.percentile(mip, (1, 99))
+                if white <= black:
+                    white = float(mip.max())
+                    black = float(mip.min())
+            else:
+                display, black, white = robust_asinh_norm(
+                    sub,
+                    mip,
+                    black_q=norm_black_quantile,
+                    white_q=norm_white_quantile,
+                    gain=norm_gain,
+                    soft_clip=norm_soft_clip,
+                )
+            colored_row.append(pseudocolor(display, ROW_LUTS[row_idx]))
+            stats_row.append(
+                {
+                    "round_idx": spec["round_idx"],
+                    "channel_idx": spec["channel_idx"],
+                    "display_name": spec["display_name"],
+                    "black": None if black is None else float(black),
+                    "white": None if white is None else float(white),
+                }
+            )
         colored_panels.append(colored_row)
+        panel_norm_stats.append(stats_row)
 
     fig = plt.figure(figsize=(12.0, 12.0), constrained_layout=False)
     fig.patch.set_facecolor("white")
@@ -286,7 +399,7 @@ def render_figure(panel_specs: list[list[dict[str, object]]], z_min: int, z_max:
                 },
             )
 
-    return fig, volume_shape
+    return fig, volume_shape, panel_norm_stats
 
 
 def main() -> None:
@@ -299,7 +412,16 @@ def main() -> None:
         raise ValueError(f"Expected auto-derived Z window 108..125 for {fish_id}, got {z_min}..{z_max}")
 
     panel_specs = build_panel_specs(data_root, fish_id)
-    fig, volume_shape = render_figure(panel_specs, z_min, z_max)
+    fig, volume_shape, panel_norm_stats = render_figure(
+        panel_specs,
+        z_min,
+        z_max,
+        norm_mode=args.norm_mode,
+        norm_black_quantile=args.norm_black_quantile,
+        norm_white_quantile=args.norm_white_quantile,
+        norm_gain=args.norm_gain,
+        norm_soft_clip=args.norm_soft_clip,
+    )
 
     output_path = Path(args.output).expanduser() if args.output else default_output_path(data_root, fish_id)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,11 +432,31 @@ def main() -> None:
     print(f"tforms_csv={csv_path}")
     print(f"z_window={z_min}..{z_max}")
     print(f"volume_shape={volume_shape}")
+    print(
+        "norm="
+        f"mode={args.norm_mode} "
+        f"black_q={args.norm_black_quantile} "
+        f"white_q={args.norm_white_quantile} "
+        f"gain={args.norm_gain} "
+        f"soft_clip={args.norm_soft_clip}"
+    )
     print("panel_order:")
     for row in panel_specs:
         print(
             " | ".join(
                 f"round{spec['round_idx']}/channel{spec['channel_idx']}/{spec['display_name']}" for spec in row
+            )
+        )
+    print("panel_norm_stats:")
+    for row in panel_norm_stats:
+        print(
+            " | ".join(
+                (
+                    f"round{spec['round_idx']}/channel{spec['channel_idx']}/{spec['display_name']}:"
+                    f"black={spec['black'] if spec['black'] is not None else 'none'}"
+                    f",white={spec['white'] if spec['white'] is not None else 'none'}"
+                )
+                for spec in row
             )
         )
     print(f"output={output_path}")
