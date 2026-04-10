@@ -11,6 +11,8 @@ requires-python = ">=3.10"
 dependencies = [
   "matplotlib",
   "numpy",
+  "nbclient",
+  "nbformat",
   "pandas",
   "scipy",
   "scikit-image",
