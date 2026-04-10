@@ -64,12 +64,17 @@ from .stimulus import (
     compute_zscore_stats,
     resolve_stimulus_context,
 )
+from .smoke import (
+    SmokeValidationError,
+    run_smoke_tier,
+)
 
 __all__ = [
     "ActivityConfig",
     "FishContext",
     "MatchingConfig",
     "StimulusConfig",
+    "SmokeValidationError",
     "_find_embedded_nrrd_header",
     "_infer_voxels_from_open_tiff",
     "_infer_voxels_nrrd",
@@ -116,6 +121,7 @@ __all__ = [
     "resolve_func_polarity",
     "resolve_fish_context",
     "resolve_stimulus_context",
+    "run_smoke_tier",
     "scanimage_um_per_px_from_artist",
     "infer_frame_rate_from_detail",
     "top_correlated_mean",

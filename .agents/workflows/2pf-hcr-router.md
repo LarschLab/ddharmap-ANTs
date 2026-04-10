@@ -29,6 +29,7 @@ Do **not** open large notebook regions first.
 | canonical table / output confusion | `references/canonical-tables.md` |
 | figure or plot issue | `references/figure-rules.md` + `references/activity-semantics.md` |
 | cache/rerun issue | `references/cache-rerun-policy.md` |
+| smoke-test/bugfix workflow issue | `references/cache-rerun-policy.md` + `references/notebook-stage-map.md` |
 | refactor or package ownership question | `references/refactor-rules.md` + `references/symbol-index.md` |
 | CLI wrapper behavior question | `references/symbol-index.md`, then `tools/` wrapper file |
 

@@ -7,3 +7,4 @@
 5. Notebook cells should contain explicit knobs, imports, one or two package calls, and optional display/save code.
 6. Fail fast on missing prerequisites; do not add new `globals()`-based fallback state.
 7. Whole-population matching remains ROI-centric in `[50i]`; identified-cell export remains HCR-centric in `[50]`; response/BPI stays downstream of geometry in `[50ia]`.
+8. Prefer adding or updating package-level smoke/contract checks over ad hoc notebook assertions.

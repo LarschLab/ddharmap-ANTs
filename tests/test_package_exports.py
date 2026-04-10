@@ -1,5 +1,6 @@
 from codeants_2pf_hcr import (
     ActivityConfig,
+    SmokeValidationError,
     _ensure_uint_labels,
     _find_embedded_nrrd_header,
     _infer_voxels_from_open_tiff,
@@ -26,6 +27,7 @@ from codeants_2pf_hcr import (
     load_or_cache_voxels,
     norm01,
     prepare_pairs_for_unique_cells,
+    run_smoke_tier,
     top_correlated_mean,
     zproject_mean,
 )
@@ -33,6 +35,7 @@ from codeants_2pf_hcr import (
 
 def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ActivityConfig)
+    assert callable(SmokeValidationError)
     assert callable(_ensure_uint_labels)
     assert callable(_find_embedded_nrrd_header)
     assert callable(_infer_voxels_from_open_tiff)
@@ -59,5 +62,6 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(load_or_cache_voxels)
     assert callable(norm01)
     assert callable(prepare_pairs_for_unique_cells)
+    assert callable(run_smoke_tier)
     assert callable(top_correlated_mean)
     assert callable(zproject_mean)
