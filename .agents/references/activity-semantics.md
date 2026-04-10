@@ -1,0 +1,64 @@
+# Activity and BPI Semantics
+
+**Purpose:** define response-state and BPI meaning without altering geometry policy.
+
+**Use this file when:** editing `[50ia]`, activity labels, BPI classes, or activity-based figures.
+
+## Separation of concerns
+
+- Geometry matching is resolved before activity semantics.
+- Activity/BPI annotate already matched ROI rows.
+- Activity/BPI must not change geometry or identity assignment.
+
+## `suite2p_is_cell` interpretation (current conservative policy)
+
+- `suite2p_is_cell=True`: high-quality trace provenance (`Active neurons` in provenance columns).
+- `suite2p_is_cell=False`: low-quality trace provenance (`Low-quality traces`), retained in master ROI table.
+- In `[50ia]`, `suite2p_is_cell=False` rows are currently marked `response unavailable`.
+- This is a conservative trace-quality gate, not a biological inactivity statement.
+
+## Two-stage classification in `[50ia]`
+
+### Stage 1: response-state classification
+
+- **Responsive**: passes AUC null-threshold test in bout and/or continuous condition.
+- **Low activity**: sufficient trials but fails both response thresholds.
+- **Response unavailable**: insufficient trials or low-quality trace policy gate.
+
+Primary fields:
+
+- `response_is_active`
+- `response_class`
+- `response_summary_class`
+- `bout_response_pass`, `cont_response_pass`
+- trial-count and null-threshold fields
+
+### Stage 2: BPI categorization
+
+BPI formula: `(bout_auc - cont_auc) / (bout_auc + cont_auc)`.
+
+- Both conditions pass:
+  - `|BPI| > 0.10` -> bout-responsive or continuous-responsive
+  - `|BPI| <= 0.10` -> both-responsive
+- Only one condition passes:
+  - `|BPI| <= 0.10` -> weak-response
+  - `|BPI| > 0.10` -> directional class (bout/continuous)
+
+Primary fields:
+
+- `bpi`
+- `bpi_z`
+- `activity_mag`
+- `bpi_data_available`
+- `bpi_category`
+
+## Color scheme (synchronized)
+
+- bout-responsive: `#2c7fb8`
+- continuous-responsive: `#d95f0e`
+- both-responsive: `#d946ef`
+- weak-response: `#000000`
+- low-activity: `#9e9e9e`
+- response-unavailable: `#ececec`
+
+This palette is expected to stay synchronized across `[50ia]`, `[50j]`, and `[50l]` outputs.
