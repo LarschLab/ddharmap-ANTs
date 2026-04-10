@@ -21,7 +21,20 @@ from .context import (
     resolve_fish_context,
     scanimage_um_per_px_from_artist,
 )
-from .matching import MatchingConfig, build_anat_identity_lookup_df, gene_from_mask
+from .activity import (
+    ActivityConfig,
+    build_response_bpi_tables,
+    infer_frame_rate_from_detail,
+    load_suite2p_dff_map,
+    prepare_pairs_for_unique_cells,
+)
+from .matching import (
+    MatchingConfig,
+    build_anat_identity_lookup_df,
+    build_functional_roi_master_df,
+    build_hcr_activity_tables,
+    gene_from_mask,
+)
 from .spatial import (
     _find_embedded_nrrd_header,
     _infer_voxels_from_open_tiff,
@@ -40,9 +53,19 @@ from .spatial import (
     top_correlated_mean,
     zproject_mean,
 )
-from .stimulus import StimulusConfig, build_stim_tables, resolve_stimulus_context
+from .stimulus import (
+    StimulusConfig,
+    build_null_window_start_map,
+    build_prestim_baseline_windows,
+    build_prestim_trial_windows,
+    build_stim_tables,
+    classify_stim_type,
+    compute_zscore_stats,
+    resolve_stimulus_context,
+)
 
 __all__ = [
+    "ActivityConfig",
     "FishContext",
     "MatchingConfig",
     "StimulusConfig",
@@ -55,8 +78,16 @@ __all__ = [
     "apply_func_orientation",
     "best_z_by_ncc",
     "build_anat_identity_lookup_df",
+    "build_functional_roi_master_df",
     "build_fish_state_audit_df",
+    "build_hcr_activity_tables",
+    "build_null_window_start_map",
+    "build_prestim_baseline_windows",
+    "build_prestim_trial_windows",
+    "build_response_bpi_tables",
     "build_stim_tables",
+    "classify_stim_type",
+    "compute_zscore_stats",
     "corrcoef_img",
     "first_match",
     "func_orientation_effective",
@@ -71,10 +102,12 @@ __all__ = [
     "infer_hcr_stack_paths",
     "infer_voxels_tiff",
     "local_unsharp",
+    "load_suite2p_dff_map",
     "load_or_cache_voxels",
     "normalize_run_config",
     "norm01",
     "notebook_bindings_from_context",
+    "prepare_pairs_for_unique_cells",
     "prepare_notebook_paths",
     "require_fish_state",
     "reset_fish_state",
@@ -82,6 +115,7 @@ __all__ = [
     "resolve_fish_context",
     "resolve_stimulus_context",
     "scanimage_um_per_px_from_artist",
+    "infer_frame_rate_from_detail",
     "top_correlated_mean",
     "zproject_mean",
 ]

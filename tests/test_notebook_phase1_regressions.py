@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
 GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase1.py"
+PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase2.py"
 
 
 def _code_cell_by_tag(tag: str) -> str:
@@ -47,6 +48,40 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("RUN_CONFIG = dict(CTX.run_config)", source)
         self.assertIn("FUNC_STACK_PATH = FUNC_RAW_STACK_PATH", source)
         self.assertIn("def _resolve_func_polarity(force_refresh=False):", source)
+
+    def test_cell_55_publishes_df_stim_fish_id(self) -> None:
+        cell = _code_cell_by_tag("55")
+        self.assertIn("DF_STIM_FISH_ID = FISH_ID", cell)
+
+    def test_matching_cells_use_package_builders(self) -> None:
+        cell_50i = _code_cell_by_tag("50i")
+        cell_50 = _code_cell_by_tag("50")
+        cell_50ia = _code_cell_by_tag("50ia")
+        self.assertIn("from codeants_2pf_hcr import build_anat_identity_lookup_df, build_functional_roi_master_df, gene_from_mask", cell_50i)
+        self.assertIn("from codeants_2pf_hcr import build_hcr_activity_tables, gene_from_mask", cell_50)
+        self.assertIn("from codeants_2pf_hcr import ActivityConfig, build_response_bpi_tables", cell_50ia)
+        self.assertNotIn("def _build_prestim_baseline_windows_local", cell_50ia)
+        self.assertNotIn("def _load_suite2p_dff_map_from_disk_local", cell_50ia)
+
+    def test_downstream_cells_import_shared_helpers(self) -> None:
+        for tag in ("56", "56h", "57"):
+            cell = _code_cell_by_tag(tag)
+            self.assertIn("prepare_pairs_for_unique_cells", cell)
+        cell_56 = _code_cell_by_tag("56")
+        cell_56h = _code_cell_by_tag("56h")
+        cell_57 = _code_cell_by_tag("57")
+        self.assertNotIn("def _prepare_pairs_for_unique_cells(", cell_56)
+        self.assertNotIn("def _build_prestim_baseline_windows(", cell_56)
+        self.assertNotIn("def _prepare_pairs_for_unique_cells_local(", cell_56h)
+        self.assertNotIn("def _build_prestim_baseline_windows_local(", cell_56h)
+        self.assertNotIn("globals().get('hcr_match_summary_table', None)", cell_56h)
+        self.assertIn("effective_motion_window", cell_57)
+
+    def test_phase2_generator_tracks_extraction(self) -> None:
+        source = PHASE2_GENERATOR_PATH.read_text()
+        self.assertIn("DF_STIM_FISH_ID = FISH_ID", source)
+        self.assertIn("build_response_bpi_tables", source)
+        self.assertIn("prepare_pairs_for_unique_cells", source)
 
 
 if __name__ == "__main__":

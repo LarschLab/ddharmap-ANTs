@@ -26,6 +26,8 @@ Generated manually for the phase-1 extraction surface.
 
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
+- `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
+- `build_hcr_activity_tables`: Build HCR-centric functional candidate/status tables for `[50]`.
 - `MatchingConfig`: Typed matching-stage knob container.
 
 ## `codeants_2pf_hcr.stimulus`
@@ -36,10 +38,23 @@ Generated manually for the phase-1 extraction surface.
 - `load_events_df`: Normalize event/time columns from the experiment log.
 - `load_metadata_params`: Read metadata key-value pairs.
 - `parse_float`: Robust numeric parser for mixed metadata values.
+- `classify_stim_type`: Collapse notebook stimulus codes to bout/continuous/mixed.
 - `effective_motion_window`: Compute motion-response windows after onset delay.
+- `build_prestim_baseline_windows`: Build merged prestim baseline windows from `df_evt`.
+- `build_prestim_trial_windows`: Build per-trial prestim windows for null sampling.
+- `build_null_window_start_map`: Build null AUC bootstrap start indices by duration.
+- `compute_zscore_stats`: Compute pooled-baseline z-score parameters and validity masks.
 - `parse_unilateral_stim`: Parse unilateral stimulus code to side/mode.
 - `build_stim_tables`: Build block and trial tables from event logs.
 - `resolve_stimulus_context`: End-to-end notebook-facing stimulus loader for `[55]`.
+
+## `codeants_2pf_hcr.activity`
+
+- `ActivityConfig`: Typed response/BPI scoring configuration for `[50ia]`.
+- `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table.
+- `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
+- `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
+- `infer_frame_rate_from_detail`: Resolve a consistent Suite2p frame rate from per-plane ops files.
 
 ## `codeants_2pf_hcr.plots.qa`
 

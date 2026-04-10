@@ -1,4 +1,4 @@
-"""Stimulus parsing and table builders for notebook cells [55] and downstream trace work."""
+"""Stimulus parsing and shared trial-window helpers for notebook cells [55]+."""
 
 from __future__ import annotations
 
@@ -18,6 +18,25 @@ class StimulusConfig:
     measure_start_event: str = "start"
     remove_interblock_gaps: bool = True
     onset_delay_sec: float = 10.0
+
+
+def classify_stim_type(stype: str) -> str | None:
+    parts = [part.strip().upper() for part in str(stype).split("+") if str(part).strip()]
+    if not parts:
+        return None
+    tags: list[str] = []
+    for part in parts:
+        if part.endswith("LB"):
+            tags.append("B")
+        elif part.endswith("LC"):
+            tags.append("C")
+        else:
+            return None
+    if all(tag == "B" for tag in tags):
+        return "bout"
+    if all(tag == "C" for tag in tags):
+        return "continuous"
+    return "mixed"
 
 
 def parse_float(value: object) -> float | None:
@@ -115,6 +134,182 @@ def effective_motion_window(start_s: object, duration_s: object, end_s: object, 
     if not np.isfinite(motion_duration) or motion_duration <= 0:
         return motion_start, motion_end, np.nan
     return motion_start, motion_end, motion_duration
+
+
+def build_prestim_baseline_windows(
+    df_evt: pd.DataFrame,
+    fps: float,
+    onset_delay_sec: float,
+    *,
+    tag: str = "[stim]",
+    verbose: bool = False,
+) -> list[tuple[int, int]]:
+    if df_evt is None or getattr(df_evt, "empty", True):
+        raise RuntimeError(f"{tag} df_evt is empty")
+    evt = df_evt[["event", "time"]].copy()
+    evt["event"] = evt["event"].astype(str).str.strip()
+    evt["time"] = pd.to_numeric(evt["time"], errors="coerce")
+    evt = evt.dropna(subset=["event", "time"]).sort_values("time").reset_index(drop=True)
+
+    stim_starts: dict[tuple[str, int], float] = {}
+    for event, time_s in evt[["event", "time"]].itertuples(index=False):
+        match = re.match(r"^(B\d+)_stim(\d+)_.+$", event)
+        if not match:
+            continue
+        key = (match.group(1), int(match.group(2)))
+        stim_starts.setdefault(key, float(time_s))
+
+    windows: list[tuple[int, int]] = []
+    missing = 0
+    for event, t_pre in evt[["event", "time"]].itertuples(index=False):
+        match = re.match(r"^(B\d+)_prestim(\d+)_pause$", event)
+        if not match:
+            continue
+        key = (match.group(1), int(match.group(2)))
+        t_stim = stim_starts.get(key)
+        if t_stim is None:
+            missing += 1
+            continue
+        t0 = float(t_pre)
+        t1 = float(t_stim) + float(onset_delay_sec)
+        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+            continue
+        idx0 = int(round(t0 * float(fps)))
+        idx1 = int(round(t1 * float(fps)))
+        if idx1 > idx0:
+            windows.append((idx0, idx1))
+    if not windows:
+        raise RuntimeError(f"{tag} no prestim baseline windows found")
+    windows = sorted(windows, key=lambda win: (win[0], win[1]))
+    merged: list[list[int]] = []
+    for start, end in windows:
+        if not merged or start > merged[-1][1]:
+            merged.append([start, end])
+        else:
+            merged[-1][1] = max(merged[-1][1], end)
+    out = [(int(start), int(end)) for start, end in merged if end > start]
+    if verbose:
+        total_sec = float(sum(end - start for start, end in out) / float(fps))
+        if missing:
+            print(f"{tag} baseline windows: {len(out)} (missing {missing} prestim->stim mappings; total {total_sec:.1f}s)")
+        else:
+            print(f"{tag} baseline windows: {len(out)} (total {total_sec:.1f}s)")
+    return out
+
+
+def build_prestim_trial_windows(
+    df_evt: pd.DataFrame,
+    fps: float,
+    onset_delay_sec: float,
+    *,
+    tag: str = "[stim]",
+) -> list[dict[str, int | str]]:
+    if df_evt is None or getattr(df_evt, "empty", True):
+        raise RuntimeError(f"{tag} df_evt is empty")
+    evt = df_evt[["event", "time"]].copy()
+    evt["event"] = evt["event"].astype(str).str.strip()
+    evt["time"] = pd.to_numeric(evt["time"], errors="coerce")
+    evt = evt.dropna(subset=["event", "time"]).sort_values("time").reset_index(drop=True)
+
+    stim_starts: dict[tuple[str, int], float] = {}
+    for event, time_s in evt[["event", "time"]].itertuples(index=False):
+        match = re.match(r"^(B\d+)_stim(\d+)_.+$", event)
+        if not match:
+            continue
+        key = (match.group(1), int(match.group(2)))
+        stim_starts.setdefault(key, float(time_s))
+
+    windows: list[dict[str, int | str]] = []
+    for event, t_pre in evt[["event", "time"]].itertuples(index=False):
+        match = re.match(r"^(B\d+)_prestim(\d+)_pause$", event)
+        if not match:
+            continue
+        block = match.group(1)
+        stim_idx = int(match.group(2))
+        t_stim = stim_starts.get((block, stim_idx))
+        if t_stim is None:
+            continue
+        t0 = float(t_pre)
+        t1 = float(t_stim) + float(onset_delay_sec)
+        if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
+            continue
+        idx0 = int(round(t0 * float(fps)))
+        idx1 = int(round(t1 * float(fps)))
+        if idx1 > idx0:
+            windows.append(
+                {
+                    "block": block,
+                    "stim_idx": stim_idx,
+                    "idx0": idx0,
+                    "idx1": idx1,
+                    "duration_frames": int(idx1 - idx0),
+                }
+            )
+    if not windows:
+        raise RuntimeError(f"{tag} no prestim trial windows found")
+    return windows
+
+
+def build_null_window_start_map(
+    prestim_windows: list[dict[str, int | str]],
+    duration_frames: list[int],
+    *,
+    step_frames: int = 1,
+    min_windows: int = 20,
+) -> dict[int, np.ndarray]:
+    out: dict[int, np.ndarray] = {}
+    unique_durations = sorted({int(d) for d in duration_frames if pd.notna(d) and int(d) > 0})
+    for duration in unique_durations:
+        starts: list[int] = []
+        for window in prestim_windows:
+            idx0 = int(window["idx0"])
+            idx1 = int(window["idx1"])
+            if idx1 - idx0 < duration:
+                continue
+            starts.extend(range(idx0, idx1 - duration + 1, max(1, int(step_frames))))
+        starts_arr = np.asarray(sorted(set(starts)), dtype=np.int32)
+        if starts_arr.size >= int(min_windows):
+            out[int(duration)] = starts_arr
+    return out
+
+
+def compute_zscore_stats(
+    dff: np.ndarray,
+    baseline_windows: list[tuple[int, int]],
+    *,
+    min_points: int = 200,
+    sigma_eps: float = 1e-6,
+) -> dict[str, np.ndarray]:
+    n_roi = int(dff.shape[0])
+    n_frames = int(dff.shape[1])
+    mask = np.zeros(n_frames, dtype=bool)
+    for idx0, idx1 in baseline_windows:
+        start = max(0, int(idx0))
+        end = min(n_frames, int(idx1))
+        if end > start:
+            mask[start:end] = True
+
+    mu = np.full(n_roi, np.nan, dtype=np.float32)
+    sigma = np.full(n_roi, np.nan, dtype=np.float32)
+    n_valid = np.zeros(n_roi, dtype=np.int32)
+    if mask.any():
+        base = dff[:, mask]
+        n_valid = np.isfinite(base).sum(axis=1).astype(np.int32)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            mu = np.nanmean(base, axis=1).astype(np.float32, copy=False)
+            sigma = np.nanstd(base, axis=1).astype(np.float32, copy=False)
+    has_points = n_valid >= int(min_points)
+    has_sigma = np.isfinite(sigma) & (sigma > float(sigma_eps))
+    has_mu = np.isfinite(mu)
+    valid = has_points & has_sigma & has_mu
+    return {
+        "mu": mu,
+        "sigma": sigma,
+        "n_valid": n_valid,
+        "valid": valid,
+        "low_points": ~has_points,
+        "low_sigma": has_points & ~has_sigma,
+    }
 
 
 def parse_unilateral_stim(stype: str) -> tuple[str | None, str | None]:
@@ -302,7 +497,12 @@ def resolve_stimulus_context(
 __all__ = [
     "StimulusConfig",
     "block_key",
+    "build_null_window_start_map",
+    "build_prestim_baseline_windows",
+    "build_prestim_trial_windows",
     "build_stim_tables",
+    "classify_stim_type",
+    "compute_zscore_stats",
     "effective_motion_window",
     "find_experiment_log",
     "find_metadata_csv",

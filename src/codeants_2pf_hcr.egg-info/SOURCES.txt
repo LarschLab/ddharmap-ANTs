@@ -1,6 +1,7 @@
 AGENTS.md
 pyproject.toml
 src/codeants_2pf_hcr/__init__.py
+src/codeants_2pf_hcr/activity.py
 src/codeants_2pf_hcr/context.py
 src/codeants_2pf_hcr/matching.py
 src/codeants_2pf_hcr/spatial.py
@@ -13,8 +14,10 @@ src/codeants_2pf_hcr.egg-info/top_level.txt
 src/codeants_2pf_hcr/plots/__init__.py
 src/codeants_2pf_hcr/plots/analysis.py
 src/codeants_2pf_hcr/plots/qa.py
+tests/test_activity.py
 tests/test_context.py
 tests/test_matching.py
+tests/test_notebook_phase1_regressions.py
 tests/test_package_exports.py
 tests/test_spatial.py
 tests/test_stimulus.py
