@@ -232,7 +232,7 @@ def _patch_cell_56(src: str) -> str:
 def _patch_cell_56h(src: str) -> str:
     src = src.replace(
         "import json\nfrom pathlib import Path\nfrom skimage.measure import regionprops_table\nfrom matplotlib.patches import Patch\n",
-        "import json\nfrom pathlib import Path\nfrom skimage.measure import regionprops_table\nfrom matplotlib.patches import Patch\nfrom codeants_2pf_hcr import prepare_pairs_for_unique_cells\nfrom codeants_2pf_hcr.stimulus import build_prestim_baseline_windows, compute_zscore_stats, effective_motion_window\n",
+        "import json\nfrom pathlib import Path\nfrom skimage.measure import regionprops_table\nfrom matplotlib.patches import Patch\nfrom codeants_2pf_hcr import prepare_pairs_for_unique_cells\nfrom codeants_2pf_hcr.stimulus import build_prestim_baseline_windows, combine_segments, compute_zscore_stats, effective_motion_window\n",
     )
     pattern = re.compile(
         r"def _build_prestim_baseline_windows_local\(.*?def _filter_pairs_high_conf_generic",
@@ -240,6 +240,7 @@ def _patch_cell_56h(src: str) -> str:
     )
     repl = (
         "_build_prestim_baseline_windows_local = build_prestim_baseline_windows\n"
+        "_combine_segments = combine_segments\n"
         "_compute_zscore_stats_local = compute_zscore_stats\n"
         "_effective_motion_window_local = effective_motion_window\n"
         "_prepare_pairs_for_unique_cells_local = prepare_pairs_for_unique_cells\n\n\n"

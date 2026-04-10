@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,7 +87,7 @@ HCR_CANDIDATES_REQUIRED = {
     "response_summary_class",
 }
 
-TIER_ORDER = ("A", "B", "C", "D")
+TIER_ORDER = ("A", "B", "C", "D", "E")
 
 
 @dataclass(frozen=True)
@@ -214,6 +215,7 @@ def _validate_exists(path: Path, *, label: str, hint: str) -> SmokeCheckResult:
 
 
 def _stale_regeneration_targets(out_reg: Path) -> list[tuple[Path, str]]:
+    out_functional = out_reg.parent
     return [
         (out_reg / "hcr_activity_status.csv", "[50] hcr_activity_status.csv"),
         (out_reg / "conf_to_func_pairs_raw.csv", "[50] conf_to_func_pairs_raw.csv"),
@@ -224,8 +226,38 @@ def _stale_regeneration_targets(out_reg: Path) -> list[tuple[Path, str]]:
         (out_reg / "functional_roi_activity_identity_by_plane.csv", "[50i] functional_roi_activity_identity_by_plane.csv"),
         (out_reg / "functional_roi_activity_bpi_cells.csv", "[50ia] functional_roi_activity_bpi_cells.csv"),
         (out_reg / "functional_roi_activity_bpi_summary.csv", "[50ia] functional_roi_activity_bpi_summary.csv"),
-        (out_reg / "suite2p_traces" / "suite2p_dff_traces_meta.csv", "[51] suite2p_traces/suite2p_dff_traces_meta.csv"),
+        (out_functional / "derived" / "suite2p_traces" / "suite2p_dff_traces_meta.csv", "[51] derived/suite2p_traces/suite2p_dff_traces_meta.csv"),
     ]
+
+
+def _code_cell_by_tag(notebook_path: Path, tag: str) -> str:
+    if not notebook_path.exists():
+        raise SmokeValidationError(f"[notebook] missing notebook at {notebook_path}")
+    notebook = json.loads(notebook_path.read_text())
+    for cell in notebook.get("cells", []):
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        if source.startswith(f"# [{tag}]"):
+            return source
+    raise SmokeValidationError(f"[notebook] code cell [{tag}] not found in {notebook_path}")
+
+
+def _validate_notebook_symbol_contracts(notebook_path: Path) -> SmokeCheckResult:
+    cell_56h = _code_cell_by_tag(notebook_path, "56h")
+    import_line = (
+        "from codeants_2pf_hcr.stimulus import "
+        "build_prestim_baseline_windows, combine_segments, compute_zscore_stats, effective_motion_window"
+    )
+    if import_line not in cell_56h:
+        raise SmokeValidationError(
+            "[56h] notebook symbol contract failed: missing combine_segments import from codeants_2pf_hcr.stimulus."
+        )
+    if "_combine_segments = combine_segments" not in cell_56h:
+        raise SmokeValidationError(
+            "[56h] notebook symbol contract failed: missing _combine_segments alias binding."
+        )
+    return SmokeCheckResult(name="[56h] symbol-contract", path=notebook_path, rows=0)
 
 
 def run_smoke_tier(
@@ -233,6 +265,7 @@ def run_smoke_tier(
     out_reg: str | Path,
     tier: str = "A",
     fish_id: str | None = None,
+    notebook_path: str | Path = "notebooks/2PF_to_HCR.ipynb",
 ) -> dict[str, Any]:
     tier_norm = str(tier).strip().upper()
     if tier_norm not in TIER_ORDER:
@@ -256,10 +289,14 @@ def run_smoke_tier(
         for path, label in _stale_regeneration_targets(out_reg_path):
             checks.append(_validate_exists(path, label=label, hint="Re-run the cache rerun sequence from .agents/references/cache-rerun-policy.md."))
 
+    if TIER_ORDER.index(tier_norm) >= TIER_ORDER.index("E"):
+        checks.append(_validate_notebook_symbol_contracts(Path(notebook_path)))
+
     return {
         "tier": tier_norm,
         "out_reg": str(out_reg_path),
         "fish_id": fish_id,
+        "notebook_path": str(notebook_path),
         "checks": [result.__dict__ for result in checks],
         "n_checks": int(len(checks)),
     }

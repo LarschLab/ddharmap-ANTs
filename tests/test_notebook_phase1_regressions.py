@@ -74,6 +74,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("def _build_prestim_baseline_windows(", cell_56)
         self.assertNotIn("def _prepare_pairs_for_unique_cells_local(", cell_56h)
         self.assertNotIn("def _build_prestim_baseline_windows_local(", cell_56h)
+        self.assertIn("combine_segments", cell_56h)
+        self.assertIn("_combine_segments = combine_segments", cell_56h)
         self.assertNotIn("globals().get('hcr_match_summary_table', None)", cell_56h)
         self.assertIn("effective_motion_window", cell_57)
 
@@ -82,6 +84,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("DF_STIM_FISH_ID = FISH_ID", source)
         self.assertIn("build_response_bpi_tables", source)
         self.assertIn("prepare_pairs_for_unique_cells", source)
+        self.assertIn("combine_segments", source)
 
 
 if __name__ == "__main__":

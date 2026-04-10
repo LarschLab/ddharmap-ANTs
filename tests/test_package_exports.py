@@ -17,6 +17,7 @@ from codeants_2pf_hcr import (
     build_prestim_baseline_windows,
     build_prestim_trial_windows,
     build_response_bpi_tables,
+    combine_segments,
     corrcoef_img,
     compute_zscore_stats,
     classify_stim_type,
@@ -28,6 +29,7 @@ from codeants_2pf_hcr import (
     load_or_cache_voxels,
     norm01,
     prepare_pairs_for_unique_cells,
+    resolve_conf_func_csv_analysis,
     run_smoke_tier,
     top_correlated_mean,
     zproject_mean,
@@ -54,6 +56,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_prestim_trial_windows)
     assert callable(build_response_bpi_tables)
     assert callable(classify_stim_type)
+    assert callable(combine_segments)
     assert callable(compute_zscore_stats)
     assert callable(corrcoef_img)
     assert callable(infer_frame_rate_from_detail)
@@ -64,6 +67,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(load_or_cache_voxels)
     assert callable(norm01)
     assert callable(prepare_pairs_for_unique_cells)
+    assert callable(resolve_conf_func_csv_analysis)
     assert callable(run_smoke_tier)
     assert callable(top_correlated_mean)
     assert callable(zproject_mean)

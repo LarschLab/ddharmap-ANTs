@@ -312,6 +312,37 @@ def compute_zscore_stats(
     }
 
 
+def combine_segments(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
+    """Combine stacked segment traces into a mean and per-timepoint SEM."""
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError("combine_segments expects a 2D array [n_segments, n_timepoints]")
+    n_valid = np.isfinite(arr).sum(axis=0).astype(np.float32)
+    mean = np.divide(
+        np.nansum(arr, axis=0),
+        n_valid,
+        out=np.full(arr.shape[1], np.nan, dtype=np.float32),
+        where=n_valid > 0,
+    )
+    sem = None
+    if arr.shape[0] > 1:
+        centered = arr - mean[np.newaxis, :]
+        centered[~np.isfinite(arr)] = np.nan
+        var = np.divide(
+            np.nansum(centered * centered, axis=0),
+            n_valid - 1.0,
+            out=np.full(arr.shape[1], np.nan, dtype=np.float32),
+            where=n_valid > 1,
+        )
+        sem = np.divide(
+            np.sqrt(var),
+            np.sqrt(n_valid),
+            out=np.full(arr.shape[1], np.nan, dtype=np.float32),
+            where=n_valid > 1,
+        )
+    return mean, sem
+
+
 def parse_unilateral_stim(stype: str) -> tuple[str | None, str | None]:
     parts = [part.strip().upper() for part in str(stype).split("+") if str(part).strip()]
     if len(parts) != 1:
@@ -502,6 +533,7 @@ __all__ = [
     "build_prestim_trial_windows",
     "build_stim_tables",
     "classify_stim_type",
+    "combine_segments",
     "compute_zscore_stats",
     "effective_motion_window",
     "find_experiment_log",

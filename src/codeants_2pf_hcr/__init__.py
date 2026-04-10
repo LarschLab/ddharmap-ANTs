@@ -27,6 +27,7 @@ from .activity import (
     infer_frame_rate_from_detail,
     load_suite2p_dff_map,
     prepare_pairs_for_unique_cells,
+    resolve_conf_func_csv_analysis,
 )
 from .matching import (
     MatchingConfig,
@@ -62,6 +63,7 @@ from .stimulus import (
     build_prestim_trial_windows,
     build_stim_tables,
     classify_stim_type,
+    combine_segments,
     compute_zscore_stats,
     resolve_stimulus_context,
 )
@@ -96,6 +98,7 @@ __all__ = [
     "build_response_bpi_tables",
     "build_stim_tables",
     "classify_stim_type",
+    "combine_segments",
     "compute_zscore_stats",
     "corrcoef_img",
     "first_match",
@@ -117,6 +120,7 @@ __all__ = [
     "norm01",
     "notebook_bindings_from_context",
     "prepare_pairs_for_unique_cells",
+    "resolve_conf_func_csv_analysis",
     "prepare_notebook_paths",
     "require_fish_state",
     "reset_fish_state",

@@ -9,6 +9,7 @@ from codeants_2pf_hcr.stimulus import (
     build_prestim_trial_windows,
     build_stim_tables,
     classify_stim_type,
+    combine_segments,
     compute_zscore_stats,
     effective_motion_window,
     parse_unilateral_stim,
@@ -65,6 +66,13 @@ class StimulusTests(unittest.TestCase):
         stats = compute_zscore_stats(dff, [(0, 4)], min_points=2, sigma_eps=1e-6)
         self.assertFalse(bool(stats["valid"][0]))
         self.assertTrue(bool(stats["valid"][1]))
+
+    def test_combine_segments_mean_and_sem(self) -> None:
+        arr = np.asarray([[1.0, 3.0], [3.0, np.nan]], dtype=np.float32)
+        mean, sem = combine_segments(arr)
+        self.assertTrue(np.allclose(mean, np.asarray([2.0, 3.0], dtype=np.float32), equal_nan=True))
+        self.assertTrue(np.isfinite(sem[0]))
+        self.assertTrue(np.isnan(sem[1]))
 
 
 if __name__ == "__main__":

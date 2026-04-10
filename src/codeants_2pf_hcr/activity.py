@@ -271,6 +271,35 @@ def prepare_pairs_for_unique_cells(pairs_df: pd.DataFrame, *, strict: bool = Tru
     return out
 
 
+def resolve_conf_func_csv_analysis(
+    *,
+    out_reg: str | Path,
+    run_config: dict[str, Any] | None = None,
+    conf_func_csv: str | Path | None = None,
+    fish_id: str | None = None,
+) -> Path:
+    out_reg_path = Path(out_reg)
+    default_conf = out_reg_path / "conf_to_func_pairs.csv"
+    rc = run_config if isinstance(run_config, dict) else {}
+    override = rc.get("CONF_FUNC_CSV_ANALYSIS", conf_func_csv)
+    if override is None:
+        return default_conf
+    override_path = Path(str(override))
+    if fish_id is not None:
+        fish = str(fish_id)
+        if fish in str(override_path):
+            return override_path
+        try:
+            if override_path.resolve(strict=False) == default_conf.resolve(strict=False):
+                return override_path
+        except Exception:
+            pass
+        if override_path.name.startswith("conf_to_func_pairs") and override_path.parent == out_reg_path:
+            return override_path
+        return default_conf
+    return override_path
+
+
 def _resolve_stim_context_for_activity(
     detail_df: pd.DataFrame,
     *,
@@ -765,4 +794,5 @@ __all__ = [
     "infer_frame_rate_from_detail",
     "load_suite2p_dff_map",
     "prepare_pairs_for_unique_cells",
+    "resolve_conf_func_csv_analysis",
 ]

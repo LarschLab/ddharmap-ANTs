@@ -5,10 +5,27 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from codeants_2pf_hcr.activity import ActivityConfig, build_response_bpi_tables, prepare_pairs_for_unique_cells
+from codeants_2pf_hcr.activity import (
+    ActivityConfig,
+    build_response_bpi_tables,
+    prepare_pairs_for_unique_cells,
+    resolve_conf_func_csv_analysis,
+)
 
 
 class ActivityTests(unittest.TestCase):
+    def test_resolve_conf_func_csv_analysis_defaults_to_out_reg(self) -> None:
+        out = resolve_conf_func_csv_analysis(out_reg="/tmp/fish/registration", run_config={})
+        self.assertEqual(str(out), "/tmp/fish/registration/conf_to_func_pairs.csv")
+
+    def test_resolve_conf_func_csv_analysis_rejects_cross_fish_override(self) -> None:
+        out = resolve_conf_func_csv_analysis(
+            out_reg="/tmp/fishB/registration",
+            run_config={"CONF_FUNC_CSV_ANALYSIS": "/tmp/fishA/registration/conf_to_func_pairs.csv"},
+            fish_id="fishB",
+        )
+        self.assertEqual(str(out), "/tmp/fishB/registration/conf_to_func_pairs.csv")
+
     def test_prepare_pairs_for_unique_cells_filters_required_surface(self) -> None:
         pairs = pd.DataFrame(
             {
