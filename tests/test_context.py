@@ -4,6 +4,7 @@ from tempfile import TemporaryDirectory
 
 from codeants_2pf_hcr.context import (
     build_fish_state_audit_df,
+    infer_hcr_label_paths,
     notebook_bindings_from_context,
     normalize_run_config,
     prepare_notebook_paths,
@@ -58,6 +59,35 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(bindings["OWNER"], "Matilde")
             self.assertEqual(bindings["DATA_MODE"], "local")
             self.assertEqual(bindings["RUN_CONFIG"], dict(ctx.run_config))
+
+    def test_infer_hcr_label_paths_prefers_canonical_raw_and_aligned_labels(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L395_f11"
+            conf_root = root / fish_id / "03_analysis" / "confocal"
+            raw_cp = conf_root / "raw" / "cp_masks"
+            aligned = conf_root / "aligned"
+            raw_cp.mkdir(parents=True)
+            aligned.mkdir(parents=True)
+
+            raw_good = raw_cp / f"{fish_id}_round1_channel2_sst1_1_cp_masks.tif"
+            raw_good.touch()
+            raw_noise = raw_cp / f"{fish_id}_round1_channel2_sst1_1_cp_masks.png"
+            raw_noise.touch()
+            aligned_good = aligned / f"{fish_id}_round1_channel2_sst1_1_cp_masks_in_2p_labels_uint16.tif"
+            aligned_good.touch()
+            aligned_noise_csv = aligned / f"{fish_id}_round1_channel2_sst1_1_cp_masks_in_2p_matches.csv"
+            aligned_noise_csv.touch()
+            aligned_noise_within = aligned / f"{fish_id}_round1_channel2_sst1_1_cp_masks_in_2p_conf_within_labels.tif"
+            aligned_noise_within.touch()
+
+            hits = infer_hcr_label_paths(root / fish_id, fish_id)
+
+            self.assertEqual(hits[0], raw_good)
+            self.assertIn(aligned_good, hits)
+            self.assertNotIn(raw_noise, hits)
+            self.assertNotIn(aligned_noise_csv, hits)
+            self.assertNotIn(aligned_noise_within, hits)
 
 
 if __name__ == "__main__":

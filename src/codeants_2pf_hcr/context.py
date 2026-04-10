@@ -28,6 +28,8 @@ DEFAULT_RUN_CONFIG: dict[str, Any] = {
     "RECOMPUTE_CONF_FUNC_PAIRS": False,
     "RECOMPUTE_SUITE2P_TRACE_EXPORT": False,
     "RECOMPUTE_FUNC_WARP_EXPORT": False,
+    "ANAT_SEG_FORCE_RECOMPUTE": False,
+    "ANAT_SEG_SKIP_IF_EXISTS": True,
     "EXPORT_BEST_ROUND_LABELS_TO_RBEST": False,
     "HCR_WARP_SPLIT_CONNECTED_COMPONENTS": False,
     "HCR_WARP_COMPONENT_CONNECTIVITY": 3,
@@ -435,12 +437,66 @@ def infer_anat_labels_path(fish_dir: Path | str, fish_id: str) -> Path | None:
 
 
 def infer_hcr_label_paths(fish_dir: Path | str, fish_id: str) -> list[Path]:
-    directory = Path(fish_dir) / "03_analysis" / "confocal" / "raw" / "cp_masks"
-    if not directory.exists():
+    root = Path(fish_dir) / "03_analysis" / "confocal"
+    raw_dir = root / "raw" / "cp_masks"
+    aligned_dir = root / "aligned"
+    if not raw_dir.exists() and not aligned_dir.exists():
         return []
+
+    # Prefer raw cp-masks first, then aligned labels. Keep only canonical label stacks and
+    # avoid downstream derivative artifacts (within-labels, overlays, matches/review tables).
+    search_specs: list[tuple[Path, tuple[str, ...]]] = [
+        (
+            raw_dir,
+            (
+                f"{fish_id}_round*_channel*_cp_masks*.tif",
+                f"{fish_id}_round*_cp_masks*.tif",
+                f"{fish_id}_round*.tif",
+                "*round*_channel*_cp_masks*.tif",
+                "*round*_cp_masks*.tif",
+            ),
+        ),
+        (
+            aligned_dir,
+            (
+                f"{fish_id}_round*_channel*_cp_masks_in_2p_labels_uint16.tif",
+                f"{fish_id}_round*_channel*_cp_masks_in_2p_labels.tif",
+                f"{fish_id}_round*_channel*_cp_masks_in_2p.tif",
+                f"{fish_id}_round*_cp_masks_in_2p_labels_uint16.tif",
+                f"{fish_id}_round*_cp_masks_in_2p_labels.tif",
+                f"{fish_id}_round*_cp_masks_in_2p.tif",
+                "*round*_channel*_cp_masks_in_2p_labels_uint16.tif",
+                "*round*_channel*_cp_masks_in_2p_labels.tif",
+                "*round*_cp_masks_in_2p_labels_uint16.tif",
+                "*round*_cp_masks_in_2p_labels.tif",
+            ),
+        ),
+    ]
+    excluded_tokens = (
+        "_conf_within_",
+        "_twop_within_",
+        "_overlay_",
+        "_matches",
+        "_review",
+        "_final_pairs",
+        "_warp_meta",
+        "debug_chain",
+    )
+    excluded_suffixes = {".csv", ".json", ".nrrd", ".html", ".png"}
+
     hits: list[Path] = []
-    for pattern in (f"{fish_id}_round*_cp_masks*.tif", f"{fish_id}_round*.tif", "*round*_cp_masks*.tif"):
-        hits.extend(sorted(directory.glob(pattern)))
+    for directory, patterns in search_specs:
+        if not directory.exists():
+            continue
+        for pattern in patterns:
+            for hit in sorted(directory.glob(pattern)):
+                name = hit.name.lower()
+                if any(token in name for token in excluded_tokens):
+                    continue
+                if hit.suffix.lower() in excluded_suffixes:
+                    continue
+                hits.append(hit)
+
     out: list[Path] = []
     seen: set[Path] = set()
     for hit in hits:
