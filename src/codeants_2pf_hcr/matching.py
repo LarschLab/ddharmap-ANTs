@@ -131,12 +131,17 @@ def compute_label_overlap(
     return df
 
 
-def _centroid_df(labels_2d: np.ndarray, y_name: str, x_name: str) -> pd.DataFrame:
-    props = regionprops_table(np.asarray(labels_2d, dtype=np.int32), properties=("label", "centroid"))
-    df = pd.DataFrame(props).rename(columns={"centroid-0": y_name, "centroid-1": x_name})
+def _regionprops_centroids_2d(label_img: ArrayLike) -> pd.DataFrame:
+    props = regionprops_table(np.asarray(label_img, dtype=np.int32), properties=("label", "centroid"))
+    df = pd.DataFrame(props).rename(columns={"centroid-0": "cy", "centroid-1": "cx"})
     if "label" not in df.columns:
-        return pd.DataFrame(columns=["label", y_name, x_name])
+        return pd.DataFrame(columns=["label", "cy", "cx"])
     return df[df["label"] != 0].reset_index(drop=True)
+
+
+def _centroid_df(labels_2d: np.ndarray, y_name: str, x_name: str) -> pd.DataFrame:
+    df = _regionprops_centroids_2d(labels_2d).rename(columns={"cy": y_name, "cx": x_name})
+    return df.loc[:, ["label", y_name, x_name]]
 
 
 def _resolve_best_z(plane_ref: dict[str, Any]) -> int:
@@ -848,6 +853,8 @@ def build_hcr_activity_tables(
 
     status_df = pd.DataFrame(status_rows).sort_values(["gene", "anat_label"]).reset_index(drop=True)
     candidate_df = pd.DataFrame(candidate_rows)
+    if not candidate_df.empty and "gene" not in candidate_df.columns:
+        candidate_df["gene"] = pd.NA
     raw_df = candidate_df.copy()
     analysis_df = pd.DataFrame(analysis_rows).sort_values(["gene", "anat_label", "plane", "func_label"]).reset_index(drop=True)
     return status_df, raw_df, analysis_df, candidate_df, plane_meta_df

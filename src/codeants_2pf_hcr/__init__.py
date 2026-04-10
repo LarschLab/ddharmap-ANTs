@@ -31,6 +31,7 @@ from .activity import (
 from .matching import (
     MatchingConfig,
     _ensure_uint_labels,
+    _regionprops_centroids_2d,
     build_anat_identity_lookup_df,
     build_functional_roi_master_df,
     build_hcr_activity_tables,
@@ -80,6 +81,7 @@ __all__ = [
     "_infer_voxels_nrrd",
     "_parse_nrrd_header_text",
     "_ensure_uint_labels",
+    "_regionprops_centroids_2d",
     "_res_to_um_per_px",
     "_to_um",
     "apply_func_orientation",

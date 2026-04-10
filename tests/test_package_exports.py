@@ -2,6 +2,7 @@ from codeants_2pf_hcr import (
     ActivityConfig,
     SmokeValidationError,
     _ensure_uint_labels,
+    _regionprops_centroids_2d,
     _find_embedded_nrrd_header,
     _infer_voxels_from_open_tiff,
     _infer_voxels_nrrd,
@@ -37,6 +38,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ActivityConfig)
     assert callable(SmokeValidationError)
     assert callable(_ensure_uint_labels)
+    assert callable(_regionprops_centroids_2d)
     assert callable(_find_embedded_nrrd_header)
     assert callable(_infer_voxels_from_open_tiff)
     assert callable(_infer_voxels_nrrd)

@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from codeants_2pf_hcr.matching import (
+    _regionprops_centroids_2d,
     build_anat_identity_lookup_df,
     build_functional_roi_master_df,
     build_hcr_activity_tables,
@@ -20,6 +21,11 @@ def _suite2p_plane(*rois: tuple[list[int], list[int]], iscell: list[bool] | None
 
 
 class MatchingTests(unittest.TestCase):
+    def test_regionprops_centroids_2d_returns_empty_schema_without_labels(self) -> None:
+        df = _regionprops_centroids_2d(np.zeros((4, 4), dtype=np.uint32))
+        self.assertEqual(list(df.columns), ["label", "cy", "cx"])
+        self.assertTrue(df.empty)
+
     def test_gene_from_mask_normalizes_sst1_names(self) -> None:
         self.assertEqual(gene_from_mask("fish_round1_channel2_sst1_2_cp_masks.tif"), "sst1.2")
 
@@ -92,6 +98,7 @@ class MatchingTests(unittest.TestCase):
             response_lookup_df=response_lookup,
         )
         self.assertEqual(int(analysis_df.iloc[0]["func_label"]), 2)
+        self.assertIn("gene", candidate_df.columns)
         self.assertEqual(
             sorted(candidate_df["response_summary_class"].astype(str).unique().tolist()),
             ["Low activity", "Responsive neurons"],
