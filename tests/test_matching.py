@@ -97,6 +97,47 @@ class MatchingTests(unittest.TestCase):
             ["Low activity", "Responsive neurons"],
         )
 
+    def test_build_hcr_activity_tables_normalizes_string_response_booleans(self) -> None:
+        anat = np.zeros((1, 6, 6), dtype=np.uint32)
+        anat[0, 1:3, 1:3] = 7
+        suite2p = {
+            0: _suite2p_plane(
+                ([1, 1, 2, 2], [1, 2, 1, 2]),
+                ([1, 2], [1, 2]),
+                iscell=[True, True],
+            )
+        }
+        hcr_results = [
+            {
+                "mask_path": "fish_round1_channel2_tac3b_cp_masks.tif",
+                "final_pairs": pd.DataFrame({"twoP_label": [7], "conf_label": [3]}),
+            }
+        ]
+        response_lookup = pd.DataFrame(
+            {
+                "plane_idx": [0, 0],
+                "func_label": [1, 2],
+                "response_is_active": ["False", "True"],
+                "response_class": ["low activity", "bout-responsive"],
+                "response_summary_class": ["Low activity", "Responsive neurons"],
+            }
+        )
+        status_df, _, analysis_df, _, _ = build_hcr_activity_tables(
+            suite2p,
+            [{"best_z": 0, "label": "p0"}],
+            anat,
+            hcr_results,
+            response_lookup_df=response_lookup,
+        )
+        self.assertEqual(int(analysis_df.iloc[0]["func_label"]), 2)
+        self.assertEqual(status_df.iloc[0]["functional_status"], "in-plane active ROI")
+
+    def test_bool_from_any_treats_fractional_float_as_true(self) -> None:
+        from codeants_2pf_hcr.matching import _bool_from_any
+
+        self.assertTrue(_bool_from_any(0.5))
+        self.assertFalse(_bool_from_any(0.0))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,7 +100,7 @@ def _bool_from_any(value: Any) -> bool:
     if isinstance(value, (int, np.integer)):
         return bool(value)
     if isinstance(value, (float, np.floating)):
-        return bool(np.isfinite(value) and int(value))
+        return bool(np.isfinite(value) and float(value) != 0.0)
     return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
 
 
@@ -550,6 +550,9 @@ def _decorate_hcr_candidates(
     out["response_summary_class"] = out["_response_summary_class"].where(
         out["_response_summary_class"].notna(), out["response_summary_class"]
     )
+    # CSV-backed response lookups can surface bool-like strings ("True"/"False");
+    # normalize explicitly so candidate ranking never treats string truthiness as True.
+    out["response_is_active"] = pd.Series(_as_bool_array(out["response_is_active"]), index=out.index).astype(bool)
     return out.drop(columns=["_response_is_active", "_response_class", "_response_summary_class"], errors="ignore")
 
 

@@ -245,7 +245,13 @@ def prepare_pairs_for_unique_cells(pairs_df: pd.DataFrame, *, strict: bool = Tru
             )
         out = out[selected].copy()
 
-    out["gene"] = out["gene"].astype(str)
+    gene_raw = out["gene"].copy()
+    gene_clean = (
+        gene_raw.astype("string")
+        .str.strip()
+        .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA})
+    )
+    out["gene"] = gene_clean
     for col in ("conf_label", "anat_label", "func_label", "plane"):
         out[col] = pd.to_numeric(out[col], errors="coerce")
     required_nonnull = out[["gene", "conf_label", "anat_label", "func_label", "plane"]].notna().all(axis=1)

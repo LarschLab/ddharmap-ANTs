@@ -181,6 +181,7 @@ REPLACEMENTS = {
         "# [6]\n",
         "from codeants_2pf_hcr import (\n",
         "    _find_embedded_nrrd_header,\n",
+        "    _ensure_uint_labels,\n",
         "    _infer_voxels_from_open_tiff,\n",
         "    _infer_voxels_nrrd,\n",
         "    _parse_nrrd_header_text,\n",

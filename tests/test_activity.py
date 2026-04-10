@@ -25,6 +25,22 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertEqual(int(out.iloc[0]["func_label"]), 5)
 
+    def test_prepare_pairs_for_unique_cells_drops_blank_gene_rows(self) -> None:
+        pairs = pd.DataFrame(
+            {
+                "gene": ["tac3b", " ", "nan"],
+                "conf_mask": ["mask.tif", "mask.tif", "mask.tif"],
+                "conf_label": [1, 2, 3],
+                "anat_label": [10, 11, 12],
+                "func_label": [5, 6, 7],
+                "plane": [0, 0, 0],
+                "is_selected_for_analysis": [True, True, True],
+            }
+        )
+        out = prepare_pairs_for_unique_cells(pairs, strict=False)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out.iloc[0]["gene"], "tac3b")
+
     def test_build_response_bpi_tables_classifies_response_states(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
