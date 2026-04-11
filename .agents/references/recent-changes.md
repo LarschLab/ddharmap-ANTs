@@ -106,3 +106,23 @@
   - Continue at cell `[24]` if the next target is HCR/Cellpose ownership, or at `[26]`/`[26a]` for functional-label QA/export cleanup.
 - Rerun implications:
   - Re-run `python tools/refactor_notebook_phase7.py`, then run `pytest -q tests/test_spatial.py tests/test_package_exports.py tests/test_notebook_phase1_regressions.py tests/test_notebook_contract.py` and `check_notebook_contract(notebooks/2PF_to_HCR.ipynb)` to confirm the reduced violation count for this slice.
+
+### 2026-04-11 - extract segmentation and label-qa cells
+
+- Slice goal:
+  - Move the `[24]` HCR Cellpose stage and its direct `[26]`/`[26a]` functional-label QA consumers into package-owned modules without leaving notebook-local helper defs behind.
+- Passes completed in this session:
+  - Added `src/codeants_2pf_hcr/segmentation.py` for Cellpose stack discovery/deduplication, model-path resolution, `[24]` segmentation orchestration, and Suite2p native-label export ownership.
+  - Added `show_functional_label_overlay_stage` in `src/codeants_2pf_hcr/plots/qa.py` so `[26]` delegates figure rendering to `plots.*` while sharing package-owned label resolution.
+  - Rewrote notebook cells `[24]`, `[26]`, and `[26a]` via `tools/refactor_notebook_phase8.py` so those cells now keep explicit knobs plus package calls and no local helper defs.
+  - Updated package exports, symbol index, and regression/unit tests for the new segmentation ownership slice.
+- What changed:
+  - Package ownership now covers HCR Cellpose input discovery, duplicate-target collapsing, anisotropy resolution, per-plane functional-label source selection, and native Suite2p QA exports.
+- What remains broken:
+  - The whole-notebook contract still has 179 top-level `def`/`class` violations and 14 late-figure contract violations outside this slice, especially later HCR warp/QC and analysis cells.
+- Remaining in-slice work:
+  - No remaining work in the `[24]`/`[26]`/`[26a]` slice beyond rerun validation.
+- Next likely breakpoint:
+  - Continue at the neighboring HCR discovery/warp ownership region starting around `[37]`-`[44]`, or run the notebook contract audit to choose the next highest-density slice.
+- Rerun implications:
+  - Re-run `python tools/refactor_notebook_phase8.py`, then run `pytest -q tests/test_segmentation.py tests/test_package_exports.py tests/test_notebook_phase1_regressions.py tests/test_notebook_contract.py` and `check_notebook_contract(notebooks/2PF_to_HCR.ipynb)` to confirm the reduced violation count for this slice.

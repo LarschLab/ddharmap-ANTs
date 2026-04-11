@@ -1,5 +1,8 @@
 import unittest
+import os
 from pathlib import Path
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 
 import numpy as np
@@ -29,6 +32,17 @@ class ContextTests(unittest.TestCase):
             canonical_checks={"FISH_DIR": "/tmp/L396_f04"},
         )
         self.assertEqual(set(audit_df["status"]), {"fail", "ok"})
+
+    def test_build_fish_state_audit_df_marks_uninitialized_expected_path_as_pending(self) -> None:
+        audit_df = build_fish_state_audit_df(
+            fish_id="L395_f11",
+            state_fish_id="L395_f11",
+            canonical_checks={"FISH_DIR": "/tmp/L395_f11"},
+            expected_paths={"ANAT_SEG_OUT_DIR": {"expected": "/tmp/L395_f11/out", "current": None}},
+        )
+        pending_row = audit_df.loc[audit_df["key"] == "ANAT_SEG_OUT_DIR"].iloc[0]
+        self.assertEqual(pending_row["status"], "pending")
+        self.assertIn("not initialized yet", pending_row["detail"])
 
     def test_prepare_notebook_paths_discovers_unique_func_labels_path(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -123,6 +137,18 @@ class ContextTests(unittest.TestCase):
 
         corr = helpers["_corr2"](oriented, ref_float)
         self.assertTrue(np.isfinite(corr))
+
+    def test_package_import_preserves_preconfigured_matplotlib_backend(self) -> None:
+        env = dict(os.environ)
+        env["MPLBACKEND"] = "svg"
+        result = subprocess.run(
+            [sys.executable, "-c", "import matplotlib; import codeants_2pf_hcr; print(matplotlib.get_backend())"],
+            capture_output=True,
+            check=True,
+            text=True,
+            env=env,
+        )
+        self.assertEqual(result.stdout.strip().lower(), "svg")
 
 
 if __name__ == "__main__":

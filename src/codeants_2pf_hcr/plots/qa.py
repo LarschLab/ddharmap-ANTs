@@ -16,17 +16,18 @@ os.environ.setdefault("XDG_CACHE_HOME", _cache_root)
 
 import matplotlib
 
-matplotlib.use("Agg")
-
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from matplotlib.gridspec import GridSpec
 import matplotlib.patheffects as path_effects
 import numpy as np
 import SimpleITK as sitk
+from skimage import color as skcolor
 from skimage import transform
 import tifffile
 
+from ..matching import _ensure_uint_labels
+from ..segmentation import resolve_functional_labels_for_plane
 from ..spatial import norm01
 
 
@@ -221,6 +222,20 @@ def _apply_overlay_color(gray01: np.ndarray, rgb: tuple[float, float, float]) ->
     return np.stack([gray01 * r, gray01 * g, gray01 * b], axis=-1)
 
 
+def _emit_figure(fig: Any) -> None:
+    try:
+        from IPython.display import display
+    except Exception:
+        display = None
+    try:
+        if display is not None:
+            display(fig)
+        else:
+            fig.canvas.draw()
+    finally:
+        plt.close(fig)
+
+
 def _render_registration_overlay(
     *,
     overlay_items: list[dict[str, Any]],
@@ -249,7 +264,7 @@ def _render_registration_overlay(
         ax.imshow(out)
         ax.set_title(f"{item['label']} z={item['z']} | func src: {item['src_label']}")
         ax.axis("off")
-    plt.show()
+    _emit_figure(fig)
 
 
 def show_registration_overlay_stage(
@@ -379,8 +394,67 @@ def show_registration_overlay_stage(
     }
 
 
+def show_functional_label_overlay_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    use_suite2p_labels: bool = False,
+    func_labels: Any = None,
+    out_seg: str | Path | None = None,
+    func_labels_path: str | Path | None = None,
+    apply_func_orientation_func: Any = None,
+    imread_func: Any = None,
+) -> dict[str, Any]:
+    if not plane_refs:
+        return {"rendered": 0, "log_lines": ["No functional references to plot."]}
+
+    log_lines: list[str] = []
+    rendered = 0
+    for plane_idx, plane_ref in enumerate(plane_refs):
+        label = plane_ref.get("label", f"plane{plane_idx}")
+        labels, src_desc = resolve_functional_labels_for_plane(
+            plane_ref,
+            plane_idx,
+            use_suite2p_labels=bool(use_suite2p_labels),
+            func_labels=func_labels,
+            out_seg=out_seg,
+            func_labels_path=func_labels_path,
+            apply_func_orientation_func=apply_func_orientation_func,
+            imread_func=imread_func,
+            ensure_uint_labels_func=_ensure_uint_labels,
+        )
+        if labels is None:
+            log_lines.append(f"[SKIP] No labels found for {label}")
+            continue
+        if labels.ndim == 3 and labels.shape[-1] in (3, 4):
+            labels = labels[..., 0]
+        if labels.ndim != 2:
+            log_lines.append(f"[SKIP] Labels for {label} have unsupported shape {labels.shape}")
+            continue
+        ref_img = plane_ref.get("ref_match")
+        if ref_img is None:
+            ref_img = plane_ref.get("ref2d_raw", plane_ref.get("ref2d"))
+        if ref_img is None:
+            log_lines.append(f"[SKIP] No functional reference for {label}")
+            continue
+        if ref_img.ndim == 3 and ref_img.shape[-1] in (3, 4):
+            ref_img = ref_img[..., 0]
+        if labels.shape != ref_img.shape:
+            log_lines.append(f"[SKIP] Label/ref shape mismatch for {label}: labels {labels.shape}, ref {ref_img.shape}")
+            continue
+        overlay = skcolor.label2rgb(labels, image=norm01(ref_img), bg_label=0, alpha=0.35, image_alpha=1.0)
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.imshow(overlay)
+        title_src = src_desc if src_desc else "labels"
+        ax.set_title(f"Functional labels on reference - {label} {title_src}")
+        ax.axis("off")
+        _emit_figure(fig)
+        rendered += 1
+    return {"rendered": rendered, "log_lines": log_lines}
+
+
 __all__ = [
     "build_best_plane_modality_merge_grid",
     "build_round_channel_mip_grid",
+    "show_functional_label_overlay_stage",
     "show_registration_overlay_stage",
 ]

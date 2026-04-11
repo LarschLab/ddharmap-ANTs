@@ -110,10 +110,21 @@ from .traces import (
     prepare_pairs_for_unique_cells,
     resolve_conf_func_csv_analysis,
 )
+from .segmentation import (
+    HcrCellposeConfig,
+    collect_hcr_intensity_stack_paths,
+    deduplicate_hcr_intensity_targets,
+    export_suite2p_native_labels_stage,
+    resolve_functional_labels_for_plane,
+    resolve_hcr_cellpose_model_path,
+    resolve_native_suite2p_labels_for_plane,
+    run_hcr_cellpose_stage,
+)
 from .organize import (
     organize,
 )
 from .plots.qa import (
+    show_functional_label_overlay_stage,
     show_registration_overlay_stage,
 )
 
@@ -124,6 +135,7 @@ __all__ = [
     "FinalFishAuditConfig",
     "FishStateStageConfig",
     "FunctionalOrientationStageConfig",
+    "HcrCellposeConfig",
     "MatchingConfig",
     "NotebookContractViolation",
     "RegistrationSearchConfig",
@@ -162,7 +174,10 @@ __all__ = [
     "compute_centroids",
     "compute_label_overlap",
     "compute_zscore_stats",
+    "collect_hcr_intensity_stack_paths",
     "corrcoef_img",
+    "deduplicate_hcr_intensity_targets",
+    "export_suite2p_native_labels_stage",
     "export_suite2p_trace_metadata",
     "find_figure_contract_violations",
     "find_top_level_defs",
@@ -191,9 +206,12 @@ __all__ = [
     "prepare_pairs_for_unique_cells",
     "nearest_neighbor_match",
     "registration_metric_from_scores",
+    "resolve_functional_labels_for_plane",
     "resolve_plane_transform",
     "resolve_conf_func_csv_analysis",
     "resolve_fish_state_stage",
+    "resolve_hcr_cellpose_model_path",
+    "resolve_native_suite2p_labels_for_plane",
     "resolve_voxel_context_stage",
     "prepare_notebook_paths",
     "require_fish_state",
@@ -202,10 +220,12 @@ __all__ = [
     "resolve_fish_context",
     "resolve_notebook_context_stage",
     "resolve_stimulus_context",
+    "run_hcr_cellpose_stage",
     "run_registration_search_stage",
     "run_smoke_tier",
     "scale_image",
     "scanimage_um_per_px_from_artist",
+    "show_functional_label_overlay_stage",
     "show_registration_overlay_stage",
     "summarize_distances",
     "infer_frame_rate_from_detail",

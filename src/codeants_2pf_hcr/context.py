@@ -760,13 +760,15 @@ def build_context_audit_stage(
     )
     n_fail = int((fish_audit_df["status"] == "fail").sum()) if not fish_audit_df.empty else 0
     n_warn = int((fish_audit_df["status"] == "warn").sum()) if not fish_audit_df.empty else 0
+    n_pending = int((fish_audit_df["status"] == "pending").sum()) if not fish_audit_df.empty else 0
     if strict and n_fail > 0:
         raise RuntimeError(f"[fish-audit] failed with {n_fail} issue(s). Resolve rows with status='fail'.")
     return {
         "fish_audit_df": fish_audit_df,
         "n_fail": n_fail,
         "n_warn": n_warn,
-        "log_lines": [f"[fish-audit] fish={fish_id} fail={n_fail} warn={n_warn}"],
+        "n_pending": n_pending,
+        "log_lines": [f"[fish-audit] fish={fish_id} fail={n_fail} warn={n_warn} pending={n_pending}"],
     }
 
 
@@ -1590,7 +1592,15 @@ def build_fish_state_audit_df(
         if expected is None:
             rows.append({"scope": "path", "key": key, "status": "warn", "value": str(current) if current is not None else None, "detail": "expected path unavailable"})
         elif current is None:
-            rows.append({"scope": "path", "key": key, "status": "warn", "value": None, "detail": f"expected {expected}"})
+            rows.append(
+                {
+                    "scope": "path",
+                    "key": key,
+                    "status": "pending",
+                    "value": None,
+                    "detail": f"not initialized yet; expected {expected}",
+                }
+            )
         elif Path(str(current)) != Path(str(expected)):
             rows.append({"scope": "path", "key": key, "status": "warn", "value": str(current), "detail": f"expected {expected}"})
         else:
@@ -1599,7 +1609,7 @@ def build_fish_state_audit_df(
     audit_df = pd.DataFrame(rows)
     if audit_df.empty:
         return audit_df
-    status_order = {"fail": 0, "warn": 1, "ok": 2}
+    status_order = {"fail": 0, "warn": 1, "pending": 2, "ok": 3}
     audit_df["_ord"] = audit_df["status"].map(status_order).fillna(9)
     return audit_df.sort_values(["_ord", "scope", "key"]).drop(columns=["_ord"]).reset_index(drop=True)
 

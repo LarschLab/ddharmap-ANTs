@@ -4,6 +4,7 @@ from codeants_2pf_hcr import (
     FinalFishAuditConfig,
     FunctionalOrientationStageConfig,
     FishStateStageConfig,
+    HcrCellposeConfig,
     NotebookContractViolation,
     RegistrationSearchConfig,
     SmokeValidationError,
@@ -31,11 +32,14 @@ from codeants_2pf_hcr import (
     build_response_bpi_tables,
     build_run_config_stage,
     check_notebook_contract,
+    collect_hcr_intensity_stack_paths,
     combine_segments,
     compute_centroids,
     corrcoef_img,
     compute_zscore_stats,
     classify_stim_type,
+    deduplicate_hcr_intensity_targets,
+    export_suite2p_native_labels_stage,
     infer_frame_rate_from_detail,
     imread_any,
     infer_voxels_tiff,
@@ -50,15 +54,20 @@ from codeants_2pf_hcr import (
     nearest_neighbor_match,
     registration_metric_from_scores,
     hungarian_match,
+    resolve_functional_labels_for_plane,
     resolve_conf_func_csv_analysis,
     resolve_fish_state_stage,
+    resolve_hcr_cellpose_model_path,
+    resolve_native_suite2p_labels_for_plane,
     resolve_notebook_context_stage,
     resolve_plane_transform,
     resolve_voxel_context_stage,
+    run_hcr_cellpose_stage,
     run_registration_search_stage,
     organize,
     run_smoke_tier,
     scale_image,
+    show_functional_label_overlay_stage,
     show_registration_overlay_stage,
     summarize_distances,
     top_correlated_mean,
@@ -72,6 +81,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(FinalFishAuditConfig)
     assert callable(FunctionalOrientationStageConfig)
     assert callable(FishStateStageConfig)
+    assert callable(HcrCellposeConfig)
     assert callable(NotebookContractViolation)
     assert callable(RegistrationSearchConfig)
     assert callable(SmokeValidationError)
@@ -100,10 +110,13 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_run_config_stage)
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
+    assert callable(collect_hcr_intensity_stack_paths)
     assert callable(combine_segments)
     assert callable(compute_centroids)
     assert callable(compute_zscore_stats)
     assert callable(corrcoef_img)
+    assert callable(deduplicate_hcr_intensity_targets)
+    assert callable(export_suite2p_native_labels_stage)
     assert callable(hungarian_match)
     assert callable(infer_frame_rate_from_detail)
     assert callable(imread_any)
@@ -117,16 +130,21 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
     assert callable(prepare_pairs_for_unique_cells)
+    assert callable(resolve_functional_labels_for_plane)
     assert callable(resolve_plane_transform)
     assert callable(registration_metric_from_scores)
     assert callable(resolve_conf_func_csv_analysis)
     assert callable(resolve_fish_state_stage)
+    assert callable(resolve_hcr_cellpose_model_path)
+    assert callable(resolve_native_suite2p_labels_for_plane)
     assert callable(resolve_notebook_context_stage)
     assert callable(resolve_voxel_context_stage)
+    assert callable(run_hcr_cellpose_stage)
     assert callable(run_registration_search_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(scale_image)
+    assert callable(show_functional_label_overlay_stage)
     assert callable(show_registration_overlay_stage)
     assert callable(summarize_distances)
     assert callable(top_correlated_mean)

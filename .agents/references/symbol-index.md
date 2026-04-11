@@ -92,6 +92,17 @@ Generated manually for the current extracted package surface.
 - `load_suite2p_stage`: Notebook-facing Suite2p stage loader for `[23a]` that returns legacy-shaped labels, plane maps, and source summary tables.
 - `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
 
+## `codeants_2pf_hcr.segmentation`
+
+- `HcrCellposeConfig`: Typed HCR Cellpose segmentation configuration for notebook cell `[24]`.
+- `resolve_hcr_cellpose_model_path`: Resolve the active HCR Cellpose model path from overrides, run config, or repo defaults.
+- `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`.
+- `deduplicate_hcr_intensity_targets`: Collapse duplicate intensity inputs that would write the same Cellpose mask output.
+- `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, and writes mask TIFFs.
+- `resolve_functional_labels_for_plane`: Resolve per-plane functional labels for `[26]` from Suite2p, Cellpose, or legacy label sources with orientation handling.
+- `resolve_native_suite2p_labels_for_plane`: Resolve the native Suite2p label image for a plane without Cellpose fallback for `[26a]`.
+- `export_suite2p_native_labels_stage`: Notebook-facing Suite2p native-label export stage for `[26a]` that writes QA TIFFs and a manifest CSV.
+
 ## `codeants_2pf_hcr.traces`
 
 - `TraceExportConfig`: Typed trace-export configuration for `[51]`.
@@ -103,6 +114,7 @@ Generated manually for the current extracted package surface.
 
 - `build_best_plane_modality_merge_grid`: Render the merged best-plane modality QA panel.
 - `build_round_channel_mip_grid`: Render the round/channel MIP grid.
+- `show_functional_label_overlay_stage`: Notebook-facing functional-label overlay stage for `[26]`.
 - `show_registration_overlay_stage`: Notebook-facing interactive registration overlay stage for `[22]`.
 
 ## `codeants_2pf_hcr.plots.analysis`

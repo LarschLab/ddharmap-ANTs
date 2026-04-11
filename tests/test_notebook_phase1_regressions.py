@@ -11,6 +11,7 @@ PHASE4_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase4.py"
 PHASE5_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase5.py"
 PHASE6_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase6.py"
 PHASE7_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase7.py"
+PHASE8_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase8.py"
 
 
 def _code_cell_by_tag(tag: str) -> str:
@@ -75,6 +76,13 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("RegistrationSearchConfig", source)
         self.assertIn("run_registration_search_stage", source)
         self.assertIn("show_registration_overlay_stage", source)
+
+    def test_phase8_generator_tracks_segmentation_extraction(self) -> None:
+        source = PHASE8_GENERATOR_PATH.read_text()
+        self.assertIn("HcrCellposeConfig", source)
+        self.assertIn("run_hcr_cellpose_stage", source)
+        self.assertIn("show_functional_label_overlay_stage", source)
+        self.assertIn("export_suite2p_native_labels_stage", source)
 
     def test_cell_55_publishes_df_stim_fish_id(self) -> None:
         cell = _code_cell_by_tag("55")
@@ -163,6 +171,20 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("show_registration_overlay_stage", cell_22)
         self.assertNotIn("def _render(", cell_22)
         self.assertNotIn("def _apply_color(", cell_22)
+
+    def test_segmentation_cells_use_package_stage_wrappers(self) -> None:
+        cell_24 = _code_cell_by_tag("24")
+        cell_26 = _code_cell_by_tag("26")
+        cell_26a = _code_cell_by_tag("26a")
+        self.assertIn("HcrCellposeConfig", cell_24)
+        self.assertIn("run_hcr_cellpose_stage", cell_24)
+        self.assertNotIn("def _src_priority(", cell_24)
+        self.assertIn("show_functional_label_overlay_stage", cell_26)
+        self.assertNotIn("def _get_labels_for_plane(", cell_26)
+        self.assertNotIn("def _rescale_labels_to_ref(", cell_26)
+        self.assertIn("export_suite2p_native_labels_stage", cell_26a)
+        self.assertNotIn("def _native_suite2p_ref_paths(", cell_26a)
+        self.assertNotIn("def _get_native_suite2p_labels_for_plane(", cell_26a)
 
 
 if __name__ == "__main__":
