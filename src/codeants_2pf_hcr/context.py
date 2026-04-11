@@ -12,6 +12,8 @@ from typing import Any
 import pandas as pd
 import tifffile
 
+from .spatial import apply_func_orientation
+
 
 DEFAULT_RUN_CONFIG: dict[str, Any] = {
     "HIGH_CONF_ONLY": False,
@@ -89,6 +91,33 @@ class FishContext:
     anat_cp_model_path: str
     cp_hcr_model_path: str
     run_config: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ContextStageConfig:
+    fish_id: str
+    owner: str = "Matilde"
+    data_mode: str = "local"
+    matching_metadata_csv_override: Path | str | None = None
+    manifest_out_override: Path | str | None = None
+    cellpose_model_root_override: Path | str | None = None
+    anat_cp_model_path_override: Path | str | None = None
+    cp_hcr_model_path_override: Path | str | None = None
+    polarity_override: Any = None
+    run_config: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class FishStateStageConfig:
+    reset_always: bool = True
+    verbose: bool = True
+
+
+@dataclass(frozen=True)
+class FinalFishAuditConfig:
+    strict: bool = False
+    max_rows_per_col: int = 5000
+    include_internal_df: bool = False
 
 
 def default_nas_root() -> Path:
@@ -601,6 +630,258 @@ def prepare_notebook_paths(ctx: FishContext, polarity_override: Any = None) -> d
     }
 
 
+def resolve_notebook_context_stage(
+    config: ContextStageConfig,
+    *,
+    nas_root: Path | str | None = None,
+    local_root: Path | str | None = None,
+) -> dict[str, Any]:
+    ctx = resolve_fish_context(
+        fish_id=config.fish_id,
+        owner=config.owner,
+        data_mode=config.data_mode,
+        nas_root=nas_root,
+        local_root=local_root,
+        matching_metadata_csv_override=config.matching_metadata_csv_override,
+        manifest_out_override=config.manifest_out_override,
+        cellpose_model_root_override=config.cellpose_model_root_override,
+        anat_cp_model_path_override=config.anat_cp_model_path_override,
+        cp_hcr_model_path_override=config.cp_hcr_model_path_override,
+        run_config=config.run_config,
+    )
+    bindings = notebook_bindings_from_context(ctx)
+    paths = prepare_notebook_paths(ctx, polarity_override=config.polarity_override)
+    log_lines = [
+        f"[Paths] DATA_MODE={ctx.data_mode} DATA_ROOT={ctx.data_root}",
+        f"[Paths] POLARITY={paths['POLARITY']} (source={paths['POLARITY_SOURCE']})",
+        f"[Paths] MATCHING_METADATA_CSV={ctx.matching_metadata_csv}",
+        f"[Paths] MANIFEST_OUT={ctx.manifest_out}",
+        f"[Paths] CELLPOSE_MODEL_ROOT={ctx.cellpose_model_root}",
+        f"[Paths] ANAT_CP_MODEL_PATH={ctx.anat_cp_model_path}",
+        f"[Paths] CP_HCR_MODEL_PATH={ctx.cp_hcr_model_path}",
+    ]
+    return {
+        "ctx": ctx,
+        "bindings": bindings,
+        "paths": paths,
+        "run_config": dict(ctx.run_config),
+        "log_lines": log_lines,
+    }
+
+
+def resolve_fish_state_stage(
+    *,
+    fish_id: str,
+    current_state_fish_id: str | None,
+    config: FishStateStageConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or FishStateStageConfig()
+    state_fish_id = reset_fish_state(current_state_fish_id, fish_id, force=cfg.reset_always)
+    log_lines = []
+    if cfg.verbose:
+        log_lines.append(f"[state] Set fish state marker to {state_fish_id}")
+        if cfg.reset_always:
+            log_lines.append("[state] RESET_FISH_STATE_ALWAYS=True (fish marker refreshed on every run)")
+    return {
+        "STATE_FISH_ID": state_fish_id,
+        "ok": require_fish_state(state_fish_id, fish_id),
+        "log_lines": log_lines,
+    }
+
+
+def build_run_config_stage(
+    *,
+    base_run_config: dict[str, Any] | None = None,
+    user_run_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    run_config = normalize_run_config({**(base_run_config or {}), **(user_run_config or {})})
+    bindings = {
+        "RUN_CONFIG": run_config,
+        "HIGH_CONF_ONLY": run_config["HIGH_CONF_ONLY"],
+        "SKIP_47": run_config["SKIP_47"],
+        "STIM_ONSET_DELAY_SEC": run_config["STIM_ONSET_DELAY_SEC"],
+        "TARGET_STIM_TYPES": run_config["TARGET_STIM_TYPES"],
+        "STRICT_PAIR_INTEGRITY": run_config["STRICT_PAIR_INTEGRITY"],
+        "REMOVE_INTERBLOCK_GAPS": run_config["REMOVE_INTERBLOCK_GAPS"],
+        "FORCE_RECOMPUTE_VOXELS": run_config["FORCE_RECOMPUTE_VOXELS"],
+        "FORCE_RECOMPUTE_HCR_WARP": run_config["FORCE_RECOMPUTE_HCR_WARP"],
+        "RECOMPUTE_WARP": run_config["RECOMPUTE_WARP"],
+        "RECOMPUTE_FILTER_STATS": run_config["RECOMPUTE_FILTER_STATS"],
+        "RECOMPUTE_INTENSITY_WARP": run_config["RECOMPUTE_INTENSITY_WARP"],
+        "RECOMPUTE_CONF_FUNC_PAIRS": run_config["RECOMPUTE_CONF_FUNC_PAIRS"],
+        "RECOMPUTE_SUITE2P_TRACE_EXPORT": run_config["RECOMPUTE_SUITE2P_TRACE_EXPORT"],
+        "RECOMPUTE_FUNC_WARP_EXPORT": run_config["RECOMPUTE_FUNC_WARP_EXPORT"],
+        "EXPORT_BEST_ROUND_LABELS_TO_RBEST": run_config["EXPORT_BEST_ROUND_LABELS_TO_RBEST"],
+        "HCR_WARP_SPLIT_CONNECTED_COMPONENTS": run_config["HCR_WARP_SPLIT_CONNECTED_COMPONENTS"],
+        "HCR_WARP_COMPONENT_CONNECTIVITY": run_config["HCR_WARP_COMPONENT_CONNECTIVITY"],
+        "HCR_WARP_MIN_COMPONENT_VOXELS": run_config["HCR_WARP_MIN_COMPONENT_VOXELS"],
+        "HCR_WARP_MIN_COMPONENT_VOLUME_UM3": run_config["HCR_WARP_MIN_COMPONENT_VOLUME_UM3"],
+        "HCR_WARP_DROP_LOW_Q": run_config["HCR_WARP_DROP_LOW_Q"],
+        "HCR_WARP_LOW_FILTER_METRIC": run_config["HCR_WARP_LOW_FILTER_METRIC"],
+        "HCR_WARP_FLAG_HIGH_Q": run_config["HCR_WARP_FLAG_HIGH_Q"],
+        "HCR_WARP_HIGH_FILTER_METRIC": run_config["HCR_WARP_HIGH_FILTER_METRIC"],
+        "CONF_FUNC_CSV_ANALYSIS": run_config["CONF_FUNC_CSV_ANALYSIS"],
+        "GENE_ORDER": list(run_config["GENE_ORDER"]),
+        "GENE_COLORS": dict(run_config["GENE_COLORS"]),
+    }
+    return {
+        "bindings": bindings,
+        "log_lines": [f"[config] RUN_CONFIG loaded with keys: {', '.join(sorted(run_config.keys()))}"],
+    }
+
+
+def build_context_audit_stage(
+    *,
+    fish_id: str,
+    state_fish_id: str | None,
+    canonical_checks: dict[str, Any],
+    expected_paths: dict[str, Any] | None = None,
+    strict: bool = True,
+) -> dict[str, Any]:
+    fish_audit_df = build_fish_state_audit_df(
+        fish_id=fish_id,
+        state_fish_id=state_fish_id,
+        canonical_checks=canonical_checks,
+        expected_paths=expected_paths,
+    )
+    n_fail = int((fish_audit_df["status"] == "fail").sum()) if not fish_audit_df.empty else 0
+    n_warn = int((fish_audit_df["status"] == "warn").sum()) if not fish_audit_df.empty else 0
+    if strict and n_fail > 0:
+        raise RuntimeError(f"[fish-audit] failed with {n_fail} issue(s). Resolve rows with status='fail'.")
+    return {
+        "fish_audit_df": fish_audit_df,
+        "n_fail": n_fail,
+        "n_warn": n_warn,
+        "log_lines": [f"[fish-audit] fish={fish_id} fail={n_fail} warn={n_warn}"],
+    }
+
+
+def build_registration_helper_stage(*, polarity: str | None) -> dict[str, Any]:
+    return {
+        "_apply_func_orientation": lambda arr: apply_func_orientation(arr, polarity=polarity, flip_x=True),
+    }
+
+
+def build_final_fish_audit_stage(
+    *,
+    fish_id: str,
+    namespace: dict[str, Any],
+    config: FinalFishAuditConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or FinalFishAuditConfig()
+    current_fish = str(fish_id)
+
+    def _maybe(name: str) -> Any:
+        return namespace.get(name)
+
+    def _pathlike_key(name: str) -> bool:
+        upper = str(name).upper()
+        return any(token in upper for token in ("PATH", "DIR", "ROOT", "CSV", "OUT", "FILE"))
+
+    def _is_pathlike_value(value: Any) -> bool:
+        if isinstance(value, Path):
+            return True
+        if isinstance(value, str):
+            return ("/" in value) or ("\\" in value) or value.endswith((".tif", ".tiff", ".nrrd", ".csv", ".json", ".npy"))
+        return False
+
+    def _is_reference_metadata_df(df: pd.DataFrame) -> bool:
+        cols = {str(column) for column in df.columns}
+        return ("fish_id" in cols) and ({"best_round", "num_rounds"} <= cols)
+
+    rows: list[dict[str, Any]] = []
+
+    def _add(scope: str, key: str, status: str, detail: str, sample: Any = None) -> None:
+        rows.append(
+            {
+                "scope": scope,
+                "key": key,
+                "status": status,
+                "detail": detail,
+                "sample": None if sample is None else str(sample),
+            }
+        )
+
+    tag_keys = [
+        "STATE_FISH_ID",
+        "SUITE2P_FISH_ID",
+        "DF_STIM_FISH_ID",
+        "MIDLINE_FISH_ID",
+        "STIM_IPSI_CONTRA_FISH_ID",
+        "BPI_FISH_ID",
+        "BPI_ACTIVITY_FISH_ID",
+        "FIG_53A_FISH_ID",
+        "FIG_56_FISH_ID",
+        "FIG_56H_FISH_ID",
+    ]
+    for key in tag_keys:
+        value = _maybe(key)
+        status = "ok" if value in (None, current_fish) else "fail"
+        detail = f"value={value}" if status == "ok" else f"mismatch: value={value}, expected={current_fish}"
+        _add("tag", key, status, detail, sample=value if status != "ok" else None)
+
+    for key, value in namespace.items():
+        if not _pathlike_key(key) and not _is_pathlike_value(value):
+            continue
+        if not _is_pathlike_value(value):
+            continue
+        tokens = _extract_fish_tokens(value)
+        if tokens and any(token != current_fish for token in tokens):
+            _add("global-path", key, "fail", f"stale fish token(s)={tokens}, current={current_fish}", sample=value)
+
+    for key, value in namespace.items():
+        if not isinstance(value, (list, tuple)):
+            continue
+        stale_items = []
+        checked = 0
+        for item in value:
+            if not _is_pathlike_value(item):
+                continue
+            checked += 1
+            tokens = _extract_fish_tokens(item)
+            if tokens and any(token != current_fish for token in tokens):
+                stale_items.append((item, tokens))
+        if stale_items:
+            example_item, example_tokens = stale_items[0]
+            _add(
+                "global-list",
+                key,
+                "fail",
+                f"{len(stale_items)}/{checked} stale item(s), current={current_fish}, example_tokens={example_tokens}",
+                sample=example_item,
+            )
+
+    if cfg.include_internal_df:
+        for key, value in namespace.items():
+            if not isinstance(value, pd.DataFrame):
+                continue
+            if _is_reference_metadata_df(value):
+                continue
+            if "fish_id" not in value.columns:
+                continue
+            fish_vals = value["fish_id"].dropna().astype(str).unique().tolist()[: max(1, int(cfg.max_rows_per_col))]
+            stale = [item for item in fish_vals if item != current_fish]
+            if stale:
+                _add("dataframe", key, "fail", f"stale fish_id values present: {stale[:5]}", sample=stale[0])
+
+    audit_df = pd.DataFrame(rows)
+    if audit_df.empty:
+        audit_df = pd.DataFrame(columns=["scope", "key", "status", "detail", "sample"])
+    n_fail = int((audit_df["status"] == "fail").sum()) if not audit_df.empty else 0
+    report_name = f"{current_fish}_fish_audit_final.csv"
+    report_path = Path(namespace.get("OUT_QA", Path.cwd())) / report_name
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_df.to_csv(report_path, index=False)
+    if cfg.strict and n_fail > 0:
+        raise RuntimeError(f"[fish-audit-final] failed with {n_fail} issue(s): {report_path}")
+    return {
+        "fish_audit_final_df": audit_df,
+        "fish_audit_final_report": report_path,
+        "n_fail": n_fail,
+        "log_lines": [f"[fish-audit-final] fish={current_fish} fail={n_fail} -> {report_path}"],
+    }
+
+
 def reset_fish_state(current_state_fish_id: str | None, fish_id: str, *, force: bool = False) -> str:
     if force or current_state_fish_id != fish_id:
         return str(fish_id)
@@ -670,10 +951,17 @@ def build_fish_state_audit_df(
 
 
 __all__ = [
+    "ContextStageConfig",
     "DEFAULT_RUN_CONFIG",
+    "FinalFishAuditConfig",
     "FORCE_TRUE_RUN_CONFIG_KEYS",
+    "FishStateStageConfig",
     "FishContext",
+    "build_context_audit_stage",
+    "build_final_fish_audit_stage",
     "build_fish_state_audit_df",
+    "build_registration_helper_stage",
+    "build_run_config_stage",
     "default_cellpose_model_root",
     "default_local_root",
     "default_matching_metadata_csv",
@@ -695,7 +983,9 @@ __all__ = [
     "read_matching_metadata_polarity",
     "require_fish_state",
     "reset_fish_state",
+    "resolve_fish_state_stage",
     "resolve_func_polarity",
+    "resolve_notebook_context_stage",
     "resolve_fish_context",
     "resolve_fish_dir",
     "scanimage_um_per_px_from_artist",

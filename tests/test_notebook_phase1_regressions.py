@@ -7,6 +7,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
 GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase1.py"
 PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase2.py"
+PHASE4_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase4.py"
+PHASE5_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase5.py"
 
 
 def _code_cell_by_tag(tag: str) -> str:
@@ -23,10 +25,11 @@ def _code_cell_by_tag(tag: str) -> str:
 class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cell_4_binds_legacy_compatibility_surface(self) -> None:
         cell = _code_cell_by_tag("4")
-        self.assertIn("notebook_bindings_from_context", cell)
-        self.assertIn("RUN_CONFIG = dict(CTX.run_config)", cell)
+        self.assertIn("resolve_notebook_context_stage", cell)
+        self.assertIn("ContextStageConfig", cell)
+        self.assertIn("RUN_CONFIG = dict(context_result['run_config'])", cell)
         self.assertIn("FUNC_STACK_PATH = FUNC_RAW_STACK_PATH", cell)
-        self.assertIn("def _resolve_func_polarity(force_refresh=False):", cell)
+        self.assertNotIn("def _resolve_func_polarity(", cell)
 
     def test_cell_8_uses_local_snapshots_for_voxel_resolution(self) -> None:
         cell = _code_cell_by_tag("8")
@@ -43,20 +46,25 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("'FUNC_STACK_PATH': str(FUNC_RAW_STACK_PATH_LOCAL) if FUNC_RAW_STACK_PATH_LOCAL else None", cell)
 
     def test_generator_contains_phase1_binding_fixes(self) -> None:
-        source = GENERATOR_PATH.read_text()
-        self.assertIn("globals().update(notebook_bindings_from_context(CTX))", source)
-        self.assertIn("RUN_CONFIG = dict(CTX.run_config)", source)
-        self.assertIn("FUNC_STACK_PATH = FUNC_RAW_STACK_PATH", source)
-        self.assertIn("def _resolve_func_polarity(force_refresh=False):", source)
+        source = PHASE5_GENERATOR_PATH.read_text()
+        self.assertIn("resolve_notebook_context_stage", source)
+        self.assertIn("build_run_config_stage", source)
+        self.assertIn("build_context_audit_stage", source)
+        self.assertIn("build_final_fish_audit_stage", source)
 
     def test_cell_55_publishes_df_stim_fish_id(self) -> None:
         cell = _code_cell_by_tag("55")
         self.assertIn("DF_STIM_FISH_ID = FISH_ID", cell)
 
     def test_matching_cells_use_package_builders(self) -> None:
+        cell_23a = _code_cell_by_tag("23a")
         cell_50i = _code_cell_by_tag("50i")
         cell_50 = _code_cell_by_tag("50")
         cell_50ia = _code_cell_by_tag("50ia")
+        self.assertIn("Suite2pStageConfig", cell_23a)
+        self.assertIn("load_suite2p_stage", cell_23a)
+        self.assertNotIn("def _build_labels_from_stat(", cell_23a)
+        self.assertNotIn("def _find_suite2p_file(", cell_23a)
         self.assertIn("from codeants_2pf_hcr import build_anat_identity_lookup_df, build_functional_roi_master_df, gene_from_mask", cell_50i)
         self.assertIn("from codeants_2pf_hcr import build_hcr_activity_tables, gene_from_mask", cell_50)
         self.assertIn("from codeants_2pf_hcr import ActivityConfig, build_response_bpi_tables", cell_50ia)
@@ -85,6 +93,27 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("build_response_bpi_tables", source)
         self.assertIn("prepare_pairs_for_unique_cells", source)
         self.assertIn("combine_segments", source)
+
+    def test_phase4_generator_tracks_suite2p_stage_extraction(self) -> None:
+        source = PHASE4_GENERATOR_PATH.read_text()
+        self.assertIn("Suite2pStageConfig", source)
+        self.assertIn("load_suite2p_stage", source)
+        self.assertIn("SUITE2P_FISH_ID = suite2p_result[\"suite2p_fish_id\"]", source)
+
+    def test_context_and_debug_cells_use_package_stage_wrappers(self) -> None:
+        cell_4a = _code_cell_by_tag("4a")
+        cell_4b = _code_cell_by_tag("4b")
+        cell_4c = _code_cell_by_tag("4c")
+        cell_6 = _code_cell_by_tag("6")
+        cell_99 = _code_cell_by_tag("99-debug-fish-audit")
+        self.assertIn("resolve_fish_state_stage", cell_4a)
+        self.assertNotIn("def reset_fish_state(", cell_4a)
+        self.assertIn("build_run_config_stage", cell_4b)
+        self.assertIn("build_context_audit_stage", cell_4c)
+        self.assertNotIn("def _apply_func_orientation(", cell_6)
+        self.assertIn("build_registration_helper_stage", cell_6)
+        self.assertIn("build_final_fish_audit_stage", cell_99)
+        self.assertNotIn("def _maybe(", cell_99)
 
 
 if __name__ == "__main__":

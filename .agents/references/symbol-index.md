@@ -12,12 +12,21 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.context`
 
+- `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
+- `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
+- `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
 - `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.
+- `resolve_notebook_context_stage`: Notebook-facing setup stage for `[4]` that returns context, legacy bindings, and discovered paths.
 - `notebook_bindings_from_context`: Rebind package-resolved context back to legacy notebook variable names.
 - `normalize_run_config`: Apply defaults and forced recompute flags.
+- `build_run_config_stage`: Notebook-facing run-config rebinding stage for `[4b]`.
 - `reset_fish_state`: Update the fish marker explicitly.
 - `require_fish_state`: Check that the current fish matches the cached fish marker.
+- `resolve_fish_state_stage`: Notebook-facing fish-state stage for `[4a]`.
 - `build_fish_state_audit_df`: Build the audit dataframe used by cell `[4c]`.
+- `build_context_audit_stage`: Notebook-facing audit stage for `[4c]`.
+- `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`.
+- `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
 
 ## `codeants_2pf_hcr.spatial`
 
@@ -63,7 +72,9 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.suite2p`
 
+- `Suite2pStageConfig`: Typed Suite2p load/orientation configuration for notebook cell `[23a]`.
 - `infer_frame_rate_from_detail`: Resolve a consistent Suite2p frame rate from per-plane ops files.
+- `load_suite2p_stage`: Notebook-facing Suite2p stage loader for `[23a]` that returns legacy-shaped labels, plane maps, and source summary tables.
 - `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
 
 ## `codeants_2pf_hcr.traces`
@@ -81,3 +92,10 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.plots.analysis`
 
 - `plot_single_roi_57style`: Render the single-ROI `[57]` style figure and optional AUC table.
+
+## `codeants_2pf_hcr.notebook_contract`
+
+- `NotebookContractViolation`: Static notebook-contract violation record.
+- `find_top_level_defs`: Find code cells that still define top-level `def`/`class` blocks.
+- `find_figure_contract_violations`: Find late figure cells that are not package-renderer driven.
+- `check_notebook_contract`: Summarize static notebook and figure contract violations for smoke/tests.
