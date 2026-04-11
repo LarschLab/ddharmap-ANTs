@@ -27,6 +27,7 @@
 
 - The cohort notebook is a downstream multi-fish consumer of single-fish canonical outputs.
 - It does **not** redefine single-fish table semantics (identity, response, BPI authority remains in single-fish writer stages/docs).
+- `[53a-cohort]` is a pooled analogue of the single-fish `[53a]` HCR↔anatomy QC panel and must preserve single-fish subset semantics (in-plane represented matched labels) rather than silently switching to responsive-only trace mappings.
 
 ## Ownership split
 

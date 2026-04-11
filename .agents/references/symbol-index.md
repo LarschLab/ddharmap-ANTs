@@ -130,6 +130,7 @@ Generated manually for the current extracted package surface.
 - `build_best_plane_modality_merge_grid`: Render the merged best-plane modality QA panel.
 - `build_round_channel_mip_grid`: Render the round/channel MIP grid.
 - `collect_cohort_53a_tables`: Build pooled cohort [53a]-analogue cache tables for `multi_fish_56h_56g.ipynb` (`[cohort-build]`).
+- `_select_in_plane_hcr_status_like_53a`: Build the [53a] label-level in-plane HCR status subset (one row per accepted `(gene, anat_label)` represented on functional planes) for HCR↔anatomy QC sourcing.
 - `show_region_shift_square_selector_stage`: Notebook-facing region-square QA selector stage for `[22d]`, including JSON reuse/save behavior.
 - `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).

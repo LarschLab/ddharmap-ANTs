@@ -1340,27 +1340,34 @@ def _resolve_conf_mask_path(*, fish_dir: Path, conf_mask_value: Any) -> Path | N
     return None
 
 
-def _dedupe_hcr_pairs_like_53a(conf_df: pd.DataFrame) -> pd.DataFrame:
-    if conf_df.empty:
-        return conf_df.copy()
-    work = conf_df.copy()
+IN_PLANE_HCR_QC_STATUSES = {
+    "in-plane responsive ROI",
+    "in-plane low-activity ROI",
+    "in-plane response unavailable",
+    "in-plane no functional ROI candidate",
+}
+
+
+def _select_in_plane_hcr_status_like_53a(status_df: pd.DataFrame) -> pd.DataFrame:
+    if status_df.empty:
+        return status_df.copy()
+    work = status_df.copy()
     work["gene"] = work.get("gene", pd.Series(["unknown"] * len(work), index=work.index)).astype(str).str.strip()
     work["anat_label"] = pd.to_numeric(work.get("anat_label", np.nan), errors="coerce").astype("Int64")
-    work["dist_func"] = pd.to_numeric(
-        work.get("dist_func_anat_um", work.get("selected_dist_um", work.get("dist_um", np.nan))), errors="coerce"
-    )
-    work["overlap"] = pd.to_numeric(
-        work.get("overlap_px_func_anat", work.get("selected_overlap_px", work.get("overlap_px", np.nan))), errors="coerce"
-    )
-    work["dist_conf"] = pd.to_numeric(work.get("dist_conf_anat_um", work.get("dist_conf", np.nan)), errors="coerce")
-    work["plane_sort"] = pd.to_numeric(work.get("plane", work.get("selected_plane", np.nan)), errors="coerce")
-    work["func_sort"] = pd.to_numeric(work.get("func_label", work.get("selected_func_label", np.nan)), errors="coerce")
+    represented = _as_bool_series(work.get("represented_on_func_plane", pd.Series(False, index=work.index)))
+    functional_status = work.get("functional_status", pd.Series("", index=work.index)).astype(str).str.strip()
+    work = work[represented & functional_status.isin(IN_PLANE_HCR_QC_STATUSES)].copy()
     work = work.dropna(subset=["gene", "anat_label"]).copy()
     if work.empty:
         return work
+    work["dist_conf"] = pd.to_numeric(work.get("dist_conf_anat_um", work.get("dist_conf", np.nan)), errors="coerce")
+    work["dist_func"] = pd.to_numeric(work.get("selected_dist_um", np.nan), errors="coerce")
+    work["overlap"] = pd.to_numeric(work.get("selected_overlap_px", work.get("overlap_px_func_anat", np.nan)), errors="coerce")
+    work["plane_sort"] = pd.to_numeric(work.get("selected_plane", np.nan), errors="coerce")
+    work["func_sort"] = pd.to_numeric(work.get("selected_func_label", np.nan), errors="coerce")
     work = work.sort_values(
-        ["gene", "anat_label", "dist_func", "overlap", "dist_conf", "plane_sort", "func_sort"],
-        ascending=[True, True, True, False, True, True, True],
+        ["gene", "anat_label", "dist_conf", "dist_func", "overlap", "plane_sort", "func_sort"],
+        ascending=[True, True, True, True, False, True, True],
         na_position="last",
     ).reset_index(drop=True)
     work = work.drop_duplicates(subset=["gene", "anat_label"], keep="first").reset_index(drop=True)
@@ -1372,9 +1379,9 @@ def _collect_hcr_offsets_for_fish(
     fish_id: str,
     fish_dir: Path,
     vox_anat: dict[str, float],
-    conf_df: pd.DataFrame,
+    hcr_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    if conf_df.empty:
+    if hcr_df.empty:
         return pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
     anat_labels_path = infer_anat_labels_path(fish_dir, fish_id)
     if anat_labels_path is None or not Path(anat_labels_path).exists():
@@ -1390,7 +1397,7 @@ def _collect_hcr_offsets_for_fish(
     dy = float(vox_anat.get("Y", 1.0))
     dz = float(vox_anat.get("Z", 1.0))
     rows: list[dict[str, Any]] = []
-    for row in conf_df.itertuples(index=False):
+    for row in hcr_df.itertuples(index=False):
         anat_label = int(row.anat_label)
         anat_xyz = anat_lookup.get(anat_label)
         if anat_xyz is None:
@@ -1518,13 +1525,18 @@ def collect_cohort_53a_tables(
             if not func_df.empty:
                 func_parts.append(func_df)
 
-        conf_path = out_reg / "conf_to_func_pairs.csv"
-        if conf_path.exists():
-            conf_df = pd.read_csv(conf_path)
-            if "fish_id" in conf_df.columns:
-                conf_df = conf_df[conf_df["fish_id"].astype(str) == fish_id].copy()
-            dedup_df = _dedupe_hcr_pairs_like_53a(conf_df)
-            hcr_df = _collect_hcr_offsets_for_fish(fish_id=fish_id, fish_dir=fish_dir, vox_anat=vox_anat, conf_df=dedup_df)
+        status_path = out_reg / "hcr_activity_status.csv"
+        if status_path.exists():
+            status_df = pd.read_csv(status_path)
+            if "fish_id" in status_df.columns:
+                status_df = status_df[status_df["fish_id"].astype(str) == fish_id].copy()
+            status_subset = _select_in_plane_hcr_status_like_53a(status_df)
+            hcr_df = _collect_hcr_offsets_for_fish(
+                fish_id=fish_id,
+                fish_dir=fish_dir,
+                vox_anat=vox_anat,
+                hcr_df=status_subset,
+            )
             if not hcr_df.empty:
                 hcr_parts.append(hcr_df)
 
@@ -1657,7 +1669,7 @@ def render_cohort_53a_summary(
         ax_ncc.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9)
         ax_ncc.set_xlabel("Z index")
         ax_ncc.set_ylabel("NCC score")
-        ax_ncc.set_title("NCC curves by plane (peak markers)")
+        ax_ncc.set_title("Plane Registration Match Quality")
         ax_ncc.grid(alpha=0.2, axis="y")
     else:
         ax_ncc.text(0.5, 0.5, "No NCC curves found", ha="center", va="center", transform=ax_ncc.transAxes)
@@ -1720,7 +1732,7 @@ def render_cohort_53a_summary(
             ax_diam.set_xticks(metric_centers)
             ax_diam.set_xticklabels(metric_labels, fontsize=8)
             ax_diam.set_ylabel("Diameter (µm)")
-            ax_diam.set_title("Per-fish label diameters (q05 drop, q95 low-confidence)")
+            ax_diam.set_title("Segmentation Size Quality")
             handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
             ax_diam.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
             ax_diam.grid(alpha=0.2, axis="y")
@@ -1809,7 +1821,7 @@ def render_cohort_53a_summary(
             ax_func.set_xticks(centers)
             ax_func.set_xticklabels(labels)
             ax_func.set_ylabel("Distance (µm)")
-            ax_func.set_title("Functional→anatomy centroid offsets (per-fish)")
+            ax_func.set_title("Functional→Anatomy Match Quality")
             handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
             ax_func.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
             ax_func.grid(alpha=0.2, axis="y")
@@ -1884,7 +1896,7 @@ def render_cohort_53a_summary(
         ax_hcr.set_xticks(xticks)
         ax_hcr.set_xticklabels(xticklabels, fontsize=8)
         ax_hcr.set_ylabel("Distance (µm)")
-        ax_hcr.set_title("HCR↔anatomy XY centroid offsets (by gene, split per fish; per-fish R50 + n)")
+        ax_hcr.set_title("In-Plane HCR→Anatomy Match Quality")
         ax_hcr.grid(alpha=0.2, axis="y")
         handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
         ref_handles, ref_labels = ax_hcr.get_legend_handles_labels()

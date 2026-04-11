@@ -23,6 +23,10 @@
 
 For explicitly identified-cell activity figures, starting from `hcr_activity_status.csv` or `conf_to_func_pairs.csv` is valid, but scope must be clearly labeled HCR-centric.
 
+## Cohort analogue inheritance rule
+
+- Cohort analogue figures must inherit the single-fish figure’s subset semantics, dedupe unit, and QC intent unless explicitly documented otherwise in the owning stage/reference docs.
+
 ## Figure defaults
 
 - Font: prefer `Aptos (Body)` with sans-serif fallback.
