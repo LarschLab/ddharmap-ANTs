@@ -22,12 +22,16 @@
    - Key object: `hcr_match_results`.
 6. **HCR-centric identified-cell activity mapping** (`[50]`)
    - Builds `hcr_activity_status.csv`, `conf_to_func_pairs_raw.csv`, response-positive `conf_to_func_pairs.csv`.
+   - Owns identified-cell activity export semantics.
 7. **ROI-centric whole-population matching** (`[50h] [50i]`)
    - Authoritative ROI↔anatomy matching and identity attachment.
+   - Owns geometry matching semantics.
 8. **Activity/BPI annotation** (`[50ia]`)
    - Response/BPI annotations merged onto master ROI table.
+   - Owns response semantics after geometry is fixed.
 9. **Population figures** (`[50e] [50j] [50k]`)
    - Table-driven summaries.
+   - Must filter canonical tables; they do not own semantic definitions.
 10. **Trace export and stimulus-aligned analyses** (`[51] [55] [56] [56h] [56g] [57]`)
    - Trace export, stimulus alignment, full-session and diagnostics figures.
 
@@ -36,6 +40,14 @@
 - ROI-centric authoritative table: `functional_roi_activity_identity.csv` (`[50i]` + `[50ia]`).
 - Response/BPI exports: `functional_roi_activity_bpi_cells.csv`, `functional_roi_activity_bpi_summary.csv` (`[50ia]`).
 - HCR-centric identified-cell outputs: `hcr_activity_status.csv`, `conf_to_func_pairs.csv`, `hcr_func_candidates.csv` (`[50]`).
+
+## Concept ownership
+
+- Whole-population identity -> `functional_roi_activity_identity.csv`.
+- Identified-cell activity export -> HCR-centric outputs from `[50]`.
+- Response semantics -> `[50ia]` / activity stage.
+- Geometry matching -> matching stage only.
+- Figure semantics -> downstream table filtering only; figures do not infer identity or response state.
 
 ## Navigation notes
 

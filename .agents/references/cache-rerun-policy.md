@@ -30,6 +30,7 @@
 
 - Fail fast if required response columns are missing in downstream HCR-centric consumers.
 - Do not mix old cached outputs with newly regenerated authoritative tables.
+- Distrust cached outputs whenever upstream writer-stage semantics changed, even if filenames and schemas stayed stable.
 
 ## Smoke-tier policy (efficient failure localization)
 
@@ -50,3 +51,10 @@ Bugfix loop:
 2. Fix the nearest upstream producer stage (avoid downstream plotting-only workarounds).
 3. Re-run the same tier, then the next tier.
 4. Mark fixed only after adding/adjusting a regression test for the broken contract.
+
+## Default validation workflow after edits
+
+- Run the smallest relevant smoke or contract test first.
+- Validate the first downstream consumer of the edited writer stage.
+- If a canonical table changed, verify required columns and filename stability explicitly.
+- Do not declare success from static reasoning alone.

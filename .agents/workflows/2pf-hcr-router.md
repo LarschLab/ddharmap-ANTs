@@ -8,12 +8,18 @@
 
 1. Read this router first.
 2. Read the smallest relevant file in `.agents/references/`.
-3. Open `notebook-stage-map.md` or `symbol-index.md` only if ownership/cell mapping is unclear.
-4. Open the owning package module in `src/codeants_2pf_hcr/`.
-5. Open notebook cells only if package code is insufficient for the task.
-6. Open `tools/` wrappers only for CLI behavior, plotting wrapper behavior, or reference patterns.
+3. Open `symbol-index.md` only if symbol lookup is needed.
+4. Open `notebook-stage-map.md` only if stage ownership or cell mapping is still unclear.
+5. Open the owning package module in `src/codeants_2pf_hcr/`.
+6. Open notebook cells only if package code is insufficient for the task.
+7. Open `tools/` wrappers only for CLI behavior, plotting wrapper behavior, or reference patterns.
 
-Do **not** open large notebook regions first.
+## Never these first
+
+- Do **not** open large notebook regions first.
+- Do **not** use `tools/` as business-logic authority.
+- Do **not** infer semantics from downstream figures before reading the writer stage.
+- Stop searching once the owning module and authoritative reference doc answer the question.
 
 ## Task routing table
 
@@ -36,6 +42,15 @@ Do **not** open large notebook regions first.
 ## Invariants to preserve while editing
 
 - Prefer package edits over notebook edits.
+- Table semantics belong to the stage that writes the table, not downstream consumers.
 - Preserve canonical outputs, filenames, variable names, and stage semantics.
 - Keep geometry matching independent of activity/BPI/gene identity.
 - Do not let HCR-centric exports silently replace ROI-centric authoritative outputs.
+
+## Error triage order
+
+1. Silent output corruption.
+2. Canonical table misuse.
+3. Upstream semantic bugs.
+4. Loud crashes.
+5. Downstream plotting or cosmetic symptoms.

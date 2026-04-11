@@ -62,3 +62,10 @@ Primary fields:
 - response-unavailable: `#ececec`
 
 This palette is expected to stay synchronized across `[50ia]`, `[50j]`, and `[50l]` outputs.
+
+## Ambiguity ladder
+
+- ROI-centric vs HCR-centric scope: defer to `scientific-policy.md`, then `current-state.md`.
+- Activity wording and response-state meaning: this file is authoritative.
+- Output ownership and canonical table choice: defer to `canonical-tables.md`.
+- If code conflicts with policy docs, follow policy docs unless they are clearly outdated.

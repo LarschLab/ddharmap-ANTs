@@ -2,6 +2,14 @@
 
 Generated manually for the phase-1 extraction surface.
 
+## Trusted patterns
+
+- `context.py`: path/config normalization pattern.
+- `stimulus.py`: explicit stage input/output pattern.
+- `activity.py`: response/BPI stage-owned semantics pattern.
+- `plots.*`: deterministic figure-builder pattern.
+- `tools/`: wrapper pattern only, not business-logic authority.
+
 ## `codeants_2pf_hcr.context`
 
 - `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.

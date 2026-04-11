@@ -30,6 +30,7 @@ from codeants_2pf_hcr import (
     norm01,
     prepare_pairs_for_unique_cells,
     resolve_conf_func_csv_analysis,
+    organize,
     run_smoke_tier,
     top_correlated_mean,
     zproject_mean,
@@ -68,6 +69,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(norm01)
     assert callable(prepare_pairs_for_unique_cells)
     assert callable(resolve_conf_func_csv_analysis)
+    assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(top_correlated_mean)
     assert callable(zproject_mean)

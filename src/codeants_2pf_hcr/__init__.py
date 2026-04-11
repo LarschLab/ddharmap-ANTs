@@ -71,6 +71,9 @@ from .smoke import (
     SmokeValidationError,
     run_smoke_tier,
 )
+from .organize import (
+    organize,
+)
 
 __all__ = [
     "ActivityConfig",
@@ -132,4 +135,5 @@ __all__ = [
     "infer_frame_rate_from_detail",
     "top_correlated_mean",
     "zproject_mean",
+    "organize",
 ]

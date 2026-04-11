@@ -14,6 +14,12 @@ Start here, then read only what your task needs.
 
 ## Non-negotiable repo rules
 
+- Ownership:
+  - notebook orchestration lives in notebook cells only
+  - reusable logic lives in `src/codeants_2pf_hcr/`
+  - CLI behavior lives in `tools/` wrappers only
+  - figure construction lives in `plots.*`
+  - table semantics are owned by the stage that writes them, not downstream consumers
 - Prefer package edits over notebook edits.
 - Do not introduce new notebook-local helper definitions when reusable package code is appropriate.
 - Preserve canonical outputs, filenames, variable names, and notebook stage semantics.
@@ -23,6 +29,26 @@ Start here, then read only what your task needs.
 - ROI-centric master table is authoritative for whole-population analyses.
 - HCR-centric exports are for identified-cell activity analyses only and must not silently replace ROI-centric authoritative outputs.
 - Consult `.agents/workflows/2pf-hcr-router.md` before opening large notebook regions.
+- Search order:
+  - router first, then the smallest relevant reference doc, then `symbol-index.md` or `notebook-stage-map.md` only if needed, then the owning module, then notebook cells
+  - do not open large notebook regions first
+  - do not use `tools/` as business-logic authority
+- Edit scope:
+  - fix at the narrowest owning layer
+  - do not patch downstream figures to compensate for upstream semantic bugs
+  - do not change schemas to dodge one local failure
+- Validation:
+  - run the smallest relevant smoke or contract check after edits
+  - verify the first downstream consumer when canonical table semantics changed
+  - do not declare success from static reasoning alone
+- Change logging:
+  - public behavior change -> update the relevant reference doc
+  - public function change -> update `symbol-index.md`
+  - stage/output ownership change -> update `notebook-stage-map.md` and `current-state.md`
+  - meaningful work with remaining breakage -> append `.agents/references/recent-changes.md`
+- Prompt minimization:
+  - future prompts should specify task, target, and any special constraint only
+  - repo docs are the default source of policy and workflow; do not restate repo-wide rules in every prompt
 
 ## Reference files
 
@@ -33,6 +59,7 @@ Start here, then read only what your task needs.
 - `.agents/references/figure-rules.md` - figure sourcing and plotting constraints.
 - `.agents/references/cache-rerun-policy.md` - stale outputs and minimum rerun sequence.
 - `.agents/references/current-state.md` - current mixed migration status and practical warnings.
+- `.agents/references/recent-changes.md` - rolling handoff log for meaningful work and remaining breakpoints.
 - `.agents/references/refactor-rules.md` - package ownership and implementation constraints.
 - `.agents/references/symbol-index.md` - package symbol lookup for fast navigation.
 

@@ -48,6 +48,13 @@ Short form: **geometry first, identity second, activity third, figures last**.
 - Prioritizes recovering responses for identified labels.
 - Must not silently replace the ROI-centric authoritative path.
 
+## Ambiguity ladder
+
+- ROI-centric vs HCR-centric meaning: start here, then confirm migration caveats in `current-state.md`.
+- Activity wording: defer to `activity-semantics.md`.
+- Output ownership: defer to `canonical-tables.md`.
+- If code conflicts with policy docs, follow policy docs unless they are clearly outdated.
+
 ## Why this split exists
 
 Historical ROI-first and label-first flows can disagree under competition. ROI-centric remains authoritative for whole-population inference; HCR-centric remains valid for identified-cell activity questions.
