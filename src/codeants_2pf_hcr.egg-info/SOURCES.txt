@@ -4,9 +4,12 @@ src/codeants_2pf_hcr/__init__.py
 src/codeants_2pf_hcr/activity.py
 src/codeants_2pf_hcr/context.py
 src/codeants_2pf_hcr/matching.py
+src/codeants_2pf_hcr/organize.py
 src/codeants_2pf_hcr/smoke.py
 src/codeants_2pf_hcr/spatial.py
 src/codeants_2pf_hcr/stimulus.py
+src/codeants_2pf_hcr/suite2p.py
+src/codeants_2pf_hcr/traces.py
 src/codeants_2pf_hcr.egg-info/PKG-INFO
 src/codeants_2pf_hcr.egg-info/SOURCES.txt
 src/codeants_2pf_hcr.egg-info/dependency_links.txt
@@ -16,9 +19,11 @@ src/codeants_2pf_hcr/plots/__init__.py
 src/codeants_2pf_hcr/plots/analysis.py
 src/codeants_2pf_hcr/plots/qa.py
 tests/test_activity.py
+tests/test_agent_docs.py
 tests/test_context.py
 tests/test_matching.py
 tests/test_notebook_phase1_regressions.py
+tests/test_organize.py
 tests/test_package_exports.py
 tests/test_smoke.py
 tests/test_spatial.py

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 import numpy as np
@@ -25,6 +24,7 @@ from .stimulus import (
     load_metadata_params,
     parse_float,
 )
+from .suite2p import infer_frame_rate_from_detail, load_suite2p_dff_map
 
 
 @dataclass(frozen=True)
@@ -139,165 +139,6 @@ def _compute_bootstrap_null_quantiles(
         boot /= float(len(class_events))
         out[stim_class] = np.quantile(boot, float(q), axis=1).astype(np.float32)
     return out
-
-
-def _find_suite2p_file(plane_dir: str | Path, kind: str) -> Path | None:
-    plane_dir = Path(plane_dir)
-    exact = plane_dir / f"{kind}.npy"
-    if exact.exists():
-        return exact
-    plane_match = re.search(r"plane(\d+)", str(plane_dir.name))
-    if plane_match:
-        tagged_hits = sorted(plane_dir.glob(f"*plane{int(plane_match.group(1))}_{kind}.npy"))
-        if tagged_hits:
-            return tagged_hits[0]
-    hits: list[Path] = []
-    for pattern in (f"*_{kind}.npy", f"*{kind}.npy"):
-        hits.extend(sorted(plane_dir.glob(pattern)))
-    hits = sorted(set(hits))
-    return hits[0] if hits else None
-
-
-def _resolve_suite2p_plane_dir(detail_df: pd.DataFrame, plane_idx: int, suite2p_root: str | Path | None) -> Path | None:
-    if "func_source" in detail_df.columns:
-        srcs = (
-            detail_df.loc[detail_df["plane_idx"] == int(plane_idx), "func_source"]
-            .dropna()
-            .astype(str)
-            .unique()
-            .tolist()
-        )
-        for src in srcs:
-            path = Path(src)
-            if path.exists():
-                return path
-    if suite2p_root is not None:
-        candidate = Path(suite2p_root) / f"plane{int(plane_idx)}"
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def infer_frame_rate_from_detail(detail_df: pd.DataFrame, *, suite2p_root: str | Path | None = None) -> float | None:
-    fs_vals: list[float] = []
-    plane_vals = detail_df["plane_idx"].dropna().astype(int).unique().tolist() if "plane_idx" in detail_df.columns else []
-    for plane_idx in sorted(plane_vals):
-        plane_dir = _resolve_suite2p_plane_dir(detail_df, plane_idx, suite2p_root)
-        if plane_dir is None:
-            continue
-        ops_path = _find_suite2p_file(plane_dir, "ops")
-        if ops_path is None:
-            continue
-        try:
-            ops = np.load(ops_path, allow_pickle=True).item()
-        except Exception:
-            continue
-        if isinstance(ops, dict) and ops.get("fs") is not None:
-            fs_vals.append(float(ops["fs"]))
-    if not fs_vals:
-        return None
-    first = float(fs_vals[0])
-    if any(abs(float(val) - first) > 1e-6 for val in fs_vals[1:]):
-        raise RuntimeError(f"inconsistent Suite2p frame rates across planes: {fs_vals}")
-    return first
-
-
-def load_suite2p_dff_map(
-    detail_df: pd.DataFrame,
-    *,
-    suite2p_root: str | Path | None = None,
-    dfof_baseline_pct: float = 10.0,
-    dfof_eps: float = 1e-6,
-) -> dict[int, dict[str, Any]]:
-    s2p_map: dict[int, dict[str, Any]] = {}
-    plane_vals = detail_df["plane_idx"].dropna().astype(int).unique().tolist() if "plane_idx" in detail_df.columns else []
-    for plane_idx in sorted(plane_vals):
-        plane_dir = _resolve_suite2p_plane_dir(detail_df, plane_idx, suite2p_root)
-        if plane_dir is None:
-            continue
-        f_path = _find_suite2p_file(plane_dir, "F")
-        if f_path is None:
-            continue
-        f_raw = np.load(f_path, allow_pickle=True).astype(np.float32)
-        f0 = np.percentile(f_raw, float(dfof_baseline_pct), axis=1, keepdims=True)
-        dff = (f_raw - f0) / (f0 + float(dfof_eps))
-        s2p_map[int(plane_idx)] = {"dff": dff, "plane_dir": str(plane_dir), "F_path": str(f_path)}
-    return s2p_map
-
-
-def prepare_pairs_for_unique_cells(pairs_df: pd.DataFrame, *, strict: bool = True, tag: str = "[stim]") -> pd.DataFrame:
-    req_cols = ["gene", "conf_mask", "conf_label", "anat_label", "func_label", "plane"]
-    missing = [col for col in req_cols if col not in pairs_df.columns]
-    if missing:
-        msg = f"{tag} mapping missing required columns for unique anat-cell traces: {missing}"
-        if strict:
-            raise RuntimeError(msg)
-        return pairs_df.iloc[0:0].copy()
-
-    out = pairs_df.copy()
-    if "is_selected_for_analysis" in out.columns:
-        selected = _as_bool_series(out["is_selected_for_analysis"])
-        n_not_selected = int((~selected).sum())
-        if strict and n_not_selected > 0:
-            raise RuntimeError(
-                f"{tag} mapping contains {n_not_selected} non-selected rows. "
-                "Use the dedup analysis mapping from [50] (conf_to_func_pairs.csv)."
-            )
-        out = out[selected].copy()
-
-    gene_raw = out["gene"].copy()
-    gene_clean = (
-        gene_raw.astype("string")
-        .str.strip()
-        .replace({"": pd.NA, "nan": pd.NA, "none": pd.NA, "null": pd.NA})
-    )
-    out["gene"] = gene_clean
-    for col in ("conf_label", "anat_label", "func_label", "plane"):
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-    required_nonnull = out[["gene", "conf_label", "anat_label", "func_label", "plane"]].notna().all(axis=1)
-    n_drop = int((~required_nonnull).sum())
-    if strict and n_drop > 0:
-        raise RuntimeError(
-            f"{tag} mapping has {n_drop} rows with missing required fields after parsing. "
-            "Re-run [50] to regenerate clean mapping."
-        )
-    out = out[required_nonnull].copy()
-    if out.empty:
-        return out
-    out["conf_label"] = out["conf_label"].astype(int)
-    out["anat_label"] = out["anat_label"].astype(int)
-    out["func_label"] = out["func_label"].astype(int)
-    out["plane"] = out["plane"].astype(int)
-    return out
-
-
-def resolve_conf_func_csv_analysis(
-    *,
-    out_reg: str | Path,
-    run_config: dict[str, Any] | None = None,
-    conf_func_csv: str | Path | None = None,
-    fish_id: str | None = None,
-) -> Path:
-    out_reg_path = Path(out_reg)
-    default_conf = out_reg_path / "conf_to_func_pairs.csv"
-    rc = run_config if isinstance(run_config, dict) else {}
-    override = rc.get("CONF_FUNC_CSV_ANALYSIS", conf_func_csv)
-    if override is None:
-        return default_conf
-    override_path = Path(str(override))
-    if fish_id is not None:
-        fish = str(fish_id)
-        if fish in str(override_path):
-            return override_path
-        try:
-            if override_path.resolve(strict=False) == default_conf.resolve(strict=False):
-                return override_path
-        except Exception:
-            pass
-        if override_path.name.startswith("conf_to_func_pairs") and override_path.parent == out_reg_path:
-            return override_path
-        return default_conf
-    return override_path
 
 
 def _resolve_stim_context_for_activity(
@@ -791,8 +632,4 @@ def build_response_bpi_tables(
 __all__ = [
     "ActivityConfig",
     "build_response_bpi_tables",
-    "infer_frame_rate_from_detail",
-    "load_suite2p_dff_map",
-    "prepare_pairs_for_unique_cells",
-    "resolve_conf_func_csv_analysis",
 ]

@@ -39,7 +39,9 @@
 ## Trusted patterns
 
 - `context.py` = path/config normalization pattern.
+- `suite2p.py` = Suite2p file/discovery and dF/F loading pattern.
 - `stimulus.py` = explicit stage input/output pattern.
 - `activity.py` = response/BPI stage-owned semantics pattern.
+- `traces.py` = trace export and trace-ready mapping pattern.
 - `plots.*` = deterministic figure-builder pattern.
 - `tools/` = wrapper pattern only.

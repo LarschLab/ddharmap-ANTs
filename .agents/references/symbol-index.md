@@ -1,6 +1,6 @@
 # Symbol Index
 
-Generated manually for the phase-1 extraction surface.
+Generated manually for the current extracted package surface.
 
 ## Trusted patterns
 
@@ -60,9 +60,18 @@ Generated manually for the phase-1 extraction surface.
 
 - `ActivityConfig`: Typed response/BPI scoring configuration for `[50ia]`.
 - `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table.
-- `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
-- `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
+
+## `codeants_2pf_hcr.suite2p`
+
 - `infer_frame_rate_from_detail`: Resolve a consistent Suite2p frame rate from per-plane ops files.
+- `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
+
+## `codeants_2pf_hcr.traces`
+
+- `TraceExportConfig`: Typed trace-export configuration for `[51]`.
+- `export_suite2p_trace_metadata`: Export deduplicated HCR-selected Suite2p dF/F traces and metadata for `[51]`.
+- `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
+- `resolve_conf_func_csv_analysis`: Resolve the analysis-ready `conf_to_func_pairs.csv` path for `[51]`, `[56]`, `[56h]`, and `[57]`.
 
 ## `codeants_2pf_hcr.plots.qa`
 

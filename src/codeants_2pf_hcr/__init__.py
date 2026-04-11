@@ -24,10 +24,6 @@ from .context import (
 from .activity import (
     ActivityConfig,
     build_response_bpi_tables,
-    infer_frame_rate_from_detail,
-    load_suite2p_dff_map,
-    prepare_pairs_for_unique_cells,
-    resolve_conf_func_csv_analysis,
 )
 from .matching import (
     MatchingConfig,
@@ -71,6 +67,16 @@ from .smoke import (
     SmokeValidationError,
     run_smoke_tier,
 )
+from .suite2p import (
+    infer_frame_rate_from_detail,
+    load_suite2p_dff_map,
+)
+from .traces import (
+    TraceExportConfig,
+    export_suite2p_trace_metadata,
+    prepare_pairs_for_unique_cells,
+    resolve_conf_func_csv_analysis,
+)
 from .organize import (
     organize,
 )
@@ -80,6 +86,7 @@ __all__ = [
     "FishContext",
     "MatchingConfig",
     "StimulusConfig",
+    "TraceExportConfig",
     "SmokeValidationError",
     "_find_embedded_nrrd_header",
     "_infer_voxels_from_open_tiff",
@@ -104,6 +111,7 @@ __all__ = [
     "combine_segments",
     "compute_zscore_stats",
     "corrcoef_img",
+    "export_suite2p_trace_metadata",
     "first_match",
     "func_orientation_effective",
     "func_orientation_mode",
