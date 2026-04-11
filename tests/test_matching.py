@@ -338,6 +338,11 @@ class MatchingTests(unittest.TestCase):
             self.assertFalse(tables["func_anat_offsets_df"].empty)
             self.assertFalse(tables["hcr_offsets_df"].empty)
             self.assertGreaterEqual(float(tables["thresholds_df"].iloc[0]["anat_r50_xy_um"]), 0.0)
+            hcr_one = tables["hcr_offsets_df"].iloc[0]
+            # Use matching-stage HCR↔anatomy distance (already in anatomy space) for XY.
+            self.assertAlmostEqual(float(hcr_one["xy_um"]), 0.5, places=6)
+            # Z offset comes from centroid delta in shared anatomy index space.
+            self.assertAlmostEqual(float(hcr_one["abs_dz_um"]), 2.0, places=6)
 
     def test_render_cohort_53a_summary_handles_empty_links(self) -> None:
         ncc_curves_df = pd.DataFrame(
@@ -390,6 +395,80 @@ class MatchingTests(unittest.TestCase):
         self.assertEqual(len(fig.axes), 4)
         self.assertIn("No functional→anatomy offsets found", fig.axes[2].texts[0].get_text())
         self.assertIn("No HCR offsets found", fig.axes[3].texts[0].get_text())
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
+
+    def test_render_cohort_53a_summary_titles_reflect_per_fish_panels(self) -> None:
+        ncc_curves_df = pd.DataFrame(
+            {
+                "fish_id": ["F01", "F02"],
+                "plane_idx": [0, 0],
+                "plane_label": ["plane0", "plane0"],
+                "z_idx": [0, 0],
+                "ncc_score": [0.5, 0.6],
+                "best_z": [0, 0],
+                "best_score": [0.5, 0.6],
+            }
+        )
+        diameters_df = pd.DataFrame(
+            {
+                "fish_id": ["F01", "F02", "F01", "F02"],
+                "dataset": ["Anatomy", "Anatomy", "Functional", "HCR"],
+                "x_um": [5.0, 6.0, 4.5, 5.5],
+                "y_um": [5.0, 6.0, 4.5, 5.5],
+                "z_um": [4.0, 5.0, 3.5, 4.5],
+                "xy_um": [5.0, 6.0, 4.5, 5.5],
+                "is_low_confidence_segmentation": [False, False, False, False],
+            }
+        )
+        diameter_filter_summary_df = pd.DataFrame(
+            {
+                "fish_id": ["F01", "F02"],
+                "dataset": ["Anatomy", "Anatomy"],
+                "xy_q05_um": [5.0, 6.0],
+                "xy_q95_um": [5.0, 6.0],
+                "n_input": [1, 1],
+                "n_kept": [1, 1],
+                "n_drop_q05": [0, 0],
+                "n_low_conf_q95": [0, 0],
+            }
+        )
+        func_anat_offsets_df = pd.DataFrame(
+            {
+                "fish_id": ["F01", "F01", "F02", "F02"],
+                "axis": ["xy", "z", "xy", "z"],
+                "offset_um": [1.0, 2.0, 1.5, 2.5],
+            }
+        )
+        hcr_offsets_df = pd.DataFrame(
+            {
+                "fish_id": ["F01", "F02", "F01", "F02"],
+                "gene": ["npy", "npy", "tac3b", "tac3b"],
+                "anat_label": [1, 2, 3, 4],
+                "xy_um": [1.0, 1.5, 2.0, 2.5],
+                "abs_dz_um": [2.0, 2.5, 3.0, 3.5],
+                "distance_um": [2.24, 2.92, 3.61, 4.30],
+            }
+        )
+        thresholds_df = pd.DataFrame([{"anat_r50_xy_um": 2.5, "anat_r50_z_um": 2.0}])
+        fig = render_cohort_53a_summary(
+            ncc_curves_df=ncc_curves_df,
+            diameters_df=diameters_df,
+            diameter_filter_summary_df=diameter_filter_summary_df,
+            func_anat_offsets_df=func_anat_offsets_df,
+            hcr_offsets_df=hcr_offsets_df,
+            thresholds_df=thresholds_df,
+            gene_order=["npy"],
+            gene_colors={"npy": "#1f9d55"},
+        )
+        self.assertIn("Per-fish label diameters", fig.axes[1].get_title())
+        self.assertIn("per-fish", fig.axes[2].get_title().lower())
+        self.assertEqual(fig.axes[2].get_ylabel(), "Distance (µm)")
+        self.assertEqual(fig.axes[3].get_ylabel(), "Distance (µm)")
+        self.assertEqual([tick.get_text() for tick in fig.axes[2].get_xticklabels()], ["XY", "Z"])
+        self.assertEqual([tick.get_text() for tick in fig.axes[3].get_xticklabels()], ["npy"])
+        self.assertIn("xy", fig.axes[3].get_title().lower())
         import matplotlib.pyplot as plt
 
         plt.close(fig)

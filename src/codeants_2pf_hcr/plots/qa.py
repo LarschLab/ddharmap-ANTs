@@ -1395,32 +1395,64 @@ def _collect_hcr_offsets_for_fish(
         anat_xyz = anat_lookup.get(anat_label)
         if anat_xyz is None:
             continue
+        # Prefer geometry distances already computed in the matching pipeline.
+        # They are in shared anatomy space and avoid mixing raw confocal indices.
+        xy_from_table = np.nan
+        for col in ("dist_conf_anat_um", "dist_conf", "dist_um", "distance_um"):
+            raw = getattr(row, col, np.nan)
+            val = pd.to_numeric(pd.Series([raw]), errors="coerce").iloc[0]
+            if pd.notna(val) and np.isfinite(float(val)):
+                xy_from_table = float(abs(val))
+                break
+        abs_dz_from_table = np.nan
+        for col in ("abs_dz_um", "dz_um"):
+            raw = getattr(row, col, np.nan)
+            val = pd.to_numeric(pd.Series([raw]), errors="coerce").iloc[0]
+            if pd.notna(val) and np.isfinite(float(val)):
+                abs_dz_from_table = float(abs(val))
+                break
+
+        dx_um = np.nan
+        dy_um = np.nan
+        dz_um = np.nan
+        xy_from_centroids = np.nan
+        abs_dz_from_centroids = np.nan
+        dist_from_centroids = np.nan
         conf_mask_path = _resolve_conf_mask_path(
             fish_dir=fish_dir,
             conf_mask_value=getattr(row, "conf_mask", getattr(row, "mask_path", None)),
         )
         conf_label_val = getattr(row, "conf_label", getattr(row, "primary_conf_label", np.nan))
         conf_label = pd.to_numeric(pd.Series([conf_label_val]), errors="coerce").iloc[0]
-        if conf_mask_path is None or pd.isna(conf_label):
-            continue
-        conf_labels = np.asarray(tifffile.imread(str(conf_mask_path)))
-        conf_centroids = compute_centroids(conf_labels)
-        if conf_centroids.empty:
-            continue
-        conf_centroids["label"] = pd.to_numeric(conf_centroids["label"], errors="coerce").astype("Int64")
-        conf_hit = conf_centroids[conf_centroids["label"] == int(conf_label)]
-        if conf_hit.empty:
-            continue
-        conf_xyz = (
-            float(conf_hit.iloc[0]["x"]),
-            float(conf_hit.iloc[0]["y"]),
-            float(conf_hit.iloc[0]["z"]),
+        if conf_mask_path is not None and not pd.isna(conf_label):
+            conf_labels = np.asarray(tifffile.imread(str(conf_mask_path)))
+            if conf_labels.shape == anat_labels.shape:
+                conf_centroids = compute_centroids(conf_labels)
+                if not conf_centroids.empty:
+                    conf_centroids["label"] = pd.to_numeric(conf_centroids["label"], errors="coerce").astype("Int64")
+                    conf_hit = conf_centroids[conf_centroids["label"] == int(conf_label)]
+                    if not conf_hit.empty:
+                        conf_xyz = (
+                            float(conf_hit.iloc[0]["x"]),
+                            float(conf_hit.iloc[0]["y"]),
+                            float(conf_hit.iloc[0]["z"]),
+                        )
+                        dx_um = (conf_xyz[0] - anat_xyz[0]) * dx
+                        dy_um = (conf_xyz[1] - anat_xyz[1]) * dy
+                        dz_um = (conf_xyz[2] - anat_xyz[2]) * dz
+                        xy_from_centroids = float(np.hypot(dx_um, dy_um))
+                        abs_dz_from_centroids = float(abs(dz_um))
+                        dist_from_centroids = float(np.sqrt(dx_um * dx_um + dy_um * dy_um + dz_um * dz_um))
+
+        xy_um = float(xy_from_table) if np.isfinite(xy_from_table) else float(xy_from_centroids)
+        abs_dz_um = float(abs_dz_from_table) if np.isfinite(abs_dz_from_table) else float(abs_dz_from_centroids)
+        distance_um = float(
+            np.sqrt(xy_um * xy_um + abs_dz_um * abs_dz_um)
+            if np.isfinite(xy_um) and np.isfinite(abs_dz_um)
+            else (xy_um if np.isfinite(xy_um) else dist_from_centroids)
         )
-        dx_um = (conf_xyz[0] - anat_xyz[0]) * dx
-        dy_um = (conf_xyz[1] - anat_xyz[1]) * dy
-        dz_um = (conf_xyz[2] - anat_xyz[2]) * dz
-        xy_um = float(np.hypot(dx_um, dy_um))
-        abs_dz_um = float(abs(dz_um))
+        if not np.isfinite(xy_um) and not np.isfinite(abs_dz_um) and not np.isfinite(distance_um):
+            continue
         rows.append(
             {
                 "fish_id": fish_id,
@@ -1431,7 +1463,7 @@ def _collect_hcr_offsets_for_fish(
                 "dz_um": float(dz_um),
                 "xy_um": xy_um,
                 "abs_dz_um": abs_dz_um,
-                "distance_um": float(np.sqrt(dx_um * dx_um + dy_um * dy_um + dz_um * dz_um)),
+                "distance_um": distance_um,
             }
         )
     return pd.DataFrame(rows)
@@ -1562,6 +1594,42 @@ def render_cohort_53a_summary(
     ax_ncc, ax_diam = axes[0, 0], axes[0, 1]
     ax_func, ax_hcr = axes[1, 0], axes[1, 1]
 
+    def _annotate_sample_sizes_no_overlap(
+        ax: plt.Axes,
+        labels: list[tuple[float, np.ndarray]],
+        *,
+        fontsize: int = 7,
+    ) -> None:
+        """Place n-labels with small y-offset collision avoidance for nearby x positions."""
+        if not labels:
+            return
+        finite_arrays = [arr[np.isfinite(arr)] for _, arr in labels]
+        finite_arrays = [arr for arr in finite_arrays if arr.size]
+        if not finite_arrays:
+            return
+        y_min_data = float(np.min([float(np.nanmin(arr)) for arr in finite_arrays]))
+        y_max_data = float(np.max([float(np.nanmax(arr)) for arr in finite_arrays]))
+        y_span = max(1e-6, y_max_data - y_min_data)
+        y_pad = 0.03 * y_span
+        min_sep = 0.05 * y_span
+        x_neighbor_thresh = 1.1
+        placed: list[tuple[float, float]] = []
+        top_used = y_max_data
+        for xpos, arr in sorted(labels, key=lambda item: float(item[0])):
+            arr_f = arr[np.isfinite(arr)]
+            if arr_f.size == 0:
+                continue
+            y = float(np.nanmax(arr_f)) + y_pad
+            while any(abs(float(xpos) - px) <= x_neighbor_thresh and abs(y - py) < min_sep for px, py in placed):
+                y += min_sep
+            ax.text(float(xpos), y, f"n={int(arr_f.size)}", ha="center", va="bottom", fontsize=fontsize)
+            placed.append((float(xpos), y))
+            top_used = max(top_used, y)
+        bottom, top = ax.get_ylim()
+        target_top = max(float(top), top_used + 0.08 * y_span)
+        if target_top > float(top):
+            ax.set_ylim(float(bottom), target_top)
+
     if not ncc_curves_df.empty:
         fish_ids = sorted(ncc_curves_df["fish_id"].astype(str).unique().tolist())
         fish_palette = {fid: plt.cm.tab10(i % 10) for i, fid in enumerate(fish_ids)}
@@ -1597,45 +1665,64 @@ def render_cohort_53a_summary(
 
     if not diameters_df.empty:
         dataset_order = ["Anatomy", "Functional", "HCR"]
-        dataset_colors = {"Anatomy": "#7f7f7f", "Functional": "#f39c12", "HCR": "#9b59b6"}
+        fish_ids = sorted(diameters_df["fish_id"].astype(str).unique().tolist())
+        fish_palette = {fid: plt.cm.tab10(i % 10) for i, fid in enumerate(fish_ids)}
+        metric_specs = [(d, axis) for d in dataset_order for axis in ("XY", "Z")]
+        block_width = max(1, len(fish_ids)) + 1
         positions: list[float] = []
         values: list[np.ndarray] = []
         colors: list[Any] = []
-        labels: list[str] = []
-        for d_idx, dataset in enumerate(dataset_order):
-            sub = diameters_df[diameters_df["dataset"].astype(str) == dataset]
-            xy = pd.to_numeric(sub.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
-            z = pd.to_numeric(sub.get("z_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
-            xy = xy[np.isfinite(xy)]
-            z = z[np.isfinite(z)]
-            for axis_idx, (axis_name, arr) in enumerate((("XY", xy), ("Z", z))):
+        metric_centers: list[float] = []
+        metric_labels: list[str] = []
+        for metric_idx, (dataset, axis_name) in enumerate(metric_specs):
+            start = metric_idx * block_width + 1
+            center = start + (max(1, len(fish_ids)) - 1) / 2.0
+            metric_centers.append(center)
+            metric_labels.append(f"{dataset}\n{axis_name}")
+            for fish_idx, fish_id in enumerate(fish_ids):
+                sub = diameters_df[
+                    (diameters_df["dataset"].astype(str) == dataset) & (diameters_df["fish_id"].astype(str) == str(fish_id))
+                ].copy()
+                col = "xy_um" if axis_name == "XY" else "z_um"
+                arr = pd.to_numeric(sub.get(col, pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+                arr = arr[np.isfinite(arr)]
                 if arr.size == 0:
                     continue
-                xpos = float(d_idx * 3 + axis_idx + 1)
+                xpos = float(start + fish_idx)
                 positions.append(xpos)
                 values.append(arr)
-                colors.append(dataset_colors.get(dataset, "#999999"))
-                labels.append(f"{dataset}\n{axis_name}")
+                colors.append(fish_palette[str(fish_id)])
         if values:
-            vp = ax_diam.violinplot(values, positions=positions, widths=0.8, showmeans=False, showmedians=False, showextrema=False)
+            vp = ax_diam.violinplot(values, positions=positions, widths=0.85, showmeans=False, showmedians=False, showextrema=False)
             for body, color in zip(vp["bodies"], colors):
                 body.set_facecolor(color)
                 body.set_edgecolor("black")
                 body.set_alpha(0.65)
-            for xpos, arr in zip(positions, values):
-                ax_diam.text(xpos, float(np.nanmax(arr)) * 1.03 if arr.size else 0.0, f"n={int(arr.size)}", ha="center", va="bottom", fontsize=8)
+            _annotate_sample_sizes_no_overlap(ax_diam, list(zip(positions, values, strict=False)), fontsize=7)
             q95_df = diameter_filter_summary_df.copy()
-            if not q95_df.empty and {"dataset", "xy_q95_um"}.issubset(q95_df.columns):
-                pooled_q95 = q95_df.groupby("dataset", dropna=False)["xy_q95_um"].median()
-                for d_idx, dataset in enumerate(dataset_order):
-                    if dataset in pooled_q95.index and np.isfinite(float(pooled_q95[dataset])):
-                        xpos = float(d_idx * 3 + 1)
-                        y = float(pooled_q95[dataset])
-                        ax_diam.hlines(y, xpos - 0.45, xpos + 0.45, colors=dataset_colors.get(dataset, "#666666"), linestyles="--", linewidth=1.2)
-            ax_diam.set_xticks(positions)
-            ax_diam.set_xticklabels(labels, fontsize=8)
+            if not q95_df.empty and {"fish_id", "dataset", "xy_q95_um"}.issubset(q95_df.columns):
+                for metric_idx, (dataset, axis_name) in enumerate(metric_specs):
+                    if axis_name != "XY":
+                        continue
+                    start = metric_idx * block_width + 1
+                    for fish_idx, fish_id in enumerate(fish_ids):
+                        qsub = q95_df[
+                            (q95_df["fish_id"].astype(str) == str(fish_id)) & (q95_df["dataset"].astype(str) == dataset)
+                        ]
+                        if qsub.empty:
+                            continue
+                        q95_val = pd.to_numeric(qsub["xy_q95_um"], errors="coerce").dropna()
+                        if q95_val.empty:
+                            continue
+                        y = float(np.median(q95_val.to_numpy(dtype=float)))
+                        xpos = float(start + fish_idx)
+                        ax_diam.hlines(y, xpos - 0.35, xpos + 0.35, colors=fish_palette[str(fish_id)], linestyles="--", linewidth=1.0)
+            ax_diam.set_xticks(metric_centers)
+            ax_diam.set_xticklabels(metric_labels, fontsize=8)
             ax_diam.set_ylabel("Diameter (µm)")
-            ax_diam.set_title("Pooled label diameters (q05 drop, q95 low-confidence)")
+            ax_diam.set_title("Per-fish label diameters (q05 drop, q95 low-confidence)")
+            handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
+            ax_diam.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
             ax_diam.grid(alpha=0.2, axis="y")
         else:
             ax_diam.text(0.5, 0.5, "No diameter values found", ha="center", va="center", transform=ax_diam.transAxes)
@@ -1648,31 +1735,87 @@ def render_cohort_53a_summary(
     r50_z = float(pd.to_numeric(thresholds_df.get("anat_r50_z_um", pd.Series([np.nan])), errors="coerce").iloc[0]) if not thresholds_df.empty else np.nan
 
     if not func_anat_offsets_df.empty:
-        xy_vals = pd.to_numeric(
-            func_anat_offsets_df.loc[func_anat_offsets_df["axis"].astype(str).str.lower() == "xy", "offset_um"], errors="coerce"
-        ).to_numpy(dtype=float)
-        z_vals = pd.to_numeric(
-            func_anat_offsets_df.loc[func_anat_offsets_df["axis"].astype(str).str.lower() == "z", "offset_um"], errors="coerce"
-        ).to_numpy(dtype=float)
-        xy_vals = xy_vals[np.isfinite(xy_vals)]
-        z_vals = z_vals[np.isfinite(z_vals)]
-        values = [xy_vals, z_vals]
-        labels = ["XY", "Z"]
-        vp = ax_func.violinplot(values, positions=[1, 2], widths=0.75, showmeans=False, showmedians=False, showextrema=False)
-        for body, color in zip(vp["bodies"], ["#4c78a8", "#f58518"]):
-            body.set_facecolor(color)
-            body.set_edgecolor("black")
-            body.set_alpha(0.75)
-        ax_func.set_xticks([1, 2])
-        ax_func.set_xticklabels(labels)
-        if np.isfinite(r50_xy):
-            ax_func.hlines(r50_xy, 0.65, 1.35, colors="#c1121f", linestyles="--", linewidth=1.4, label=f"Anat R50 XY={r50_xy:.2f} µm")
-        if np.isfinite(r50_z):
-            ax_func.hlines(r50_z, 1.65, 2.35, colors="#c1121f", linestyles="--", linewidth=1.4, label=f"Anat R50 Z={r50_z:.2f} µm")
-        ax_func.set_ylabel("Offset (µm)")
-        ax_func.set_title("Functional→anatomy centroid offsets (pooled)")
-        ax_func.grid(alpha=0.2, axis="y")
-        ax_func.legend(frameon=False, fontsize=8, loc="upper right")
+        fish_ids = sorted(func_anat_offsets_df["fish_id"].astype(str).unique().tolist())
+        fish_palette = {fid: plt.cm.tab10(i % 10) for i, fid in enumerate(fish_ids)}
+        axis_specs = [("xy", "XY"), ("z", "Z")]
+        block_width = max(1, len(fish_ids)) + 1
+        positions: list[float] = []
+        values: list[np.ndarray] = []
+        colors: list[Any] = []
+        centers: list[float] = []
+        labels: list[str] = []
+        for axis_idx, (axis_key, axis_label) in enumerate(axis_specs):
+            start = axis_idx * block_width + 1
+            centers.append(start + (max(1, len(fish_ids)) - 1) / 2.0)
+            labels.append(axis_label)
+            for fish_idx, fish_id in enumerate(fish_ids):
+                sub = func_anat_offsets_df[
+                    (func_anat_offsets_df["fish_id"].astype(str) == str(fish_id))
+                    & (func_anat_offsets_df["axis"].astype(str).str.lower() == axis_key)
+                ]
+                arr = pd.to_numeric(sub.get("offset_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+                arr = arr[np.isfinite(arr)]
+                if arr.size == 0:
+                    continue
+                xpos = float(start + fish_idx)
+                positions.append(xpos)
+                values.append(arr)
+                colors.append(fish_palette[str(fish_id)])
+        if values:
+            vp = ax_func.violinplot(values, positions=positions, widths=0.85, showmeans=False, showmedians=False, showextrema=False)
+            for body, color in zip(vp["bodies"], colors):
+                body.set_facecolor(color)
+                body.set_edgecolor("black")
+                body.set_alpha(0.75)
+            _annotate_sample_sizes_no_overlap(ax_func, list(zip(positions, values, strict=False)), fontsize=7)
+            # Show per-fish anatomy R50 references derived from per-fish anatomy diameters.
+            if not diameters_df.empty and {"fish_id", "dataset", "xy_um", "z_um"}.issubset(diameters_df.columns):
+                anat_by_fish = diameters_df[diameters_df["dataset"].astype(str) == "Anatomy"].copy()
+                for axis_idx, (axis_key, _axis_label) in enumerate(axis_specs):
+                    start = axis_idx * block_width + 1
+                    for fish_idx, fish_id in enumerate(fish_ids):
+                        sub = anat_by_fish[anat_by_fish["fish_id"].astype(str) == str(fish_id)]
+                        if sub.empty:
+                            continue
+                        source_col = "xy_um" if axis_key == "xy" else "z_um"
+                        vals = pd.to_numeric(sub[source_col], errors="coerce").to_numpy(dtype=float)
+                        vals = vals[np.isfinite(vals)]
+                        if vals.size == 0:
+                            continue
+                        r50_val = float(np.median(vals) / 2.0)
+                        xpos = float(start + fish_idx)
+                        ax_func.hlines(r50_val, xpos - 0.35, xpos + 0.35, colors=fish_palette[str(fish_id)], linestyles="--", linewidth=1.0)
+            elif np.isfinite(r50_xy) or np.isfinite(r50_z):
+                if np.isfinite(r50_xy):
+                    start = 1
+                    ax_func.hlines(
+                        float(r50_xy),
+                        start - 0.4,
+                        start + max(0, len(fish_ids) - 1) + 0.4,
+                        colors="#c1121f",
+                        linestyles="--",
+                        linewidth=1.1,
+                    )
+                if np.isfinite(r50_z):
+                    start = block_width + 1
+                    ax_func.hlines(
+                        float(r50_z),
+                        start - 0.4,
+                        start + max(0, len(fish_ids) - 1) + 0.4,
+                        colors="#7f1d1d",
+                        linestyles=":",
+                        linewidth=1.1,
+                    )
+            ax_func.set_xticks(centers)
+            ax_func.set_xticklabels(labels)
+            ax_func.set_ylabel("Distance (µm)")
+            ax_func.set_title("Functional→anatomy centroid offsets (per-fish)")
+            handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
+            ax_func.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
+            ax_func.grid(alpha=0.2, axis="y")
+        else:
+            ax_func.text(0.5, 0.5, "No functional→anatomy offsets found", ha="center", va="center", transform=ax_func.transAxes)
+            ax_func.set_axis_off()
     else:
         ax_func.text(0.5, 0.5, "No functional→anatomy offsets found", ha="center", va="center", transform=ax_func.transAxes)
         ax_func.set_axis_off()
@@ -1681,49 +1824,71 @@ def render_cohort_53a_summary(
         order = list(gene_order or [])
         if not order:
             order = sorted(hcr_offsets_df["gene"].astype(str).unique().tolist())
-        palette = dict(gene_colors or {})
-        if not palette:
-            palette = {gene: mcolors.to_hex(plt.cm.tab10(i % 10)) for i, gene in enumerate(order)}
-        plot_rows = []
-        for gene in order:
-            sub = hcr_offsets_df[hcr_offsets_df["gene"].astype(str) == str(gene)].copy()
-            if sub.empty:
-                continue
-            xy = pd.to_numeric(sub.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
-            zz = pd.to_numeric(sub.get("abs_dz_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
-            xy = xy[np.isfinite(xy)]
-            zz = zz[np.isfinite(zz)]
-            plot_rows.append((gene, "XY", xy))
-            plot_rows.append((gene, "Z", zz))
-        xpos = 1
+        fish_ids = sorted(hcr_offsets_df["fish_id"].astype(str).unique().tolist())
+        fish_palette = {fid: plt.cm.tab10(i % 10) for i, fid in enumerate(fish_ids)}
+        anat_r50_by_fish: dict[str, float] = {}
+        if not diameters_df.empty and {"fish_id", "dataset", "xy_um"}.issubset(diameters_df.columns):
+            anat_by_fish = diameters_df[diameters_df["dataset"].astype(str) == "Anatomy"].copy()
+            for fish_id in fish_ids:
+                sub = anat_by_fish[anat_by_fish["fish_id"].astype(str) == str(fish_id)]
+                vals = pd.to_numeric(sub.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+                vals = vals[np.isfinite(vals)]
+                if vals.size:
+                    anat_r50_by_fish[str(fish_id)] = float(np.median(vals) / 2.0)
+        axis_specs = [("xy_um", "XY")]
+        block_width = max(1, len(fish_ids)) + 1
         xticks: list[float] = []
         xticklabels: list[str] = []
-        for gene, axis_name, arr in plot_rows:
-            if arr.size == 0:
-                xpos += 1
+        hcr_sample_labels: list[tuple[float, np.ndarray]] = []
+        for gene_idx, gene in enumerate(order):
+            start = gene_idx * block_width + 1
+            xticks.append(start + (max(1, len(fish_ids)) - 1) / 2.0)
+            xticklabels.append(str(gene))
+            gene_sub = hcr_offsets_df[hcr_offsets_df["gene"].astype(str) == str(gene)].copy()
+            if gene_sub.empty:
                 continue
-            xvals = np.full(arr.shape, float(xpos))
-            jitter = (np.random.default_rng(0).uniform(-0.12, 0.12, size=arr.shape[0]) if arr.size else np.array([], dtype=float))
-            ax_hcr.scatter(xvals + jitter, arr, s=16, alpha=0.70, color=palette.get(gene, "#666666"), edgecolors="black", linewidths=0.3)
-            bp = ax_hcr.boxplot([arr], positions=[xpos], widths=0.5, patch_artist=True, showfliers=False)
-            for patch in bp["boxes"]:
-                patch.set_facecolor(palette.get(gene, "#666666"))
-                patch.set_alpha(0.30)
-                patch.set_edgecolor("black")
-            xticks.append(float(xpos))
-            xticklabels.append(f"{gene}\n{axis_name}")
-            xpos += 1
-        if np.isfinite(r50_xy):
-            ax_hcr.axhline(r50_xy, color="#c1121f", linestyle="--", linewidth=1.3, alpha=0.8, label=f"Anat R50 XY={r50_xy:.2f} µm")
-        if np.isfinite(r50_z):
-            ax_hcr.axhline(r50_z, color="#7f1d1d", linestyle=":", linewidth=1.3, alpha=0.8, label=f"Anat R50 Z={r50_z:.2f} µm")
+            for fish_idx, fish_id in enumerate(fish_ids):
+                sub = gene_sub[gene_sub["fish_id"].astype(str) == str(fish_id)].copy()
+                if sub.empty:
+                    continue
+                arr = pd.to_numeric(sub.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+                arr = arr[np.isfinite(arr)]
+                if arr.size == 0:
+                    continue
+                xpos = float(start + fish_idx)
+                hcr_sample_labels.append((xpos, arr))
+                xvals = np.full(arr.shape, xpos)
+                jitter = np.random.default_rng(0).uniform(-0.12, 0.12, size=arr.shape[0]) if arr.size else np.array([], dtype=float)
+                ax_hcr.scatter(
+                    xvals + jitter,
+                    arr,
+                    s=16,
+                    alpha=0.70,
+                    color=fish_palette[str(fish_id)],
+                    edgecolors="black",
+                    linewidths=0.3,
+                )
+                bp = ax_hcr.boxplot([arr], positions=[xpos], widths=0.5, patch_artist=True, showfliers=False)
+                for patch in bp["boxes"]:
+                    patch.set_facecolor(fish_palette[str(fish_id)])
+                    patch.set_alpha(0.30)
+                    patch.set_edgecolor("black")
+                r50_val = anat_r50_by_fish.get(str(fish_id))
+                if r50_val is not None and np.isfinite(r50_val):
+                    ax_hcr.hlines(float(r50_val), xpos - 0.28, xpos + 0.28, colors=fish_palette[str(fish_id)], linestyles="--", linewidth=1.0)
+        _annotate_sample_sizes_no_overlap(ax_hcr, hcr_sample_labels, fontsize=7)
+        max_gene_blocks = max(1, len(order))
+        x_left = 1.0 - 0.5
+        x_right = float((max_gene_blocks - 1) * block_width + max(1, len(fish_ids))) + 0.5
+        ax_hcr.set_xlim(x_left, x_right)
         ax_hcr.set_xticks(xticks)
         ax_hcr.set_xticklabels(xticklabels, fontsize=8)
-        ax_hcr.set_ylabel("Offset (µm)")
-        ax_hcr.set_title("HCR↔anatomy centroid offsets (deduped by gene/anat)")
+        ax_hcr.set_ylabel("Distance (µm)")
+        ax_hcr.set_title("HCR↔anatomy XY centroid offsets (by gene, split per fish; per-fish R50 + n)")
         ax_hcr.grid(alpha=0.2, axis="y")
-        if ax_hcr.get_legend_handles_labels()[0]:
-            ax_hcr.legend(frameon=False, fontsize=8, loc="upper right")
+        handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
+        ref_handles, ref_labels = ax_hcr.get_legend_handles_labels()
+        ax_hcr.legend(handles=handles + ref_handles, labels=[*fish_ids, *ref_labels], title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
     else:
         ax_hcr.text(0.5, 0.5, "No HCR offsets found", ha="center", va="center", transform=ax_hcr.transAxes)
         ax_hcr.set_axis_off()

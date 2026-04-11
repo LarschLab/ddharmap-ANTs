@@ -2,6 +2,8 @@ import json
 import unittest
 from pathlib import Path
 
+from codeants_2pf_hcr import cohort_cache_paths
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
@@ -13,6 +15,8 @@ PHASE5_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase5.py"
 PHASE6_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase6.py"
 PHASE7_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase7.py"
 PHASE8_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase8.py"
+COHORT_PHASE1_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_cohort_phase1.py"
+COHORT_PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_cohort_phase2.py"
 
 
 def _code_cell_by_tag(tag: str) -> str:
@@ -237,17 +241,62 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
 
     def test_cohort_build_uses_package_collector(self) -> None:
         cell = _cohort_cell_by_tag("cohort-build")
-        self.assertIn("collect_cohort_53a_tables(", cell)
-        self.assertIn("cohort_53a_tables=", cell)
+        self.assertIn("build_cohort_outputs_stage(", cell)
+        self.assertNotIn("collect_cohort_53a_tables(", cell)
 
     def test_cohort_cfg_wires_53a_cache_paths(self) -> None:
         cell = _cohort_cfg_cell()
-        self.assertIn("cohort_53a_ncc_curves_csv", cell)
-        self.assertIn("cohort_53a_diameters_csv", cell)
-        self.assertIn("cohort_53a_diameter_filter_summary_csv", cell)
-        self.assertIn("cohort_53a_func_anat_offsets_csv", cell)
-        self.assertIn("cohort_53a_hcr_offsets_csv", cell)
-        self.assertIn("cohort_53a_thresholds_csv", cell)
+        self.assertIn("CohortBuildConfig(", cell)
+        self.assertIn("cohort_cache_paths", cell)
+        self.assertIn("resolve_cohort_context_stage", cell)
+        self.assertNotIn("def cohort_cache_paths(", cell)
+        self.assertNotIn("def save_cohort_outputs_to_disk(", cell)
+        self.assertNotIn("def load_cohort_outputs_from_disk(", cell)
+
+    def test_cohort_late_cells_use_package_renderers_only(self) -> None:
+        expected_imports = {
+            "56h-cohort": "from codeants_2pf_hcr.plots.analysis import render_cohort_56h_by_fish",
+            "56g-cohort": "from codeants_2pf_hcr.plots.analysis import render_cohort_56g_diagnostics",
+            "cohort-auc": "from codeants_2pf_hcr.plots.analysis import render_cohort_motion_auc",
+            "cohort-56h-donut-grid": "from codeants_2pf_hcr.plots.analysis import render_cohort_56h_status_donut_grid",
+            "cohort-50l-donut-row": "from codeants_2pf_hcr.plots.analysis import render_cohort_50l_donut_row",
+        }
+        for tag, expected_import in expected_imports.items():
+            cell = _cohort_cell_by_tag(tag)
+            self.assertIn(expected_import, cell)
+            self.assertIn("load_cohort_analysis_state", cell)
+            self.assertNotIn("def ", cell)
+
+    def test_cohort_phase2_generator_tracks_late_slice_refactor(self) -> None:
+        source = COHORT_PHASE2_GENERATOR_PATH.read_text()
+        self.assertIn("render_cohort_56h_by_fish", source)
+        self.assertIn("render_cohort_56g_diagnostics", source)
+        self.assertIn("render_cohort_motion_auc", source)
+        self.assertIn("render_cohort_56h_status_donut_grid", source)
+        self.assertIn("render_cohort_50l_donut_row", source)
+        self.assertIn("load_cohort_analysis_state", source)
+
+    def test_cohort_cache_keys_remain_stable(self) -> None:
+        keys = set(cohort_cache_paths(Path("/tmp/cohort-test-keys")).keys())
+        assert keys == {
+            "fish_summary_csv",
+            "stim_summary_csv",
+            "bpi_trials_csv",
+            "bpi_cells_csv",
+            "cohort_53a_ncc_curves_csv",
+            "cohort_53a_diameters_csv",
+            "cohort_53a_diameter_filter_summary_csv",
+            "cohort_53a_func_anat_offsets_csv",
+            "cohort_53a_hcr_offsets_csv",
+            "cohort_53a_thresholds_csv",
+            "trace_cache_pkl",
+        }
+
+    def test_cohort_phase1_generator_tracks_build_cache_extraction(self) -> None:
+        source = COHORT_PHASE1_GENERATOR_PATH.read_text()
+        self.assertIn("CohortBuildConfig", source)
+        self.assertIn("build_cohort_outputs_stage", source)
+        self.assertIn("cohort_cache_paths", source)
 
 
 if __name__ == "__main__":

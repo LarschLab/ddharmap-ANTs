@@ -8,6 +8,12 @@
 
 - ROI-centric path (`[50i]`, `[50ia]`, `[50j]`, `[50k]`) is used for authoritative whole-population outputs.
 - HCR-centric identified-cell path (`[50]`, `[50e]`, `[51]`, `[56]`, `[56h]`, `[57]`) remains active for identified-cell activity workflows.
+- Cohort notebook path (`notebooks/multi_fish_56h_56g.ipynb`) is a downstream multi-fish consumer of single-fish outputs.
+
+## Cohort authority boundary
+
+- Cohort stages aggregate and visualize outputs from single-fish canonical tables.
+- Cohort notebook stages are **not** authoritative for single-fish identity/response semantics.
 
 ## Practical warnings
 

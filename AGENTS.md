@@ -47,7 +47,7 @@ Start here, then read only what your task needs.
   - public behavior change -> update the relevant reference doc
   - public function change -> update `symbol-index.md`
   - stage/output ownership change -> update `notebook-stage-map.md` and `current-state.md`
-  - meaningful work with remaining breakage -> append `.agents/references/recent-changes.md`
+  - meaningful work with remaining breakage -> append the workflow-specific recent-changes file (`.agents/references/recent-changes-single-fish.md` or `.agents/references/recent-changes-cohort.md`)
 - Prompt minimization:
   - future prompts should specify task, target, and any special constraint only
   - repo docs are the default source of policy and workflow; do not restate repo-wide rules in every prompt
@@ -61,7 +61,9 @@ Start here, then read only what your task needs.
 - `.agents/references/figure-rules.md` - figure sourcing and plotting constraints.
 - `.agents/references/cache-rerun-policy.md` - stale outputs and minimum rerun sequence.
 - `.agents/references/current-state.md` - current mixed migration status and practical warnings.
-- `.agents/references/recent-changes.md` - rolling handoff log for meaningful work and remaining breakpoints.
+- `.agents/references/recent-changes.md` - index/compat pointer for workflow-specific rolling logs.
+- `.agents/references/recent-changes-single-fish.md` - single-fish rolling handoff log.
+- `.agents/references/recent-changes-cohort.md` - cohort rolling handoff log.
 - `.agents/references/refactor-loop-policy.md` - multi-pass refactor persistence and stop/continue rules.
 - `.agents/references/refactor-rules.md` - package ownership and implementation constraints.
 - `.agents/references/symbol-index.md` - package symbol lookup for fast navigation.

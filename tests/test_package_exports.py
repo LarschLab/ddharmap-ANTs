@@ -1,6 +1,7 @@
 from codeants_2pf_hcr import (
     ActivityConfig,
     ContextStageConfig,
+    CohortBuildConfig,
     FinalFishAuditConfig,
     FunctionalOrientationStageConfig,
     FishStateStageConfig,
@@ -21,6 +22,7 @@ from codeants_2pf_hcr import (
     apply_func_orientation,
     best_z_by_ncc,
     build_context_audit_stage,
+    build_cohort_outputs_stage,
     build_final_fish_audit_stage,
     build_functional_anatomy_debug_df,
     build_functional_roi_master_df,
@@ -35,6 +37,8 @@ from codeants_2pf_hcr import (
     build_run_config_stage,
     check_notebook_contract,
     collect_cohort_53a_tables,
+    cohort_cache_paths,
+    count_trace_genes,
     collect_hcr_intensity_stack_paths,
     combine_segments,
     compute_centroids,
@@ -51,12 +55,19 @@ from codeants_2pf_hcr import (
     load_suite2p_stage,
     load_suite2p_dff_map,
     load_or_cache_voxels,
+    load_cohort_outputs_from_disk,
+    load_cohort_analysis_state,
     norm01,
     orient_functional_stacks_stage,
     prepare_pairs_for_unique_cells,
     nearest_neighbor_match,
     registration_metric_from_scores,
     render_cohort_53a_summary,
+    render_cohort_50l_donut_row,
+    render_cohort_56g_diagnostics,
+    render_cohort_56h_by_fish,
+    render_cohort_56h_status_donut_grid,
+    render_cohort_motion_auc,
     hungarian_match,
     harmonize_functional_labels_to_anatomy,
     resolve_functional_labels_for_plane,
@@ -68,11 +79,13 @@ from codeants_2pf_hcr import (
     resolve_plane_transform,
     resample_labels_nn,
     resolve_voxel_context_stage,
+    resolve_cohort_context_stage,
     run_hcr_cellpose_stage,
     run_registration_search_stage,
     organize,
     run_smoke_tier,
     scale_image,
+    save_cohort_outputs_to_disk,
     show_functional_label_overlay_stage,
     show_centroid_match_qa_stage,
     show_region_shift_square_selector_stage,
@@ -87,6 +100,7 @@ from codeants_2pf_hcr import (
 def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ActivityConfig)
     assert callable(ContextStageConfig)
+    assert callable(CohortBuildConfig)
     assert callable(FinalFishAuditConfig)
     assert callable(FunctionalOrientationStageConfig)
     assert callable(FishStateStageConfig)
@@ -107,6 +121,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(apply_func_orientation)
     assert callable(best_z_by_ncc)
     assert callable(build_context_audit_stage)
+    assert callable(build_cohort_outputs_stage)
     assert callable(build_final_fish_audit_stage)
     assert callable(build_functional_anatomy_debug_df)
     assert callable(build_functional_roi_master_df)
@@ -122,6 +137,8 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
     assert callable(collect_cohort_53a_tables)
+    assert callable(cohort_cache_paths)
+    assert callable(count_trace_genes)
     assert callable(collect_hcr_intensity_stack_paths)
     assert callable(combine_segments)
     assert callable(compute_centroids)
@@ -139,6 +156,8 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(load_suite2p_stage)
     assert callable(load_suite2p_dff_map)
     assert callable(load_or_cache_voxels)
+    assert callable(load_cohort_outputs_from_disk)
+    assert callable(load_cohort_analysis_state)
     assert callable(nearest_neighbor_match)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
@@ -148,17 +167,24 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(resample_labels_nn)
     assert callable(registration_metric_from_scores)
     assert callable(render_cohort_53a_summary)
+    assert callable(render_cohort_50l_donut_row)
+    assert callable(render_cohort_56g_diagnostics)
+    assert callable(render_cohort_56h_by_fish)
+    assert callable(render_cohort_56h_status_donut_grid)
+    assert callable(render_cohort_motion_auc)
     assert callable(resolve_conf_func_csv_analysis)
     assert callable(resolve_fish_state_stage)
     assert callable(resolve_hcr_cellpose_model_path)
     assert callable(resolve_native_suite2p_labels_for_plane)
     assert callable(resolve_notebook_context_stage)
     assert callable(resolve_voxel_context_stage)
+    assert callable(resolve_cohort_context_stage)
     assert callable(run_hcr_cellpose_stage)
     assert callable(run_registration_search_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(scale_image)
+    assert callable(save_cohort_outputs_to_disk)
     assert callable(show_centroid_match_qa_stage)
     assert callable(show_region_shift_square_selector_stage)
     assert callable(compute_anatomy_median_xy_radius_um)

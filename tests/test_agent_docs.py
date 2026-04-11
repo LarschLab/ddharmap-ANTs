@@ -16,15 +16,28 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn(".agents/references/notebook-stage-map.md", source)
         self.assertIn(".agents/references/canonical-tables.md", source)
         self.assertIn(".agents/references/recent-changes.md", source)
+        self.assertIn(".agents/references/recent-changes-single-fish.md", source)
+        self.assertIn(".agents/references/recent-changes-cohort.md", source)
+        self.assertIn("append the workflow-specific recent-changes file", source)
 
-    def test_router_contains_strict_read_order_and_never_first_rules(self) -> None:
+    def test_top_router_dispatches_to_profile_routers(self) -> None:
         source = _read(".agents/workflows/2pf-hcr-router.md")
         self.assertIn("Read this router first.", source)
-        self.assertIn("Open `symbol-index.md` only if symbol lookup is needed.", source)
-        self.assertIn("Open `notebook-stage-map.md` only if stage ownership or cell mapping is still unclear.", source)
-        self.assertIn("Do **not** open large notebook regions first.", source)
-        self.assertIn("Do **not** use `tools/` as business-logic authority.", source)
-        self.assertIn("Do **not** infer semantics from downstream figures before reading the writer stage.", source)
+        self.assertIn(".agents/workflows/2pf-hcr-single-fish-router.md", source)
+        self.assertIn(".agents/workflows/2pf-hcr-cohort-router.md", source)
+        self.assertIn("Cross-workflow invariants (always)", source)
+        self.assertIn("Compact scaling rule", source)
+        self.assertIn("shares stage semantics, ownership modules, and validation surface", source)
+
+    def test_profile_routers_reference_owning_stage_map_and_handoff_log(self) -> None:
+        single = _read(".agents/workflows/2pf-hcr-single-fish-router.md")
+        cohort = _read(".agents/workflows/2pf-hcr-cohort-router.md")
+        self.assertIn("references/notebook-stage-map.md", single)
+        self.assertIn("references/recent-changes-single-fish.md", single)
+        self.assertIn("Do **not** use `tools/` as business-logic authority.", single)
+        self.assertIn("references/cohort-stage-map.md", cohort)
+        self.assertIn("references/recent-changes-cohort.md", cohort)
+        self.assertIn("Do **not** use `tools/` as business-logic authority.", cohort)
 
     def test_refactor_rules_define_ownership_and_edit_scope(self) -> None:
         source = _read(".agents/references/refactor-rules.md")
@@ -49,8 +62,16 @@ class AgentDocsTests(unittest.TestCase):
         current_state = _read(".agents/references/current-state.md")
         recent_changes = _read(".agents/references/recent-changes.md")
         self.assertIn("mixed migration state", current_state)
-        self.assertIn("rolling manual handoff log", recent_changes)
-        self.assertIn("Update template", recent_changes)
+        self.assertIn("Cohort notebook path", current_state)
+        self.assertIn("index and compatibility pointer", recent_changes)
+        self.assertIn("Workflow log routing", recent_changes)
+        self.assertIn("recent-changes-single-fish.md", recent_changes)
+        self.assertIn("recent-changes-cohort.md", recent_changes)
+
+    def test_cohort_stage_map_covers_cohort_workflow(self) -> None:
+        cohort_map = _read(".agents/references/cohort-stage-map.md")
+        self.assertIn("[cohort-build]", cohort_map)
+        self.assertIn("cohort_outputs/multi_fish_56h_56g/", cohort_map)
 
     def test_symbol_index_includes_trusted_patterns(self) -> None:
         source = _read(".agents/references/symbol-index.md")

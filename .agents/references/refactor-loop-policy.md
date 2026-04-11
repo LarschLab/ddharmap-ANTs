@@ -43,7 +43,10 @@
 
 ## Handoff requirements when stopping mid-migration
 
-- Update `.agents/references/recent-changes.md` if the session changed behavior, leaves known breakage, or would force the next session to rediscover context.
+- Update the workflow-specific handoff log:
+  - `.agents/references/recent-changes-single-fish.md` for single-fish work
+  - `.agents/references/recent-changes-cohort.md` for cohort work
+- Use `.agents/references/recent-changes.md` only for short cross-workflow compatibility pointers.
 - Record:
   - the slice goal
   - the passes completed in this session

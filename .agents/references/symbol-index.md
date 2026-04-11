@@ -33,6 +33,17 @@ Generated manually for the current extracted package surface.
 - `orient_functional_stacks_stage`: Notebook-facing functional stack orientation/cache stage for `[10]`.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
 
+## `codeants_2pf_hcr.cohort`
+
+- `CohortBuildConfig`: Typed cohort build/cache knob container for `multi_fish_56h_56g.ipynb` `[cfg]` + `[cohort-build]`.
+- `cohort_cache_paths`: Resolve canonical cohort cache/output filenames under `cohort_outputs/multi_fish_56h_56g/`.
+- `count_trace_genes`: Count available genes in panel-keyed trace cache payloads (flat and per-fish nested variants).
+- `resolve_cohort_context_stage`: Notebook-facing cohort environment/context stage for `[cfg]`; publishes stable cohort env bindings.
+- `load_cohort_analysis_state`: Cache-aware cohort analysis loader for late cohort cells; always returns stable env bindings plus cached tables/results.
+- `load_cohort_outputs_from_disk`: Load cached cohort tables and trace payload keys for cache reuse checks.
+- `save_cohort_outputs_to_disk`: Persist cohort summary tables, 53a cache tables, and trace cache payload.
+- `build_cohort_outputs_stage`: Notebook-facing owner stage for cohort fish discovery, metadata lookup, cache reuse/invalidation, aggregation, and legacy-shaped binding export.
+
 ## `codeants_2pf_hcr.spatial`
 
 - `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
@@ -129,6 +140,11 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.plots.analysis`
 
 - `plot_single_roi_57style`: Render the single-ROI `[57]` style figure and optional AUC table.
+- `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
+- `render_cohort_56g_diagnostics`: Render cohort [56g] activity/BPI diagnostic 2x2 panel from `cohort_bpi_cells_df`.
+- `render_cohort_motion_auc`: Render cohort [cohort-auc] motion-window AUC figure; supports cached aggregate CSV reuse or per-fish aggregation fallback.
+- `render_cohort_56h_status_donut_grid`: Render cohort fish×gene HCR-status donut grid and export summary counts table.
+- `render_cohort_50l_donut_row`: Render cohort [50l]-style fish-row donut figure and export long/wide counts tables.
 
 ## `codeants_2pf_hcr.notebook_contract`
 

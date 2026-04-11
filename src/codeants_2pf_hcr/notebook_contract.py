@@ -11,7 +11,17 @@ from typing import Any
 
 
 _TAG_RE = re.compile(r"^\s*#\s*\[([^\]]+)\]")
-_FIGURE_TAGS = {"50e", "50f", "50g", "50l", "56", "56f-qc", "56f-qc-activity", "56h", "56g", "57"}
+_PROFILE_FIGURE_TAGS = {
+    "single-fish": {"50e", "50f", "50g", "50l", "56", "56f-qc", "56f-qc-activity", "56h", "56g", "57"},
+    "cohort": {"53a-cohort", "56h-cohort", "56g-cohort", "cohort-auc", "cohort-56h-donut-grid", "cohort-50l-donut-row"},
+}
+
+
+def _profile_from_notebook_path(notebook_path: str | Path) -> str:
+    path_name = Path(notebook_path).name
+    if path_name == "multi_fish_56h_56g.ipynb":
+        return "cohort"
+    return "single-fish"
 
 
 @dataclass(frozen=True)
@@ -67,11 +77,17 @@ def find_top_level_defs(notebook_path: str | Path) -> list[NotebookContractViola
     return violations
 
 
-def find_figure_contract_violations(notebook_path: str | Path) -> list[NotebookContractViolation]:
+def find_figure_contract_violations(
+    notebook_path: str | Path,
+    *,
+    profile: str | None = None,
+) -> list[NotebookContractViolation]:
+    profile_name = profile or _profile_from_notebook_path(notebook_path)
+    figure_tags = _PROFILE_FIGURE_TAGS.get(profile_name, _PROFILE_FIGURE_TAGS["single-fish"])
     violations: list[NotebookContractViolation] = []
     for index, cell in _code_cells(notebook_path):
         tag = _cell_tag(cell, index)
-        if tag not in _FIGURE_TAGS:
+        if tag not in figure_tags:
             continue
         source = "".join(cell.get("source", []))
         if "from codeants_2pf_hcr.plots." not in source:
@@ -95,11 +111,13 @@ def find_figure_contract_violations(notebook_path: str | Path) -> list[NotebookC
     return violations
 
 
-def check_notebook_contract(notebook_path: str | Path) -> dict[str, Any]:
+def check_notebook_contract(notebook_path: str | Path, *, profile: str | None = None) -> dict[str, Any]:
+    profile_name = profile or _profile_from_notebook_path(notebook_path)
     top_level_defs = find_top_level_defs(notebook_path)
-    figure_violations = find_figure_contract_violations(notebook_path)
+    figure_violations = find_figure_contract_violations(notebook_path, profile=profile_name)
     return {
         "notebook_path": str(Path(notebook_path)),
+        "profile": profile_name,
         "top_level_defs": [violation.__dict__ for violation in top_level_defs],
         "figure_violations": [violation.__dict__ for violation in figure_violations],
         "n_top_level_defs": len(top_level_defs),
