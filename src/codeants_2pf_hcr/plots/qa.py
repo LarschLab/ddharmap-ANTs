@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 from matplotlib.gridspec import GridSpec
 import matplotlib.patheffects as path_effects
+from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
@@ -28,7 +29,9 @@ from skimage import color as skcolor
 from skimage import transform
 import tifffile
 
+from ..context import infer_anat_labels_path
 from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches
+from ..matching import compute_centroids
 from ..segmentation import resolve_functional_labels_for_plane
 from ..spatial import norm01
 
@@ -1162,10 +1165,579 @@ def show_centroid_match_qa_stage(
     }
 
 
+def _as_bool_series(values: pd.Series) -> pd.Series:
+    series = pd.Series(values)
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(False).astype(bool)
+    if pd.api.types.is_numeric_dtype(series):
+        return series.fillna(0).astype(float) != 0
+    return series.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+
+
+def _resolve_cohort_fish_dir(*, data_root: Path, owner: str, fish_id: str, data_mode: str = "local") -> Path:
+    root = Path(data_root)
+    if str(data_mode).strip().lower() == "local":
+        candidates = [
+            root / fish_id,
+            root / owner / fish_id,
+            root / owner / "Microscopy" / fish_id,
+        ]
+        for cand in candidates:
+            if cand.exists():
+                return cand
+        return candidates[0]
+    owner_root = root / owner
+    microscopy = owner_root / "Microscopy"
+    return (microscopy if microscopy.exists() else owner_root) / fish_id
+
+
+def _cohort_voxels_from_metadata(run_metadata_path: Path) -> dict[str, float]:
+    payload = json.loads(run_metadata_path.read_text())
+    voxels = payload.get("voxels", {})
+    anat = voxels.get("anat", voxels) if isinstance(voxels, dict) else {}
+    return {
+        "X": float(anat.get("X", 1.0)),
+        "Y": float(anat.get("Y", 1.0)),
+        "Z": float(anat.get("Z", 1.0)),
+    }
+
+
+def _collect_ncc_curves_for_fish(*, fish_id: str, fish_dir: Path) -> pd.DataFrame:
+    ncc_path = fish_dir / "03_analysis" / "functional" / "ncc" / "ncc_bestz_by_plane.json"
+    if not ncc_path.exists():
+        return pd.DataFrame(columns=["fish_id", "plane_idx", "plane_label", "z_idx", "ncc_score", "best_z", "best_score"])
+    payload = json.loads(ncc_path.read_text())
+    per_fish = payload.get("per_fish", {})
+    fish_payload = per_fish.get(fish_id)
+    if not isinstance(fish_payload, dict):
+        return pd.DataFrame(columns=["fish_id", "plane_idx", "plane_label", "z_idx", "ncc_score", "best_z", "best_score"])
+    rows: list[dict[str, Any]] = []
+    for plane_idx, (plane_label, entry) in enumerate(fish_payload.items()):
+        scores = np.asarray(entry.get("scores", []), dtype=float)
+        if scores.size == 0:
+            continue
+        best_z = int(entry.get("best_z", int(np.argmax(scores))))
+        best_score = float(scores[best_z]) if 0 <= best_z < scores.size else float(np.nanmax(scores))
+        for z_idx, score in enumerate(scores.tolist()):
+            rows.append(
+                {
+                    "fish_id": fish_id,
+                    "plane_idx": int(plane_idx),
+                    "plane_label": str(plane_label),
+                    "z_idx": int(z_idx),
+                    "ncc_score": float(score),
+                    "best_z": int(best_z),
+                    "best_score": float(best_score),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _filter_diameters_with_summary(*, fish_id: str, diam_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if diam_df.empty:
+        empty_summary = pd.DataFrame(
+            columns=["fish_id", "dataset", "xy_q05_um", "xy_q95_um", "n_input", "n_kept", "n_drop_q05", "n_low_conf_q95"]
+        )
+        return diam_df.copy(), empty_summary
+    required = {"dataset", "x_um", "y_um", "z_um"}
+    if not required.issubset(set(diam_df.columns)):
+        missing = sorted(required - set(diam_df.columns))
+        raise ValueError(f"diameters_df_all missing columns {missing} for fish {fish_id}")
+    kept_parts: list[pd.DataFrame] = []
+    summary_rows: list[dict[str, Any]] = []
+    for dataset in sorted(diam_df["dataset"].astype(str).unique().tolist()):
+        sub = diam_df[diam_df["dataset"].astype(str) == str(dataset)].copy()
+        xy_vals = pd.to_numeric(sub[["x_um", "y_um"]].mean(axis=1), errors="coerce").to_numpy(dtype=float)
+        finite_mask = np.isfinite(xy_vals)
+        finite_vals = xy_vals[finite_mask]
+        keep_mask = np.zeros(len(sub), dtype=bool)
+        low_conf_mask = np.zeros(len(sub), dtype=bool)
+        q05 = np.nan
+        q95 = np.nan
+        if finite_vals.size:
+            q05 = float(np.quantile(finite_vals, 0.05))
+            q95 = float(np.quantile(finite_vals, 0.95))
+            finite_idx = np.where(finite_mask)[0]
+            keep_mask[finite_idx] = finite_vals >= q05
+            low_conf_mask[finite_idx] = finite_vals > q95
+        kept = sub.iloc[keep_mask].copy()
+        kept["xy_um"] = pd.to_numeric(kept[["x_um", "y_um"]].mean(axis=1), errors="coerce")
+        kept["is_low_confidence_segmentation"] = low_conf_mask[keep_mask]
+        kept_parts.append(kept)
+        summary_rows.append(
+            {
+                "fish_id": fish_id,
+                "dataset": str(dataset),
+                "xy_q05_um": q05,
+                "xy_q95_um": q95,
+                "n_input": int(len(sub)),
+                "n_kept": int(len(kept)),
+                "n_drop_q05": int(max(0, len(sub) - len(kept))),
+                "n_low_conf_q95": int(np.count_nonzero(low_conf_mask[keep_mask])) if len(kept) else 0,
+            }
+        )
+    kept_df = pd.concat(kept_parts, ignore_index=True) if kept_parts else diam_df.iloc[0:0].copy()
+    summary_df = pd.DataFrame(summary_rows)
+    return kept_df, summary_df
+
+
+def _collect_func_anat_offsets_for_fish(
+    *,
+    fish_id: str,
+    fish_dir: Path,
+    vox_anat: dict[str, float],
+    roi_df: pd.DataFrame,
+) -> pd.DataFrame:
+    required = {"plane_match_outcome", "has_unique_anat_match", "selected_dist_um", "selected_anat_label", "best_z"}
+    if not required.issubset(set(roi_df.columns)):
+        return pd.DataFrame(columns=["fish_id", "axis", "offset_um"])
+    mask = roi_df["plane_match_outcome"].astype(str).eq("anatomy match")
+    mask &= _as_bool_series(roi_df["has_unique_anat_match"])
+    matched = roi_df.loc[mask].copy()
+    if matched.empty:
+        return pd.DataFrame(columns=["fish_id", "axis", "offset_um"])
+    matched["selected_dist_um"] = pd.to_numeric(matched["selected_dist_um"], errors="coerce")
+    matched["selected_anat_label"] = pd.to_numeric(matched["selected_anat_label"], errors="coerce").astype("Int64")
+    matched["best_z"] = pd.to_numeric(matched["best_z"], errors="coerce")
+    matched = matched.dropna(subset=["selected_dist_um", "selected_anat_label", "best_z"]).copy()
+    if matched.empty:
+        return pd.DataFrame(columns=["fish_id", "axis", "offset_um"])
+    anat_labels_path = infer_anat_labels_path(fish_dir, fish_id)
+    if anat_labels_path is None or not Path(anat_labels_path).exists():
+        z_offsets = np.full((len(matched),), np.nan, dtype=float)
+    else:
+        anat_labels = np.asarray(tifffile.imread(str(anat_labels_path)))
+        anat_centroids = compute_centroids(anat_labels)
+        z_lookup = dict(zip(anat_centroids["label"].astype(int), pd.to_numeric(anat_centroids["z"], errors="coerce")))
+        dz = float(vox_anat.get("Z", 1.0))
+        z_vals: list[float] = []
+        for row in matched.itertuples(index=False):
+            anat_label = int(row.selected_anat_label)
+            anat_z = z_lookup.get(anat_label)
+            if anat_z is None or not np.isfinite(anat_z):
+                z_vals.append(np.nan)
+                continue
+            z_vals.append(abs(float(anat_z) - float(row.best_z)) * dz)
+        z_offsets = np.asarray(z_vals, dtype=float)
+    xy_offsets = np.abs(pd.to_numeric(matched["selected_dist_um"], errors="coerce").to_numpy(dtype=float))
+    xy_rows = pd.DataFrame({"fish_id": fish_id, "axis": "xy", "offset_um": xy_offsets})
+    z_rows = pd.DataFrame({"fish_id": fish_id, "axis": "z", "offset_um": z_offsets})
+    out = pd.concat([xy_rows, z_rows], ignore_index=True)
+    out["offset_um"] = pd.to_numeric(out["offset_um"], errors="coerce")
+    out = out[np.isfinite(out["offset_um"])].reset_index(drop=True)
+    return out
+
+
+def _resolve_conf_mask_path(*, fish_dir: Path, conf_mask_value: Any) -> Path | None:
+    if conf_mask_value is None or (isinstance(conf_mask_value, float) and np.isnan(conf_mask_value)):
+        return None
+    cand = Path(str(conf_mask_value))
+    if cand.exists():
+        return cand
+    joined = fish_dir / cand
+    if joined.exists():
+        return joined
+    return None
+
+
+def _dedupe_hcr_pairs_like_53a(conf_df: pd.DataFrame) -> pd.DataFrame:
+    if conf_df.empty:
+        return conf_df.copy()
+    work = conf_df.copy()
+    work["gene"] = work.get("gene", pd.Series(["unknown"] * len(work), index=work.index)).astype(str).str.strip()
+    work["anat_label"] = pd.to_numeric(work.get("anat_label", np.nan), errors="coerce").astype("Int64")
+    work["dist_func"] = pd.to_numeric(
+        work.get("dist_func_anat_um", work.get("selected_dist_um", work.get("dist_um", np.nan))), errors="coerce"
+    )
+    work["overlap"] = pd.to_numeric(
+        work.get("overlap_px_func_anat", work.get("selected_overlap_px", work.get("overlap_px", np.nan))), errors="coerce"
+    )
+    work["dist_conf"] = pd.to_numeric(work.get("dist_conf_anat_um", work.get("dist_conf", np.nan)), errors="coerce")
+    work["plane_sort"] = pd.to_numeric(work.get("plane", work.get("selected_plane", np.nan)), errors="coerce")
+    work["func_sort"] = pd.to_numeric(work.get("func_label", work.get("selected_func_label", np.nan)), errors="coerce")
+    work = work.dropna(subset=["gene", "anat_label"]).copy()
+    if work.empty:
+        return work
+    work = work.sort_values(
+        ["gene", "anat_label", "dist_func", "overlap", "dist_conf", "plane_sort", "func_sort"],
+        ascending=[True, True, True, False, True, True, True],
+        na_position="last",
+    ).reset_index(drop=True)
+    work = work.drop_duplicates(subset=["gene", "anat_label"], keep="first").reset_index(drop=True)
+    return work
+
+
+def _collect_hcr_offsets_for_fish(
+    *,
+    fish_id: str,
+    fish_dir: Path,
+    vox_anat: dict[str, float],
+    conf_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if conf_df.empty:
+        return pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
+    anat_labels_path = infer_anat_labels_path(fish_dir, fish_id)
+    if anat_labels_path is None or not Path(anat_labels_path).exists():
+        return pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
+    anat_labels = np.asarray(tifffile.imread(str(anat_labels_path)))
+    anat_centroids = compute_centroids(anat_labels)
+    anat_centroids["label"] = pd.to_numeric(anat_centroids["label"], errors="coerce").astype("Int64")
+    anat_centroids = anat_centroids.dropna(subset=["label"])
+    anat_lookup = {
+        int(row.label): (float(row.x), float(row.y), float(row.z)) for row in anat_centroids.itertuples(index=False)
+    }
+    dx = float(vox_anat.get("X", 1.0))
+    dy = float(vox_anat.get("Y", 1.0))
+    dz = float(vox_anat.get("Z", 1.0))
+    rows: list[dict[str, Any]] = []
+    for row in conf_df.itertuples(index=False):
+        anat_label = int(row.anat_label)
+        anat_xyz = anat_lookup.get(anat_label)
+        if anat_xyz is None:
+            continue
+        conf_mask_path = _resolve_conf_mask_path(
+            fish_dir=fish_dir,
+            conf_mask_value=getattr(row, "conf_mask", getattr(row, "mask_path", None)),
+        )
+        conf_label_val = getattr(row, "conf_label", getattr(row, "primary_conf_label", np.nan))
+        conf_label = pd.to_numeric(pd.Series([conf_label_val]), errors="coerce").iloc[0]
+        if conf_mask_path is None or pd.isna(conf_label):
+            continue
+        conf_labels = np.asarray(tifffile.imread(str(conf_mask_path)))
+        conf_centroids = compute_centroids(conf_labels)
+        if conf_centroids.empty:
+            continue
+        conf_centroids["label"] = pd.to_numeric(conf_centroids["label"], errors="coerce").astype("Int64")
+        conf_hit = conf_centroids[conf_centroids["label"] == int(conf_label)]
+        if conf_hit.empty:
+            continue
+        conf_xyz = (
+            float(conf_hit.iloc[0]["x"]),
+            float(conf_hit.iloc[0]["y"]),
+            float(conf_hit.iloc[0]["z"]),
+        )
+        dx_um = (conf_xyz[0] - anat_xyz[0]) * dx
+        dy_um = (conf_xyz[1] - anat_xyz[1]) * dy
+        dz_um = (conf_xyz[2] - anat_xyz[2]) * dz
+        xy_um = float(np.hypot(dx_um, dy_um))
+        abs_dz_um = float(abs(dz_um))
+        rows.append(
+            {
+                "fish_id": fish_id,
+                "gene": str(getattr(row, "gene", "unknown")),
+                "anat_label": int(anat_label),
+                "dx_um": float(dx_um),
+                "dy_um": float(dy_um),
+                "dz_um": float(dz_um),
+                "xy_um": xy_um,
+                "abs_dz_um": abs_dz_um,
+                "distance_um": float(np.sqrt(dx_um * dx_um + dy_um * dy_um + dz_um * dz_um)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def collect_cohort_53a_tables(
+    *,
+    fish_specs: list[dict[str, Any]],
+    data_root: str | Path,
+    data_mode: str = "local",
+) -> dict[str, pd.DataFrame]:
+    """Collect pooled cohort tables for the [53a-cohort] summary figure."""
+    data_root_path = Path(data_root)
+    ncc_parts: list[pd.DataFrame] = []
+    diam_parts: list[pd.DataFrame] = []
+    diam_summary_parts: list[pd.DataFrame] = []
+    func_parts: list[pd.DataFrame] = []
+    hcr_parts: list[pd.DataFrame] = []
+    for spec in fish_specs:
+        fish_id = str(spec.get("fish_id", "")).strip()
+        owner = str(spec.get("owner", "")).strip()
+        if not fish_id:
+            continue
+        fish_dir = _resolve_cohort_fish_dir(data_root=data_root_path, owner=owner, fish_id=fish_id, data_mode=data_mode)
+        if not fish_dir.exists():
+            continue
+        analysis_dir = fish_dir / "03_analysis"
+        out_reg = analysis_dir / "functional" / "registration"
+        out_qa = analysis_dir / "functional" / "qa"
+        run_metadata = out_reg / "run_metadata.json"
+        vox_anat = _cohort_voxels_from_metadata(run_metadata) if run_metadata.exists() else {"X": 1.0, "Y": 1.0, "Z": 1.0}
+
+        ncc_df = _collect_ncc_curves_for_fish(fish_id=fish_id, fish_dir=fish_dir)
+        if not ncc_df.empty:
+            ncc_parts.append(ncc_df)
+
+        diam_path = out_qa / "diameters_df_all.pkl"
+        if diam_path.exists():
+            raw_diam = pd.read_pickle(diam_path)
+            filt_diam, filt_summary = _filter_diameters_with_summary(fish_id=fish_id, diam_df=raw_diam)
+            if not filt_diam.empty:
+                filt_diam = filt_diam.copy()
+                filt_diam["fish_id"] = fish_id
+                diam_parts.append(filt_diam)
+            if not filt_summary.empty:
+                diam_summary_parts.append(filt_summary)
+
+        roi_path = out_reg / "functional_roi_activity_identity.csv"
+        if roi_path.exists():
+            roi_df = pd.read_csv(roi_path)
+            func_df = _collect_func_anat_offsets_for_fish(fish_id=fish_id, fish_dir=fish_dir, vox_anat=vox_anat, roi_df=roi_df)
+            if not func_df.empty:
+                func_parts.append(func_df)
+
+        conf_path = out_reg / "conf_to_func_pairs.csv"
+        if conf_path.exists():
+            conf_df = pd.read_csv(conf_path)
+            if "fish_id" in conf_df.columns:
+                conf_df = conf_df[conf_df["fish_id"].astype(str) == fish_id].copy()
+            dedup_df = _dedupe_hcr_pairs_like_53a(conf_df)
+            hcr_df = _collect_hcr_offsets_for_fish(fish_id=fish_id, fish_dir=fish_dir, vox_anat=vox_anat, conf_df=dedup_df)
+            if not hcr_df.empty:
+                hcr_parts.append(hcr_df)
+
+    ncc_curves_df = (
+        pd.concat(ncc_parts, ignore_index=True)
+        if ncc_parts
+        else pd.DataFrame(columns=["fish_id", "plane_idx", "plane_label", "z_idx", "ncc_score", "best_z", "best_score"])
+    )
+    diameters_df = (
+        pd.concat(diam_parts, ignore_index=True)
+        if diam_parts
+        else pd.DataFrame(columns=["fish_id", "dataset", "x_um", "y_um", "z_um", "xy_um", "is_low_confidence_segmentation"])
+    )
+    diameter_filter_summary_df = (
+        pd.concat(diam_summary_parts, ignore_index=True)
+        if diam_summary_parts
+        else pd.DataFrame(columns=["fish_id", "dataset", "xy_q05_um", "xy_q95_um", "n_input", "n_kept", "n_drop_q05", "n_low_conf_q95"])
+    )
+    func_anat_offsets_df = (
+        pd.concat(func_parts, ignore_index=True)
+        if func_parts
+        else pd.DataFrame(columns=["fish_id", "axis", "offset_um"])
+    )
+    hcr_offsets_df = (
+        pd.concat(hcr_parts, ignore_index=True)
+        if hcr_parts
+        else pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
+    )
+
+    anat_df = diameters_df[diameters_df.get("dataset", pd.Series(dtype=str)).astype(str) == "Anatomy"].copy()
+    anat_xy = pd.to_numeric(anat_df.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+    anat_z = pd.to_numeric(anat_df.get("z_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+    anat_xy = anat_xy[np.isfinite(anat_xy)]
+    anat_z = anat_z[np.isfinite(anat_z)]
+    thresholds_df = pd.DataFrame(
+        [
+            {
+                "anat_r50_xy_um": float(np.median(anat_xy) / 2.0) if anat_xy.size else np.nan,
+                "anat_r50_z_um": float(np.median(anat_z) / 2.0) if anat_z.size else np.nan,
+            }
+        ]
+    )
+
+    return {
+        "ncc_curves_df": ncc_curves_df,
+        "diameters_df": diameters_df,
+        "diameter_filter_summary_df": diameter_filter_summary_df,
+        "func_anat_offsets_df": func_anat_offsets_df,
+        "hcr_offsets_df": hcr_offsets_df,
+        "thresholds_df": thresholds_df,
+    }
+
+
+def render_cohort_53a_summary(
+    *,
+    ncc_curves_df: pd.DataFrame,
+    diameters_df: pd.DataFrame,
+    diameter_filter_summary_df: pd.DataFrame,
+    func_anat_offsets_df: pd.DataFrame,
+    hcr_offsets_df: pd.DataFrame,
+    thresholds_df: pd.DataFrame,
+    gene_order: list[str] | None = None,
+    gene_colors: dict[str, str] | None = None,
+) -> matplotlib.figure.Figure:
+    """Render a 2x2 pooled cohort analogue of single-fish [53a]."""
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10), constrained_layout=True)
+    ax_ncc, ax_diam = axes[0, 0], axes[0, 1]
+    ax_func, ax_hcr = axes[1, 0], axes[1, 1]
+
+    if not ncc_curves_df.empty:
+        fish_ids = sorted(ncc_curves_df["fish_id"].astype(str).unique().tolist())
+        fish_palette = {fid: plt.cm.tab10(i % 10) for i, fid in enumerate(fish_ids)}
+        for (fish_id, plane_label), sub in ncc_curves_df.groupby(["fish_id", "plane_label"], dropna=False):
+            ordered = sub.sort_values("z_idx")
+            ax_ncc.plot(
+                ordered["z_idx"].to_numpy(dtype=float),
+                ordered["ncc_score"].to_numpy(dtype=float),
+                color=fish_palette[str(fish_id)],
+                linewidth=1.0,
+                alpha=0.70,
+            )
+            peak = ordered.loc[(ordered["z_idx"] == ordered["best_z"])]
+            if peak.empty and not ordered.empty:
+                peak = ordered.iloc[[int(np.nanargmax(pd.to_numeric(ordered["ncc_score"], errors="coerce").to_numpy(dtype=float)))]]
+            if not peak.empty:
+                ax_ncc.scatter(
+                    peak["z_idx"].to_numpy(dtype=float),
+                    peak["ncc_score"].to_numpy(dtype=float),
+                    color=fish_palette[str(fish_id)],
+                    s=16,
+                    alpha=0.95,
+                )
+        handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
+        ax_ncc.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9)
+        ax_ncc.set_xlabel("Z index")
+        ax_ncc.set_ylabel("NCC score")
+        ax_ncc.set_title("NCC curves by plane (peak markers)")
+        ax_ncc.grid(alpha=0.2, axis="y")
+    else:
+        ax_ncc.text(0.5, 0.5, "No NCC curves found", ha="center", va="center", transform=ax_ncc.transAxes)
+        ax_ncc.set_axis_off()
+
+    if not diameters_df.empty:
+        dataset_order = ["Anatomy", "Functional", "HCR"]
+        dataset_colors = {"Anatomy": "#7f7f7f", "Functional": "#f39c12", "HCR": "#9b59b6"}
+        positions: list[float] = []
+        values: list[np.ndarray] = []
+        colors: list[Any] = []
+        labels: list[str] = []
+        for d_idx, dataset in enumerate(dataset_order):
+            sub = diameters_df[diameters_df["dataset"].astype(str) == dataset]
+            xy = pd.to_numeric(sub.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+            z = pd.to_numeric(sub.get("z_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+            xy = xy[np.isfinite(xy)]
+            z = z[np.isfinite(z)]
+            for axis_idx, (axis_name, arr) in enumerate((("XY", xy), ("Z", z))):
+                if arr.size == 0:
+                    continue
+                xpos = float(d_idx * 3 + axis_idx + 1)
+                positions.append(xpos)
+                values.append(arr)
+                colors.append(dataset_colors.get(dataset, "#999999"))
+                labels.append(f"{dataset}\n{axis_name}")
+        if values:
+            vp = ax_diam.violinplot(values, positions=positions, widths=0.8, showmeans=False, showmedians=False, showextrema=False)
+            for body, color in zip(vp["bodies"], colors):
+                body.set_facecolor(color)
+                body.set_edgecolor("black")
+                body.set_alpha(0.65)
+            for xpos, arr in zip(positions, values):
+                ax_diam.text(xpos, float(np.nanmax(arr)) * 1.03 if arr.size else 0.0, f"n={int(arr.size)}", ha="center", va="bottom", fontsize=8)
+            q95_df = diameter_filter_summary_df.copy()
+            if not q95_df.empty and {"dataset", "xy_q95_um"}.issubset(q95_df.columns):
+                pooled_q95 = q95_df.groupby("dataset", dropna=False)["xy_q95_um"].median()
+                for d_idx, dataset in enumerate(dataset_order):
+                    if dataset in pooled_q95.index and np.isfinite(float(pooled_q95[dataset])):
+                        xpos = float(d_idx * 3 + 1)
+                        y = float(pooled_q95[dataset])
+                        ax_diam.hlines(y, xpos - 0.45, xpos + 0.45, colors=dataset_colors.get(dataset, "#666666"), linestyles="--", linewidth=1.2)
+            ax_diam.set_xticks(positions)
+            ax_diam.set_xticklabels(labels, fontsize=8)
+            ax_diam.set_ylabel("Diameter (µm)")
+            ax_diam.set_title("Pooled label diameters (q05 drop, q95 low-confidence)")
+            ax_diam.grid(alpha=0.2, axis="y")
+        else:
+            ax_diam.text(0.5, 0.5, "No diameter values found", ha="center", va="center", transform=ax_diam.transAxes)
+            ax_diam.set_axis_off()
+    else:
+        ax_diam.text(0.5, 0.5, "No diameter table found", ha="center", va="center", transform=ax_diam.transAxes)
+        ax_diam.set_axis_off()
+
+    r50_xy = float(pd.to_numeric(thresholds_df.get("anat_r50_xy_um", pd.Series([np.nan])), errors="coerce").iloc[0]) if not thresholds_df.empty else np.nan
+    r50_z = float(pd.to_numeric(thresholds_df.get("anat_r50_z_um", pd.Series([np.nan])), errors="coerce").iloc[0]) if not thresholds_df.empty else np.nan
+
+    if not func_anat_offsets_df.empty:
+        xy_vals = pd.to_numeric(
+            func_anat_offsets_df.loc[func_anat_offsets_df["axis"].astype(str).str.lower() == "xy", "offset_um"], errors="coerce"
+        ).to_numpy(dtype=float)
+        z_vals = pd.to_numeric(
+            func_anat_offsets_df.loc[func_anat_offsets_df["axis"].astype(str).str.lower() == "z", "offset_um"], errors="coerce"
+        ).to_numpy(dtype=float)
+        xy_vals = xy_vals[np.isfinite(xy_vals)]
+        z_vals = z_vals[np.isfinite(z_vals)]
+        values = [xy_vals, z_vals]
+        labels = ["XY", "Z"]
+        vp = ax_func.violinplot(values, positions=[1, 2], widths=0.75, showmeans=False, showmedians=False, showextrema=False)
+        for body, color in zip(vp["bodies"], ["#4c78a8", "#f58518"]):
+            body.set_facecolor(color)
+            body.set_edgecolor("black")
+            body.set_alpha(0.75)
+        ax_func.set_xticks([1, 2])
+        ax_func.set_xticklabels(labels)
+        if np.isfinite(r50_xy):
+            ax_func.hlines(r50_xy, 0.65, 1.35, colors="#c1121f", linestyles="--", linewidth=1.4, label=f"Anat R50 XY={r50_xy:.2f} µm")
+        if np.isfinite(r50_z):
+            ax_func.hlines(r50_z, 1.65, 2.35, colors="#c1121f", linestyles="--", linewidth=1.4, label=f"Anat R50 Z={r50_z:.2f} µm")
+        ax_func.set_ylabel("Offset (µm)")
+        ax_func.set_title("Functional→anatomy centroid offsets (pooled)")
+        ax_func.grid(alpha=0.2, axis="y")
+        ax_func.legend(frameon=False, fontsize=8, loc="upper right")
+    else:
+        ax_func.text(0.5, 0.5, "No functional→anatomy offsets found", ha="center", va="center", transform=ax_func.transAxes)
+        ax_func.set_axis_off()
+
+    if not hcr_offsets_df.empty:
+        order = list(gene_order or [])
+        if not order:
+            order = sorted(hcr_offsets_df["gene"].astype(str).unique().tolist())
+        palette = dict(gene_colors or {})
+        if not palette:
+            palette = {gene: mcolors.to_hex(plt.cm.tab10(i % 10)) for i, gene in enumerate(order)}
+        plot_rows = []
+        for gene in order:
+            sub = hcr_offsets_df[hcr_offsets_df["gene"].astype(str) == str(gene)].copy()
+            if sub.empty:
+                continue
+            xy = pd.to_numeric(sub.get("xy_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+            zz = pd.to_numeric(sub.get("abs_dz_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+            xy = xy[np.isfinite(xy)]
+            zz = zz[np.isfinite(zz)]
+            plot_rows.append((gene, "XY", xy))
+            plot_rows.append((gene, "Z", zz))
+        xpos = 1
+        xticks: list[float] = []
+        xticklabels: list[str] = []
+        for gene, axis_name, arr in plot_rows:
+            if arr.size == 0:
+                xpos += 1
+                continue
+            xvals = np.full(arr.shape, float(xpos))
+            jitter = (np.random.default_rng(0).uniform(-0.12, 0.12, size=arr.shape[0]) if arr.size else np.array([], dtype=float))
+            ax_hcr.scatter(xvals + jitter, arr, s=16, alpha=0.70, color=palette.get(gene, "#666666"), edgecolors="black", linewidths=0.3)
+            bp = ax_hcr.boxplot([arr], positions=[xpos], widths=0.5, patch_artist=True, showfliers=False)
+            for patch in bp["boxes"]:
+                patch.set_facecolor(palette.get(gene, "#666666"))
+                patch.set_alpha(0.30)
+                patch.set_edgecolor("black")
+            xticks.append(float(xpos))
+            xticklabels.append(f"{gene}\n{axis_name}")
+            xpos += 1
+        if np.isfinite(r50_xy):
+            ax_hcr.axhline(r50_xy, color="#c1121f", linestyle="--", linewidth=1.3, alpha=0.8, label=f"Anat R50 XY={r50_xy:.2f} µm")
+        if np.isfinite(r50_z):
+            ax_hcr.axhline(r50_z, color="#7f1d1d", linestyle=":", linewidth=1.3, alpha=0.8, label=f"Anat R50 Z={r50_z:.2f} µm")
+        ax_hcr.set_xticks(xticks)
+        ax_hcr.set_xticklabels(xticklabels, fontsize=8)
+        ax_hcr.set_ylabel("Offset (µm)")
+        ax_hcr.set_title("HCR↔anatomy centroid offsets (deduped by gene/anat)")
+        ax_hcr.grid(alpha=0.2, axis="y")
+        if ax_hcr.get_legend_handles_labels()[0]:
+            ax_hcr.legend(frameon=False, fontsize=8, loc="upper right")
+    else:
+        ax_hcr.text(0.5, 0.5, "No HCR offsets found", ha="center", va="center", transform=ax_hcr.transAxes)
+        ax_hcr.set_axis_off()
+
+    fig.suptitle("Cohort [53a] summary", fontsize=14)
+    return fig
+
+
 __all__ = [
     "build_best_plane_modality_merge_grid",
+    "collect_cohort_53a_tables",
     "compute_anatomy_median_xy_radius_um",
     "build_round_channel_mip_grid",
+    "render_cohort_53a_summary",
     "show_centroid_match_qa_stage",
     "show_functional_label_overlay_stage",
     "show_region_shift_square_selector_stage",

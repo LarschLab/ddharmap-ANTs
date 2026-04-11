@@ -1,8 +1,11 @@
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import tifffile
 
 from codeants_2pf_hcr.matching import (
     _regionprops_centroids_2d,
@@ -16,7 +19,9 @@ from codeants_2pf_hcr.matching import (
     resample_labels_nn,
 )
 from codeants_2pf_hcr.plots.qa import (
+    collect_cohort_53a_tables,
     compute_anatomy_median_xy_radius_um,
+    render_cohort_53a_summary,
     show_centroid_match_qa_stage,
 )
 
@@ -244,6 +249,150 @@ class MatchingTests(unittest.TestCase):
         self.assertIsNotNone(snap)
         self.assertEqual(int(snap["links_at_initial_threshold"]), 0)
         self.assertGreaterEqual(int(snap["context_anat_centroids"]), 1)
+
+    def test_collect_cohort_53a_tables_computes_thresholds_and_offsets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "F01"
+            fish_dir = root / fish_id
+            (fish_dir / "03_analysis" / "functional" / "ncc").mkdir(parents=True, exist_ok=True)
+            (fish_dir / "03_analysis" / "functional" / "registration").mkdir(parents=True, exist_ok=True)
+            (fish_dir / "03_analysis" / "functional" / "qa").mkdir(parents=True, exist_ok=True)
+            (fish_dir / "03_analysis" / "structural" / "cp_masks").mkdir(parents=True, exist_ok=True)
+            (fish_dir / "03_analysis" / "confocal" / "raw" / "cp_masks").mkdir(parents=True, exist_ok=True)
+
+            ncc_payload = {
+                "per_fish": {
+                    fish_id: {
+                        "plane0": {"best_z": 1, "scores": [0.1, 0.7, 0.2]},
+                        "plane1": {"best_z": 0, "scores": [0.8, 0.3]},
+                    }
+                }
+            }
+            (fish_dir / "03_analysis" / "functional" / "ncc" / "ncc_bestz_by_plane.json").write_text(json.dumps(ncc_payload))
+
+            diam_df = pd.DataFrame(
+                {
+                    "dataset": ["Anatomy", "Anatomy", "Functional", "HCR"],
+                    "x_um": [4.0, 6.0, 5.0, 7.0],
+                    "y_um": [4.0, 6.0, 5.0, 7.0],
+                    "z_um": [2.0, 4.0, 3.0, 5.0],
+                }
+            )
+            diam_df.to_pickle(fish_dir / "03_analysis" / "functional" / "qa" / "diameters_df_all.pkl")
+
+            run_meta = {"voxels": {"anat": {"X": 1.0, "Y": 1.0, "Z": 2.0}}}
+            (fish_dir / "03_analysis" / "functional" / "registration" / "run_metadata.json").write_text(json.dumps(run_meta))
+
+            roi_df = pd.DataFrame(
+                {
+                    "plane_match_outcome": ["anatomy match"],
+                    "has_unique_anat_match": [True],
+                    "selected_dist_um": [3.5],
+                    "selected_anat_label": [1],
+                    "best_z": [1.0],
+                }
+            )
+            roi_df.to_csv(fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_activity_identity.csv", index=False)
+
+            anat_labels = np.zeros((4, 8, 8), dtype=np.uint16)
+            anat_labels[1, 1:3, 1:3] = 1
+            anat_labels[3, 5:7, 5:7] = 2
+            tifffile.imwrite(
+                fish_dir / "03_analysis" / "structural" / "cp_masks" / f"{fish_id}_anatomy_00001_8bit_cp_masks.tif",
+                anat_labels,
+            )
+
+            conf_labels = np.zeros((4, 8, 8), dtype=np.uint16)
+            conf_labels[2, 1:3, 1:3] = 10
+            conf_mask_path = fish_dir / "03_analysis" / "confocal" / "raw" / "cp_masks" / f"{fish_id}_round1_channel2_npy_cp_masks.tif"
+            tifffile.imwrite(conf_mask_path, conf_labels)
+            conf_df = pd.DataFrame(
+                {
+                    "fish_id": [fish_id, fish_id],
+                    "gene": ["npy", "npy"],
+                    "anat_label": [1, 1],
+                    "conf_mask": [str(conf_mask_path), str(conf_mask_path)],
+                    "conf_label": [10, 10],
+                    "dist_func_anat_um": [1.0, 2.0],
+                    "overlap_px_func_anat": [5, 1],
+                    "dist_conf_anat_um": [0.5, 0.8],
+                    "plane": [0, 1],
+                    "func_label": [1, 2],
+                }
+            )
+            conf_df.to_csv(fish_dir / "03_analysis" / "functional" / "registration" / "conf_to_func_pairs.csv", index=False)
+
+            tables = collect_cohort_53a_tables(
+                fish_specs=[{"owner": "Matilde", "fish_id": fish_id}],
+                data_root=root,
+                data_mode="local",
+            )
+            self.assertIn("ncc_curves_df", tables)
+            self.assertIn("diameters_df", tables)
+            self.assertIn("func_anat_offsets_df", tables)
+            self.assertIn("hcr_offsets_df", tables)
+            self.assertIn("thresholds_df", tables)
+            self.assertFalse(tables["ncc_curves_df"].empty)
+            self.assertFalse(tables["diameters_df"].empty)
+            self.assertFalse(tables["func_anat_offsets_df"].empty)
+            self.assertFalse(tables["hcr_offsets_df"].empty)
+            self.assertGreaterEqual(float(tables["thresholds_df"].iloc[0]["anat_r50_xy_um"]), 0.0)
+
+    def test_render_cohort_53a_summary_handles_empty_links(self) -> None:
+        ncc_curves_df = pd.DataFrame(
+            {
+                "fish_id": ["F01"],
+                "plane_idx": [0],
+                "plane_label": ["plane0"],
+                "z_idx": [0],
+                "ncc_score": [0.5],
+                "best_z": [0],
+                "best_score": [0.5],
+            }
+        )
+        diameters_df = pd.DataFrame(
+            {
+                "fish_id": ["F01"],
+                "dataset": ["Anatomy"],
+                "x_um": [5.0],
+                "y_um": [5.0],
+                "z_um": [4.0],
+                "xy_um": [5.0],
+                "is_low_confidence_segmentation": [False],
+            }
+        )
+        diameter_filter_summary_df = pd.DataFrame(
+            {
+                "fish_id": ["F01"],
+                "dataset": ["Anatomy"],
+                "xy_q05_um": [5.0],
+                "xy_q95_um": [5.0],
+                "n_input": [1],
+                "n_kept": [1],
+                "n_drop_q05": [0],
+                "n_low_conf_q95": [0],
+            }
+        )
+        func_anat_offsets_df = pd.DataFrame(columns=["fish_id", "axis", "offset_um"])
+        hcr_offsets_df = pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
+        thresholds_df = pd.DataFrame([{"anat_r50_xy_um": 2.5, "anat_r50_z_um": 2.0}])
+        fig = render_cohort_53a_summary(
+            ncc_curves_df=ncc_curves_df,
+            diameters_df=diameters_df,
+            diameter_filter_summary_df=diameter_filter_summary_df,
+            func_anat_offsets_df=func_anat_offsets_df,
+            hcr_offsets_df=hcr_offsets_df,
+            thresholds_df=thresholds_df,
+            gene_order=["npy"],
+            gene_colors={"npy": "#1f9d55"},
+        )
+        self.assertEqual(len(fig.axes), 4)
+        self.assertIn("No functional→anatomy offsets found", fig.axes[2].texts[0].get_text())
+        self.assertIn("No HCR offsets found", fig.axes[3].texts[0].get_text())
+        import matplotlib.pyplot as plt
+
+        plt.close(fig)
 
 
 if __name__ == "__main__":

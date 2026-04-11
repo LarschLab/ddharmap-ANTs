@@ -128,7 +128,9 @@ from .organize import (
     organize,
 )
 from .plots.qa import (
+    collect_cohort_53a_tables,
     compute_anatomy_median_xy_radius_um,
+    render_cohort_53a_summary,
     show_centroid_match_qa_stage,
     show_functional_label_overlay_stage,
     show_region_shift_square_selector_stage,
@@ -179,6 +181,7 @@ __all__ = [
     "build_stim_tables",
     "check_notebook_contract",
     "classify_stim_type",
+    "collect_cohort_53a_tables",
     "compute_anatomy_median_xy_radius_um",
     "combine_segments",
     "compute_centroids",
@@ -217,6 +220,7 @@ __all__ = [
     "prepare_pairs_for_unique_cells",
     "nearest_neighbor_match",
     "registration_metric_from_scores",
+    "render_cohort_53a_summary",
     "resolve_functional_labels_for_plane",
     "resolve_plane_transform",
     "resample_labels_nn",

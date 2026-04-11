@@ -34,6 +34,7 @@ from codeants_2pf_hcr import (
     build_response_bpi_tables,
     build_run_config_stage,
     check_notebook_contract,
+    collect_cohort_53a_tables,
     collect_hcr_intensity_stack_paths,
     combine_segments,
     compute_centroids,
@@ -55,6 +56,7 @@ from codeants_2pf_hcr import (
     prepare_pairs_for_unique_cells,
     nearest_neighbor_match,
     registration_metric_from_scores,
+    render_cohort_53a_summary,
     hungarian_match,
     harmonize_functional_labels_to_anatomy,
     resolve_functional_labels_for_plane,
@@ -119,6 +121,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_run_config_stage)
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
+    assert callable(collect_cohort_53a_tables)
     assert callable(collect_hcr_intensity_stack_paths)
     assert callable(combine_segments)
     assert callable(compute_centroids)
@@ -144,6 +147,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(resolve_plane_transform)
     assert callable(resample_labels_nn)
     assert callable(registration_metric_from_scores)
+    assert callable(render_cohort_53a_summary)
     assert callable(resolve_conf_func_csv_analysis)
     assert callable(resolve_fish_state_stage)
     assert callable(resolve_hcr_cellpose_model_path)

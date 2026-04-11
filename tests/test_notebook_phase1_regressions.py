@@ -5,6 +5,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
+COHORT_NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "multi_fish_56h_56g.ipynb"
 GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase1.py"
 PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase2.py"
 PHASE4_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase4.py"
@@ -34,6 +35,28 @@ def _code_cell_by_prefix(prefix: str) -> str:
         if source.startswith(prefix):
             return source
     raise AssertionError(f"Notebook cell starting with {prefix!r} not found")
+
+
+def _cohort_cell_by_tag(tag: str) -> str:
+    notebook = json.loads(COHORT_NOTEBOOK_PATH.read_text())
+    for cell in notebook["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        if source.startswith(f"# [{tag}]"):
+            return source
+    raise AssertionError(f"Cohort notebook cell [{tag}] not found")
+
+
+def _cohort_cfg_cell() -> str:
+    notebook = json.loads(COHORT_NOTEBOOK_PATH.read_text())
+    for cell in notebook["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        if source.startswith("# [cfg] Imports + cohort configuration"):
+            return source
+    raise AssertionError("Cohort cfg cell not found")
 
 
 class NotebookPhase1RegressionTests(unittest.TestCase):
@@ -204,6 +227,27 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("export_suite2p_native_labels_stage", cell_26a)
         self.assertNotIn("def _native_suite2p_ref_paths(", cell_26a)
         self.assertNotIn("def _get_native_suite2p_labels_for_plane(", cell_26a)
+
+    def test_cohort_53a_cell_uses_package_renderer_only(self) -> None:
+        cell = _cohort_cell_by_tag("53a-cohort")
+        self.assertIn("render_cohort_53a_summary(", cell)
+        self.assertIn("cohort_53a_summary.png", cell)
+        self.assertIn("cohort_53a_summary.pdf", cell)
+        self.assertNotIn("def ", cell)
+
+    def test_cohort_build_uses_package_collector(self) -> None:
+        cell = _cohort_cell_by_tag("cohort-build")
+        self.assertIn("collect_cohort_53a_tables(", cell)
+        self.assertIn("cohort_53a_tables=", cell)
+
+    def test_cohort_cfg_wires_53a_cache_paths(self) -> None:
+        cell = _cohort_cfg_cell()
+        self.assertIn("cohort_53a_ncc_curves_csv", cell)
+        self.assertIn("cohort_53a_diameters_csv", cell)
+        self.assertIn("cohort_53a_diameter_filter_summary_csv", cell)
+        self.assertIn("cohort_53a_func_anat_offsets_csv", cell)
+        self.assertIn("cohort_53a_hcr_offsets_csv", cell)
+        self.assertIn("cohort_53a_thresholds_csv", cell)
 
 
 if __name__ == "__main__":
