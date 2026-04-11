@@ -22,8 +22,10 @@ from codeants_2pf_hcr import (
     best_z_by_ncc,
     build_context_audit_stage,
     build_final_fish_audit_stage,
+    build_functional_anatomy_debug_df,
     build_functional_roi_master_df,
     build_hcr_activity_tables,
+    build_plane_centroid_matches,
     build_voxel_debug_stage,
     build_null_window_start_map,
     build_prestim_baseline_windows,
@@ -54,6 +56,7 @@ from codeants_2pf_hcr import (
     nearest_neighbor_match,
     registration_metric_from_scores,
     hungarian_match,
+    harmonize_functional_labels_to_anatomy,
     resolve_functional_labels_for_plane,
     resolve_conf_func_csv_analysis,
     resolve_fish_state_stage,
@@ -61,6 +64,7 @@ from codeants_2pf_hcr import (
     resolve_native_suite2p_labels_for_plane,
     resolve_notebook_context_stage,
     resolve_plane_transform,
+    resample_labels_nn,
     resolve_voxel_context_stage,
     run_hcr_cellpose_stage,
     run_registration_search_stage,
@@ -68,6 +72,9 @@ from codeants_2pf_hcr import (
     run_smoke_tier,
     scale_image,
     show_functional_label_overlay_stage,
+    show_centroid_match_qa_stage,
+    show_region_shift_square_selector_stage,
+    compute_anatomy_median_xy_radius_um,
     show_registration_overlay_stage,
     summarize_distances,
     top_correlated_mean,
@@ -99,8 +106,10 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(best_z_by_ncc)
     assert callable(build_context_audit_stage)
     assert callable(build_final_fish_audit_stage)
+    assert callable(build_functional_anatomy_debug_df)
     assert callable(build_functional_roi_master_df)
     assert callable(build_hcr_activity_tables)
+    assert callable(build_plane_centroid_matches)
     assert callable(build_voxel_debug_stage)
     assert callable(build_null_window_start_map)
     assert callable(build_prestim_baseline_windows)
@@ -117,6 +126,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(corrcoef_img)
     assert callable(deduplicate_hcr_intensity_targets)
     assert callable(export_suite2p_native_labels_stage)
+    assert callable(harmonize_functional_labels_to_anatomy)
     assert callable(hungarian_match)
     assert callable(infer_frame_rate_from_detail)
     assert callable(imread_any)
@@ -132,6 +142,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(prepare_pairs_for_unique_cells)
     assert callable(resolve_functional_labels_for_plane)
     assert callable(resolve_plane_transform)
+    assert callable(resample_labels_nn)
     assert callable(registration_metric_from_scores)
     assert callable(resolve_conf_func_csv_analysis)
     assert callable(resolve_fish_state_stage)
@@ -144,6 +155,9 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(scale_image)
+    assert callable(show_centroid_match_qa_stage)
+    assert callable(show_region_shift_square_selector_stage)
+    assert callable(compute_anatomy_median_xy_radius_um)
     assert callable(show_functional_label_overlay_stage)
     assert callable(show_registration_overlay_stage)
     assert callable(summarize_distances)

@@ -51,11 +51,15 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.matching`
 
 - `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
+- `resample_labels_nn`: Apply nearest-neighbor label resampling for functional-to-anatomy plane warps and shape harmonization.
+- `harmonize_functional_labels_to_anatomy`: Enforce the shared per-plane functional/anatomy shape contract before overlap or centroid matching.
 - `compute_centroids`: Build label centroid tables for centroid-based QC and distance summaries.
 - `idx_to_um`: Convert centroid-index tables to micron coordinates with explicit voxel scaling.
 - `nearest_neighbor_match`: Build one-nearest-neighbor centroid matches for QC diagnostics.
 - `hungarian_match`: Build Hungarian centroid matches for QC diagnostics.
 - `summarize_distances`: Summarize centroid-match distance arrays for QC tables.
+- `build_plane_centroid_matches`: Build per-plane centroid-link tables and overlap-aware counts for notebook QA stages `[34]`/`[34a]`.
+- `build_functional_anatomy_debug_df`: Summarize per-plane functional-to-anatomy centroid matching status for notebook debug stage `[34a]`.
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
@@ -114,6 +118,9 @@ Generated manually for the current extracted package surface.
 
 - `build_best_plane_modality_merge_grid`: Render the merged best-plane modality QA panel.
 - `build_round_channel_mip_grid`: Render the round/channel MIP grid.
+- `show_region_shift_square_selector_stage`: Notebook-facing region-square QA selector stage for `[22d]`, including JSON reuse/save behavior.
+- `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
+- `show_centroid_match_qa_stage`: Notebook-facing centroid-distance QA stage for `[34]` with threshold UI, plane switching, and context rendering.
 - `show_functional_label_overlay_stage`: Notebook-facing functional-label overlay stage for `[26]`.
 - `show_registration_overlay_stage`: Notebook-facing interactive registration overlay stage for `[22]`.
 

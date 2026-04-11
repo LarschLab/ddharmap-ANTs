@@ -126,3 +126,24 @@
   - Continue at the neighboring HCR discovery/warp ownership region starting around `[37]`-`[44]`, or run the notebook contract audit to choose the next highest-density slice.
 - Rerun implications:
   - Re-run `python tools/refactor_notebook_phase8.py`, then run `pytest -q tests/test_segmentation.py tests/test_package_exports.py tests/test_notebook_phase1_regressions.py tests/test_notebook_contract.py` and `check_notebook_contract(notebooks/2PF_to_HCR.ipynb)` to confirm the reduced violation count for this slice.
+
+### 2026-04-11 - centralize plane centroid QA resampling
+
+- Slice goal:
+  - Fix the functional/anatomy plane-shape mismatch and missing `resample_labels_nn` path in the package owner used by notebook stages `[34]` and `[34a]`, without reviving notebook-local geometry helpers.
+- Passes completed in this session:
+  - Added package-owned label resampling and harmonization helpers in `src/codeants_2pf_hcr/matching.py`.
+  - Added package builders for per-plane centroid-link tables and `[34a]` debug summaries, and rewired notebook cells `[34]` and `[34a]` to call them.
+  - Updated package exports, symbol index, and regression tests covering the new centroid-QA contract.
+- What changed:
+  - `resolve_plane_transform` now falls back to `ncc_xy` translations, so the shared plane transform contract matches the notebook’s historical QA path.
+  - `resample_labels_nn` is now a public package helper, and matching stages use the same shape-harmonization path instead of a missing notebook symbol or silent raw-label fallback.
+  - `[34]` now resolves functional labels through `resolve_functional_labels_for_plane` and builds centroid links through `build_plane_centroid_matches`; `[34a]` now uses `build_functional_anatomy_debug_df`.
+- What remains broken:
+  - Fish-specific end-to-end rerun validation for `L395_f11_plane0_mcorrected_flipX` could not be executed in this workspace because the corresponding outputs/data are not present locally.
+- Remaining in-slice work:
+  - Run the targeted notebook stages on a workspace that has the fish data and verify the first downstream plane consumer after `[34a]`.
+- Next likely breakpoint:
+  - The next meaningful failure, if any, should surface in a fish-backed rerun of `[34]`, `[34a]`, or the first consumer that expects `_prepare_plane_data`.
+- Rerun implications:
+  - Re-run the geometry-producing stages that populate `plane_refs`, then re-run `[34]`, `[34a]`, and the first downstream plane consumer with real fish data. Package-side contract coverage is now `pytest -q tests/test_matching.py tests/test_package_exports.py tests/test_notebook_phase1_regressions.py`.

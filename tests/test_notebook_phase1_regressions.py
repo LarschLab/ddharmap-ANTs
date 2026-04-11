@@ -158,8 +158,27 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         cell = _code_cell_by_prefix("# HCR matching/QC helpers (antsQC-style)")
         self.assertIn("resolve_plane_transform", cell)
         self.assertIn("build_hcr_activity_tables", cell)
+        self.assertIn("build_functional_anatomy_debug_df", cell)
+        self.assertIn("build_plane_centroid_matches", cell)
+        self.assertIn("resample_labels_nn", cell)
+        self.assertIn("resolve_functional_labels_for_plane", cell)
         self.assertNotIn("def _tform_for_plane(", cell)
         self.assertNotIn("def compute_centroids(", cell)
+
+    def test_centroid_qa_cells_use_package_matching_builders(self) -> None:
+        cell_22d = _code_cell_by_tag("22d")
+        cell_34 = _code_cell_by_tag("34")
+        cell_34a = _code_cell_by_tag("34a")
+        self.assertIn("show_region_shift_square_selector_stage", cell_22d)
+        self.assertNotIn("def _render(", cell_22d)
+        self.assertNotIn("def _bundle(", cell_22d)
+        self.assertIn("show_centroid_match_qa_stage", cell_34)
+        self.assertIn("centroid_qa_result", cell_34)
+        self.assertIn("_prepare_plane_data = centroid_qa_result['helpers']['prepare_plane_data']", cell_34)
+        self.assertNotIn("def _render(", cell_34)
+        self.assertIn("build_functional_anatomy_debug_df", cell_34a)
+        self.assertIn("resample_labels_nn", cell_34a)
+        self.assertNotIn("resample_failed (name 'resample_labels_nn' is not defined)", cell_34a)
 
     def test_registration_cells_use_package_stage_wrappers(self) -> None:
         cell_16 = _code_cell_by_tag("16")

@@ -13,6 +13,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from skimage.measure import regionprops_table
+from skimage.transform import AffineTransform, SimilarityTransform, warp
 
 
 ArrayLike = Any
@@ -40,6 +41,12 @@ def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
         tform = plane_ref.get(key)
         if tform is not None:
             return tform
+    try:
+        ncc_xy = plane_ref.get("ncc_xy")
+        if isinstance(ncc_xy, dict) and "x0" in ncc_xy and "y0" in ncc_xy:
+            return SimilarityTransform(translation=(int(ncc_xy["x0"]), int(ncc_xy["y0"])))
+    except Exception:
+        pass
     return None
 
 
@@ -147,6 +154,31 @@ def _ensure_uint_labels(arr: ArrayLike) -> np.ndarray:
     return np.asarray(out, dtype=np.uint32)
 
 
+def resample_labels_nn(
+    labels_2d: ArrayLike,
+    tform: Any | None = None,
+    *,
+    output_shape: tuple[int, int] | list[int] | np.ndarray,
+) -> np.ndarray:
+    labels = _ensure_uint_labels(labels_2d)
+    if labels.ndim != 2:
+        raise ValueError(f"Expected 2D label image, got shape {labels.shape!r}")
+    shape = tuple(int(v) for v in tuple(output_shape))
+    if len(shape) != 2:
+        raise ValueError(f"Expected 2D output_shape, got {output_shape!r}")
+    xform = tform if tform is not None else AffineTransform()
+    warped = warp(
+        labels.astype(np.float32, copy=False),
+        xform.inverse,
+        output_shape=shape,
+        order=0,
+        mode="constant",
+        cval=0.0,
+        preserve_range=True,
+    )
+    return _ensure_uint_labels(warped)
+
+
 def _series_to_int_list(series: pd.Series) -> list[int]:
     vals = pd.to_numeric(series, errors="coerce").dropna().astype(int).tolist()
     return sorted(set(int(v) for v in vals))
@@ -216,6 +248,61 @@ def _centroid_df(labels_2d: np.ndarray, y_name: str, x_name: str) -> pd.DataFram
     return df.loc[:, ["label", y_name, x_name]]
 
 
+def harmonize_functional_labels_to_anatomy(
+    labels_raw: ArrayLike,
+    plane_ref: dict[str, Any] | None,
+    anat_shape: tuple[int, int] | list[int] | np.ndarray,
+    *,
+    tform_for_plane_func: Callable[[dict[str, Any]], Any] | None = None,
+    resample_labels_nn_func: Callable[..., np.ndarray] | None = None,
+) -> dict[str, Any]:
+    labels = _ensure_uint_labels(labels_raw)
+    if labels.ndim == 3 and labels.shape[-1] in (1, 3, 4):
+        labels = labels[..., 0]
+    target_shape = tuple(int(v) for v in tuple(anat_shape))
+    result = {
+        "labels": None,
+        "status": "ok",
+        "status_detail": None,
+        "func_shape": tuple(labels.shape),
+        "anat_shape": target_shape,
+        "transform_applied": False,
+    }
+    if labels.ndim != 2:
+        result["status"] = f"func_shape_not_2D ({labels.shape})"
+        return result
+
+    try:
+        if callable(tform_for_plane_func):
+            tform = tform_for_plane_func(plane_ref or {})
+        else:
+            tform = resolve_plane_transform(plane_ref)
+    except Exception as exc:
+        result["status"] = f"transform_resolve_failed ({exc})"
+        return result
+
+    resampler = resample_labels_nn_func if callable(resample_labels_nn_func) else resample_labels_nn
+    needs_resample = (tform is not None) or (tuple(labels.shape) != target_shape)
+    if not needs_resample:
+        result["labels"] = labels
+        return result
+
+    try:
+        warped = resampler(labels, tform if tform is not None else AffineTransform(), output_shape=target_shape)
+    except Exception as exc:
+        result["status"] = f"resample_failed ({exc})"
+        return result
+
+    warped = _ensure_uint_labels(warped)
+    result["transform_applied"] = tform is not None
+    result["func_shape"] = tuple(warped.shape)
+    if tuple(warped.shape) != target_shape:
+        result["status"] = f"shape_mismatch ({tuple(warped.shape)} vs {target_shape})"
+        return result
+    result["labels"] = warped
+    return result
+
+
 def _resolve_best_z(plane_ref: dict[str, Any]) -> int:
     try:
         return int(plane_ref.get("best_z", -1))
@@ -283,16 +370,17 @@ def _resample_func_labels(
     tform_for_plane_func: Callable[[dict[str, Any]], Any] | None = None,
     resample_labels_nn_func: Callable[..., np.ndarray] | None = None,
 ) -> np.ndarray:
-    if not callable(tform_for_plane_func) or not callable(resample_labels_nn_func):
-        return _ensure_uint_labels(labels_raw)
-    try:
-        tform = tform_for_plane_func(plane_ref)
-    except Exception:
-        tform = None
-    if tform is None:
-        return _ensure_uint_labels(labels_raw)
-    warped = resample_labels_nn_func(labels_raw, tform, output_shape=anat_shape)
-    return _ensure_uint_labels(warped)
+    result = harmonize_functional_labels_to_anatomy(
+        labels_raw,
+        plane_ref,
+        anat_shape,
+        tform_for_plane_func=tform_for_plane_func,
+        resample_labels_nn_func=resample_labels_nn_func,
+    )
+    labels = result.get("labels")
+    if labels is None:
+        raise RuntimeError(str(result.get("status", "resample_failed")))
+    return _ensure_uint_labels(labels)
 
 
 def _pair_df_for_plane(
@@ -364,6 +452,198 @@ def _pair_df_for_plane(
     if np.isfinite(float(max_dist_um)) and float(max_dist_um) > 0:
         pair_df = pair_df[pd.to_numeric(pair_df["dist_um"], errors="coerce") <= float(max_dist_um)].copy()
     return pair_df.reset_index(drop=True), overlap_any_count, overlap_valid_count
+
+
+def build_plane_centroid_matches(
+    func_labels: ArrayLike,
+    anat_slice: ArrayLike,
+    *,
+    plane_ref: dict[str, Any] | None = None,
+    vox_x: float = 1.0,
+    vox_y: float = 1.0,
+    max_link_dist_px: float = 50.0,
+    require_overlap: bool = True,
+    min_overlap: int = 1,
+    tform_for_plane_func: Callable[[dict[str, Any]], Any] | None = None,
+    resample_labels_nn_func: Callable[..., np.ndarray] | None = None,
+) -> dict[str, Any]:
+    anat_labels = _ensure_uint_labels(anat_slice)
+    harmonized = harmonize_functional_labels_to_anatomy(
+        func_labels,
+        plane_ref,
+        anat_labels.shape,
+        tform_for_plane_func=tform_for_plane_func,
+        resample_labels_nn_func=resample_labels_nn_func,
+    )
+    func_warped = harmonized.get("labels")
+    result = {
+        "status": harmonized.get("status", "ok"),
+        "func_warped": func_warped,
+        "links_df": pd.DataFrame(
+            columns=["fx_anat_px", "fy_anat_px", "ax_px", "ay_px", "dist_px", "dist_um", "func_label", "anat_label", "overlap_px"]
+        ),
+        "n_func": 0,
+        "n_anat": 0,
+        "pairs_raw": 0,
+        "pairs_keep_dist": 0,
+        "pairs_overlap_gt0": 0,
+        "pairs_final": 0,
+    }
+    if func_warped is None:
+        return result
+
+    fdf = _regionprops_centroids_2d(func_warped)
+    adf = _regionprops_centroids_2d(anat_labels)
+    result["n_func"] = int(len(fdf))
+    result["n_anat"] = int(len(adf))
+    if fdf.empty or adf.empty:
+        result["status"] = f"empty_labels (func={len(fdf)}, anat={len(adf)})"
+        return result
+
+    fpts = fdf[["cx", "cy"]].to_numpy()
+    apts = adf[["cx", "cy"]].to_numpy()
+    dists = np.sqrt(((fpts[:, None, :] - apts[None, :, :]) ** 2).sum(axis=2))
+    row_ind, col_ind = linear_sum_assignment(dists)
+    result["pairs_raw"] = int(len(row_ind))
+    keep = dists[row_ind, col_ind] <= float(max_link_dist_px)
+    row_ind = row_ind[keep]
+    col_ind = col_ind[keep]
+    result["pairs_keep_dist"] = int(len(row_ind))
+
+    links = []
+    for r_idx, c_idx in zip(row_ind, col_ind):
+        fxp = float(fpts[r_idx, 0])
+        fyp = float(fpts[r_idx, 1])
+        axp = float(apts[c_idx, 0])
+        ayp = float(apts[c_idx, 1])
+        dx_um = (fxp - axp) * float(vox_x)
+        dy_um = (fyp - ayp) * float(vox_y)
+        links.append(
+            {
+                "fx_anat_px": fxp,
+                "fy_anat_px": fyp,
+                "ax_px": axp,
+                "ay_px": ayp,
+                "dist_px": float(dists[r_idx, c_idx]),
+                "dist_um": float(np.sqrt(dx_um * dx_um + dy_um * dy_um)),
+                "func_label": int(fdf.iloc[r_idx]["label"]),
+                "anat_label": int(adf.iloc[c_idx]["label"]),
+            }
+        )
+    links_df = pd.DataFrame(links)
+
+    overlap_df = compute_label_overlap(func_warped, anat_labels, min_overlap_voxels=1)
+    overlap_df = (
+        overlap_df.rename(columns={"conf_label": "func_label", "twoP_label": "anat_label", "overlap_voxels": "overlap_px"})
+        if not overlap_df.empty
+        else overlap_df
+    )
+    if links_df.empty:
+        result["pairs_overlap_gt0"] = 0
+        result["pairs_final"] = 0
+        result["links_df"] = result["links_df"].iloc[0:0].copy()
+        return result
+
+    links_df = (
+        links_df.merge(overlap_df, on=["func_label", "anat_label"], how="left")
+        if not overlap_df.empty
+        else links_df.assign(overlap_px=0)
+    )
+    links_df["overlap_px"] = links_df["overlap_px"].fillna(0).astype(int)
+    result["pairs_overlap_gt0"] = int((links_df["overlap_px"] > 0).sum())
+    if require_overlap:
+        links_df = links_df[links_df["overlap_px"] >= int(min_overlap)].reset_index(drop=True)
+    result["pairs_final"] = int(len(links_df))
+    result["links_df"] = links_df
+    return result
+
+
+def build_functional_anatomy_debug_df(
+    plane_refs: list[dict[str, Any]],
+    anat_labels_all: ArrayLike,
+    *,
+    load_func_labels_for_plane_func: Callable[[int], tuple[ArrayLike | None, str | None, str | None] | tuple[ArrayLike | None, str | None]] | None,
+    vox_x: float = 1.0,
+    vox_y: float = 1.0,
+    max_link_dist_px: float = 50.0,
+    require_overlap: bool = True,
+    min_overlap: int = 1,
+    tform_for_plane_func: Callable[[dict[str, Any]], Any] | None = None,
+    resample_labels_nn_func: Callable[..., np.ndarray] | None = None,
+) -> pd.DataFrame:
+    anat_all = _ensure_uint_labels(anat_labels_all)
+    z_size = int(anat_all.shape[0]) if anat_all.ndim == 3 else 1
+    rows: list[dict[str, Any]] = []
+    for p_idx, plane_ref in enumerate(plane_refs or []):
+        plane_label = str(plane_ref.get("label", f"plane{p_idx}"))
+        best_z = _resolve_best_z(plane_ref)
+        row = {
+            "plane_idx": int(p_idx),
+            "plane": plane_label,
+            "best_z": int(best_z),
+            "n_func": np.nan,
+            "n_anat": np.nan,
+            "pairs_raw": np.nan,
+            "pairs_keep_dist": np.nan,
+            "pairs_overlap_gt0": np.nan,
+            "pairs_final": np.nan,
+            "func_source": None,
+            "status": "ok",
+        }
+        if best_z < 0 or best_z >= z_size:
+            row["status"] = f"best_z_out_of_bounds ({best_z})"
+            rows.append(row)
+            continue
+        loaded = load_func_labels_for_plane_func(int(p_idx)) if callable(load_func_labels_for_plane_func) else (None, None, None)
+        if isinstance(loaded, tuple) and len(loaded) == 3:
+            func_labels, func_label_name, func_src = loaded
+        elif isinstance(loaded, tuple) and len(loaded) == 2:
+            func_labels, func_src = loaded
+            func_label_name = None
+        else:
+            func_labels, func_label_name, func_src = None, None, None
+        if func_labels is None:
+            row["status"] = "no_functional_labels"
+            rows.append(row)
+            continue
+        row["func_source"] = func_src if func_src is not None else func_label_name
+        anat_slice = anat_all[best_z] if anat_all.ndim == 3 else anat_all
+        match_result = build_plane_centroid_matches(
+            func_labels,
+            anat_slice,
+            plane_ref=plane_ref,
+            vox_x=vox_x,
+            vox_y=vox_y,
+            max_link_dist_px=max_link_dist_px,
+            require_overlap=require_overlap,
+            min_overlap=min_overlap,
+            tform_for_plane_func=tform_for_plane_func,
+            resample_labels_nn_func=resample_labels_nn_func,
+        )
+        row["n_func"] = int(match_result["n_func"])
+        row["n_anat"] = int(match_result["n_anat"])
+        row["pairs_raw"] = int(match_result["pairs_raw"])
+        row["pairs_keep_dist"] = int(match_result["pairs_keep_dist"])
+        row["pairs_overlap_gt0"] = int(match_result["pairs_overlap_gt0"])
+        row["pairs_final"] = int(match_result["pairs_final"])
+        row["status"] = str(match_result["status"])
+        rows.append(row)
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "plane_idx",
+            "plane",
+            "best_z",
+            "n_func",
+            "n_anat",
+            "pairs_raw",
+            "pairs_keep_dist",
+            "pairs_overlap_gt0",
+            "pairs_final",
+            "func_source",
+            "status",
+        ],
+    )
 
 
 def build_functional_roi_master_df(
@@ -467,13 +747,28 @@ def build_functional_roi_master_df(
             continue
 
         anat_slice = ensure(anat_labels_all[best_z])
-        func_warped = _resample_func_labels(
-            labels_raw,
-            plane_ref,
-            anat_slice.shape,
-            tform_for_plane_func=tform_for_plane_func,
-            resample_labels_nn_func=resample_labels_nn_func,
-        )
+        try:
+            func_warped = _resample_func_labels(
+                labels_raw,
+                plane_ref,
+                anat_slice.shape,
+                tform_for_plane_func=tform_for_plane_func,
+                resample_labels_nn_func=resample_labels_nn_func,
+            )
+        except Exception as exc:
+            plane_meta_rows.append(
+                {
+                    "plane": plane_label,
+                    "plane_idx": int(p_idx),
+                    "best_z": int(best_z),
+                    "n_rois_requested": int(len(roi_indices)),
+                    "n_rois_rendered": int(len(raw_df)),
+                    "n_anat_total": int(np.count_nonzero(np.unique(anat_slice))),
+                    "status": str(exc),
+                    "func_source": func_source,
+                }
+            )
+            continue
         fdf = _centroid_df(func_warped, "anat_cy", "anat_cx")
         if not fdf.empty and not raw_df.empty:
             fdf = fdf.merge(raw_df[["label", "raw_cx", "raw_cy", "roi_idx"]], on="label", how="left")
@@ -700,13 +995,28 @@ def build_hcr_activity_tables(
             continue
 
         anat_slice = ensure(anat_labels_all[best_z])
-        func_warped = _resample_func_labels(
-            labels_raw,
-            plane_ref,
-            anat_slice.shape,
-            tform_for_plane_func=tform_for_plane_func,
-            resample_labels_nn_func=resample_labels_nn_func,
-        )
+        try:
+            func_warped = _resample_func_labels(
+                labels_raw,
+                plane_ref,
+                anat_slice.shape,
+                tform_for_plane_func=tform_for_plane_func,
+                resample_labels_nn_func=resample_labels_nn_func,
+            )
+        except Exception as exc:
+            plane_meta_rows.append(
+                {
+                    "plane": plane_label,
+                    "plane_idx": int(p_idx),
+                    "best_z": int(best_z),
+                    "n_rois_requested": int(len(roi_indices)),
+                    "n_rois_rendered": int(len(raw_df)),
+                    "n_anat_total": int(np.count_nonzero(np.unique(anat_slice))),
+                    "status": str(exc),
+                    "func_source": func_source,
+                }
+            )
+            continue
         fdf = _centroid_df(func_warped, "anat_cy", "anat_cx")
         if not fdf.empty and not raw_df.empty:
             fdf = fdf.merge(raw_df[["label", "raw_cx", "raw_cy", "roi_idx"]], on="label", how="left")
@@ -935,14 +1245,18 @@ def build_hcr_activity_tables(
 __all__ = [
     "MatchingConfig",
     "build_anat_identity_lookup_df",
+    "build_functional_anatomy_debug_df",
     "build_functional_roi_master_df",
     "build_hcr_activity_tables",
+    "build_plane_centroid_matches",
     "compute_centroids",
     "compute_label_overlap",
     "gene_from_mask",
+    "harmonize_functional_labels_to_anatomy",
     "hungarian_match",
     "idx_to_um",
     "nearest_neighbor_match",
+    "resample_labels_nn",
     "resolve_plane_transform",
     "summarize_distances",
 ]
