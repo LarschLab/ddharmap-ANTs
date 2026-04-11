@@ -2,10 +2,13 @@ from codeants_2pf_hcr import (
     ActivityConfig,
     ContextStageConfig,
     FinalFishAuditConfig,
+    FunctionalOrientationStageConfig,
     FishStateStageConfig,
     NotebookContractViolation,
+    RegistrationSearchConfig,
     SmokeValidationError,
     Suite2pStageConfig,
+    VoxelStageConfig,
     _ensure_uint_labels,
     _regionprops_centroids_2d,
     _find_embedded_nrrd_header,
@@ -20,6 +23,7 @@ from codeants_2pf_hcr import (
     build_final_fish_audit_stage,
     build_functional_roi_master_df,
     build_hcr_activity_tables,
+    build_voxel_debug_stage,
     build_null_window_start_map,
     build_prestim_baseline_windows,
     build_prestim_trial_windows,
@@ -28,23 +32,35 @@ from codeants_2pf_hcr import (
     build_run_config_stage,
     check_notebook_contract,
     combine_segments,
+    compute_centroids,
     corrcoef_img,
     compute_zscore_stats,
     classify_stim_type,
     infer_frame_rate_from_detail,
     imread_any,
     infer_voxels_tiff,
+    idx_to_um,
     local_unsharp,
     load_suite2p_stage,
     load_suite2p_dff_map,
     load_or_cache_voxels,
     norm01,
+    orient_functional_stacks_stage,
     prepare_pairs_for_unique_cells,
+    nearest_neighbor_match,
+    registration_metric_from_scores,
+    hungarian_match,
     resolve_conf_func_csv_analysis,
     resolve_fish_state_stage,
     resolve_notebook_context_stage,
+    resolve_plane_transform,
+    resolve_voxel_context_stage,
+    run_registration_search_stage,
     organize,
     run_smoke_tier,
+    scale_image,
+    show_registration_overlay_stage,
+    summarize_distances,
     top_correlated_mean,
     zproject_mean,
 )
@@ -54,10 +70,13 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ActivityConfig)
     assert callable(ContextStageConfig)
     assert callable(FinalFishAuditConfig)
+    assert callable(FunctionalOrientationStageConfig)
     assert callable(FishStateStageConfig)
     assert callable(NotebookContractViolation)
+    assert callable(RegistrationSearchConfig)
     assert callable(SmokeValidationError)
     assert callable(Suite2pStageConfig)
+    assert callable(VoxelStageConfig)
     assert callable(_ensure_uint_labels)
     assert callable(_regionprops_centroids_2d)
     assert callable(_find_embedded_nrrd_header)
@@ -72,6 +91,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_final_fish_audit_stage)
     assert callable(build_functional_roi_master_df)
     assert callable(build_hcr_activity_tables)
+    assert callable(build_voxel_debug_stage)
     assert callable(build_null_window_start_map)
     assert callable(build_prestim_baseline_windows)
     assert callable(build_prestim_trial_windows)
@@ -81,21 +101,33 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
     assert callable(combine_segments)
+    assert callable(compute_centroids)
     assert callable(compute_zscore_stats)
     assert callable(corrcoef_img)
+    assert callable(hungarian_match)
     assert callable(infer_frame_rate_from_detail)
     assert callable(imread_any)
     assert callable(infer_voxels_tiff)
+    assert callable(idx_to_um)
     assert callable(local_unsharp)
     assert callable(load_suite2p_stage)
     assert callable(load_suite2p_dff_map)
     assert callable(load_or_cache_voxels)
+    assert callable(nearest_neighbor_match)
     assert callable(norm01)
+    assert callable(orient_functional_stacks_stage)
     assert callable(prepare_pairs_for_unique_cells)
+    assert callable(resolve_plane_transform)
+    assert callable(registration_metric_from_scores)
     assert callable(resolve_conf_func_csv_analysis)
     assert callable(resolve_fish_state_stage)
     assert callable(resolve_notebook_context_stage)
+    assert callable(resolve_voxel_context_stage)
+    assert callable(run_registration_search_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
+    assert callable(scale_image)
+    assert callable(show_registration_overlay_stage)
+    assert callable(summarize_distances)
     assert callable(top_correlated_mean)
     assert callable(zproject_mean)

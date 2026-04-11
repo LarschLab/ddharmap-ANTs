@@ -37,6 +37,8 @@ Start here, then read only what your task needs.
   - fix at the narrowest owning layer
   - do not patch downstream figures to compensate for upstream semantic bugs
   - do not change schemas to dodge one local failure
+  - continue refactor work through repeated passes within the same ownership slice; do not stop after one cleaned-up cell unless a real boundary or blocker is reached
+  - detailed multi-pass refactor stop/continue policy lives in `.agents/references/refactor-loop-policy.md`
 - Validation:
   - run the smallest relevant smoke or contract check after edits
   - verify the first downstream consumer when canonical table semantics changed
@@ -60,6 +62,7 @@ Start here, then read only what your task needs.
 - `.agents/references/cache-rerun-policy.md` - stale outputs and minimum rerun sequence.
 - `.agents/references/current-state.md` - current mixed migration status and practical warnings.
 - `.agents/references/recent-changes.md` - rolling handoff log for meaningful work and remaining breakpoints.
+- `.agents/references/refactor-loop-policy.md` - multi-pass refactor persistence and stop/continue rules.
 - `.agents/references/refactor-rules.md` - package ownership and implementation constraints.
 - `.agents/references/symbol-index.md` - package symbol lookup for fast navigation.
 

@@ -36,6 +36,13 @@
 23. Notebook-facing module docstrings should name the relevant notebook cell tags and canonical outputs.
 24. Stage functions should accept explicit inputs and return legacy-shaped outputs without hidden notebook-state dependencies.
 
+## Refactor persistence rules
+
+25. Treat notebook migration work as an ownership-slice refactor, not a one-cell cleanup task.
+26. Prefer owner-complete slice reduction over isolated cell edits when adjacent cells still belong to the same owning module or stage family.
+27. Continue repeated passes while the remaining work stays within the same owner and uses the same validation surface.
+28. Stop only at a real boundary: completed-and-validated slice, concrete recorded blocker, or ownership handoff to a different module/stage family.
+
 ## Trusted patterns
 
 - `context.py` = path/config normalization pattern.

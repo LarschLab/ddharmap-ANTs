@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 from typing import Any
+from functools import partial
 
 _cache_root = tempfile.mkdtemp(prefix="mpl_cache_")
 os.environ.setdefault("MPLCONFIGDIR", _cache_root)
@@ -23,7 +24,10 @@ from matplotlib.gridspec import GridSpec
 import matplotlib.patheffects as path_effects
 import numpy as np
 import SimpleITK as sitk
+from skimage import transform
 import tifffile
+
+from ..spatial import norm01
 
 
 DEFAULT_DATA_ROOT = Path("/Users/ddharmap/dataProcessing/2p_HCR/analysis/midThesis")
@@ -212,4 +216,171 @@ def build_round_channel_mip_grid(
     return out_path
 
 
-__all__ = ["build_best_plane_modality_merge_grid", "build_round_channel_mip_grid"]
+def _apply_overlay_color(gray01: np.ndarray, rgb: tuple[float, float, float]) -> np.ndarray:
+    r, g, b = rgb
+    return np.stack([gray01 * r, gray01 * g, gray01 * b], axis=-1)
+
+
+def _render_registration_overlay(
+    *,
+    overlay_items: list[dict[str, Any]],
+    colors: dict[str, tuple[float, float, float]],
+    show_func: bool = True,
+    show_anat: bool = True,
+    func_color: str = "green",
+    anat_color: str = "magenta",
+    func_alpha: float = 1.0,
+    anat_alpha: float = 1.0,
+    panel_w: float = 4.0,
+    panel_h: float = 4.0,
+) -> None:
+    n_items = len(overlay_items)
+    fig_w = max(2.0, float(panel_w) * n_items)
+    fig, axes = plt.subplots(1, n_items, figsize=(fig_w, float(panel_h)))
+    if n_items == 1:
+        axes = [axes]
+    for ax, item in zip(axes, overlay_items):
+        out = np.zeros((item["f_vis"].shape[0], item["f_vis"].shape[1], 3), dtype=np.float32)
+        if show_anat:
+            out += _apply_overlay_color(item["a_vis"], colors[anat_color]) * float(anat_alpha)
+        if show_func:
+            out += _apply_overlay_color(item["f_vis"], colors[func_color]) * float(func_alpha)
+        out = np.clip(out, 0, 1)
+        ax.imshow(out)
+        ax.set_title(f"{item['label']} z={item['z']} | func src: {item['src_label']}")
+        ax.axis("off")
+    plt.show()
+
+
+def show_registration_overlay_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat: np.ndarray | None,
+    best_z: int = 0,
+    apply_transform_2d_func: Any = None,
+) -> dict[str, Any]:
+    log_lines: list[str] = []
+    try:
+        import ipywidgets as widgets
+        from IPython.display import display
+
+        has_widgets = True
+    except Exception:
+        widgets = None
+        display = None
+        has_widgets = False
+        log_lines.append("ipywidgets not available; skipping interactive overlay. Install ipywidgets to enable.")
+
+    overlay_items: list[dict[str, Any]] = []
+    overlay_ready = True
+    try:
+        if not plane_refs:
+            raise RuntimeError("plane_refs missing; run previous cells first.")
+        if anat is None:
+            raise RuntimeError("anat missing; run [16] first.")
+        anat_arr = np.asarray(anat, dtype=np.float32)
+        for plane_ref in plane_refs:
+            if plane_ref is None:
+                continue
+            bz = int(plane_ref.get("best_z", best_z))
+            a_src = anat_arr[bz]
+            src_label = "raw"
+            f_src = None
+            if plane_ref.get("ref_warped") is not None:
+                f_src = plane_ref.get("ref_warped")
+                src_label = "warped"
+            elif plane_ref.get("tform") is not None and callable(apply_transform_2d_func):
+                mov_src = plane_ref.get("ref_match", plane_ref.get("ref2d_raw", plane_ref.get("ref2d")))
+                if mov_src is not None:
+                    f_src = apply_transform_2d_func(mov_src, plane_ref["tform"], output_shape=a_src.shape, order=1)
+                    src_label = "tform-preview"
+            elif plane_ref.get("ref_warped_raw") is not None:
+                f_src = plane_ref.get("ref_warped_raw")
+                src_label = "warped-raw"
+            else:
+                f_src = plane_ref.get("ref2d", plane_ref.get("ref2d_raw"))
+                src_label = "raw"
+            if f_src is None:
+                continue
+            f_vis = norm01(f_src)
+            a_vis = norm01(a_src)
+            if f_vis.shape != a_vis.shape:
+                f_vis = transform.resize(
+                    f_vis,
+                    a_vis.shape,
+                    order=1,
+                    mode="reflect",
+                    preserve_range=True,
+                    anti_aliasing=True,
+                ).astype(np.float32)
+            overlay_items.append(
+                {
+                    "f_vis": f_vis,
+                    "a_vis": a_vis,
+                    "label": plane_ref.get("label", "plane"),
+                    "z": bz,
+                    "src_label": src_label,
+                }
+            )
+        if not overlay_items:
+            raise RuntimeError("No overlay items prepared; check inputs.")
+    except Exception:
+        overlay_ready = False
+        log_lines.append("Interactive overlay prerequisites missing (plane_refs/anat/best_z). Run previous cells first.")
+
+    colors = {
+        "green": (0.0, 1.0, 0.0),
+        "magenta": (1.0, 0.0, 1.0),
+        "red": (1.0, 0.0, 0.0),
+        "blue": (0.0, 0.0, 1.0),
+        "cyan": (0.0, 1.0, 1.0),
+        "yellow": (1.0, 1.0, 0.0),
+        "white": (1.0, 1.0, 1.0),
+    }
+
+    if has_widgets and overlay_ready and widgets is not None and display is not None:
+        render_func = partial(_render_registration_overlay, overlay_items=overlay_items, colors=colors)
+        show_func_cb = widgets.Checkbox(value=True, description="Show functional")
+        show_anat_cb = widgets.Checkbox(value=True, description="Show anatomy")
+        func_color_dd = widgets.Dropdown(options=list(colors.keys()), value="green", description="Func LUT")
+        anat_color_dd = widgets.Dropdown(options=list(colors.keys()), value="magenta", description="Anat LUT")
+        func_alpha_sl = widgets.FloatSlider(value=1.0, min=0.0, max=1.0, step=0.05, readout_format=".2f", description="Func alpha")
+        anat_alpha_sl = widgets.FloatSlider(value=1.0, min=0.0, max=1.0, step=0.05, readout_format=".2f", description="Anat alpha")
+        panel_w_sl = widgets.FloatSlider(value=8.0, min=2.0, max=10.0, step=0.5, readout_format=".1f", description="Panel W")
+        panel_h_sl = widgets.FloatSlider(value=8.0, min=2.0, max=10.0, step=0.5, readout_format=".1f", description="Panel H")
+        ui = widgets.VBox(
+            [
+                widgets.HBox([show_func_cb, func_color_dd, func_alpha_sl]),
+                widgets.HBox([show_anat_cb, anat_color_dd, anat_alpha_sl, panel_w_sl, panel_h_sl]),
+            ]
+        )
+        out = widgets.interactive_output(
+            render_func,
+            {
+                "show_func": show_func_cb,
+                "show_anat": show_anat_cb,
+                "func_color": func_color_dd,
+                "anat_color": anat_color_dd,
+                "func_alpha": func_alpha_sl,
+                "anat_alpha": anat_alpha_sl,
+                "panel_w": panel_w_sl,
+                "panel_h": panel_h_sl,
+            },
+        )
+        display(ui, out)
+    elif has_widgets and not overlay_ready:
+        log_lines.append("Interactive overlay not shown: run best-Z cell first.")
+
+    return {
+        "overlay_ready": overlay_ready,
+        "overlay_items": overlay_items,
+        "has_widgets": has_widgets,
+        "log_lines": log_lines,
+    }
+
+
+__all__ = [
+    "build_best_plane_modality_merge_grid",
+    "build_round_channel_mip_grid",
+    "show_registration_overlay_stage",
+]

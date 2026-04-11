@@ -1,4 +1,4 @@
-"""Context and fish-scoped path helpers for notebook cells [4], [4a], [4b], [4c]."""
+"""Context and fish-scoped stage helpers for notebook cells [4], [4a], [4b], [4c], [8], [8a], and [10]."""
 
 from __future__ import annotations
 
@@ -7,12 +7,15 @@ import json
 import os
 from pathlib import Path
 import re
+import time
 from typing import Any
 
+import numpy as np
 import pandas as pd
+from skimage import transform
 import tifffile
 
-from .spatial import apply_func_orientation
+from .spatial import _infer_voxels_nrrd, apply_func_orientation, corrcoef_img, load_or_cache_voxels
 
 
 DEFAULT_RUN_CONFIG: dict[str, Any] = {
@@ -118,6 +121,17 @@ class FinalFishAuditConfig:
     strict: bool = False
     max_rows_per_col: int = 5000
     include_internal_df: bool = False
+
+
+@dataclass(frozen=True)
+class VoxelStageConfig:
+    force_recompute_voxels: bool = False
+
+
+@dataclass(frozen=True)
+class FunctionalOrientationStageConfig:
+    overwrite_flipped: bool = False
+    cache_version: int = 2
 
 
 def default_nas_root() -> Path:
@@ -756,9 +770,649 @@ def build_context_audit_stage(
     }
 
 
-def build_registration_helper_stage(*, polarity: str | None) -> dict[str, Any]:
+def _vox_complete(vox: dict[str, Any] | None) -> bool:
+    try:
+        return bool(vox) and all(vox.get(axis) is not None for axis in ("X", "Y", "Z"))
+    except Exception:
+        return False
+
+
+def _read_json_dict(path: Path | str | None) -> dict[str, Any]:
+    try:
+        target = Path(path) if path is not None else None
+        if target is None or not target.exists():
+            return {}
+        data = json.loads(target.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _norm_vox(vox: Any) -> dict[str, Any]:
+    if not isinstance(vox, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for axis in ("X", "Y", "Z"):
+        value = vox.get(axis)
+        if value is None:
+            continue
+        try:
+            out[axis] = float(value)
+        except Exception:
+            out[axis] = value
+    return out
+
+
+def _merge_missing(primary: dict[str, Any] | None, fallback: dict[str, Any] | None) -> dict[str, Any]:
+    out = dict(primary or {})
+    fb = dict(fallback or {})
+    for axis in ("X", "Y", "Z"):
+        if out.get(axis) is None and fb.get(axis) is not None:
+            out[axis] = fb.get(axis)
+    return out
+
+
+def _load_vox_cache(vox_cache_path: Path, legacy_vox_cache_path: Path) -> tuple[dict[str, Any], list[str]]:
+    log_lines: list[str] = []
+    for cache_path, label in ((vox_cache_path, "voxel cache"), (legacy_vox_cache_path, "legacy voxel cache")):
+        if not Path(cache_path).exists():
+            continue
+        data = _read_json_dict(cache_path)
+        if not data:
+            continue
+        if label == "legacy voxel cache":
+            log_lines.append(f"[Info] Loaded legacy voxel cache: {cache_path}")
+        return data, log_lines
+    return {}, log_lines
+
+
+def _cache_lookup(cache: dict[str, Any], path: Path | str | None = None, aliases: list[str] | tuple[str, ...] = ()) -> dict[str, Any]:
+    if not isinstance(cache, dict):
+        return {}
+    by_path = cache.get("by_path", {}) if isinstance(cache.get("by_path"), dict) else {}
+    by_alias = cache.get("by_alias", {}) if isinstance(cache.get("by_alias"), dict) else {}
+    out: dict[str, Any] = {}
+    if path is not None:
+        path_key = str(Path(path))
+        if path_key in by_path:
+            out = _merge_missing(_norm_vox(by_path.get(path_key)), out)
+        elif path_key in cache:
+            out = _merge_missing(_norm_vox(cache.get(path_key)), out)
+    for alias in aliases or ():
+        if alias in by_alias:
+            out = _merge_missing(out, _norm_vox(by_alias.get(alias)))
+        elif alias in cache:
+            out = _merge_missing(out, _norm_vox(cache.get(alias)))
+    return out
+
+
+def _path_from_data_root(path: Path | str | None, roots: list[Path | None]) -> str | None:
+    if not path:
+        return None
+    target = Path(path)
+    for root in roots:
+        if not root:
+            continue
+        try:
+            return str(target.relative_to(Path(root)))
+        except Exception:
+            continue
+    return str(target)
+
+
+def resolve_voxel_context_stage(
+    *,
+    analysis_dir: Path | str,
+    outdir: Path | str,
+    out_reg: Path | str,
+    data_mode: str | None,
+    func_stack_path: Path | str | None,
+    func_raw_stack_path: Path | str | None,
+    anat_stack_path: Path | str | None,
+    hcr_stack_paths: list[Path | str] | None,
+    hcr_stack_path: Path | str | None,
+    vox_func_auto: dict[str, Any] | None,
+    vox_func_manual: dict[str, Any] | None,
+    vox_anat_manual: dict[str, Any] | None,
+    vox_hcr_manual: dict[str, Any] | None,
+    flipped_list: list[Path | str] | None,
+    data_root: Path | str | None,
+    local_root: Path | str | None,
+    nas_root: Path | str | None,
+    config: VoxelStageConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or VoxelStageConfig()
+    analysis_dir = Path(analysis_dir)
+    outdir = Path(outdir)
+    out_reg = Path(out_reg)
+    vox_cache_path = analysis_dir / "voxel_sizes.json"
+    legacy_vox_cache_path = outdir / "voxel_sizes.json"
+    run_metadata_path = out_reg / "run_metadata.json"
+
+    data_mode_local = str(data_mode or "nas").strip().lower()
+    flipped_list_local = [Path(path) for path in (flipped_list or []) if path]
+    func_stack_path_local = Path(func_stack_path) if func_stack_path else None
+    func_raw_stack_path_local = Path(func_raw_stack_path) if func_raw_stack_path else None
+    anat_stack_path_local = Path(anat_stack_path) if anat_stack_path else None
+    hcr_stack_paths_local = [Path(path) for path in (hcr_stack_paths or []) if path]
+    hcr_stack_path_local = Path(hcr_stack_path) if hcr_stack_path else None
+    if not hcr_stack_paths_local and hcr_stack_path_local is not None:
+        hcr_stack_paths_local = [hcr_stack_path_local]
+
+    vox_func_auto_local = dict(vox_func_auto) if isinstance(vox_func_auto, dict) else {}
+    vox_func_manual_local = dict(vox_func_manual) if isinstance(vox_func_manual, dict) else {}
+    vox_anat_manual_local = dict(vox_anat_manual) if isinstance(vox_anat_manual, dict) else {}
+    vox_hcr_manual_local = dict(vox_hcr_manual) if isinstance(vox_hcr_manual, dict) else {}
+
+    roots = [
+        Path(data_root) if data_root else None,
+        Path(local_root) if local_root else None,
+        Path(nas_root) if nas_root else None,
+    ]
+
+    log_lines: list[str] = []
+    cache_data, cache_logs = _load_vox_cache(vox_cache_path, legacy_vox_cache_path)
+    log_lines.extend(cache_logs)
+    run_meta = _read_json_dict(run_metadata_path)
+    run_meta_voxels = {key: {} for key in ("func", "anat", "hcr")}
+    if isinstance(run_meta.get("voxels"), dict):
+        for key in ("func", "anat", "hcr"):
+            run_meta_voxels[key] = _norm_vox(run_meta["voxels"].get(key))
+
+    func_paths = flipped_list_local if flipped_list_local else ([func_stack_path_local] if func_stack_path_local else [])
+    func_scale: dict[str, Any] = {}
+    func_scale_source: str | None = None
+    if vox_func_auto_local:
+        func_scale = _norm_vox(vox_func_auto_local)
+        func_scale_source = "raw ScanImage metadata"
+    if not _vox_complete(func_scale) and _vox_complete(run_meta_voxels.get("func")):
+        func_scale = _merge_missing(run_meta_voxels.get("func"), func_scale)
+        func_scale_source = "cached run_metadata.json"
+    if not _vox_complete(func_scale):
+        raw_aliases: list[str] = []
+        if func_raw_stack_path_local:
+            raw_aliases.append(f"func_raw_{func_raw_stack_path_local.name}")
+        raw_aliases.append("func")
+        cached_func_scale = _cache_lookup(cache_data, path=func_raw_stack_path_local, aliases=raw_aliases)
+        if _vox_complete(cached_func_scale):
+            func_scale = _merge_missing(cached_func_scale, func_scale)
+            func_scale_source = "cached voxel_sizes.json"
+    if (not _vox_complete(func_scale)) and func_raw_stack_path_local and func_raw_stack_path_local.exists():
+        try:
+            raw_vox = load_or_cache_voxels(func_raw_stack_path_local, f"func_raw_{func_raw_stack_path_local.name}") or {}
+            if raw_vox:
+                func_scale = _merge_missing(_norm_vox(raw_vox), func_scale)
+                func_scale_source = "raw functional header"
+        except Exception:
+            pass
+    if func_scale_source is not None:
+        log_lines.append(f"[Vox] Functional voxel fallback source: {func_scale_source}")
+
+    vox_func_by_path: dict[str, dict[str, Any]] = {}
+    for func_path in func_paths:
+        aliases = [f"func_{func_path.name}", func_path.name, "func"]
+        vox = _cache_lookup(cache_data, path=func_path, aliases=aliases)
+        vox = _merge_missing(vox, run_meta_voxels.get("func"))
+        vox = _merge_missing(vox, func_scale)
+        if (not _vox_complete(vox)) and func_path.exists():
+            try:
+                inferred = load_or_cache_voxels(func_path, f"func_{func_path.name}") or {}
+            except Exception:
+                inferred = {}
+            vox = _merge_missing(_norm_vox(inferred), vox)
+        if vox.get("Z") is None and (vox.get("X") is not None or vox.get("Y") is not None):
+            vox["Z"] = func_scale.get("Z", 1.0)
+        vox_func_by_path[str(func_path)] = dict(vox)
+
+    vox_anat = _cache_lookup(cache_data, path=anat_stack_path_local, aliases=["anat"])
+    vox_anat = _merge_missing(vox_anat, run_meta_voxels.get("anat"))
+    if (not _vox_complete(vox_anat)) and anat_stack_path_local and anat_stack_path_local.exists():
+        try:
+            inferred = load_or_cache_voxels(anat_stack_path_local, "anat") or {}
+            vox_anat = _merge_missing(_norm_vox(inferred), vox_anat)
+        except Exception:
+            pass
+
+    hcr_stack_paths_local = list(hcr_stack_paths_local)
+    if not hcr_stack_paths_local and hcr_stack_path_local:
+        hcr_stack_paths_local = [hcr_stack_path_local]
+    vox_hcr_by_path: dict[str, dict[str, Any]] = {}
+    for hcr_path in hcr_stack_paths_local:
+        aliases = [f"hcr_{hcr_path.name}", hcr_path.name, "hcr"]
+        vox = _cache_lookup(cache_data, path=hcr_path, aliases=aliases)
+        vox = _merge_missing(vox, run_meta_voxels.get("hcr"))
+        if (not _vox_complete(vox)) and hcr_path.exists():
+            try:
+                inferred = load_or_cache_voxels(hcr_path, f"hcr_{hcr_path.name}") or {}
+                vox = _merge_missing(_norm_vox(inferred), vox)
+            except Exception:
+                pass
+        vox_hcr_by_path[str(hcr_path)] = dict(vox)
+    vox_hcr = vox_hcr_by_path.get(str(hcr_stack_path_local), {}) if hcr_stack_path_local else None
+
+    if vox_func_manual_local:
+        for vox in vox_func_by_path.values():
+            for axis in ("X", "Y", "Z"):
+                value = vox_func_manual_local.get(axis)
+                if value is not None:
+                    try:
+                        vox[axis] = float(value)
+                    except Exception:
+                        vox[axis] = value
+    if vox_anat_manual_local:
+        for axis in ("X", "Y", "Z"):
+            value = vox_anat_manual_local.get(axis)
+            if value is not None:
+                try:
+                    vox_anat[axis] = float(value)
+                except Exception:
+                    vox_anat[axis] = value
+    if vox_hcr_manual_local:
+        if vox_hcr_by_path:
+            for vox in vox_hcr_by_path.values():
+                for axis in ("X", "Y", "Z"):
+                    value = vox_hcr_manual_local.get(axis)
+                    if value is not None:
+                        try:
+                            vox[axis] = float(value)
+                        except Exception:
+                            vox[axis] = value
+        if vox_hcr is None:
+            vox_hcr = {}
+        for axis in ("X", "Y", "Z"):
+            value = vox_hcr_manual_local.get(axis)
+            if value is not None:
+                try:
+                    vox_hcr[axis] = float(value)
+                except Exception:
+                    vox_hcr[axis] = value
+
+    vox_func = vox_func_by_path.get(str(func_paths[0]), {}) if func_paths else {}
+
+    rows: list[dict[str, Any]] = []
+    for func_path, vox in vox_func_by_path.items():
+        rows.append(
+            {
+                "dataset": "func",
+                "path": _path_from_data_root(func_path, roots),
+                "X_um": vox.get("X"),
+                "Y_um": vox.get("Y"),
+                "Z_um": vox.get("Z"),
+            }
+        )
+    rows.append(
+        {
+            "dataset": "anat",
+            "path": _path_from_data_root(anat_stack_path_local, roots) if anat_stack_path_local else None,
+            "X_um": vox_anat.get("X") if vox_anat else None,
+            "Y_um": vox_anat.get("Y") if vox_anat else None,
+            "Z_um": vox_anat.get("Z") if vox_anat else None,
+        }
+    )
+    for hcr_path in hcr_stack_paths_local:
+        vox = vox_hcr_by_path.get(str(hcr_path), {}) if vox_hcr_by_path else (vox_hcr or {})
+        rows.append(
+            {
+                "dataset": "hcr",
+                "path": _path_from_data_root(hcr_path, roots),
+                "X_um": vox.get("X") if vox else None,
+                "Y_um": vox.get("Y") if vox else None,
+                "Z_um": vox.get("Z") if vox else None,
+            }
+        )
+    df_vox = pd.DataFrame(rows)
+    if not df_vox.empty:
+        df_vox["complete"] = df_vox[["X_um", "Y_um", "Z_um"]].notna().all(axis=1)
+
     return {
-        "_apply_func_orientation": lambda arr: apply_func_orientation(arr, polarity=polarity, flip_x=True),
+        "bindings": {
+            "VOX_CACHE_PATH": vox_cache_path,
+            "LEGACY_VOX_CACHE_PATH": legacy_vox_cache_path,
+            "RUN_METADATA_PATH": run_metadata_path,
+            "FORCE_RECOMPUTE_VOXELS": bool(cfg.force_recompute_voxels),
+            "HCR_STACK_PATHS": list(hcr_stack_paths_local),
+            "VOX_FUNC_BY_PATH": vox_func_by_path,
+            "VOX_FUNC": vox_func,
+            "VOX_ANAT": dict(vox_anat or {}),
+            "VOX_HCR_BY_PATH": vox_hcr_by_path,
+            "VOX_HCR": vox_hcr,
+            "df_vox": df_vox,
+        },
+        "df_vox": df_vox,
+        "log_lines": log_lines,
+        "cache_data": cache_data,
+        "run_metadata_voxels": run_meta_voxels,
+    }
+
+
+def build_voxel_debug_stage(
+    *,
+    anat_stack_path: Path | str | None,
+    voxel_cache_path: Path | str | None,
+    legacy_voxel_cache_path: Path | str | None,
+) -> dict[str, Any]:
+    anat_path = Path(anat_stack_path) if anat_stack_path else None
+    hdr_vox: dict[str, Any] | None = None
+    log_lines = [f"[VoxDbg] ANAT_STACK_PATH={anat_path}"]
+    if anat_path and anat_path.exists():
+        try:
+            raw_header = {}
+            with anat_path.open("rb") as handle:
+                header_bytes = b""
+                for _ in range(512):
+                    line = handle.readline()
+                    if not line:
+                        break
+                    header_bytes += line
+                    if line.strip() == b"" or len(header_bytes) > 65536:
+                        break
+            text = header_bytes.decode("latin-1", errors="replace")
+            for line in text.splitlines():
+                if (not line) or line.startswith("#") or ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                raw_header[key.strip().lower()] = value.strip()
+            log_lines.append(f"[VoxDbg] nrrd space units: {raw_header.get('space units')}")
+            log_lines.append(f"[VoxDbg] nrrd space directions: {raw_header.get('space directions')}")
+            hdr_vox = _infer_voxels_nrrd(anat_path)
+            log_lines.append(f"[VoxDbg] inferred vox (um): {hdr_vox}")
+        except Exception as exc:
+            log_lines.append(f"[VoxDbg] header error: {exc}")
+    else:
+        log_lines.append("[VoxDbg] anatomy path missing")
+
+    cache_hits: dict[str, Any] = {}
+    for label, cache_path in (
+        ("VOX_CACHE_PATH", Path(voxel_cache_path) if voxel_cache_path else None),
+        ("LEGACY_VOX_CACHE_PATH", Path(legacy_voxel_cache_path) if legacy_voxel_cache_path else None),
+    ):
+        if cache_path is None:
+            continue
+        value: Any = None
+        if cache_path.exists() and anat_path is not None:
+            try:
+                data = json.loads(cache_path.read_text())
+                key = str(anat_path)
+                if key in data:
+                    value = data[key]
+                else:
+                    by_path = data.get("by_path", {})
+                    value = by_path.get(key) if isinstance(by_path, dict) else None
+            except Exception as exc:
+                value = f"read failed: {exc}"
+        cache_hits[label] = value
+        log_lines.append(f"[VoxDbg] cache {label}={cache_path} -> {value}")
+
+    ratios: dict[str, dict[str, float] | None] = {}
+    for label, cache_vox in cache_hits.items():
+        if not isinstance(cache_vox, dict) or not isinstance(hdr_vox, dict):
+            ratios[label] = None
+            continue
+        ratio_map: dict[str, float] = {}
+        for axis in ("X", "Y", "Z"):
+            cache_value = cache_vox.get(axis)
+            header_value = hdr_vox.get(axis)
+            if cache_value is None or header_value in (None, 0):
+                continue
+            ratio_map[axis] = float(cache_value) / float(header_value)
+        ratios[label] = ratio_map or None
+        if ratios[label]:
+            log_lines.append(f"[VoxDbg] cache/header ratio for {label}: {ratios[label]}")
+
+    return {
+        "cache_hits": cache_hits,
+        "hdr_vox": hdr_vox,
+        "ratios": ratios,
+        "log_lines": log_lines,
+    }
+
+
+def orient_functional_stacks_stage(
+    *,
+    func_nonflipped_list: list[Path | str] | None,
+    flipped_list: list[Path | str] | None,
+    out_raw: Path | str,
+    fish_id: str | None,
+    polarity: str | None,
+    polarity_source: str | None,
+    resolve_func_polarity_func: Any = None,
+    apply_func_orientation_func: Any = None,
+    config: FunctionalOrientationStageConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or FunctionalOrientationStageConfig()
+    orient_manifest_path = Path(out_raw) / "functional_orientation_manifest.json"
+    log_lines: list[str] = []
+
+    if callable(resolve_func_polarity_func):
+        try:
+            resolve_func_polarity_func(force_refresh=True)
+        except Exception as exc:
+            log_lines.append(f"[WARN] Failed to resolve POLARITY in [10]: {exc}")
+
+    mode = "rot180+flipX" if str(polarity or "").lower() == "north" else "flipX"
+    source_paths = [Path(path) for path in (func_nonflipped_list or []) if path]
+    target_paths = [Path(path) for path in (flipped_list or []) if path]
+
+    def orient_sample(arr: Any) -> Any:
+        if arr is None:
+            return None
+        out = np.asarray(arr)
+        if out.ndim < 2:
+            return out
+        if callable(apply_func_orientation_func):
+            try:
+                return apply_func_orientation_func(out)
+            except Exception:
+                pass
+        return apply_func_orientation(out, polarity=polarity, flip_x=True)
+
+    def finalize_dtype(arr: Any) -> Any:
+        if getattr(arr, "dtype", None) == np.int16:
+            return (np.asarray(arr, dtype=np.int32) + 32768).clip(0, 65535).astype(np.uint16)
+        return arr
+
+    def load_manifest() -> dict[str, Any]:
+        if not orient_manifest_path.exists():
+            return {}
+        try:
+            data = json.loads(orient_manifest_path.read_text())
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            log_lines.append(f"[WARN] Could not read orientation manifest {orient_manifest_path}: {exc}")
+            return {}
+
+    def save_manifest(manifest: dict[str, Any]) -> None:
+        try:
+            orient_manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        except Exception as exc:
+            log_lines.append(f"[WARN] Could not write orientation manifest {orient_manifest_path}: {exc}")
+
+    def manifest_entry_current(tracked: dict[str, Any], src_path: Path, current_mode: str, current_fish_id: str) -> bool:
+        if not isinstance(tracked, dict) or not tracked:
+            return False
+        try:
+            src_stat = src_path.stat()
+        except Exception:
+            return False
+        try:
+            tracked_src_mtime_ns = int(tracked.get("src_mtime_ns", -1))
+            tracked_src_size = int(tracked.get("src_size", -1))
+            tracked_cache_version = int(tracked.get("cache_version", 0))
+        except Exception:
+            return False
+        return (
+            str(tracked.get("mode", "")) == str(current_mode)
+            and str(tracked.get("fish_id", "")) == str(current_fish_id)
+            and str(tracked.get("src", "")) == str(src_path)
+            and tracked_src_mtime_ns == int(src_stat.st_mtime_ns)
+            and tracked_src_size == int(src_stat.st_size)
+            and tracked_cache_version >= int(cfg.cache_version)
+        )
+
+    def sample_page_indices(tif: tifffile.TiffFile) -> list[int]:
+        n_pages = len(getattr(tif, "pages", []))
+        if n_pages <= 1:
+            return [0]
+        return sorted({0, int(n_pages // 2), int(n_pages - 1)})
+
+    def validate_existing_oriented_stack(src_path: Path, dst_path: Path, current_mode: str) -> tuple[bool, str]:
+        try:
+            src_stat = src_path.stat()
+            dst_stat = dst_path.stat()
+        except Exception as exc:
+            return False, f"stat_error:{exc}"
+        if int(dst_stat.st_mtime_ns) < int(src_stat.st_mtime_ns):
+            return False, "dst_older_than_src"
+        try:
+            with tifffile.TiffFile(str(src_path)) as tif_src, tifffile.TiffFile(str(dst_path)) as tif_dst:
+                src_pages = len(getattr(tif_src, "pages", []))
+                dst_pages = len(getattr(tif_dst, "pages", []))
+                if src_pages != dst_pages:
+                    return False, f"page_count_mismatch:{src_pages}!={dst_pages}"
+                page_indices = sample_page_indices(tif_src)
+                for page_idx in page_indices:
+                    src_page = tif_src.pages[int(page_idx)].asarray()
+                    dst_page = tif_dst.pages[int(page_idx)].asarray()
+                    expected = finalize_dtype(orient_sample(src_page))
+                    if expected.shape != dst_page.shape:
+                        return False, f"shape_mismatch_page{page_idx}"
+                    if expected.dtype != dst_page.dtype:
+                        try:
+                            expected = expected.astype(dst_page.dtype, copy=False)
+                        except Exception:
+                            return False, f"dtype_mismatch_page{page_idx}"
+                    if not np.array_equal(expected, dst_page):
+                        return False, f"content_mismatch_page{page_idx}"
+        except Exception as exc:
+            return False, f"validate_error:{exc}"
+        return True, f"verified_existing_stack pages={page_indices}"
+
+    if not source_paths:
+        log_lines.append("[WARN] No unflipped functional stacks found")
+        return {
+            "bindings": {
+                "ORIENT_MANIFEST_PATH": orient_manifest_path,
+                "ORIENT_CACHE_VERSION": int(cfg.cache_version),
+            },
+            "log_lines": log_lines,
+            "mode": mode,
+        }
+
+    orient_manifest = load_manifest()
+    fish_id_str = str(fish_id)
+    log_lines.append(
+        f"[10] mode={mode} polarity={polarity} source={polarity_source} "
+        f"overwrite={cfg.overwrite_flipped} stacks={len(source_paths)}"
+    )
+    for idx, (src_path, dst_path) in enumerate(zip(source_paths, target_paths), start=1):
+        if not src_path.exists():
+            log_lines.append(f"[WARN] Non-flipped functional not found: {src_path}")
+            continue
+        manifest_key = str(dst_path)
+        tracked = orient_manifest.get(manifest_key, {})
+        tracked_mode = str(tracked.get("mode", "")) or "untracked"
+        tracked_fish = str(tracked.get("fish_id", "")) or "unknown"
+        cache_reason: str | None = None
+        if dst_path.exists() and (not cfg.overwrite_flipped):
+            if manifest_entry_current(tracked, src_path, mode, fish_id_str):
+                log_lines.append(f"[INFO] Using existing oriented stack ({mode}): {dst_path}")
+                continue
+            adopt_ok, cache_reason = validate_existing_oriented_stack(src_path, dst_path, mode)
+            if adopt_ok:
+                src_stat = src_path.stat()
+                orient_manifest[manifest_key] = {
+                    "src": str(src_path),
+                    "dst": str(dst_path),
+                    "fish_id": fish_id_str,
+                    "mode": mode,
+                    "polarity": polarity,
+                    "polarity_source": polarity_source,
+                    "src_mtime_ns": int(src_stat.st_mtime_ns),
+                    "src_size": int(src_stat.st_size),
+                    "cache_version": int(cfg.cache_version),
+                    "validation": cache_reason,
+                }
+                log_lines.append(f"[INFO] Using existing oriented stack ({mode}): {dst_path} [{cache_reason}]")
+                continue
+        if dst_path.exists() and not cfg.overwrite_flipped:
+            reason_bits = [
+                f"cached entry is {tracked_mode} for fish={tracked_fish}",
+                f"current mode={mode} fish={fish_id_str}",
+            ]
+            if cache_reason:
+                reason_bits.append(f"validation={cache_reason}")
+            log_lines.append("[INFO] Rebuilding oriented stack because " + "; ".join(reason_bits))
+
+        log_lines.append(f"[10] [{idx}/{len(source_paths)}] orienting {src_path} -> {dst_path}")
+        read_start = time.time()
+        arr_nf = tifffile.imread(src_path)
+        read_elapsed = time.time() - read_start
+        log_lines.append(
+            f"[10] [{idx}/{len(source_paths)}] loaded shape={getattr(arr_nf, 'shape', None)} "
+            f"dtype={getattr(arr_nf, 'dtype', None)} in {read_elapsed:.1f}s"
+        )
+        arr_or = finalize_dtype(orient_sample(arr_nf))
+        write_start = time.time()
+        tifffile.imwrite(dst_path, arr_or)
+        write_elapsed = time.time() - write_start
+        src_stat = src_path.stat()
+        orient_manifest[manifest_key] = {
+            "src": str(src_path),
+            "dst": str(dst_path),
+            "fish_id": fish_id_str,
+            "mode": mode,
+            "polarity": polarity,
+            "polarity_source": polarity_source,
+            "src_mtime_ns": int(src_stat.st_mtime_ns),
+            "src_size": int(src_stat.st_size),
+            "cache_version": int(cfg.cache_version),
+            "validation": "written_by_[10]",
+        }
+        log_lines.append(
+            f"[INFO] Saved oriented stack to {dst_path} "
+            f"(mode={mode}, polarity={polarity}, dtype={arr_or.dtype}, write_s={write_elapsed:.1f})"
+        )
+
+    save_manifest(orient_manifest)
+    return {
+        "bindings": {
+            "ORIENT_MANIFEST_PATH": orient_manifest_path,
+            "ORIENT_CACHE_VERSION": int(cfg.cache_version),
+        },
+        "log_lines": log_lines,
+        "mode": mode,
+    }
+
+
+def build_registration_helper_stage(*, polarity: str | None) -> dict[str, Any]:
+    def _apply_orient(arr: Any) -> np.ndarray:
+        return apply_func_orientation(arr, polarity=polarity, flip_x=True)
+
+    def _ensure_float32(arr: Any) -> np.ndarray:
+        return np.asarray(arr, dtype=np.float32)
+
+    def _resize_like(arr: Any, out_shape: tuple[int, ...] | list[int]) -> np.ndarray:
+        arr32 = _ensure_float32(arr)
+        target_shape = tuple(int(v) for v in out_shape)
+        if arr32.shape == target_shape:
+            return arr32
+        return transform.resize(
+            arr32,
+            target_shape,
+            order=1,
+            preserve_range=True,
+            anti_aliasing=True,
+        ).astype(np.float32, copy=False)
+
+    def _corr2(arr_a: Any, arr_b: Any) -> float:
+        return corrcoef_img(_ensure_float32(arr_a), _ensure_float32(arr_b))
+
+    return {
+        "_apply_func_orientation": _apply_orient,
+        "_apply_func_orient": _apply_orient,
+        "_ensure_float32": _ensure_float32,
+        "_resize_like": _resize_like,
+        "_corr2": _corr2,
     }
 
 
@@ -954,13 +1608,16 @@ __all__ = [
     "ContextStageConfig",
     "DEFAULT_RUN_CONFIG",
     "FinalFishAuditConfig",
+    "FunctionalOrientationStageConfig",
     "FORCE_TRUE_RUN_CONFIG_KEYS",
     "FishStateStageConfig",
     "FishContext",
+    "VoxelStageConfig",
     "build_context_audit_stage",
     "build_final_fish_audit_stage",
     "build_fish_state_audit_df",
     "build_registration_helper_stage",
+    "build_voxel_debug_stage",
     "build_run_config_stage",
     "default_cellpose_model_root",
     "default_local_root",
@@ -983,10 +1640,12 @@ __all__ = [
     "read_matching_metadata_polarity",
     "require_fish_state",
     "reset_fish_state",
+    "resolve_voxel_context_stage",
     "resolve_fish_state_stage",
     "resolve_func_polarity",
     "resolve_notebook_context_stage",
     "resolve_fish_context",
     "resolve_fish_dir",
+    "orient_functional_stacks_stage",
     "scanimage_um_per_px_from_artist",
 ]

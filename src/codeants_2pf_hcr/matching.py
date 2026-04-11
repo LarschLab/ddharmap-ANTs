@@ -10,6 +10,8 @@ from typing import Any, Callable
 import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
+from scipy.spatial import cKDTree
+from scipy.spatial.distance import cdist
 from skimage.measure import regionprops_table
 
 
@@ -29,6 +31,76 @@ def gene_from_mask(path_str: str | Path | None) -> str:
     match = re.search(r"channel\d+_(.+?)_cp_masks", name)
     gene = match.group(1) if match else name
     return gene.replace("sst1_", "sst1.")
+
+
+def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
+    if not isinstance(plane_ref, dict):
+        return None
+    for key in ("tform", "func_to_anat_tform", "transform", "affine_tform"):
+        tform = plane_ref.get(key)
+        if tform is not None:
+            return tform
+    return None
+
+
+def compute_centroids(mask: ArrayLike) -> pd.DataFrame:
+    props = regionprops_table(np.asarray(mask), properties=("label", "centroid"))
+    df = pd.DataFrame(props)
+    df = df.rename(columns={"centroid-0": "z", "centroid-1": "y", "centroid-2": "x"})
+    if "label" not in df.columns:
+        return pd.DataFrame(columns=["label", "z", "y", "x"])
+    return df[df["label"] != 0].reset_index(drop=True)
+
+
+def idx_to_um(df: pd.DataFrame, vox: dict[str, Any]) -> np.ndarray:
+    dz = float(vox["dz"])
+    dy = float(vox["dy"])
+    dx = float(vox["dx"])
+    return np.column_stack([df["z"].to_numpy() * dz, df["y"].to_numpy() * dy, df["x"].to_numpy() * dx])
+
+
+def nearest_neighbor_match(points_src_um: ArrayLike, points_dst_um: ArrayLike) -> tuple[np.ndarray, np.ndarray]:
+    tree = cKDTree(np.asarray(points_dst_um))
+    dists, nn = tree.query(np.asarray(points_src_um), k=1)
+    return np.asarray(dists), np.asarray(nn)
+
+
+def hungarian_match(
+    points_src_um: ArrayLike,
+    points_dst_um: ArrayLike,
+    *,
+    max_cost: float = float("inf"),
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    costs = cdist(np.asarray(points_src_um), np.asarray(points_dst_um))
+    if np.isfinite(float(max_cost)):
+        costs[costs > float(max_cost)] = float(max_cost)
+    row_ind, col_ind = linear_sum_assignment(costs)
+    dists = costs[row_ind, col_ind]
+    return np.asarray(dists), np.asarray(col_ind), np.asarray(row_ind)
+
+
+def summarize_distances(dists: ArrayLike, valid_mask: ArrayLike) -> dict[str, float | int]:
+    dists_arr = np.asarray(dists)
+    valid_arr = np.asarray(valid_mask, dtype=bool)
+    if dists_arr.size == 0:
+        return {
+            "n": 0,
+            "mean": 0.0,
+            "median": 0.0,
+            "p90": 0.0,
+            "max": 0.0,
+            "within_gate": 0,
+            "within_gate_frac": 0.0,
+        }
+    return {
+        "n": int(dists_arr.size),
+        "mean": float(np.mean(dists_arr)),
+        "median": float(np.median(dists_arr)),
+        "p90": float(np.percentile(dists_arr, 90)),
+        "max": float(np.max(dists_arr)),
+        "within_gate": int(valid_arr.sum()),
+        "within_gate_frac": float(valid_arr.mean()),
+    }
 
 
 def build_anat_identity_lookup_df(
@@ -865,6 +937,12 @@ __all__ = [
     "build_anat_identity_lookup_df",
     "build_functional_roi_master_df",
     "build_hcr_activity_tables",
+    "compute_centroids",
     "compute_label_overlap",
     "gene_from_mask",
+    "hungarian_match",
+    "idx_to_um",
+    "nearest_neighbor_match",
+    "resolve_plane_transform",
+    "summarize_distances",
 ]

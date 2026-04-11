@@ -15,6 +15,8 @@ Generated manually for the current extracted package surface.
 - `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
+- `VoxelStageConfig`: Typed voxel-resolution stage configuration for notebook cell `[8]`.
+- `FunctionalOrientationStageConfig`: Typed functional-stack orientation configuration for notebook cell `[10]`.
 - `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.
 - `resolve_notebook_context_stage`: Notebook-facing setup stage for `[4]` that returns context, legacy bindings, and discovered paths.
 - `notebook_bindings_from_context`: Rebind package-resolved context back to legacy notebook variable names.
@@ -25,11 +27,15 @@ Generated manually for the current extracted package surface.
 - `resolve_fish_state_stage`: Notebook-facing fish-state stage for `[4a]`.
 - `build_fish_state_audit_df`: Build the audit dataframe used by cell `[4c]`.
 - `build_context_audit_stage`: Notebook-facing audit stage for `[4c]`.
-- `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`.
+- `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
+- `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals and summary dataframe outputs.
+- `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
+- `orient_functional_stacks_stage`: Notebook-facing functional stack orientation/cache stage for `[10]`.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
 
 ## `codeants_2pf_hcr.spatial`
 
+- `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
 - `imread_any`: Read TIFF or NRRD images with minimal notebook dependencies.
 - `zproject_mean`: Mean projection helper.
 - `norm01`: Robust percentile normalization to `[0, 1]`.
@@ -38,9 +44,18 @@ Generated manually for the current extracted package surface.
 - `top_correlated_mean`: Suite2p-like top-k frame reference builder.
 - `best_z_by_ncc`: Best-z search by NCC-like scoring.
 - `apply_func_orientation`: Apply the notebook’s functional orientation convention.
+- `scale_image`: Resize a 2D functional reference by an empirical NCC search scale.
+- `registration_metric_from_scores`: Summarize NCC scores into best-z and peak metrics.
+- `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, and rebinds legacy globals.
 
 ## `codeants_2pf_hcr.matching`
 
+- `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
+- `compute_centroids`: Build label centroid tables for centroid-based QC and distance summaries.
+- `idx_to_um`: Convert centroid-index tables to micron coordinates with explicit voxel scaling.
+- `nearest_neighbor_match`: Build one-nearest-neighbor centroid matches for QC diagnostics.
+- `hungarian_match`: Build Hungarian centroid matches for QC diagnostics.
+- `summarize_distances`: Summarize centroid-match distance arrays for QC tables.
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
@@ -88,6 +103,7 @@ Generated manually for the current extracted package surface.
 
 - `build_best_plane_modality_merge_grid`: Render the merged best-plane modality QA panel.
 - `build_round_channel_mip_grid`: Render the round/channel MIP grid.
+- `show_registration_overlay_stage`: Notebook-facing interactive registration overlay stage for `[22]`.
 
 ## `codeants_2pf_hcr.plots.analysis`
 

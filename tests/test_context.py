@@ -2,7 +2,10 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
+
 from codeants_2pf_hcr.context import (
+    build_registration_helper_stage,
     build_fish_state_audit_df,
     infer_hcr_label_paths,
     notebook_bindings_from_context,
@@ -88,6 +91,38 @@ class ContextTests(unittest.TestCase):
             self.assertNotIn(raw_noise, hits)
             self.assertNotIn(aligned_noise_csv, hits)
             self.assertNotIn(aligned_noise_within, hits)
+
+    def test_build_registration_helper_stage_restores_orientation_qc_helpers(self) -> None:
+        helpers = build_registration_helper_stage(polarity="north")
+
+        self.assertEqual(
+            set(helpers),
+            {
+                "_apply_func_orientation",
+                "_apply_func_orient",
+                "_ensure_float32",
+                "_resize_like",
+                "_corr2",
+            },
+        )
+
+        ref_img = np.array([[1, 2], [3, 4]], dtype=np.uint16)
+        mean_img = np.array([[4, 3], [2, 1]], dtype=np.float64)
+
+        ref_float = helpers["_ensure_float32"](ref_img)
+        self.assertEqual(ref_float.dtype.kind, "f")
+        self.assertEqual(str(ref_float.dtype), "float32")
+
+        oriented = helpers["_apply_func_orient"](mean_img)
+        expected = np.array([[2, 1], [4, 3]], dtype=np.float32)
+        np.testing.assert_array_equal(oriented, expected)
+
+        resized = helpers["_resize_like"](mean_img, ref_img.shape)
+        self.assertEqual(resized.shape, ref_img.shape)
+        self.assertEqual(str(resized.dtype), "float32")
+
+        corr = helpers["_corr2"](oriented, ref_float)
+        self.assertTrue(np.isfinite(corr))
 
 
 if __name__ == "__main__":

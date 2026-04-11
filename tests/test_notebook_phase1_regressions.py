@@ -9,6 +9,8 @@ GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase1.py"
 PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase2.py"
 PHASE4_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase4.py"
 PHASE5_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase5.py"
+PHASE6_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase6.py"
+PHASE7_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase7.py"
 
 
 def _code_cell_by_tag(tag: str) -> str:
@@ -22,6 +24,17 @@ def _code_cell_by_tag(tag: str) -> str:
     raise AssertionError(f"Notebook cell [{tag}] not found")
 
 
+def _code_cell_by_prefix(prefix: str) -> str:
+    notebook = json.loads(NOTEBOOK_PATH.read_text())
+    for cell in notebook["cells"]:
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        if source.startswith(prefix):
+            return source
+    raise AssertionError(f"Notebook cell starting with {prefix!r} not found")
+
+
 class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cell_4_binds_legacy_compatibility_surface(self) -> None:
         cell = _code_cell_by_tag("4")
@@ -33,12 +46,10 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
 
     def test_cell_8_uses_local_snapshots_for_voxel_resolution(self) -> None:
         cell = _code_cell_by_tag("8")
-        self.assertIn("func_scale = _norm_vox(VOX_FUNC_AUTO_LOCAL)", cell)
-        self.assertIn("Path(FUNC_RAW_STACK_PATH_LOCAL).name", cell)
-        self.assertIn("v = VOX_FUNC_MANUAL_LOCAL.get(ax)", cell)
-        self.assertNotIn("func_scale = _norm_vox(VOX_FUNC_AUTO)\n", cell)
-        self.assertNotIn("Path(FUNC_RAW_STACK_PATH).name", cell)
-        self.assertNotIn("v = VOX_FUNC_MANUAL.get(ax)", cell)
+        self.assertIn("resolve_voxel_context_stage", cell)
+        self.assertIn("VoxelStageConfig", cell)
+        self.assertNotIn("def _vox_complete(", cell)
+        self.assertNotIn("def _path_from_data_root(", cell)
 
     def test_metadata_cell_records_raw_functional_source_path(self) -> None:
         cell = _code_cell_by_tag("40")
@@ -51,6 +62,19 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("build_run_config_stage", source)
         self.assertIn("build_context_audit_stage", source)
         self.assertIn("build_final_fish_audit_stage", source)
+
+    def test_phase6_generator_tracks_voxel_and_orientation_extraction(self) -> None:
+        source = PHASE6_GENERATOR_PATH.read_text()
+        self.assertIn("resolve_voxel_context_stage", source)
+        self.assertIn("build_voxel_debug_stage", source)
+        self.assertIn("orient_functional_stacks_stage", source)
+        self.assertIn("resolve_plane_transform", source)
+
+    def test_phase7_generator_tracks_registration_extraction(self) -> None:
+        source = PHASE7_GENERATOR_PATH.read_text()
+        self.assertIn("RegistrationSearchConfig", source)
+        self.assertIn("run_registration_search_stage", source)
+        self.assertIn("show_registration_overlay_stage", source)
 
     def test_cell_55_publishes_df_stim_fish_id(self) -> None:
         cell = _code_cell_by_tag("55")
@@ -105,6 +129,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         cell_4b = _code_cell_by_tag("4b")
         cell_4c = _code_cell_by_tag("4c")
         cell_6 = _code_cell_by_tag("6")
+        cell_8a = _code_cell_by_tag("8a")
+        cell_10 = _code_cell_by_tag("10")
         cell_99 = _code_cell_by_tag("99-debug-fish-audit")
         self.assertIn("resolve_fish_state_stage", cell_4a)
         self.assertNotIn("def reset_fish_state(", cell_4a)
@@ -112,8 +138,31 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("build_context_audit_stage", cell_4c)
         self.assertNotIn("def _apply_func_orientation(", cell_6)
         self.assertIn("build_registration_helper_stage", cell_6)
+        self.assertIn("build_voxel_debug_stage", cell_8a)
+        self.assertNotIn("def _read_nrrd_header(", cell_8a)
+        self.assertIn("orient_functional_stacks_stage", cell_10)
+        self.assertIn("FunctionalOrientationStageConfig", cell_10)
+        self.assertNotIn("def _resolve_mode_local(", cell_10)
         self.assertIn("build_final_fish_audit_stage", cell_99)
         self.assertNotIn("def _maybe(", cell_99)
+
+    def test_hidden_matching_helper_cell_uses_package_imports(self) -> None:
+        cell = _code_cell_by_prefix("# HCR matching/QC helpers (antsQC-style)")
+        self.assertIn("resolve_plane_transform", cell)
+        self.assertIn("build_hcr_activity_tables", cell)
+        self.assertNotIn("def _tform_for_plane(", cell)
+        self.assertNotIn("def compute_centroids(", cell)
+
+    def test_registration_cells_use_package_stage_wrappers(self) -> None:
+        cell_16 = _code_cell_by_tag("16")
+        cell_22 = _code_cell_by_tag("22")
+        self.assertIn("RegistrationSearchConfig", cell_16)
+        self.assertIn("run_registration_search_stage", cell_16)
+        self.assertNotIn("def _search_scale_for_ref(", cell_16)
+        self.assertNotIn("def _solve_plane(", cell_16)
+        self.assertIn("show_registration_overlay_stage", cell_22)
+        self.assertNotIn("def _render(", cell_22)
+        self.assertNotIn("def _apply_color(", cell_22)
 
 
 if __name__ == "__main__":
