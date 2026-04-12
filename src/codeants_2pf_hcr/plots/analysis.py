@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from .annotations import place_labels_no_overlap
 from ..stimulus import StimulusConfig, build_stim_tables, load_events_df, load_metadata_params, parse_float, parse_unilateral_stim
 
 
@@ -260,7 +261,12 @@ def render_cohort_56h_by_fish(
             for panel in plot_order:
                 ax.text(centers[panel], 1.005, plot_titles.get(panel, panel), transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=8.5)
 
-    axes_arr[-1].set_xticks([centers[p] for p in plot_order], [plot_titles.get(p, p).replace(" × ", "\n") for p in plot_order])
+    def _panel_xtick_label(panel_key: str) -> str:
+        side = "Ipsi" if str(panel_key).startswith("ipsi") else ("Contra" if str(panel_key).startswith("contra") else "Unknown")
+        mode = "bout-like" if str(panel_key).endswith("LB") else ("continuous" if str(panel_key).endswith("LC") else str(panel_key))
+        return f"{side}\n{mode}"
+
+    axes_arr[-1].set_xticks([centers[p] for p in plot_order], [_panel_xtick_label(p) for p in plot_order])
     axes_arr[-1].set_xlabel("Time (s)")
     for ax in axes_arr[:-1]:
         ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
@@ -393,6 +399,7 @@ def render_cohort_motion_auc(
     points_df: pd.DataFrame | None = None,
     counts_df: pd.DataFrame | None = None,
     out_path: str | Path | None = None,
+    hide_global_median_labels: bool = False,
 ) -> dict[str, Any]:
     import matplotlib as mpl
     import matplotlib.colors as mcolors
@@ -645,10 +652,63 @@ def render_cohort_motion_auc(
         y_min = 0.0
         y_max = float(np.nanmax(vals_panel) + float(AUC_Y_PAD)) if vals_panel.size else 1.0
         y_max = y_min + 1.0 if y_max <= y_min else y_max
+        stats_df = (
+            sub.assign(
+                auc_dff_norm_num=pd.to_numeric(sub["auc_dff_norm"], errors="coerce"),
+                stim_mode_norm=sub["stim_mode"].astype(str).str.strip().str.lower(),
+            )
+            .loc[lambda d: np.isfinite(d["auc_dff_norm_num"].to_numpy(dtype=float))]
+            .groupby(["group", "stim_mode_norm"], dropna=False)["auc_dff_norm_num"]
+            .median()
+            .reset_index()
+        )
         ax.axhline(0.0, color="#d0d0d0", linewidth=0.9, zorder=0)
         x_pad = float(np.max(np.abs(fish_center_offsets))) + float(pair_mode_offset_fish) + 0.20
         ax.set_xlim(float(group_pos.min()) - x_pad, float(group_pos.max()) + x_pad)
         ax.set_ylim(y_min, y_max)
+        y_span = max(1e-6, y_max - y_min)
+        if not (hide_global_median_labels and (not is_gene_panel)):
+            label_items: list[tuple[float, float, str, dict[str, Any]]] = []
+            for g_idx, group in enumerate(groups):
+                g_stats = stats_df[stats_df["group"].astype(str) == str(group)]
+                for mode in ("bout", "continuous"):
+                    row = g_stats[g_stats["stim_mode_norm"] == mode]
+                    if row.empty:
+                        continue
+                    med_val = float(row["auc_dff_norm_num"].iloc[0])
+                    mode_offset = -pair_mode_offset_fish if mode == "bout" else pair_mode_offset_fish
+                    x_stat = float(group_pos[g_idx]) + float(mode_offset)
+                    label_color = mode_color_map[group][mode]
+                    label_items.append(
+                        (
+                            x_stat,
+                            float(y_max),
+                            f"med={med_val:.2f}",
+                            {
+                                "color": "#111111",
+                                "bbox": {
+                                    "facecolor": _blend_color(label_color, frac=0.88),
+                                    "edgecolor": label_color,
+                                    "linewidth": 0.9,
+                                    "alpha": 0.95,
+                                    "pad": 0.2,
+                                },
+                            },
+                        )
+                    )
+            place_labels_no_overlap(
+                ax,
+                label_items,
+                y_span=y_span,
+                x_neighbor_thresh=0.0,
+                y_pad_frac=0.03,
+                min_sep_frac=0.05,
+                top_margin_frac=0.08,
+                fontsize=6.5,
+                text_kwargs={
+                    "zorder": 5,
+                },
+            )
         if len(fish_center_offsets) > 0:
             lane_x = [float(group_pos[g_idx]) + float(off) for g_idx, _ in enumerate(groups) for off in fish_center_offsets]
             if lane_x:
@@ -719,6 +779,18 @@ def render_cohort_56h_status_donut_grid(
     cohort_fish_summary_df: pd.DataFrame | None,
     gene_order: list[str] | None = None,
 ) -> dict[str, Any]:
+    import matplotlib.colors as mcolors
+
+    OUTER_RADIUS = 1.08
+    DONUT_WIDTH_OUTER = 0.12
+    DONUT_WIDTH_INNER = 0.30
+    RING_GAP = 0.03
+    VIEW_LIMIT = 1.20
+
+    INNER_WITHIN = "within functional planes"
+    INNER_OUTSIDE = "outside functional planes"
+    INNER_UNMATCHED = "unmatched"
+
     gene_order_local = list(gene_order or ["sst1.1", "pth2", "sst1.2", "tac3b", "npy", "cfos"])
     fish_ok_set: set[str] = set()
     if isinstance(cohort_fish_summary_df, pd.DataFrame) and {"fish_id", "ok"}.issubset(cohort_fish_summary_df.columns):
@@ -763,9 +835,48 @@ def render_cohort_56h_status_donut_grid(
     counts_csv = outdir / "cohort_hcr_donut_counts_by_fish_gene.csv"
     counts_df.to_csv(counts_csv, index=False)
     fish_ids = [f for _, f, _ in fish_cols]
-    fig, axes = plt.subplots(len(gene_order_local), len(fish_ids), figsize=(max(2.4 * len(fish_ids), 6.0), max(2.35 * len(gene_order_local), 8.5)), squeeze=False, subplot_kw={"aspect": "equal"})
+    fig, axes = plt.subplots(
+        len(gene_order_local),
+        len(fish_ids),
+        figsize=(max(2.4 * len(fish_ids), 6.0), max(2.35 * len(gene_order_local), 8.5)),
+        squeeze=False,
+        subplot_kw={"aspect": "equal"},
+    )
     palette = {"responsive": "#1b9e77", "low": "#6a6a6a", "unavailable": "#fdb462", "no_func": "#d73027", "out_of_plane": "#80b1d3"}
+    inner_palette = {
+        INNER_WITHIN: "#4daf4a",
+        INNER_OUTSIDE: "#377eb8",
+        INNER_UNMATCHED: "#bdbdbd",
+    }
     status_order = ["responsive", "low", "unavailable", "no_func", "out_of_plane"]
+    inner_order = [INNER_WITHIN, INNER_OUTSIDE, INNER_UNMATCHED]
+
+    def _wedge_midpoint(wedge: Any, radius: float) -> tuple[float, float, float]:
+        theta = np.deg2rad((float(wedge.theta1) + float(wedge.theta2)) / 2.0)
+        return float(theta), float(radius) * np.cos(theta), float(radius) * np.sin(theta)
+
+    def _tangent_rotation(theta_rad: float) -> float:
+        theta_deg = ((float(np.rad2deg(theta_rad)) + 180.0) % 360.0) - 180.0
+        rot = theta_deg - 90.0
+        if rot < -90.0:
+            rot += 180.0
+        elif rot > 90.0:
+            rot -= 180.0
+        return float(rot)
+
+    def _contrast_text_color(color: Any) -> str:
+        try:
+            r, g, b = mcolors.to_rgb(color)
+        except Exception:
+            return "black"
+        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return "white" if luminance < 0.52 else "black"
+
+    inner_outer_radius = OUTER_RADIUS - DONUT_WIDTH_OUTER - RING_GAP
+    inner_mid_radius = inner_outer_radius - (DONUT_WIDTH_INNER / 2.0)
+    outer_mid_radius = OUTER_RADIUS - (DONUT_WIDTH_OUTER / 2.0)
+    centre_radius = inner_outer_radius - DONUT_WIDTH_INNER
+
     for col_idx, fish_id in enumerate(fish_ids):
         axes[0, col_idx].set_title(str(fish_id), fontsize=11, pad=20)
     for r, gene in enumerate(gene_order_local):
@@ -773,15 +884,80 @@ def render_cohort_56h_status_donut_grid(
             ax = axes[r, c]
             ax.set_axis_off()
             d = (counts_by_fish.get(fish_id, {}) or {}).get(gene, {})
-            vals = [float(d.get(k, 0)) for k in status_order]
-            if sum(vals) <= 0:
+            outer_vals = [float(d.get(k, 0)) for k in status_order]
+            if sum(outer_vals) <= 0:
                 continue
-            cols = [palette[k] for k in status_order]
-            ax.pie(vals, radius=1.05, colors=cols, startangle=90, counterclock=False, wedgeprops=dict(width=0.45, edgecolor="white", linewidth=0.9))
-            ax.add_artist(plt.Circle((0, 0), 0.50, fc="white", ec="white"))
-            ax.text(0, 0, f"n={int(d.get('n_labels', 0))}", ha="center", va="center", fontsize=8.5, fontweight="bold")
-            ax.set_xlim(-0.85, 0.85)
-            ax.set_ylim(-0.78, 0.78)
+
+            n_within = int(d.get("responsive", 0)) + int(d.get("low", 0)) + int(d.get("unavailable", 0)) + int(d.get("no_func", 0))
+            n_outside = int(d.get("out_of_plane", 0))
+            n_total = int(d.get("n_labels", n_within + n_outside))
+            n_unmatched = max(0, int(d.get("unmatched", 0)))
+            if n_total > (n_within + n_outside):
+                n_unmatched = max(n_unmatched, n_total - (n_within + n_outside))
+            inner_counts = {
+                INNER_WITHIN: int(n_within),
+                INNER_OUTSIDE: int(n_outside),
+                INNER_UNMATCHED: int(n_unmatched),
+            }
+            inner_labels = [k for k in inner_order if inner_counts.get(k, 0) > 0]
+            inner_vals = [float(inner_counts[k]) for k in inner_labels]
+            inner_cols = [inner_palette[k] for k in inner_labels]
+
+            outer_cols = [palette[k] for k in status_order]
+            outer_wedges, _ = ax.pie(
+                outer_vals,
+                radius=OUTER_RADIUS,
+                labels=None,
+                colors=outer_cols,
+                startangle=90,
+                counterclock=False,
+                wedgeprops=dict(width=DONUT_WIDTH_OUTER, edgecolor="white", linewidth=1.0),
+            )
+            inner_wedges, _ = ax.pie(
+                inner_vals,
+                radius=inner_outer_radius,
+                labels=None,
+                colors=inner_cols,
+                startangle=90,
+                counterclock=False,
+                wedgeprops=dict(width=DONUT_WIDTH_INNER, edgecolor="white", linewidth=1.0),
+            )
+
+            for wedge, val, color in zip(outer_wedges, outer_vals, outer_cols, strict=False):
+                if float(val) <= 0:
+                    continue
+                theta, x, y = _wedge_midpoint(wedge, outer_mid_radius)
+                ax.text(
+                    x,
+                    y,
+                    f"{int(round(val))}",
+                    ha="center",
+                    va="center",
+                    rotation=_tangent_rotation(theta),
+                    rotation_mode="anchor",
+                    fontsize=8.0,
+                    color=_contrast_text_color(color),
+                )
+            for wedge, val, color in zip(inner_wedges, inner_vals, inner_cols, strict=False):
+                if float(val) <= 0:
+                    continue
+                theta, x, y = _wedge_midpoint(wedge, inner_mid_radius)
+                ax.text(
+                    x,
+                    y,
+                    f"{int(round(val))}",
+                    ha="center",
+                    va="center",
+                    rotation=_tangent_rotation(theta),
+                    rotation_mode="anchor",
+                    fontsize=8.5,
+                    color=_contrast_text_color(color),
+                )
+
+            ax.add_artist(plt.Circle((0, 0), centre_radius, fc="white", ec="white"))
+            ax.text(0, 0, f"n={n_total}", ha="center", va="center", fontsize=8.5, fontweight="bold")
+            ax.set_xlim(-VIEW_LIMIT, VIEW_LIMIT)
+            ax.set_ylim(-VIEW_LIMIT, VIEW_LIMIT)
     for r, gene in enumerate(gene_order_local):
         y = 0.5 * (axes[r, 0].get_position().y0 + axes[r, 0].get_position().y1)
         fig.text(0.015, y, str(gene), ha="left", va="center", fontsize=11)

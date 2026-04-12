@@ -38,3 +38,6 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 - Auto y-limit with clearance (e.g., `max + 0.1`) for panel-level scaling.
 - Use fixed RNG seeds for jittered points.
 - Save publication PNG at `dpi=300`; add vector output when needed.
+- In-panel numeric annotations (e.g., medians, n-labels) must use collision-aware placement (minimum vertical separation and x-neighbor checks) and should use a subtle text background (`bbox`) when plotted over dense marks.
+- Prefer the 53a summary style for dense panels: place annotation text above the plotted data band, stack upward on collisions, and expand y-limits as needed so labels never overlap data or each other.
+- Prefer reusing existing anti-overlap helpers/patterns (e.g., sample-size label collision avoidance in `plots.qa`) instead of ad hoc fixed-y text placement.

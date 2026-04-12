@@ -32,6 +32,7 @@ import tifffile
 from ..context import infer_anat_labels_path
 from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches
 from ..matching import compute_centroids
+from .annotations import place_labels_no_overlap
 from ..segmentation import resolve_functional_labels_for_plane
 from ..spatial import norm01
 
@@ -1571,11 +1572,67 @@ def collect_cohort_53a_tables(
     anat_z = pd.to_numeric(anat_df.get("z_um", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
     anat_xy = anat_xy[np.isfinite(anat_xy)]
     anat_z = anat_z[np.isfinite(anat_z)]
+    hcr_xy_median_of_fish_medians_um = np.nan
+    hcr_xy_median_pooled_um = np.nan
+    hcr_xy_n_fish = 0
+    hcr_xy_n_pairs = 0
+    if not hcr_offsets_df.empty and {"fish_id", "xy_um"}.issubset(hcr_offsets_df.columns):
+        hcr_xy_series = pd.to_numeric(hcr_offsets_df["xy_um"], errors="coerce")
+        finite_mask = np.isfinite(hcr_xy_series.to_numpy(dtype=float))
+        if int(finite_mask.sum()) > 0:
+            hcr_xy_valid = hcr_offsets_df.loc[finite_mask, ["fish_id"]].copy()
+            hcr_xy_valid["fish_id"] = hcr_xy_valid["fish_id"].astype(str)
+            hcr_xy_valid["xy_um"] = hcr_xy_series.loc[finite_mask].to_numpy(dtype=float)
+            per_fish_xy_medians = (
+                hcr_xy_valid.groupby("fish_id", sort=False)["xy_um"].median().to_numpy(dtype=float)
+            )
+            if per_fish_xy_medians.size:
+                hcr_xy_median_of_fish_medians_um = float(np.median(per_fish_xy_medians))
+                hcr_xy_n_fish = int(per_fish_xy_medians.size)
+            pooled_xy_vals = hcr_xy_valid["xy_um"].to_numpy(dtype=float)
+            if pooled_xy_vals.size:
+                hcr_xy_median_pooled_um = float(np.median(pooled_xy_vals))
+                hcr_xy_n_pairs = int(pooled_xy_vals.size)
+
+    func_anat_xy_median_of_fish_medians_um = np.nan
+    func_anat_xy_median_pooled_um = np.nan
+    func_anat_xy_n_fish = 0
+    func_anat_xy_n_pairs = 0
+    if not func_anat_offsets_df.empty and {"fish_id", "axis", "offset_um"}.issubset(func_anat_offsets_df.columns):
+        func_xy_df = func_anat_offsets_df[
+            func_anat_offsets_df["axis"].astype(str).str.lower() == "xy"
+        ].copy()
+        if not func_xy_df.empty:
+            func_xy_series = pd.to_numeric(func_xy_df["offset_um"], errors="coerce")
+            finite_mask = np.isfinite(func_xy_series.to_numpy(dtype=float))
+            if int(finite_mask.sum()) > 0:
+                func_xy_valid = func_xy_df.loc[finite_mask, ["fish_id"]].copy()
+                func_xy_valid["fish_id"] = func_xy_valid["fish_id"].astype(str)
+                func_xy_valid["offset_um"] = func_xy_series.loc[finite_mask].to_numpy(dtype=float)
+                per_fish_func_xy_medians = (
+                    func_xy_valid.groupby("fish_id", sort=False)["offset_um"].median().to_numpy(dtype=float)
+                )
+                if per_fish_func_xy_medians.size:
+                    func_anat_xy_median_of_fish_medians_um = float(np.median(per_fish_func_xy_medians))
+                    func_anat_xy_n_fish = int(per_fish_func_xy_medians.size)
+                pooled_func_xy_vals = func_xy_valid["offset_um"].to_numpy(dtype=float)
+                if pooled_func_xy_vals.size:
+                    func_anat_xy_median_pooled_um = float(np.median(pooled_func_xy_vals))
+                    func_anat_xy_n_pairs = int(pooled_func_xy_vals.size)
+
     thresholds_df = pd.DataFrame(
         [
             {
                 "anat_r50_xy_um": float(np.median(anat_xy) / 2.0) if anat_xy.size else np.nan,
                 "anat_r50_z_um": float(np.median(anat_z) / 2.0) if anat_z.size else np.nan,
+                "hcr_xy_median_of_fish_medians_um": hcr_xy_median_of_fish_medians_um,
+                "hcr_xy_median_pooled_um": hcr_xy_median_pooled_um,
+                "hcr_xy_n_fish": hcr_xy_n_fish,
+                "hcr_xy_n_pairs": hcr_xy_n_pairs,
+                "func_anat_xy_median_of_fish_medians_um": func_anat_xy_median_of_fish_medians_um,
+                "func_anat_xy_median_pooled_um": func_anat_xy_median_pooled_um,
+                "func_anat_xy_n_fish": func_anat_xy_n_fish,
+                "func_anat_xy_n_pairs": func_anat_xy_n_pairs,
             }
         ]
     )
@@ -1621,26 +1678,23 @@ def render_cohort_53a_summary(
             return
         y_min_data = float(np.min([float(np.nanmin(arr)) for arr in finite_arrays]))
         y_max_data = float(np.max([float(np.nanmax(arr)) for arr in finite_arrays]))
-        y_span = max(1e-6, y_max_data - y_min_data)
-        y_pad = 0.03 * y_span
-        min_sep = 0.05 * y_span
-        x_neighbor_thresh = 1.1
-        placed: list[tuple[float, float]] = []
-        top_used = y_max_data
-        for xpos, arr in sorted(labels, key=lambda item: float(item[0])):
+        y_span = max(1e-6, float(y_max_data - y_min_data))
+        items: list[tuple[float, float, str]] = []
+        for xpos, arr in labels:
             arr_f = arr[np.isfinite(arr)]
             if arr_f.size == 0:
                 continue
-            y = float(np.nanmax(arr_f)) + y_pad
-            while any(abs(float(xpos) - px) <= x_neighbor_thresh and abs(y - py) < min_sep for px, py in placed):
-                y += min_sep
-            ax.text(float(xpos), y, f"n={int(arr_f.size)}", ha="center", va="bottom", fontsize=fontsize)
-            placed.append((float(xpos), y))
-            top_used = max(top_used, y)
-        bottom, top = ax.get_ylim()
-        target_top = max(float(top), top_used + 0.08 * y_span)
-        if target_top > float(top):
-            ax.set_ylim(float(bottom), target_top)
+            items.append((float(xpos), float(np.nanmax(arr_f)), f"n={int(arr_f.size)}"))
+        place_labels_no_overlap(
+            ax,
+            items,
+            y_span=y_span,
+            x_neighbor_thresh=1.1,
+            y_pad_frac=0.03,
+            min_sep_frac=0.05,
+            top_margin_frac=0.08,
+            fontsize=float(fontsize),
+        )
 
     if not ncc_curves_df.empty:
         fish_ids = sorted(ncc_curves_df["fish_id"].astype(str).unique().tolist())

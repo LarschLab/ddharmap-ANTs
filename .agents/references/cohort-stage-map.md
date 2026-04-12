@@ -22,6 +22,12 @@
   - `cohort_outputs/multi_fish_56h_56g/`
 - Build/cache stage writes cohort-level CSV/PKL artifacts under that directory.
 - Downstream cohort figure stages read those artifacts; they should not redefine cohort cache semantics.
+- `[53a-cohort]` thresholds cache now also includes representative HCR↔anatomy XY cohort summaries:
+  - `hcr_xy_median_of_fish_medians_um` (recommended representative cohort median)
+  - `hcr_xy_median_pooled_um`, `hcr_xy_n_fish`, `hcr_xy_n_pairs`
+- `[53a-cohort]` thresholds cache also includes representative functional↔anatomy XY cohort summaries:
+  - `func_anat_xy_median_of_fish_medians_um` (recommended representative cohort median)
+  - `func_anat_xy_median_pooled_um`, `func_anat_xy_n_fish`, `func_anat_xy_n_pairs`
 
 ## Semantic boundary
 

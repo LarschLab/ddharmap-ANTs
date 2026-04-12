@@ -163,6 +163,7 @@ render_auc = render_cohort_motion_auc(
     fish_order_hint=globals().get("fish_order", []),
     points_df=globals().get("cohort_motion_auc_plot_points", None),
     counts_df=globals().get("cohort_motion_auc_plot_counts", None),
+    hide_global_median_labels=True,
     out_path=(state_bindings.get("COHORT_OUTDIR", COHORT_OUTDIR) / "cohort_50l_auc_ipsi_contra.png"),
 )
 cohort_motion_auc_plot_points = render_auc["points_df"].copy()

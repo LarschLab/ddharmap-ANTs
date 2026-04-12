@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import tifffile
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 from codeants_2pf_hcr.matching import (
     _regionprops_centroids_2d,
@@ -24,6 +26,7 @@ from codeants_2pf_hcr.plots.qa import (
     render_cohort_53a_summary,
     show_centroid_match_qa_stage,
 )
+from codeants_2pf_hcr.plots.annotations import place_labels_no_overlap
 
 
 def _suite2p_plane(*rois: tuple[list[int], list[int]], iscell: list[bool] | None = None) -> dict:
@@ -35,6 +38,49 @@ def _suite2p_plane(*rois: tuple[list[int], list[int]], iscell: list[bool] | None
 
 
 class MatchingTests(unittest.TestCase):
+    def test_place_labels_no_overlap_stacks_close_auc_style_labels(self) -> None:
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlim(-1.0, 1.0)
+        items = [(0.0, 0.8, "med=0.42"), (0.0, 0.8, "med=0.45")]
+        placed = place_labels_no_overlap(ax, items, y_span=1.0, x_neighbor_thresh=0.0, fontsize=8.0)
+        self.assertEqual(len(placed), 2)
+        self.assertGreater(placed[1][1], placed[0][1])
+        plt.close(fig)
+
+    def test_place_labels_no_overlap_keeps_far_labels_on_same_band(self) -> None:
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlim(-1.0, 6.0)
+        items = [(0.0, 0.8, "med=0.42"), (5.0, 0.8, "med=0.45")]
+        placed = place_labels_no_overlap(ax, items, y_span=1.0, x_neighbor_thresh=0.0, fontsize=8.0)
+        self.assertEqual(len(placed), 2)
+        self.assertAlmostEqual(placed[0][1], placed[1][1], places=6)
+        plt.close(fig)
+
+    def test_place_labels_no_overlap_expands_ylim_when_stacking(self) -> None:
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.set_ylim(0.0, 1.0)
+        initial_top = float(ax.get_ylim()[1])
+        items = [(0.0, 0.96, "med=0.42"), (0.2, 0.96, "med=0.45")]
+        place_labels_no_overlap(ax, items, y_span=1.0, x_neighbor_thresh=0.0, fontsize=10.0)
+        self.assertGreater(float(ax.get_ylim()[1]), initial_top)
+        plt.close(fig)
+
+    def test_place_labels_no_overlap_allows_per_item_text_kwargs(self) -> None:
+        fig, ax = plt.subplots(figsize=(4, 3))
+        ax.set_ylim(0.0, 1.0)
+        ax.set_xlim(-1.0, 1.0)
+        items = [
+            (0.0, 0.8, "med=0.42", {"color": "#2c7fb8"}),
+            (0.2, 0.8, "med=0.45", {"color": "#d95f0e"}),
+        ]
+        place_labels_no_overlap(ax, items, y_span=1.0, x_neighbor_thresh=0.0, fontsize=8.0, text_kwargs={"zorder": 5})
+        text_colors = [mcolors.to_rgba(txt.get_color()) for txt in ax.texts]
+        self.assertIn(mcolors.to_rgba("#2c7fb8"), text_colors)
+        self.assertIn(mcolors.to_rgba("#d95f0e"), text_colors)
+        plt.close(fig)
+
     def test_regionprops_centroids_2d_returns_empty_schema_without_labels(self) -> None:
         df = _regionprops_centroids_2d(np.zeros((4, 4), dtype=np.uint32))
         self.assertEqual(list(df.columns), ["label", "cy", "cx"])
