@@ -29,6 +29,12 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 
 ## Figure defaults
 
+- Notebook onboarding markdown near the top of a notebook should stay plain-English and reader-facing; reserve stage tags, implementation jargon, and interpretation details for the later stage markdown cells.
+- Displayed figure titles should read like journal-ready takeaways in neutral voice.
+- Prefer concept-first wording over stage tags, raw method names, or implementation jargon.
+- Put figure-level takeaway in the `suptitle` and panel-level evidence statements in panel titles.
+- Keep metrics, thresholds, and processing details in axis labels, legends, annotations, or notebook markdown unless they are essential to interpretation.
+- For repeated small multiples, stable identifiers such as fish IDs or gene names may remain as panel titles when the suptitle already states the conceptual message.
 - Font: prefer `Aptos (Body)` with sans-serif fallback.
 - Panel title size: `11`.
 - Default width: `A4_width * 0.8` unless panel constraints require otherwise.

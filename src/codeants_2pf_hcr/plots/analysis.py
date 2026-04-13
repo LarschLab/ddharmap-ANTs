@@ -271,7 +271,7 @@ def render_cohort_56h_by_fish(
     for ax in axes_arr[:-1]:
         ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
     n_fish_ok = int(cohort_fish_summary_df.get("ok", pd.Series(dtype=bool)).sum()) if isinstance(cohort_fish_summary_df, pd.DataFrame) else len(fish_order)
-    fig.suptitle(f"Cohort [56h]: per-gene stimulus traces by fish (fish n={n_fish_ok})", y=0.995)
+    fig.suptitle(f"Stimulus-locked gene responses are consistent across fish (fish n={n_fish_ok})", y=0.995)
     fig.tight_layout(rect=[0, 0.04, 1, 0.93])
     save_path = Path(out_path) if out_path is not None else None
     if save_path is not None:
@@ -334,7 +334,7 @@ def render_cohort_56g_diagnostics(
     ax_plane.set_ylim(-vmax, vmax)
     ax_plane.set_xlabel(f"Mean continuous response ({activity_label})")
     ax_plane.set_ylabel(f"Mean bout response ({activity_label})")
-    ax_plane.set_title("1) Bout vs Continuous Response Plane")
+    ax_plane.set_title("Bout and continuous responses reveal distinct tuning")
     handles, labels = ax_plane.get_legend_handles_labels()
     if handles:
         ax_plane.legend(handles, labels, fontsize=7, ncol=2, loc="lower right")
@@ -346,7 +346,7 @@ def render_cohort_56g_diagnostics(
     ax_quad.set_ylabel(f"BPI ({bpi_col})")
     ax_quad.set_ylim(-1.02, 1.02)
     ax_quad.set_xlim(left=0)
-    ax_quad.set_title("2) BPI vs Activity Magnitude")
+    ax_quad.set_title("Strong tuning is not explained by weak activity alone")
     bins = pd.qcut(work["activity_mag"], q=min(6, int(work["activity_mag"].nunique())), duplicates="drop")
     grouped = work.assign(_bin=bins).groupby("_bin", observed=False)["abs_bpi"]
     binned_df = grouped.agg(median_abs_bpi="median", q25_abs_bpi=lambda s: s.quantile(0.25), q75_abs_bpi=lambda s: s.quantile(0.75), n_cells="size").reset_index()
@@ -358,7 +358,7 @@ def render_cohort_56g_diagnostics(
         ax_bins.fill_between(mids, binned_df["q25_abs_bpi"].to_numpy(dtype=float), binned_df["q75_abs_bpi"].to_numpy(dtype=float), alpha=0.2, color="#1f77b4")
         ax_bins.set_ylim(0, 1.02)
         ax_bins.set_xlim(left=0)
-    ax_bins.set_title("3) Activity-Binned Tuning Strength")
+    ax_bins.set_title("Tuning strength remains visible across activity levels")
     ax_bins.set_xlabel(f"Activity magnitude ({activity_label}; bin mid)")
     ax_bins.set_ylabel("Median |BPI|")
     groups = ["near-zero BPI + low activity", "near-zero BPI + high activity", "non-zero BPI"]
@@ -374,10 +374,10 @@ def render_cohort_56g_diagnostics(
         ax_group.axhline(thr, color="#2b2b2b", linestyle="-.", linewidth=1.0)
     else:
         ax_group.text(0.5, 0.5, "No group data", transform=ax_group.transAxes, ha="center", va="center")
-    ax_group.set_title("4) Activity by BPI/Response Class")
+    ax_group.set_title("Low activity and weak tuning occupy different regimes")
     ax_group.set_ylabel(f"Activity magnitude ({activity_label})")
     n_fish_ok = int(cohort_fish_summary_df.get("ok", pd.Series(dtype=bool)).sum()) if isinstance(cohort_fish_summary_df, pd.DataFrame) else 0
-    fig.suptitle(f"Cohort [56g]: BPI vs activity diagnostics (fish n={n_fish_ok})", fontsize=13)
+    fig.suptitle(f"Stimulus bias cannot be reduced to activity magnitude alone (fish n={n_fish_ok})", fontsize=13)
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     save_path = Path(out_path) if out_path is not None else None
     if save_path is not None:
@@ -729,9 +729,9 @@ def render_cohort_motion_auc(
 
     all_pos = np.array([0.0])
     gene_pos = np.arange(len(ordered_genes), dtype=float) * float(group_step)
-    _plot_auc_block(ax_all_ipsi, all_neurons_points, group_order_all, all_pos, "ipsi", is_gene_panel=False, panel_title="Global activity", show_ylabel=True, hide_x_labels=True)
+    _plot_auc_block(ax_all_ipsi, all_neurons_points, group_order_all, all_pos, "ipsi", is_gene_panel=False, panel_title="Population-wide responses", show_ylabel=True, hide_x_labels=True)
     _plot_auc_block(ax_all_contra, all_neurons_points, group_order_all, all_pos, "contra", is_gene_panel=False, panel_title="", show_ylabel=True)
-    _plot_auc_block(ax_gene_ipsi, gene_points, ordered_genes, gene_pos, "ipsi", is_gene_panel=True, panel_title="Marker-specific activity", hide_y_labels=True, hide_x_labels=True)
+    _plot_auc_block(ax_gene_ipsi, gene_points, ordered_genes, gene_pos, "ipsi", is_gene_panel=True, panel_title="Marker-specific responses", hide_y_labels=True, hide_x_labels=True)
     _plot_auc_block(ax_gene_contra, gene_points, ordered_genes, gene_pos, "contra", is_gene_panel=True, panel_title="", hide_y_labels=True)
 
     fig.text(0.03, 0.7, "Ipsi", ha="left", va="center", rotation=90, fontsize=AUC_ROW_LABEL_FONT_SIZE, fontweight="normal")
@@ -758,7 +758,7 @@ def render_cohort_motion_auc(
 
     n_fish_ok = int(cohort_fish_summary_df.get("ok", pd.Series(dtype=bool)).sum()) if isinstance(cohort_fish_summary_df, pd.DataFrame) else len(fish_order)
     fig.suptitle(
-        f"Cohort [50l-style] Motion-Window AUC (fish n={n_fish_ok}, All neurons n={len(all_neurons_points)}, Genes n={len(gene_points)})",
+        f"Population and marker-specific responses remain separable across stimulus directions (fish n={n_fish_ok}, all neurons n={len(all_neurons_points)}, genes n={len(gene_points)})",
         fontsize=13,
         fontweight="bold",
         y=0.995,
@@ -963,7 +963,7 @@ def render_cohort_56h_status_donut_grid(
         fig.text(0.015, y, str(gene), ha="left", va="center", fontsize=11)
     from matplotlib.patches import Patch
     fig.legend(handles=[Patch(facecolor=palette[k], edgecolor="none", label=k.replace("_", " ")) for k in status_order], loc="lower center", bbox_to_anchor=(0.53, 0.01), ncol=5, frameon=False, fontsize=8)
-    fig.suptitle("Cohort [56h] HCR status donuts: fish x gene", y=0.995, fontsize=12, fontweight="bold")
+    fig.suptitle("Gene-linked anatomy labels are represented differently across fish", y=0.995, fontsize=12, fontweight="bold")
     fig.tight_layout(rect=[0.05, 0.08, 1.0, 0.95])
     out_path = outdir / "cohort_56h_hcr_donut_grid_fish_by_gene.png"
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -1393,7 +1393,7 @@ def render_cohort_50l_donut_row(
         title_fontsize=COHORT_50L_LEGEND_FONTSIZE,
     )
     legend._legend_box.align = "left"
-    fig.suptitle("Cohort [50l] global activity distribution by fish", y=0.98, fontsize=COHORT_50L_TITLE_FONTSIZE, fontweight="bold")
+    fig.suptitle("Global response classes and stimulus bias remain comparable across fish", y=0.98, fontsize=COHORT_50L_TITLE_FONTSIZE, fontweight="bold")
     fig.tight_layout(rect=[0.01, 0.11, 0.99, 0.93])
     fig_path = outdir / "cohort_50l_global_activity_donut_row_by_fish.png"
     fig_pdf = outdir / "cohort_50l_global_activity_donut_row_by_fish.pdf"

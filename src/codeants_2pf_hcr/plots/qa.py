@@ -1723,7 +1723,7 @@ def render_cohort_53a_summary(
         ax_ncc.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9)
         ax_ncc.set_xlabel("Z index")
         ax_ncc.set_ylabel("NCC score")
-        ax_ncc.set_title("Plane Registration Match Quality")
+        ax_ncc.set_title("Functional planes align to a clear anatomy depth")
         ax_ncc.grid(alpha=0.2, axis="y")
     else:
         ax_ncc.text(0.5, 0.5, "No NCC curves found", ha="center", va="center", transform=ax_ncc.transAxes)
@@ -1786,7 +1786,7 @@ def render_cohort_53a_summary(
             ax_diam.set_xticks(metric_centers)
             ax_diam.set_xticklabels(metric_labels, fontsize=8)
             ax_diam.set_ylabel("Diameter (µm)")
-            ax_diam.set_title("Segmentation Size Quality")
+            ax_diam.set_title("Mask sizes agree across anatomy, function, and HCR")
             handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
             ax_diam.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
             ax_diam.grid(alpha=0.2, axis="y")
@@ -1875,7 +1875,7 @@ def render_cohort_53a_summary(
             ax_func.set_xticks(centers)
             ax_func.set_xticklabels(labels)
             ax_func.set_ylabel("Distance (µm)")
-            ax_func.set_title("Functional→Anatomy Match Quality")
+            ax_func.set_title("Functional ROIs stay close to their anatomy matches")
             handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
             ax_func.legend(handles=handles, title="Fish", frameon=False, fontsize=8, title_fontsize=9, loc="upper right")
             ax_func.grid(alpha=0.2, axis="y")
@@ -1950,7 +1950,7 @@ def render_cohort_53a_summary(
         ax_hcr.set_xticks(xticks)
         ax_hcr.set_xticklabels(xticklabels, fontsize=8)
         ax_hcr.set_ylabel("Distance (µm)")
-        ax_hcr.set_title("In-Plane HCR→Anatomy Match Quality")
+        ax_hcr.set_title("In-plane HCR labels stay close to anatomy matches")
         ax_hcr.grid(alpha=0.2, axis="y")
         handles = [plt.Line2D([0], [0], color=fish_palette[fid], lw=2, label=fid) for fid in fish_ids]
         ref_handles, ref_labels = ax_hcr.get_legend_handles_labels()
@@ -1959,7 +1959,7 @@ def render_cohort_53a_summary(
         ax_hcr.text(0.5, 0.5, "No HCR offsets found", ha="center", va="center", transform=ax_hcr.transAxes)
         ax_hcr.set_axis_off()
 
-    fig.suptitle("Cohort [53a] summary", fontsize=14)
+    fig.suptitle("Registration and segmentation quality support cross-modal matching", fontsize=14)
     return fig
 
 
