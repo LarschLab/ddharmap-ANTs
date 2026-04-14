@@ -7,8 +7,9 @@
 ## Read this first
 
 1. Read this router first.
-2. Select the workflow profile.
-3. Jump to the profile router and follow its read order and task-routing table.
+2. Read `.agents/references/coding.md` for universal coding guardrails.
+3. Select the workflow profile.
+4. Jump to the profile router and follow its read order and task-routing table.
 
 ## Workflow profile dispatch
 

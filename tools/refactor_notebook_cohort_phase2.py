@@ -240,6 +240,40 @@ except Exception:
 display(COHORT_50L_DONUT_COUNTS_WIDE_DF)
 plt.show()
 """,
+    "cohort-50l-responsive-identity-donut-row": """# [cohort-50l-responsive-identity-donut-row] Cohort responsive identity donuts by fish
+from codeants_2pf_hcr.plots.analysis import render_cohort_50l_responsive_identity_donut_row
+from codeants_2pf_hcr import load_cohort_analysis_state
+
+state_bindings = load_cohort_analysis_state(
+    COHORT_BUILD_CONFIG,
+    outdir=COHORT_OUTDIR,
+    load_tables=False,
+    load_trace_cache=False,
+    load_cohort_53a_tables=False,
+    verbose=True,
+)["bindings"]
+
+render_responsive_identity_donut = render_cohort_50l_responsive_identity_donut_row(
+    fish_specs=state_bindings["FISH_SPECS"],
+    data_root=state_bindings["DATA_ROOT"],
+    data_mode=state_bindings["DATA_MODE"],
+    cohort_outdir=state_bindings["COHORT_OUTDIR"],
+    gene_order=state_bindings.get("GENE_ORDER", GENE_ORDER),
+    gene_colors=state_bindings.get("GENE_COLORS", GENE_COLORS),
+)
+COHORT_50L_RESPONSIVE_IDENTITY_DONUT_ROW_LAST = render_responsive_identity_donut["fig"]
+COHORT_50L_RESPONSIVE_IDENTITY_DONUT_COUNTS_DF = render_responsive_identity_donut["counts_df"]
+COHORT_50L_RESPONSIVE_IDENTITY_DONUT_COUNTS_WIDE_DF = render_responsive_identity_donut["counts_wide_df"]
+COHORT_50L_RESPONSIVE_IDENTITY_DONUT_FISH_ORDER = render_responsive_identity_donut["fish_order"]
+COHORT_50L_RESPONSIVE_IDENTITY_DONUT_IDENTITY_ORDER = render_responsive_identity_donut["identity_order"]
+try:
+    COHORT_50L_RESPONSIVE_IDENTITY_DONUT_ROW_LAST.canvas.draw()
+    COHORT_50L_RESPONSIVE_IDENTITY_DONUT_ROW_RGBA = np.asarray(COHORT_50L_RESPONSIVE_IDENTITY_DONUT_ROW_LAST.canvas.buffer_rgba()).copy()
+except Exception:
+    COHORT_50L_RESPONSIVE_IDENTITY_DONUT_ROW_RGBA = None
+display(COHORT_50L_RESPONSIVE_IDENTITY_DONUT_COUNTS_WIDE_DF)
+plt.show()
+""",
 }
 
 

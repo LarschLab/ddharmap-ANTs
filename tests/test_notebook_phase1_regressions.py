@@ -260,12 +260,22 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
             "cohort-auc": "from codeants_2pf_hcr.plots.analysis import render_cohort_motion_auc",
             "cohort-56h-donut-grid": "from codeants_2pf_hcr.plots.analysis import render_cohort_56h_status_donut_grid",
             "cohort-50l-donut-row": "from codeants_2pf_hcr.plots.analysis import render_cohort_50l_donut_row",
+            "cohort-50l-responsive-identity-donut-row": "from codeants_2pf_hcr.plots.analysis import render_cohort_50l_responsive_identity_donut_row",
         }
         for tag, expected_import in expected_imports.items():
             cell = _cohort_cell_by_tag(tag)
             self.assertIn(expected_import, cell)
             self.assertIn("load_cohort_analysis_state", cell)
             self.assertNotIn("def ", cell)
+
+    def test_cohort_responsive_identity_donut_cell_uses_package_renderer(self) -> None:
+        cell = _cohort_cell_by_tag("cohort-50l-responsive-identity-donut-row")
+        self.assertIn(
+            "from codeants_2pf_hcr.plots.analysis import render_cohort_50l_responsive_identity_donut_row",
+            cell,
+        )
+        self.assertIn("load_cohort_analysis_state", cell)
+        self.assertNotIn("def ", cell)
 
     def test_cohort_phase2_generator_tracks_late_slice_refactor(self) -> None:
         source = COHORT_PHASE2_GENERATOR_PATH.read_text()
@@ -274,6 +284,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("render_cohort_motion_auc", source)
         self.assertIn("render_cohort_56h_status_donut_grid", source)
         self.assertIn("render_cohort_50l_donut_row", source)
+        self.assertIn("render_cohort_50l_responsive_identity_donut_row", source)
         self.assertIn("load_cohort_analysis_state", source)
 
     def test_cohort_cache_keys_remain_stable(self) -> None:

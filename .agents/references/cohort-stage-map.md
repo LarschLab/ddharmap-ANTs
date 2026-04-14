@@ -15,6 +15,7 @@
 - `[cohort-auc]`
 - `[cohort-56h-donut-grid]`
 - `[cohort-50l-donut-row]`
+- `[cohort-50l-responsive-identity-donut-row]`
 
 ## Cohort-owned outputs
 
@@ -49,4 +50,5 @@
 - `[cohort-auc]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_motion_auc`.
 - `[cohort-56h-donut-grid]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56h_status_donut_grid`.
 - `[cohort-50l-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_donut_row`.
+- `[cohort-50l-responsive-identity-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_responsive_identity_donut_row`.
 - Late cells are thin wrappers: explicit knobs, one context/cache load (`resolve_cohort_context_stage` / `load_cohort_analysis_state`), one renderer call, optional save/display.

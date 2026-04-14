@@ -148,6 +148,7 @@ from .plots.qa import (
 )
 from .plots.analysis import (
     render_cohort_50l_donut_row,
+    render_cohort_50l_responsive_identity_donut_row,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
     render_cohort_56h_status_donut_grid,
@@ -245,6 +246,7 @@ __all__ = [
     "registration_metric_from_scores",
     "render_cohort_53a_summary",
     "render_cohort_50l_donut_row",
+    "render_cohort_50l_responsive_identity_donut_row",
     "render_cohort_56g_diagnostics",
     "render_cohort_56h_by_fish",
     "render_cohort_56h_status_donut_grid",

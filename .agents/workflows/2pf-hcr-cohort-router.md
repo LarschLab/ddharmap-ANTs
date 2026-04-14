@@ -8,12 +8,13 @@
 
 1. Read `.agents/workflows/2pf-hcr-router.md`.
 2. Read this cohort router.
-3. Read `references/cohort-stage-map.md`.
-4. Read the smallest additional semantic reference needed (`canonical-tables.md`, `activity-semantics.md`, `figure-rules.md`, `current-state.md`, `cache-rerun-policy.md`).
-5. Open `symbol-index.md` only if symbol lookup is needed.
-6. Open the owning package module in `src/codeants_2pf_hcr/`.
-7. Open notebook cells only if package code is insufficient for the task.
-8. Open `tools/` wrappers only for CLI behavior or wrapper behavior.
+3. Read `.agents/references/coding.md` (required baseline guardrails).
+4. Read `references/cohort-stage-map.md`.
+5. Read the smallest additional semantic reference needed (`canonical-tables.md`, `activity-semantics.md`, `figure-rules.md`, `current-state.md`, `cache-rerun-policy.md`).
+6. Open `symbol-index.md` only if symbol lookup is needed.
+7. Open the owning package module in `src/codeants_2pf_hcr/`.
+8. Open notebook cells only if package code is insufficient for the task.
+9. Open `tools/` wrappers only for CLI behavior or wrapper behavior.
 
 ## Task routing table (cohort)
 

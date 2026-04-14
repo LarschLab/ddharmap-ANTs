@@ -1,6 +1,7 @@
 """Deterministic figure builders for notebook QA and CLI wrappers."""
 
 from .analysis import (
+    render_cohort_50l_responsive_identity_donut_row,
     plot_single_roi_57style,
     render_cohort_50l_donut_row,
     render_cohort_56g_diagnostics,
@@ -23,6 +24,7 @@ __all__ = [
     "place_labels_no_overlap",
     "plot_single_roi_57style",
     "render_cohort_50l_donut_row",
+    "render_cohort_50l_responsive_identity_donut_row",
     "render_cohort_53a_summary",
     "render_cohort_56g_diagnostics",
     "render_cohort_56h_by_fish",

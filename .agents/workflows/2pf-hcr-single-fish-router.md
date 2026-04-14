@@ -8,12 +8,13 @@
 
 1. Read `.agents/workflows/2pf-hcr-router.md`.
 2. Read this single-fish router.
-3. Read the smallest relevant file in `.agents/references/`.
-4. Open `symbol-index.md` only if symbol lookup is needed.
-5. Open `notebook-stage-map.md` only if stage ownership or cell mapping is still unclear.
-6. Open the owning package module in `src/codeants_2pf_hcr/`.
-7. Open notebook cells only if package code is insufficient for the task.
-8. Open `tools/` wrappers only for CLI behavior or wrapper behavior.
+3. Read `.agents/references/coding.md` (required baseline guardrails).
+4. Read the smallest additional relevant file in `.agents/references/`.
+5. Open `symbol-index.md` only if symbol lookup is needed.
+6. Open `notebook-stage-map.md` only if stage ownership or cell mapping is still unclear.
+7. Open the owning package module in `src/codeants_2pf_hcr/`.
+8. Open notebook cells only if package code is insufficient for the task.
+9. Open `tools/` wrappers only for CLI behavior or wrapper behavior.
 
 ## Task routing table (single-fish)
 

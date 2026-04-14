@@ -12,6 +12,7 @@ import pandas as pd
 
 from .annotations import place_labels_no_overlap
 from ..stimulus import StimulusConfig, build_stim_tables, load_events_df, load_metadata_params, parse_float, parse_unilateral_stim
+from ..traces import prepare_pairs_for_unique_cells
 
 
 STIM_PALETTE = {
@@ -1445,6 +1446,573 @@ def render_cohort_50l_donut_row(
     }
 
 
+def render_cohort_50l_responsive_identity_donut_row(
+    *,
+    fish_specs: list[dict[str, str]],
+    data_root: str | Path,
+    data_mode: str,
+    cohort_outdir: str | Path,
+    gene_order: list[str] | None = None,
+    gene_colors: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    import matplotlib.colors as mcolors
+
+    BPI_ORDER = ["bout-responsive", "continuous-responsive", "both-responsive", "weak-response"]
+    BPI_SHORT = {
+        "bout-responsive": "Bout-responsive",
+        "continuous-responsive": "Cont.-responsive",
+        "both-responsive": "Both-responsive",
+        "weak-response": "Weak-response",
+    }
+    BPI_COLORS = {
+        "bout-responsive": "#2c7fb8",
+        "continuous-responsive": "#d95f0e",
+        "both-responsive": "#d946ef",
+        "weak-response": "#000000",
+    }
+    DEFAULT_GENE_ORDER = ["sst1.1", "sst1.2", "npy", "tac3b", "pth2", "cfos", "cort"]
+    DEFAULT_GENE_COLORS = {
+        "sst1.1": "#d62728",
+        "sst1.2": "#d61ad2",
+        "npy": "#1f9d55",
+        "tac3b": "#ffd400",
+        "pth2": "#00bcd4",
+        "cfos": "#ff7f0e",
+        "cort": "#8c564b",
+    }
+    ID_UNIDENTIFIED = "unidentified"
+
+    OUTER_RADIUS = 1.08
+    INNER_RING_WIDTH = 0.35
+    OUTER_RING_WIDTH = INNER_RING_WIDTH * 0.375
+    RING_GAP = 0.02
+    VIEW_LIMIT = 1.20
+    OUTER_COUNT_INSIDE_MIN = 150
+    OUTER_LABEL_RADIUS = OUTER_RADIUS + 0.08
+    OUTER_LABEL_GUTTER_X = VIEW_LIMIT - 0.09
+    OUTER_LABEL_Y_MARGIN = 0.10
+    OUTER_LABEL_MIN_GAP = 0.11
+    OUTER_LABEL_TEXT_SHIFT = 0.1
+    OUTER_LABEL_ELBOW_PAD = 0.04
+    OUTER_LABEL_TEXT_PAD = -0.1
+    OUTER_FORCE_OUTSIDE_WEDGE_DEG = 12.0
+    OUTER_LEADER_LINEWIDTH = 0.8
+    INNER_LABEL_MIN_PCT = 6.0
+    INNER_LABEL_FONTSIZE = 8.0
+    CENTER_FONTSIZE = 10.0
+    LEGEND_FONTSIZE = 8.0
+
+    gene_order_local = list(gene_order or DEFAULT_GENE_ORDER)
+    gene_colors_local = dict(DEFAULT_GENE_COLORS)
+    if isinstance(gene_colors, dict):
+        gene_colors_local.update({str(k): str(v) for k, v in gene_colors.items()})
+    gene_rank = {gene: idx for idx, gene in enumerate(gene_order_local)}
+
+    def _as_bool_series(series_in: Any) -> pd.Series:
+        s = pd.Series(series_in)
+        if pd.api.types.is_bool_dtype(s):
+            return s.fillna(False).astype(bool)
+        if pd.api.types.is_numeric_dtype(s):
+            return s.fillna(0).astype(float) != 0
+        return s.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+
+    def _wedge_midpoint(wedge: Any, radius: float) -> tuple[float, float, float]:
+        theta = np.deg2rad((float(wedge.theta1) + float(wedge.theta2)) / 2.0)
+        return float(theta), float(radius) * np.cos(theta), float(radius) * np.sin(theta)
+
+    def _tangent_rotation(theta_rad: float) -> float:
+        theta_deg = ((float(np.rad2deg(theta_rad)) + 180.0) % 360.0) - 180.0
+        rot = theta_deg - 90.0
+        if rot < -90.0:
+            rot += 180.0
+        elif rot > 90.0:
+            rot -= 180.0
+        return float(rot)
+
+    def _contrast_text_color(color: Any) -> str:
+        try:
+            r, g, b = mcolors.to_rgb(color)
+        except Exception:
+            return "black"
+        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return "white" if luminance < 0.52 else "black"
+
+    def _resolve_outside_label_positions(candidates: list[dict[str, Any]], y_min: float, y_max: float, min_gap: float) -> list[dict[str, Any]]:
+        if not candidates:
+            return []
+        resolved: list[dict[str, Any]] = []
+        for side in ("left", "right"):
+            side_items = [dict(item) for item in candidates if item.get("side") == side]
+            if not side_items:
+                continue
+            side_items = sorted(side_items, key=lambda item: (float(item["target_y"]), float(item["theta"])))
+            n_items = len(side_items)
+            if n_items == 1:
+                y_positions = np.array([float(np.clip(side_items[0]["target_y"], y_min, y_max))], dtype=float)
+            else:
+                span_needed = float(min_gap) * float(n_items - 1)
+                if span_needed > float(y_max - y_min):
+                    y_positions = np.linspace(float(y_min), float(y_max), n_items, dtype=float)
+                else:
+                    y_positions = np.array([float(np.clip(item["target_y"], y_min, y_max)) for item in side_items], dtype=float)
+                    for idx in range(1, n_items):
+                        y_positions[idx] = max(y_positions[idx], y_positions[idx - 1] + float(min_gap))
+                    if y_positions[-1] > float(y_max):
+                        y_positions -= float(y_positions[-1] - y_max)
+                    if y_positions[0] < float(y_min):
+                        y_positions += float(y_min - y_positions[0])
+                    for idx in range(n_items - 2, -1, -1):
+                        y_positions[idx] = min(y_positions[idx], y_positions[idx + 1] - float(min_gap))
+                    if y_positions[0] < float(y_min):
+                        y_positions = np.linspace(float(y_min), float(y_min) + span_needed, n_items, dtype=float)
+            for item, y_text in zip(side_items, y_positions.tolist()):
+                item["resolved_y"] = float(y_text)
+                resolved.append(item)
+        return sorted(resolved, key=lambda item: int(item["idx"]))
+
+    def _outside_label_gap_stats(resolved_candidates: list[dict[str, Any]]) -> tuple[float, int]:
+        gaps: list[float] = []
+        overlap_pairs = 0
+        for side in ("left", "right"):
+            y_vals = sorted(float(item["resolved_y"]) for item in resolved_candidates if item.get("side") == side)
+            if len(y_vals) < 2:
+                continue
+            side_gaps = np.diff(np.asarray(y_vals, dtype=float))
+            gaps.extend(side_gaps.tolist())
+            overlap_pairs += int(np.sum(side_gaps < (float(OUTER_LABEL_MIN_GAP) - 1e-9)))
+        return (float(np.min(gaps)) if gaps else np.nan), int(overlap_pairs)
+
+    def _ordered_gene_tuple(genes: set[str]) -> tuple[str, ...]:
+        return tuple(sorted([str(g) for g in genes], key=lambda g: (gene_rank.get(g, 10**6), str(g))))
+
+    def _blend_combo_color(combo_label: str) -> tuple[float, float, float]:
+        parts = [p for p in str(combo_label).split("/") if p]
+        if not parts:
+            return mcolors.to_rgb("#bdbdbd")
+        rgb = np.asarray([mcolors.to_rgb(gene_colors_local.get(g, "#777777")) for g in parts], dtype=float).mean(axis=0)
+        return tuple(np.clip(0.85 * rgb + 0.15 * np.ones(3, dtype=float), 0.0, 1.0))
+
+    def _identity_sort_key(label: str) -> tuple[int, tuple[Any, ...]]:
+        if label == ID_UNIDENTIFIED:
+            return (2, ("zzzz",))
+        parts = tuple([p for p in str(label).split("/") if p])
+        if len(parts) == 1:
+            g = parts[0]
+            return (0, (gene_rank.get(g, 10**6), g))
+        ranked = tuple((gene_rank.get(g, 10**6), g) for g in parts)
+        return (1, ranked)
+
+    def _load_master(master_csv: Path, fish_id: str) -> pd.DataFrame:
+        master_df = pd.read_csv(master_csv)
+        if "fish_id" in master_df.columns:
+            master_df = master_df[master_df["fish_id"].astype(str) == str(fish_id)].copy()
+        if master_df.empty:
+            raise RuntimeError(f"[cohort-50l-responsive-identity-donut] {fish_id}: master ROI table is empty")
+        required_cols = {"plane_idx", "func_label", "response_is_active", "bpi_category"}
+        missing = sorted(required_cols - set(master_df.columns))
+        if missing:
+            raise RuntimeError(
+                f"[cohort-50l-responsive-identity-donut] {fish_id}: missing required columns {missing}; rerun [50ia]."
+            )
+        master_df["plane_idx"] = pd.to_numeric(master_df["plane_idx"], errors="coerce")
+        master_df["func_label"] = pd.to_numeric(master_df["func_label"], errors="coerce")
+        master_df = master_df[master_df["plane_idx"].notna() & master_df["func_label"].notna()].copy()
+        master_df["plane_idx"] = master_df["plane_idx"].astype(int)
+        master_df["func_label"] = master_df["func_label"].astype(int)
+        master_df["response_is_active"] = _as_bool_series(master_df["response_is_active"])
+        master_df["bpi_category"] = master_df["bpi_category"].astype(str).str.strip().str.lower()
+        unknown = sorted(set(master_df["bpi_category"]) - set(BPI_ORDER) - {"low activity", "response unavailable"})
+        if unknown:
+            raise RuntimeError(
+                f"[cohort-50l-responsive-identity-donut] {fish_id}: unexpected bpi_category values {unknown}"
+            )
+        return master_df
+
+    def _build_combo_lookup(conf_func_csv: Path, fish_id: str) -> pd.DataFrame:
+        pairs_raw = pd.read_csv(conf_func_csv)
+        if "fish_id" in pairs_raw.columns:
+            pairs_raw = pairs_raw[pairs_raw["fish_id"].astype(str) == str(fish_id)].copy()
+        if "is_selected_for_analysis" in pairs_raw.columns:
+            pairs_raw = pairs_raw[_as_bool_series(pairs_raw["is_selected_for_analysis"])].copy()
+        pairs = prepare_pairs_for_unique_cells(
+            pairs_raw,
+            strict=True,
+            tag="[cohort-50l-responsive-identity-donut]",
+        )
+        if pairs.empty:
+            return pd.DataFrame(columns=["plane_idx", "func_label", "exact_combo_label"])
+        grouped = (
+            pairs.groupby(["plane", "func_label"], as_index=False)["gene"]
+            .agg(lambda vals: _ordered_gene_tuple(set(vals.astype(str))))
+            .rename(columns={"plane": "plane_idx", "gene": "gene_tuple"})
+        )
+        grouped["exact_combo_label"] = grouped["gene_tuple"].apply(lambda tup: "/".join(tup))
+        return grouped[["plane_idx", "func_label", "exact_combo_label"]].copy()
+
+    def _compute_fish_counts(owner: str, fish_id: str, master_csv: Path, conf_func_csv: Path) -> dict[str, Any]:
+        master_df = _load_master(master_csv, fish_id)
+        responsive_df = master_df[
+            master_df["response_is_active"].astype(bool) & master_df["bpi_category"].isin(BPI_ORDER)
+        ][["plane_idx", "func_label", "bpi_category"]].copy()
+        combo_lookup = _build_combo_lookup(conf_func_csv, fish_id)
+        merged = responsive_df.merge(combo_lookup, on=["plane_idx", "func_label"], how="left")
+        merged["identity_bucket"] = merged["exact_combo_label"].fillna(ID_UNIDENTIFIED).astype(str)
+
+        inner_full = pd.DataFrame({"bpi_category": BPI_ORDER})
+        inner_counts = (
+            merged.groupby("bpi_category", as_index=False)
+            .size()
+            .rename(columns={"size": "count"})
+        )
+        inner_full = inner_full.merge(inner_counts, on="bpi_category", how="left")
+        inner_full["count"] = inner_full["count"].fillna(0).astype(int)
+
+        outer_counts = (
+            merged.groupby(["bpi_category", "identity_bucket"], as_index=False)
+            .size()
+            .rename(columns={"size": "count"})
+        )
+        outer_counts["bpi_order"] = outer_counts["bpi_category"].map({k: i for i, k in enumerate(BPI_ORDER)}).fillna(10**6)
+        outer_counts["identity_sort"] = outer_counts["identity_bucket"].map(_identity_sort_key)
+        outer_counts = outer_counts.sort_values(["bpi_order", "identity_sort"]).reset_index(drop=True)
+
+        count_rows: list[dict[str, Any]] = []
+        for idx, row in inner_full.iterrows():
+            count_rows.append(
+                {
+                    "owner": owner,
+                    "fish_id": fish_id,
+                    "master_csv": str(master_csv),
+                    "conf_func_csv": str(conf_func_csv),
+                    "ring": "inner",
+                    "plot_order": int(idx),
+                    "bpi_category": str(row["bpi_category"]),
+                    "identity_bucket": pd.NA,
+                    "count": int(row["count"]),
+                    "n_total_responsive": int(len(merged)),
+                }
+            )
+        for idx, row in outer_counts.iterrows():
+            count_rows.append(
+                {
+                    "owner": owner,
+                    "fish_id": fish_id,
+                    "master_csv": str(master_csv),
+                    "conf_func_csv": str(conf_func_csv),
+                    "ring": "outer",
+                    "plot_order": int(idx),
+                    "bpi_category": str(row["bpi_category"]),
+                    "identity_bucket": str(row["identity_bucket"]),
+                    "count": int(row["count"]),
+                    "n_total_responsive": int(len(merged)),
+                }
+            )
+        return {
+            "owner": owner,
+            "fish_id": fish_id,
+            "master_csv": master_csv,
+            "conf_func_csv": conf_func_csv,
+            "n_total_responsive": int(len(merged)),
+            "responsive_with_identity_df": merged.copy(),
+            "inner_counts_full": inner_full.copy(),
+            "outer_counts_plot": outer_counts[["bpi_category", "identity_bucket", "count"]].copy(),
+            "counts_long": pd.DataFrame(count_rows),
+        }
+
+    bundles: list[dict[str, Any]] = []
+    for spec in fish_specs:
+        owner = str(spec["owner"])
+        fish_id = str(spec["fish_id"])
+        paths = _fish_paths_for_cohort(data_root, owner, fish_id, data_mode)
+        master_csv = paths["out_reg"] / "functional_roi_activity_identity.csv"
+        conf_func_csv = paths["out_reg"] / "conf_to_func_pairs.csv"
+        if not master_csv.exists():
+            raise RuntimeError(f"[cohort-50l-responsive-identity-donut] Missing master ROI table: {master_csv}")
+        if not conf_func_csv.exists():
+            raise RuntimeError(f"[cohort-50l-responsive-identity-donut] Missing mapping table: {conf_func_csv}")
+        bundles.append(_compute_fish_counts(owner, fish_id, master_csv, conf_func_csv))
+    if not bundles:
+        raise RuntimeError("[cohort-50l-responsive-identity-donut] No fish specs were provided.")
+
+    observed_identities = sorted(
+        {
+            str(identity)
+            for bundle in bundles
+            for identity in bundle["outer_counts_plot"]["identity_bucket"].dropna().astype(str).tolist()
+        },
+        key=_identity_sort_key,
+    )
+    observed_single = [label for label in observed_identities if (label != ID_UNIDENTIFIED and "/" not in label)]
+    observed_multi = [label for label in observed_identities if "/" in label]
+    identity_order = (
+        list(gene_order_local)
+        + [label for label in observed_single if label not in gene_order_local]
+        + list(observed_multi)
+        + [ID_UNIDENTIFIED]
+    )
+
+    identity_colors: dict[str, Any] = {}
+    for label in identity_order:
+        if label == ID_UNIDENTIFIED:
+            identity_colors[label] = "#bdbdbd"
+        elif "/" in label:
+            identity_colors[label] = _blend_combo_color(label)
+        else:
+            identity_colors[label] = gene_colors_local.get(label, "#777777")
+
+    def _plot_fish(ax: plt.Axes, bundle: dict[str, Any]) -> dict[str, Any]:
+        inner_df = bundle["inner_counts_full"].copy()
+        outer_df = bundle["outer_counts_plot"].copy()
+        outer_df = outer_df[pd.to_numeric(outer_df["count"], errors="coerce").fillna(0) > 0].copy()
+        if outer_df.empty:
+            raise RuntimeError(f"[cohort-50l-responsive-identity-donut] {bundle['fish_id']}: no responsive counts to plot")
+        outer_df["bpi_order"] = outer_df["bpi_category"].map({k: i for i, k in enumerate(BPI_ORDER)}).fillna(10**6)
+        outer_df["identity_order"] = outer_df["identity_bucket"].map({k: i for i, k in enumerate(identity_order)}).fillna(10**6)
+        outer_df = outer_df.sort_values(["bpi_order", "identity_order"]).reset_index(drop=True)
+
+        inner_outer_radius = OUTER_RADIUS - OUTER_RING_WIDTH - RING_GAP
+        outer_mid_radius = OUTER_RADIUS - (OUTER_RING_WIDTH / 2.0)
+        inner_mid_radius = inner_outer_radius - (INNER_RING_WIDTH / 2.0)
+        centre_radius = inner_outer_radius - INNER_RING_WIDTH
+
+        outer_wedges, _ = ax.pie(
+            outer_df["count"].astype(float).tolist(),
+            radius=OUTER_RADIUS,
+            labels=None,
+            colors=[identity_colors[str(label)] for label in outer_df["identity_bucket"].astype(str)],
+            startangle=90,
+            counterclock=False,
+            wedgeprops=dict(width=OUTER_RING_WIDTH, edgecolor="white", linewidth=1.0),
+        )
+        inner_wedges, _ = ax.pie(
+            inner_df["count"].astype(float).tolist(),
+            radius=inner_outer_radius,
+            labels=None,
+            colors=[BPI_COLORS[str(label)] for label in inner_df["bpi_category"].astype(str)],
+            startangle=90,
+            counterclock=False,
+            wedgeprops=dict(width=INNER_RING_WIDTH, edgecolor="white", linewidth=1.0),
+        )
+
+        outer_text_labels_drawn = 0
+        outside_candidates: list[dict[str, Any]] = []
+        for wedge, val, color in zip(
+            outer_wedges,
+            outer_df["count"].astype(float).tolist(),
+            [identity_colors[str(label)] for label in outer_df["identity_bucket"].astype(str)],
+            strict=False,
+        ):
+            if float(val) <= 0:
+                continue
+            val_i = int(round(val))
+            wedge_span_deg = abs(float(wedge.theta2) - float(wedge.theta1))
+            if (val_i < OUTER_COUNT_INSIDE_MIN) or (wedge_span_deg <= OUTER_FORCE_OUTSIDE_WEDGE_DEG):
+                theta, x_edge, y_edge = _wedge_midpoint(wedge, OUTER_RADIUS)
+                _, x_target, y_target = _wedge_midpoint(wedge, OUTER_LABEL_RADIUS)
+                outside_candidates.append(
+                    {
+                        "idx": int(outer_text_labels_drawn),
+                        "theta": float(theta),
+                        "x_edge": float(x_edge),
+                        "y_edge": float(y_edge),
+                        "target_y": float(y_target),
+                        "side": ("right" if x_target >= 0 else "left"),
+                        "value": int(val_i),
+                    }
+                )
+            else:
+                theta, x, y = _wedge_midpoint(wedge, outer_mid_radius)
+                ax.text(
+                    x,
+                    y,
+                    f"{val_i}",
+                    ha="center",
+                    va="center",
+                    rotation=_tangent_rotation(theta),
+                    rotation_mode="anchor",
+                    fontsize=INNER_LABEL_FONTSIZE,
+                    color=_contrast_text_color(color),
+                )
+            outer_text_labels_drawn += 1
+
+        y_min = -float(VIEW_LIMIT) + float(OUTER_LABEL_Y_MARGIN)
+        y_max = float(VIEW_LIMIT) - float(OUTER_LABEL_Y_MARGIN)
+        resolved_outside_candidates = _resolve_outside_label_positions(
+            outside_candidates,
+            y_min=y_min,
+            y_max=y_max,
+            min_gap=OUTER_LABEL_MIN_GAP,
+        )
+        for item in resolved_outside_candidates:
+            side_sign = 1.0 if item["side"] == "right" else -1.0
+            x_text = side_sign * float(OUTER_LABEL_GUTTER_X + OUTER_LABEL_TEXT_SHIFT)
+            y_text = float(item["resolved_y"])
+            x_elbow = side_sign * float(OUTER_LABEL_RADIUS + OUTER_LABEL_ELBOW_PAD)
+            x_text_anchor = x_text - (side_sign * float(OUTER_LABEL_TEXT_PAD))
+            ax.plot(
+                [float(item["x_edge"]), x_elbow, x_text_anchor],
+                [float(item["y_edge"]), y_text, y_text],
+                color="black",
+                linewidth=OUTER_LEADER_LINEWIDTH,
+                solid_capstyle="round",
+                zorder=3,
+            )
+            ax.text(
+                x_text,
+                y_text,
+                f"{int(item['value'])}",
+                ha=("left" if side_sign > 0 else "right"),
+                va="center",
+                fontsize=INNER_LABEL_FONTSIZE,
+                color="black",
+            )
+
+        n_total = float(inner_df["count"].sum())
+        for wedge, label, val in zip(
+            inner_wedges,
+            inner_df["bpi_category"].astype(str).tolist(),
+            inner_df["count"].astype(float).tolist(),
+            strict=False,
+        ):
+            if n_total <= 0 or float(val) <= 0:
+                continue
+            pct = 100.0 * float(val) / n_total
+            if pct < INNER_LABEL_MIN_PCT:
+                continue
+            theta, x, y = _wedge_midpoint(wedge, inner_mid_radius)
+            ax.text(
+                x,
+                y,
+                f"{BPI_SHORT.get(label, label)}\n{int(round(val))}",
+                ha="center",
+                va="center",
+                rotation=_tangent_rotation(theta),
+                rotation_mode="anchor",
+                fontsize=INNER_LABEL_FONTSIZE,
+                color=_contrast_text_color(BPI_COLORS.get(label, "#cccccc")),
+            )
+
+        ax.add_artist(plt.Circle((0, 0), centre_radius, fc="white", ec="white"))
+        ax.text(0, 0, f"n = {int(bundle['n_total_responsive'])}", ha="center", va="center", fontsize=CENTER_FONTSIZE, fontweight="bold")
+        ax.set_title(str(bundle["fish_id"]), fontsize=11.0, pad=12)
+        ax.set_xlim(-VIEW_LIMIT, VIEW_LIMIT)
+        ax.set_ylim(-VIEW_LIMIT, VIEW_LIMIT)
+        ax.set_axis_off()
+        outside_min_gap, outside_overlap_pairs = _outside_label_gap_stats(resolved_outside_candidates)
+        return {
+            "n_outer_text_labels": int(outer_text_labels_drawn),
+            "n_outer_labels_inside": int(len(outer_wedges) - len(resolved_outside_candidates)),
+            "n_outer_labels_outside": int(len(resolved_outside_candidates)),
+            "outside_label_min_gap": float(outside_min_gap) if np.isfinite(outside_min_gap) else np.nan,
+            "outside_label_overlap_pairs": int(outside_overlap_pairs),
+        }
+
+    outdir = Path(cohort_outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    fig, axes = plt.subplots(
+        1,
+        len(bundles),
+        figsize=(max(2.7 * len(bundles), 7.0), 3.8),
+        dpi=300,
+        squeeze=False,
+        subplot_kw={"aspect": "equal"},
+    )
+    axes_arr = axes.ravel()
+    qa_rows: list[dict[str, Any]] = []
+    for ax, bundle in zip(axes_arr, bundles):
+        qa = _plot_fish(ax, bundle)
+        qa_rows.append({"fish_id": bundle["fish_id"], "n_total_responsive": int(bundle["n_total_responsive"]), **qa})
+
+    counts_df = pd.concat([bundle["counts_long"] for bundle in bundles], ignore_index=True)
+    counts_csv = outdir / "cohort_50l_responsive_identity_donut_counts_by_fish.csv"
+    counts_df.to_csv(counts_csv, index=False)
+    counts_wide_df = (
+        counts_df[counts_df["ring"] == "outer"]
+        .assign(bucket_key=lambda d: d["bpi_category"].astype(str) + "__" + d["identity_bucket"].fillna(ID_UNIDENTIFIED).astype(str))
+        .pivot_table(
+            index=["owner", "fish_id"],
+            columns="bucket_key",
+            values="count",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    counts_wide_csv = outdir / "cohort_50l_responsive_identity_donut_counts_by_fish_wide.csv"
+    counts_wide_df.to_csv(counts_wide_csv, index=False)
+
+    from matplotlib.patches import Patch
+
+    legend_labels = [label for label in identity_order if label in set(counts_df["identity_bucket"].dropna().astype(str).tolist()) or label == ID_UNIDENTIFIED]
+    legend_handles = [Patch(facecolor=identity_colors[label], edgecolor="none", label=label) for label in legend_labels]
+    legend = fig.legend(
+        handles=legend_handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=min(max(1, len(legend_handles)), 7),
+        frameon=False,
+        fontsize=LEGEND_FONTSIZE,
+        title="Outer ring: HCR-derived exact identity (within responsive ROIs)",
+        title_fontsize=LEGEND_FONTSIZE,
+    )
+    legend._legend_box.align = "left"
+    fig.suptitle(
+        "Stimulus-responsive tuning classes split into exact HCR-derived identities by fish",
+        y=0.98,
+        fontsize=12.0,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=[0.01, 0.15, 0.99, 0.93])
+
+    fig_path = outdir / "cohort_50l_responsive_identity_donut_row_by_fish.png"
+    fig_pdf = outdir / "cohort_50l_responsive_identity_donut_row_by_fish.pdf"
+    fig.savefig(fig_path, dpi=300, bbox_inches="tight")
+    fig.savefig(fig_pdf, bbox_inches="tight")
+
+    qa_df = pd.DataFrame(qa_rows)
+    for bundle in bundles:
+        inner_sum = int(bundle["inner_counts_full"]["count"].sum())
+        outer_sum = int(bundle["outer_counts_plot"]["count"].sum())
+        n_total = int(bundle["n_total_responsive"])
+        if inner_sum != n_total:
+            raise RuntimeError(
+                f"[cohort-50l-responsive-identity-donut] {bundle['fish_id']}: inner counts {inner_sum} != responsive n {n_total}"
+            )
+        if outer_sum != n_total:
+            raise RuntimeError(
+                f"[cohort-50l-responsive-identity-donut] {bundle['fish_id']}: outer counts {outer_sum} != responsive n {n_total}"
+            )
+        inner_map = bundle["inner_counts_full"].set_index("bpi_category")["count"].to_dict()
+        outer_map = bundle["outer_counts_plot"].groupby("bpi_category")["count"].sum().to_dict()
+        for bpi in BPI_ORDER:
+            if int(inner_map.get(bpi, 0)) != int(outer_map.get(bpi, 0)):
+                raise RuntimeError(
+                    f"[cohort-50l-responsive-identity-donut] {bundle['fish_id']}: outer totals for {bpi} "
+                    f"({int(outer_map.get(bpi, 0))}) != inner count ({int(inner_map.get(bpi, 0))})"
+                )
+    if int(qa_df["n_outer_text_labels"].sum()) <= 0:
+        raise RuntimeError("[cohort-50l-responsive-identity-donut] Outer-ring text labels were not drawn.")
+    if int(qa_df["outside_label_overlap_pairs"].sum()) > 0:
+        raise RuntimeError("[cohort-50l-responsive-identity-donut] Outside-label layout still contains vertical overlaps.")
+    if not fig_path.exists():
+        raise RuntimeError(f"[cohort-50l-responsive-identity-donut] Figure was not written: {fig_path}")
+    if not counts_csv.exists():
+        raise RuntimeError(f"[cohort-50l-responsive-identity-donut] Counts CSV was not written: {counts_csv}")
+
+    return {
+        "fig": fig,
+        "out_path": fig_path,
+        "pdf_path": fig_pdf,
+        "counts_csv": counts_csv,
+        "counts_wide_csv": counts_wide_csv,
+        "counts_df": counts_df,
+        "counts_wide_df": counts_wide_df,
+        "fish_order": [bundle["fish_id"] for bundle in bundles],
+        "identity_order": identity_order,
+        "qa_df": qa_df,
+    }
+
+
 __all__ = [
     "STIM_PALETTE",
     "compute_laterality",
@@ -1455,4 +2023,5 @@ __all__ = [
     "render_cohort_motion_auc",
     "render_cohort_56h_status_donut_grid",
     "render_cohort_50l_donut_row",
+    "render_cohort_50l_responsive_identity_donut_row",
 ]
