@@ -12,7 +12,7 @@ from typing import Any
 
 _TAG_RE = re.compile(r"^\s*#\s*\[([^\]]+)\]")
 _PROFILE_FIGURE_TAGS = {
-    "single-fish": {"50e", "50f", "50g", "50l", "56", "56f-qc", "56f-qc-activity", "56h", "56g", "57"},
+    "single-fish": {"50e", "50f", "50g", "50l", "56", "56f-qc", "56f-qc-activity", "56h", "56g", "57a-responsive-identity-donut", "57"},
     "cohort": {
         "53a-cohort",
         "56h-cohort",

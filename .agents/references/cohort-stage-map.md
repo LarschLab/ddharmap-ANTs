@@ -51,4 +51,6 @@
 - `[cohort-56h-donut-grid]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56h_status_donut_grid`.
 - `[cohort-50l-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_donut_row`.
 - `[cohort-50l-responsive-identity-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_responsive_identity_donut_row`.
+- `[cohort-50l-responsive-identity-donut-row]` renderer now lays out fish in a 2-row stagger (`top, bottom, top, bottom`) across columns, leaving unused grid slots blank to reduce outer-label collisions without changing counts/output contracts.
+- `[cohort-50l-responsive-identity-donut-row]` notebook cell exposes manual sizing knobs (`COHORT_50L_RESPONSIVE_IDENTITY_DONUT_SCALE`, `COHORT_50L_RESPONSIVE_IDENTITY_VIEW_SCALE`) passed to renderer (`donut_scale`, `view_limit_scale`); ring widths/radii scale proportionally from `donut_scale`.
 - Late cells are thin wrappers: explicit knobs, one context/cache load (`resolve_cohort_context_stage` / `load_cohort_analysis_state`), one renderer call, optional save/display.

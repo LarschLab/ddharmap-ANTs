@@ -65,6 +65,7 @@ from codeants_2pf_hcr import (
     render_cohort_53a_summary,
     render_cohort_50l_donut_row,
     render_cohort_50l_responsive_identity_donut_row,
+    render_single_fish_50l_responsive_identity_donut,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
     render_cohort_56h_status_donut_grid,
@@ -170,6 +171,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_cohort_53a_summary)
     assert callable(render_cohort_50l_donut_row)
     assert callable(render_cohort_50l_responsive_identity_donut_row)
+    assert callable(render_single_fish_50l_responsive_identity_donut)
     assert callable(render_cohort_56g_diagnostics)
     assert callable(render_cohort_56h_by_fish)
     assert callable(render_cohort_56h_status_donut_grid)

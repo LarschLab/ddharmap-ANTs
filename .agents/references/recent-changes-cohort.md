@@ -171,6 +171,28 @@
 - Rerun implications:
   - minimum rerun: `[cohort-auc]`.
 
+### 2026-04-14 - cohort responsive-identity donuts use staggered two-row layout
+
+- Slice goal:
+  - reduce label collisions in `[cohort-50l-responsive-identity-donut-row]` by adding vertical separation while preserving stage semantics and exported contracts.
+- Passes completed in this session:
+  - confirmed ownership and routing to package renderer `render_cohort_50l_responsive_identity_donut_row`.
+  - replaced single-row subplot arrangement with staggered two-row placement (`top, bottom, top, bottom`) and explicit blank unused slots.
+  - updated focused renderer test expectations for new figure geometry.
+  - documented stage-level renderer behavior update in `cohort-stage-map.md`.
+- What changed:
+  - `src/codeants_2pf_hcr/plots/analysis.py` now creates a `2 x N` grid and places fish `i` at `(row=i%2, col=i)`, which yields `top, bottom, top, bottom` ordering across columns; non-used cells are hidden.
+  - spacing constants were updated for the two-row geometry (`FIGURE_HEIGHT`, `LAYOUT_BOTTOM/TOP`, `LAYOUT_HSPACE`) while preserving axis limits and output filenames.
+  - `tests/test_plots_analysis.py` now asserts the taller figure and expected axis count for the one-fish case.
+- What remains broken:
+  - repository baseline still has unrelated failures outside this slice in other test modules (pre-existing).
+- Remaining in-slice work:
+  - visual notebook export check to tune spacing constants only if residual collisions remain on real cohort data.
+- Next likely breakpoint:
+  - rerun `[cohort-50l-responsive-identity-donut-row]` in `notebooks/multi_fish_56h_56g.ipynb` and inspect inter-panel label clearance.
+- Rerun implications:
+  - minimum rerun: cohort responsive-identity donut stage only.
+
 ### 2026-04-12 - cohort AUC median label contrast tuning
 
 - Slice goal:
@@ -188,3 +210,32 @@
   - rerun `[cohort-auc]` in `notebooks/multi_fish_56h_56g.ipynb` and inspect label contrast in continuous-mode medians.
 - Rerun implications:
   - minimum rerun: `[cohort-auc]`.
+
+### 2026-04-14 - responsive-identity donut manual size knobs with proportional ring scaling
+
+- Slice goal:
+  - allow manual donut enlargement in `[cohort-50l-responsive-identity-donut-row]` without changing inner/outer ring proportion.
+- Passes completed in this session:
+  - extended renderer API with explicit sizing parameters.
+  - wired notebook stage knobs and mirrored template updates.
+  - added focused tests for geometry metadata and proportional ring-width invariant.
+- What changed:
+  - `src/codeants_2pf_hcr/plots/analysis.py` `render_cohort_50l_responsive_identity_donut_row` now accepts `donut_scale` and `view_limit_scale`.
+  - donut geometry now derives from base constants scaled by `donut_scale`; `OUTER_RING_WIDTH` remains `0.375 * INNER_RING_WIDTH` under all scales.
+  - renderer returns `geometry` metadata (`outer_radius`, ring widths, `view_limit`, scales) to support assertions/introspection.
+  - `notebooks/multi_fish_56h_56g.ipynb` stage `[cohort-50l-responsive-identity-donut-row]` now defines:
+    - `COHORT_50L_RESPONSIVE_IDENTITY_DONUT_SCALE`
+    - `COHORT_50L_RESPONSIVE_IDENTITY_VIEW_SCALE`
+    and passes them into the renderer call.
+  - `tools/refactor_notebook_cohort_phase2.py` stage template is updated to preserve these notebook knobs.
+  - `tests/test_plots_analysis.py` now verifies:
+    - default proportional ratio invariant (`outer_ring_width / inner_ring_width == 0.375`)
+    - custom scale pass-through and expected axis view-limit behavior.
+- What remains broken:
+  - repository baseline still has unrelated pre-existing failures outside this slice in other modules.
+- Remaining in-slice work:
+  - tune default knob values on real cohort output if desired visual density differs from current defaults.
+- Next likely breakpoint:
+  - rerun `[cohort-50l-responsive-identity-donut-row]` and adjust the two notebook constants interactively for preferred panel fill.
+- Rerun implications:
+  - minimum rerun: responsive-identity donut stage only.

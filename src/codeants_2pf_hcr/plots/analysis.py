@@ -289,6 +289,19 @@ def render_cohort_56g_diagnostics(
     cohort_fish_summary_df: pd.DataFrame | None,
     out_path: str | Path | None = None,
 ) -> dict[str, Any]:
+    def _resolve_reference_threshold(
+        frame: pd.DataFrame,
+        column: str,
+        fallback: float,
+    ) -> float:
+        if column not in frame.columns:
+            return float(fallback)
+        vals = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            return float(fallback)
+        return float(np.nanmedian(vals))
+
     if not isinstance(df, pd.DataFrame) or df.empty:
         raise RuntimeError("cohort_bpi_cells_df missing; run [cohort-build] first.")
     work = df.copy()
@@ -308,8 +321,9 @@ def render_cohort_56g_diagnostics(
     work = work[np.isfinite(work["activity_mag"]) & np.isfinite(work[bpi_col]) & np.isfinite(work[bout_col]) & np.isfinite(work[cont_col])].copy()
     if work.empty:
         raise RuntimeError("No finite rows left for [56g-cohort].")
-    thr = float(np.nanquantile(work["activity_mag"].to_numpy(dtype=float), 0.20))
-    work["is_bpi_near_zero"] = work[bpi_col].abs() <= 0.10
+    thr = _resolve_reference_threshold(work, "bpi_activity_threshold", float(np.nanquantile(work["activity_mag"].to_numpy(dtype=float), 0.20)))
+    zero_band = _resolve_reference_threshold(work, "bpi_zero_band", 0.10)
+    work["is_bpi_near_zero"] = work[bpi_col].abs() <= float(zero_band)
     work["is_nonresponsive"] = work["activity_mag"] <= thr
     work["interpretation"] = np.where(
         work["is_bpi_near_zero"] & work["is_nonresponsive"],
@@ -340,8 +354,8 @@ def render_cohort_56g_diagnostics(
     if handles:
         ax_plane.legend(handles, labels, fontsize=7, ncol=2, loc="lower right")
     ax_quad.axhline(0.0, color="black", linestyle="--", linewidth=1.0)
-    ax_quad.axhline(0.10, color="#444444", linestyle=":", linewidth=1.0)
-    ax_quad.axhline(-0.10, color="#444444", linestyle=":", linewidth=1.0)
+    ax_quad.axhline(float(zero_band), color="#444444", linestyle=":", linewidth=1.0)
+    ax_quad.axhline(-float(zero_band), color="#444444", linestyle=":", linewidth=1.0)
     ax_quad.axvline(thr, color="#2b2b2b", linestyle="-.", linewidth=1.0)
     ax_quad.set_xlabel(f"Activity magnitude ({activity_label})")
     ax_quad.set_ylabel(f"BPI ({bpi_col})")
@@ -384,7 +398,14 @@ def render_cohort_56g_diagnostics(
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=200, bbox_inches="tight")
-    return {"fig": fig, "out_path": save_path, "cohort_bpi_activity_df": work, "cohort_bpi_activity_bins_df": binned_df}
+    return {
+        "fig": fig,
+        "out_path": save_path,
+        "cohort_bpi_activity_df": work,
+        "cohort_bpi_activity_bins_df": binned_df,
+        "bpi_zero_band": float(zero_band),
+        "bpi_activity_threshold": float(thr),
+    }
 
 
 def render_cohort_motion_auc(
@@ -1454,15 +1475,18 @@ def render_cohort_50l_responsive_identity_donut_row(
     cohort_outdir: str | Path,
     gene_order: list[str] | None = None,
     gene_colors: dict[str, str] | None = None,
+    donut_scale: float = 1.0,
+    view_limit_scale: float = 1.0,
+    panel_vertical_offsets: list[float] | tuple[float, ...] | None = None,
 ) -> dict[str, Any]:
     import matplotlib.colors as mcolors
 
     BPI_ORDER = ["bout-responsive", "continuous-responsive", "both-responsive", "weak-response"]
     BPI_SHORT = {
-        "bout-responsive": "Bout-responsive",
-        "continuous-responsive": "Cont.-responsive",
-        "both-responsive": "Both-responsive",
-        "weak-response": "Weak-response",
+        "bout-responsive": "Bout",
+        "continuous-responsive": "Cont.",
+        "both-responsive": "Both",
+        "weak-response": "Weak",
     }
     BPI_COLORS = {
         "bout-responsive": "#2c7fb8",
@@ -1482,25 +1506,57 @@ def render_cohort_50l_responsive_identity_donut_row(
     }
     ID_UNIDENTIFIED = "unidentified"
 
-    OUTER_RADIUS = 1.08
-    INNER_RING_WIDTH = 0.35
+    BASE_OUTER_RADIUS = 1.08
+    BASE_INNER_RING_WIDTH = 0.35
+    BASE_RING_GAP = 0.02
+    BASE_VIEW_LIMIT = 1.20
+    BASE_OUTER_LABEL_RADIUS_PAD = 0.08
+    BASE_OUTER_LABEL_GUTTER_PAD = 0.09
+    BASE_OUTER_LABEL_Y_MARGIN = 0.10
+    BASE_OUTER_LABEL_MIN_GAP = 0.11
+    BASE_OUTER_LABEL_TEXT_SHIFT = 0.1
+    BASE_OUTER_LABEL_ELBOW_PAD = 0.04
+    BASE_OUTER_LABEL_TEXT_PAD = -0.1
+    donut_scale = float(donut_scale)
+    view_limit_scale = float(view_limit_scale)
+    if donut_scale <= 0.0:
+        raise RuntimeError("[cohort-50l-responsive-identity-donut] donut_scale must be > 0.")
+    if view_limit_scale <= 0.0:
+        raise RuntimeError("[cohort-50l-responsive-identity-donut] view_limit_scale must be > 0.")
+
+    OUTER_RADIUS = BASE_OUTER_RADIUS * donut_scale
+    INNER_RING_WIDTH = BASE_INNER_RING_WIDTH * donut_scale
     OUTER_RING_WIDTH = INNER_RING_WIDTH * 0.375
-    RING_GAP = 0.02
-    VIEW_LIMIT = 1.20
+    RING_GAP = BASE_RING_GAP * donut_scale
+    VIEW_LIMIT = BASE_VIEW_LIMIT * view_limit_scale
+    if OUTER_RADIUS >= VIEW_LIMIT:
+        raise RuntimeError(
+            "[cohort-50l-responsive-identity-donut] donut_scale is too large for current view_limit_scale; "
+            "increase view_limit_scale or reduce donut_scale."
+        )
     OUTER_COUNT_INSIDE_MIN = 150
-    OUTER_LABEL_RADIUS = OUTER_RADIUS + 0.08
-    OUTER_LABEL_GUTTER_X = VIEW_LIMIT - 0.09
-    OUTER_LABEL_Y_MARGIN = 0.10
-    OUTER_LABEL_MIN_GAP = 0.11
-    OUTER_LABEL_TEXT_SHIFT = 0.1
-    OUTER_LABEL_ELBOW_PAD = 0.04
-    OUTER_LABEL_TEXT_PAD = -0.1
+    OUTER_LABEL_RADIUS = OUTER_RADIUS + (BASE_OUTER_LABEL_RADIUS_PAD * donut_scale)
+    OUTER_LABEL_GUTTER_X = VIEW_LIMIT - (BASE_OUTER_LABEL_GUTTER_PAD * view_limit_scale)
+    OUTER_LABEL_Y_MARGIN = BASE_OUTER_LABEL_Y_MARGIN * view_limit_scale
+    OUTER_LABEL_MIN_GAP = BASE_OUTER_LABEL_MIN_GAP * view_limit_scale
+    OUTER_LABEL_TEXT_SHIFT = BASE_OUTER_LABEL_TEXT_SHIFT * view_limit_scale
+    OUTER_LABEL_ELBOW_PAD = BASE_OUTER_LABEL_ELBOW_PAD * donut_scale
+    OUTER_LABEL_TEXT_PAD = BASE_OUTER_LABEL_TEXT_PAD * view_limit_scale
     OUTER_FORCE_OUTSIDE_WEDGE_DEG = 12.0
     OUTER_LEADER_LINEWIDTH = 0.8
     INNER_LABEL_MIN_PCT = 6.0
     INNER_LABEL_FONTSIZE = 8.0
     CENTER_FONTSIZE = 10.0
     LEGEND_FONTSIZE = 8.0
+    FIGURE_WIDTH_PER_FISH = 3.2
+    FIGURE_MIN_WIDTH = 9.0
+    FIGURE_HEIGHT = 6.2
+    LAYOUT_LEFT = 0.03
+    LAYOUT_RIGHT = 0.97
+    LAYOUT_BOTTOM = 0.18
+    LAYOUT_TOP = 0.88
+    LAYOUT_WSPACE = 0.30
+    DEFAULT_ODD_PANEL_Y_OFFSET = 0.08
 
     gene_order_local = list(gene_order or DEFAULT_GENE_ORDER)
     gene_colors_local = dict(DEFAULT_GENE_COLORS)
@@ -1601,6 +1657,16 @@ def render_cohort_50l_responsive_identity_donut_row(
             return (0, (gene_rank.get(g, 10**6), g))
         ranked = tuple((gene_rank.get(g, 10**6), g) for g in parts)
         return (1, ranked)
+
+    def _normalized_panel_offsets(n_panels: int) -> list[float]:
+        if panel_vertical_offsets is None:
+            return [DEFAULT_ODD_PANEL_Y_OFFSET if (idx % 2 == 1) else 0.0 for idx in range(n_panels)]
+        offsets = [float(v) for v in panel_vertical_offsets]
+        if len(offsets) != n_panels:
+            raise RuntimeError(
+                "[cohort-50l-responsive-identity-donut] panel_vertical_offsets length must match number of fish panels."
+            )
+        return offsets
 
     def _load_master(master_csv: Path, fish_id: str) -> pd.DataFrame:
         master_df = pd.read_csv(master_csv)
@@ -1817,15 +1883,17 @@ def render_cohort_50l_responsive_identity_donut_row(
                         "y_edge": float(y_edge),
                         "target_y": float(y_target),
                         "side": ("right" if x_target >= 0 else "left"),
+                        "identity_bucket": str(outer_df.iloc[int(outer_text_labels_drawn)]["identity_bucket"]),
                         "value": int(val_i),
                     }
                 )
             else:
                 theta, x, y = _wedge_midpoint(wedge, outer_mid_radius)
+                identity_bucket = str(outer_df.iloc[int(outer_text_labels_drawn)]["identity_bucket"])
                 ax.text(
                     x,
                     y,
-                    f"{val_i}",
+                    f"{identity_bucket} (n = {val_i})",
                     ha="center",
                     va="center",
                     rotation=_tangent_rotation(theta),
@@ -1860,7 +1928,7 @@ def render_cohort_50l_responsive_identity_donut_row(
             ax.text(
                 x_text,
                 y_text,
-                f"{int(item['value'])}",
+                f"{str(item['identity_bucket'])} (n = {int(item['value'])})",
                 ha=("left" if side_sign > 0 else "right"),
                 va="center",
                 fontsize=INNER_LABEL_FONTSIZE,
@@ -1909,17 +1977,20 @@ def render_cohort_50l_responsive_identity_donut_row(
 
     outdir = Path(cohort_outdir)
     outdir.mkdir(parents=True, exist_ok=True)
+    n_cols = len(bundles)
     fig, axes = plt.subplots(
         1,
-        len(bundles),
-        figsize=(max(2.7 * len(bundles), 7.0), 3.8),
+        n_cols,
+        figsize=(max(FIGURE_WIDTH_PER_FISH * len(bundles), FIGURE_MIN_WIDTH), FIGURE_HEIGHT),
         dpi=300,
         squeeze=False,
         subplot_kw={"aspect": "equal"},
     )
-    axes_arr = axes.ravel()
+    panel_offsets = _normalized_panel_offsets(n_cols)
     qa_rows: list[dict[str, Any]] = []
-    for ax, bundle in zip(axes_arr, bundles):
+    for idx, bundle in enumerate(bundles):
+        col = idx
+        ax = axes[0, col]
         qa = _plot_fish(ax, bundle)
         qa_rows.append({"fish_id": bundle["fish_id"], "n_total_responsive": int(bundle["n_total_responsive"]), **qa})
 
@@ -1962,12 +2033,26 @@ def render_cohort_50l_responsive_identity_donut_row(
         fontsize=12.0,
         fontweight="bold",
     )
-    fig.tight_layout(rect=[0.01, 0.15, 0.99, 0.93])
+    # Keep donut axes size stable regardless of long outside labels.
+    fig.subplots_adjust(
+        left=LAYOUT_LEFT,
+        right=LAYOUT_RIGHT,
+        bottom=LAYOUT_BOTTOM,
+        top=LAYOUT_TOP,
+        wspace=LAYOUT_WSPACE,
+    )
+    for idx, y_offset in enumerate(panel_offsets):
+        y_offset = float(y_offset)
+        if y_offset == 0.0:
+            continue
+        ax = axes[0, idx]
+        box = ax.get_position()
+        ax.set_position([box.x0, box.y0 - y_offset, box.width, box.height])
 
     fig_path = outdir / "cohort_50l_responsive_identity_donut_row_by_fish.png"
     fig_pdf = outdir / "cohort_50l_responsive_identity_donut_row_by_fish.pdf"
-    fig.savefig(fig_path, dpi=300, bbox_inches="tight")
-    fig.savefig(fig_pdf, bbox_inches="tight")
+    fig.savefig(fig_path, dpi=300)
+    fig.savefig(fig_pdf)
 
     qa_df = pd.DataFrame(qa_rows)
     for bundle in bundles:
@@ -2010,6 +2095,116 @@ def render_cohort_50l_responsive_identity_donut_row(
         "fish_order": [bundle["fish_id"] for bundle in bundles],
         "identity_order": identity_order,
         "qa_df": qa_df,
+        "geometry": {
+            "donut_scale": float(donut_scale),
+            "view_limit_scale": float(view_limit_scale),
+            "outer_radius": float(OUTER_RADIUS),
+            "inner_ring_width": float(INNER_RING_WIDTH),
+            "outer_ring_width": float(OUTER_RING_WIDTH),
+            "ring_gap": float(RING_GAP),
+            "view_limit": float(VIEW_LIMIT),
+            "panel_vertical_offsets": [float(v) for v in panel_offsets],
+        },
+    }
+
+
+def _infer_single_fish_local_spec(*, fish_id: str, out_reg: Path) -> tuple[Path, str]:
+    fish_id_s = str(fish_id)
+    out_reg_resolved = out_reg.resolve()
+    fish_dir = out_reg.parents[2]
+    if str(fish_dir.name) != fish_id_s:
+        raise RuntimeError(
+            f"[single-fish-50l-responsive-identity-donut] fish_id={fish_id_s!r} does not match registration path fish dir {fish_dir.name!r}."
+        )
+
+    candidate_roots: list[Path] = []
+    current = fish_dir.parent
+    for _ in range(4):
+        candidate_roots.append(current)
+        if current.parent == current:
+            break
+        current = current.parent
+    candidate_owners = [str(fish_dir.parent.name), str(fish_dir.parent.parent.name), ""]
+
+    for root in candidate_roots:
+        for owner in candidate_owners:
+            paths = _fish_paths_for_cohort(root, owner, fish_id_s, "local")
+            if paths["out_reg"].resolve() == out_reg_resolved:
+                return root, owner
+
+    raise RuntimeError(
+        "[single-fish-50l-responsive-identity-donut] Could not infer local data_root/owner from registration path."
+    )
+
+
+def render_single_fish_50l_responsive_identity_donut(
+    *,
+    fish_id: str,
+    master_csv: str | Path,
+    conf_func_csv: str | Path,
+    outdir: str | Path,
+    gene_order: list[str] | None = None,
+    gene_colors: dict[str, str] | None = None,
+    donut_scale: float = 1.0,
+    view_limit_scale: float = 1.0,
+) -> dict[str, Any]:
+    import tempfile
+
+    fish_id_s = str(fish_id)
+    master_csv_p = Path(master_csv)
+    conf_func_csv_p = Path(conf_func_csv)
+    if not master_csv_p.exists():
+        raise RuntimeError(f"[single-fish-50l-responsive-identity-donut] Missing master ROI table: {master_csv_p}")
+    if not conf_func_csv_p.exists():
+        raise RuntimeError(f"[single-fish-50l-responsive-identity-donut] Missing mapping table: {conf_func_csv_p}")
+    if master_csv_p.parent.resolve() != conf_func_csv_p.parent.resolve():
+        raise RuntimeError(
+            "[single-fish-50l-responsive-identity-donut] master_csv and conf_func_csv must be in the same registration directory."
+        )
+
+    out_reg = master_csv_p.parent
+    inferred_root, inferred_owner = _infer_single_fish_local_spec(fish_id=fish_id_s, out_reg=out_reg)
+    with tempfile.TemporaryDirectory(prefix="single-fish-responsive-identity-donut-") as tmpdir:
+        delegated = render_cohort_50l_responsive_identity_donut_row(
+            fish_specs=[{"owner": inferred_owner, "fish_id": fish_id_s}],
+            data_root=inferred_root,
+            data_mode="local",
+            cohort_outdir=Path(tmpdir),
+            gene_order=gene_order,
+            gene_colors=gene_colors,
+            donut_scale=donut_scale,
+            view_limit_scale=view_limit_scale,
+            panel_vertical_offsets=[0.0],
+        )
+
+    outdir_p = Path(outdir)
+    outdir_p.mkdir(parents=True, exist_ok=True)
+    out_path = outdir_p / "single_fish_50l_responsive_identity_donut.png"
+    pdf_path = outdir_p / "single_fish_50l_responsive_identity_donut.pdf"
+    counts_csv = outdir_p / "single_fish_50l_responsive_identity_donut_counts.csv"
+    counts_wide_csv = outdir_p / "single_fish_50l_responsive_identity_donut_counts_wide.csv"
+
+    fig = delegated["fig"]
+    fig.savefig(out_path, dpi=300)
+    fig.savefig(pdf_path)
+
+    counts_df = delegated["counts_df"].copy()
+    counts_wide_df = delegated["counts_wide_df"].copy()
+    counts_df.to_csv(counts_csv, index=False)
+    counts_wide_df.to_csv(counts_wide_csv, index=False)
+
+    return {
+        "fig": fig,
+        "out_path": out_path,
+        "pdf_path": pdf_path,
+        "counts_csv": counts_csv,
+        "counts_wide_csv": counts_wide_csv,
+        "counts_df": counts_df,
+        "counts_wide_df": counts_wide_df,
+        "identity_order": delegated["identity_order"],
+        "qa_df": delegated["qa_df"],
+        "geometry": delegated["geometry"],
+        "fish_id": fish_id_s,
     }
 
 
@@ -2024,4 +2219,5 @@ __all__ = [
     "render_cohort_56h_status_donut_grid",
     "render_cohort_50l_donut_row",
     "render_cohort_50l_responsive_identity_donut_row",
+    "render_single_fish_50l_responsive_identity_donut",
 ]

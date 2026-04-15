@@ -253,6 +253,10 @@ state_bindings = load_cohort_analysis_state(
     verbose=True,
 )["bindings"]
 
+# Manual size controls (keep rings proportional via shared donut scale)
+COHORT_50L_RESPONSIVE_IDENTITY_DONUT_SCALE = 1.0
+COHORT_50L_RESPONSIVE_IDENTITY_VIEW_SCALE = 1.0
+
 render_responsive_identity_donut = render_cohort_50l_responsive_identity_donut_row(
     fish_specs=state_bindings["FISH_SPECS"],
     data_root=state_bindings["DATA_ROOT"],
@@ -260,6 +264,8 @@ render_responsive_identity_donut = render_cohort_50l_responsive_identity_donut_r
     cohort_outdir=state_bindings["COHORT_OUTDIR"],
     gene_order=state_bindings.get("GENE_ORDER", GENE_ORDER),
     gene_colors=state_bindings.get("GENE_COLORS", GENE_COLORS),
+    donut_scale=COHORT_50L_RESPONSIVE_IDENTITY_DONUT_SCALE,
+    view_limit_scale=COHORT_50L_RESPONSIVE_IDENTITY_VIEW_SCALE,
 )
 COHORT_50L_RESPONSIVE_IDENTITY_DONUT_ROW_LAST = render_responsive_identity_donut["fig"]
 COHORT_50L_RESPONSIVE_IDENTITY_DONUT_COUNTS_DF = render_responsive_identity_donut["counts_df"]

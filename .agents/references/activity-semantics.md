@@ -51,6 +51,14 @@ Primary fields:
 - `activity_mag`
 - `bpi_data_available`
 - `bpi_category`
+- `bpi_zero_band`
+- `bpi_activity_threshold`
+
+## Threshold ownership
+
+- `[50ia]` owns the exported BPI/activity thresholds used to interpret downstream plots.
+- Downstream figures should reuse `bpi_zero_band` for near-zero BPI guide lines and `bpi_activity_threshold` for low-activity guide lines when those columns are present.
+- Do not hard-code duplicate threshold constants in downstream cohort or figure stages when the authoritative `[50ia]` columns are available.
 
 ## Color scheme (synchronized)
 

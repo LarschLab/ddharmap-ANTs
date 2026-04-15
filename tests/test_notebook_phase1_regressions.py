@@ -146,6 +146,15 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("globals().get('hcr_match_summary_table', None)", cell_56h)
         self.assertIn("effective_motion_window", cell_57)
 
+    def test_cell_57a_responsive_identity_donut_uses_package_renderer_only(self) -> None:
+        cell = _code_cell_by_tag("57a-responsive-identity-donut")
+        self.assertIn(
+            "from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_responsive_identity_donut",
+            cell,
+        )
+        self.assertIn("render_single_fish_50l_responsive_identity_donut(", cell)
+        self.assertNotIn("def ", cell)
+
     def test_phase2_generator_tracks_extraction(self) -> None:
         source = PHASE2_GENERATOR_PATH.read_text()
         self.assertIn("DF_STIM_FISH_ID = FISH_ID", source)

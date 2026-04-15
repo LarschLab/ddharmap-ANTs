@@ -25,11 +25,12 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 
 ## Stage-specific hybrid exception
 
-- `[cohort-50l-responsive-identity-donut-row]` is explicitly hybrid-scoped:
+- `[57a-responsive-identity-donut]` is explicitly hybrid-scoped:
   - denominator is ROI-centric and responsive-only from `functional_roi_activity_identity.csv` (`response_is_active == True` and responsive `bpi_category` classes)
   - identity assignment for the identified fraction comes from selected `conf_to_func_pairs.csv` rows collapsed to exact per-ROI gene combinations
   - responsive ROIs without a selected HCR join are `unidentified`
   - selected HCR rows that do not join back to responsive ROIs are excluded from this figure
+- `[cohort-50l-responsive-identity-donut-row]` inherits the same hybrid semantics from `[57a-responsive-identity-donut]`.
 
 ## Cohort analogue inheritance rule
 

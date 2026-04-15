@@ -139,3 +139,28 @@
   - rerun `[50l]` in `notebooks/2PF_to_HCR.ipynb` and inspect mode-colored median labels in all-neurons and marker panels.
 - Rerun implications:
   - minimum rerun: `[56i]` (if stale) -> `[50l]`.
+
+### 2026-04-15 - single-fish responsive identity donut stage near [57]
+
+- Slice goal:
+  - add a package-rendered single-fish responsive-identity donut bridge stage immediately before `[57]` with cohort-matched hybrid semantics.
+- Passes completed in this session:
+  - added `render_single_fish_50l_responsive_identity_donut` in `plots.analysis` and delegated to cohort responsive renderer internals to keep semantics identical.
+  - inserted notebook stage `[57a-responsive-identity-donut]` before `[57]` with thin orchestration-only call and scale knobs.
+  - extended notebook contract tags/regressions and renderer/export tests.
+  - updated stage/figure/symbol/current-state references.
+- What changed:
+  - new single-fish outputs are written under fish `04_plots` with stable filenames:
+    - `single_fish_50l_responsive_identity_donut.png`
+    - `single_fish_50l_responsive_identity_donut.pdf`
+    - `single_fish_50l_responsive_identity_donut_counts.csv`
+    - `single_fish_50l_responsive_identity_donut_counts_wide.csv`
+  - semantics remain hybrid-scoped: responsive ROI-centric denominator + selected HCR exact-combo identity mapping + `unidentified` fallback.
+- What remains broken:
+  - unrelated baseline collection/export issue outside this slice may still appear depending on branch state.
+- Remaining in-slice work:
+  - optional: migrate remaining local plotting-heavy single-fish cells to package-owned renderers.
+- Next likely breakpoint:
+  - rerun notebook stage `[57a-responsive-identity-donut]` using current `[50]` and `[50ia]` outputs to visually confirm layout on target fish data.
+- Rerun implications:
+  - minimum rerun: `[50]` + `[50ia]` (if stale) -> `[57a-responsive-identity-donut]` -> `[57]`.
