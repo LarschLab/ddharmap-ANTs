@@ -49,6 +49,7 @@
 - `[56g-cohort]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56g_diagnostics`.
 - `[cohort-auc]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_motion_auc`.
 - `[cohort-56h-donut-grid]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56h_status_donut_grid`.
+- `[cohort-56h-donut-grid]` consumes per-fish `hcr_activity_status.csv` and `[50e]` `hcr_activity_status_summary.csv` so unmatched-mask semantics remain consistent with single-fish outputs.
 - `[cohort-50l-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_donut_row`.
 - `[cohort-50l-responsive-identity-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_responsive_identity_donut_row`.
 - `[cohort-50l-responsive-identity-donut-row]` renderer now lays out fish in a 2-row stagger (`top, bottom, top, bottom`) across columns, leaving unused grid slots blank to reduce outer-label collisions without changing counts/output contracts.

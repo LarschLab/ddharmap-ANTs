@@ -3,6 +3,7 @@
 from .analysis import (
     render_cohort_50l_responsive_identity_donut_row,
     render_single_fish_50l_responsive_identity_donut,
+    render_single_fish_50l_bpi_panel,
     plot_single_roi_57style,
     render_cohort_50l_donut_row,
     render_cohort_56g_diagnostics,
@@ -24,6 +25,7 @@ __all__ = [
     "collect_cohort_53a_tables",
     "place_labels_no_overlap",
     "plot_single_roi_57style",
+    "render_single_fish_50l_bpi_panel",
     "render_cohort_50l_donut_row",
     "render_cohort_50l_responsive_identity_donut_row",
     "render_single_fish_50l_responsive_identity_donut",

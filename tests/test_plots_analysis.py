@@ -2,15 +2,169 @@ import unittest
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from codeants_2pf_hcr.plots.analysis import (
+    render_cohort_56h_status_donut_grid,
     render_cohort_50l_responsive_identity_donut_row,
     render_single_fish_50l_responsive_identity_donut,
+    render_single_fish_50l_bpi_panel,
 )
 
 
 class PlotsAnalysisTests(unittest.TestCase):
+    def test_render_single_fish_50l_bpi_panel_computes_mean_auc(self) -> None:
+        fig, ax = plt.subplots()
+        try:
+            out = render_single_fish_50l_bpi_panel(
+                ax,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, 0.6],
+                        "mean_cont_auc_dff": [0.4, 0.8],
+                        "bpi": [0.3, -0.4],
+                        "bpi_category": ["bout-responsive", "continuous-responsive"],
+                        "response_is_active": [True, True],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            plot_df = out["plot_df"].sort_values("bpi").reset_index(drop=True)
+            np.testing.assert_allclose(plot_df["mean_auc_dff"].to_numpy(dtype=float), np.array([0.7, 0.3]))
+            self.assertEqual(out["n_plotted"], 2)
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_bpi_panel_excludes_missing_coordinates(self) -> None:
+        fig, ax = plt.subplots()
+        try:
+            out = render_single_fish_50l_bpi_panel(
+                ax,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, np.nan, 0.6],
+                        "mean_cont_auc_dff": [0.4, 0.5, np.nan],
+                        "bpi": [0.3, 0.1, -0.2],
+                        "bpi_category": ["bout-responsive", "continuous-responsive", "both-responsive"],
+                        "response_is_active": [True, True, True],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            self.assertEqual(out["n_plotted"], 1)
+            plot_df = out["plot_df"].reset_index(drop=True)
+            self.assertAlmostEqual(float(plot_df.loc[0, "mean_auc_dff"]), 0.3, places=6)
+            self.assertAlmostEqual(float(plot_df.loc[0, "bpi"]), 0.3, places=6)
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_bpi_panel_excludes_response_unavailable(self) -> None:
+        fig, ax = plt.subplots()
+        try:
+            out = render_single_fish_50l_bpi_panel(
+                ax,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, 0.3],
+                        "mean_cont_auc_dff": [0.4, 0.5],
+                        "bpi": [0.3, -0.1],
+                        "bpi_category": ["bout-responsive", "response unavailable"],
+                        "response_is_active": [True, False],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            self.assertEqual(out["n_plotted"], 1)
+            self.assertEqual(out["category_counts"], {"bout-responsive": 1})
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_bpi_panel_preserves_colors_and_fill(self) -> None:
+        fig, ax = plt.subplots()
+        try:
+            render_single_fish_50l_bpi_panel(
+                ax,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, 0.4, 0.6],
+                        "mean_cont_auc_dff": [0.4, 0.6, 0.8],
+                        "bpi": [0.3, -0.3, 0.0],
+                        "bpi_category": ["bout-responsive", "continuous-responsive", "weak-response"],
+                        "response_is_active": [True, False, False],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            collections = [c for c in ax.collections if int(c.get_offsets().shape[0]) > 0]
+            self.assertEqual(len(collections), 3)
+            filled = collections[0]
+            hollow_cont = collections[1]
+            hollow_weak = collections[2]
+            np.testing.assert_allclose(
+                filled.get_facecolors()[0, :3],
+                np.array([44, 127, 184], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+            self.assertEqual(int(np.count_nonzero(hollow_cont.get_facecolors()[:, -1] > 0)), 0)
+            np.testing.assert_allclose(
+                hollow_cont.get_edgecolors()[0, :3],
+                np.array([217, 95, 14], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+            self.assertEqual(int(np.count_nonzero(hollow_weak.get_facecolors()[:, -1] > 0)), 0)
+            np.testing.assert_allclose(hollow_weak.get_edgecolors()[0, :3], np.zeros(3, dtype=float), atol=1e-6)
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_bpi_panel_zero_band_prefers_column_then_fallback(self) -> None:
+        fig1, ax1 = plt.subplots()
+        fig2, ax2 = plt.subplots()
+        try:
+            out1 = render_single_fish_50l_bpi_panel(
+                ax1,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2],
+                        "mean_cont_auc_dff": [0.4],
+                        "bpi": [0.3],
+                        "bpi_category": ["bout-responsive"],
+                        "response_is_active": [True],
+                        "bpi_zero_band": [0.2],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            out2 = render_single_fish_50l_bpi_panel(
+                ax2,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2],
+                        "mean_cont_auc_dff": [0.4],
+                        "bpi": [0.3],
+                        "bpi_category": ["bout-responsive"],
+                        "response_is_active": [True],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            self.assertAlmostEqual(out1["zero_band"], 0.2, places=6)
+            self.assertAlmostEqual(out2["zero_band"], 0.1, places=6)
+            yvals1 = sorted({float(line.get_ydata()[0]) for line in ax1.lines})
+            yvals2 = sorted({float(line.get_ydata()[0]) for line in ax2.lines})
+            self.assertEqual(yvals1, [-0.2, 0.0, 0.2])
+            self.assertEqual(yvals2, [-0.1, 0.0, 0.1])
+        finally:
+            plt.close(fig1)
+            plt.close(fig2)
+
     def _write_two_fish_fixture(self, root: Path, fish_ids: list[str], owner: str) -> None:
         for fish_id in fish_ids:
             out_reg = root / owner / fish_id / "03_analysis" / "functional" / "registration"
@@ -347,6 +501,89 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertAlmostEqual(float(geom["donut_scale"]), 1.25, places=6)
             self.assertAlmostEqual(float(geom["view_limit_scale"]), 1.25, places=6)
             self.assertAlmostEqual(float(geom["outer_ring_width"] / geom["inner_ring_width"]), 0.375, places=6)
+
+    def test_render_cohort_56h_status_donut_grid_uses_unmatched_summary(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            owner = "ownerA"
+            fish_id = "A1_f01"
+            out_reg = root / owner / fish_id / "03_analysis" / "functional" / "registration"
+            out_reg.mkdir(parents=True, exist_ok=True)
+
+            pd.DataFrame(
+                {
+                    "fish_id": [fish_id, fish_id, fish_id],
+                    "gene": ["sst1.1", "sst1.1", "sst1.1"],
+                    "functional_status": [
+                        "in-plane responsive ROI",
+                        "in-plane low-activity ROI",
+                        "out-of-plane anatomy label",
+                    ],
+                }
+            ).to_csv(out_reg / "hcr_activity_status.csv", index=False)
+            pd.DataFrame(
+                {
+                    "fish_id": [fish_id, fish_id, fish_id],
+                    "gene": ["sst1.1", "sst1.1", "sst1.1"],
+                    "inner_status": ["within functional planes", "outside functional planes", "unmatched"],
+                    "outer_status": ["in-plane responsive ROI", "out-of-plane anatomy label", "unmatched"],
+                    "n_labels": [2, 1, 2],
+                }
+            ).to_csv(out_reg / "hcr_activity_status_summary.csv", index=False)
+
+            out = render_cohort_56h_status_donut_grid(
+                fish_specs=[{"owner": owner, "fish_id": fish_id}],
+                data_root=root,
+                data_mode="cluster",
+                cohort_outdir=root / "cohort_out",
+                cohort_fish_summary_df=None,
+                gene_order=["sst1.1"],
+            )
+            counts = out["counts_df"].copy()
+            row = counts[(counts["fish_id"] == fish_id) & (counts["gene"] == "sst1.1")].iloc[0]
+            self.assertEqual(int(row["unmatched"]), 2)
+            self.assertEqual(int(row["n_total_hq_masks"]), 5)
+
+            ax = out["fig"].axes[0]
+            inner_total = 0
+            outer_total = 0
+            for txt in ax.texts:
+                label = str(txt.get_text()).strip()
+                if not label.isdigit():
+                    continue
+                r = float(np.hypot(*txt.get_position()))
+                if r > 0.9:
+                    outer_total += int(label)
+                elif r > 0.55:
+                    inner_total += int(label)
+            self.assertEqual(inner_total, int(row["n_total_hq_masks"]))
+            self.assertEqual(outer_total, int(row["n_total_hq_masks"]))
+            self.assertTrue(Path(out["out_path"]).exists())
+
+    def test_render_cohort_56h_status_donut_grid_missing_summary_fails_fast(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            owner = "ownerA"
+            fish_id = "A1_f01"
+            out_reg = root / owner / fish_id / "03_analysis" / "functional" / "registration"
+            out_reg.mkdir(parents=True, exist_ok=True)
+            pd.DataFrame(
+                {
+                    "fish_id": [fish_id],
+                    "gene": ["sst1.1"],
+                    "functional_status": ["in-plane responsive ROI"],
+                }
+            ).to_csv(out_reg / "hcr_activity_status.csv", index=False)
+
+            with self.assertRaisesRegex(RuntimeError, r"Rerun single-fish \[50e\]"):
+                render_cohort_56h_status_donut_grid(
+                    fish_specs=[{"owner": owner, "fish_id": fish_id}],
+                    data_root=root,
+                    data_mode="cluster",
+                    cohort_outdir=root / "cohort_out",
+                    cohort_fish_summary_df=None,
+                    gene_order=["sst1.1"],
+                )
 
 
 if __name__ == "__main__":

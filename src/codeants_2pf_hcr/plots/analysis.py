@@ -9,6 +9,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 
 from .annotations import place_labels_no_overlap
 from ..stimulus import StimulusConfig, build_stim_tables, load_events_df, load_metadata_params, parse_float, parse_unilateral_stim
@@ -26,6 +27,23 @@ STIM_PALETTE = {
     "LLB+RLB": "#94cae3",
 }
 
+SINGLE_FISH_50L_BPI_ORDER = [
+    "bout-responsive",
+    "continuous-responsive",
+    "both-responsive",
+    "weak-response",
+    "low activity",
+]
+
+SINGLE_FISH_50L_BPI_COLORS = {
+    "bout-responsive": "#2c7fb8",
+    "continuous-responsive": "#d95f0e",
+    "both-responsive": "#d946ef",
+    "weak-response": "#000000",
+    "low activity": "#9e9e9e",
+    "response unavailable": "#ececec",
+}
+
 
 def _find_one(directory: Path, pattern: str) -> Path:
     matches = sorted(directory.glob(pattern))
@@ -39,6 +57,27 @@ def _find_suite2p_f(plane_dir: Path) -> Path:
         if candidate.exists():
             return candidate
     raise FileNotFoundError(f"Could not resolve Suite2p F.npy under {plane_dir}")
+
+
+def _resolve_reference_threshold(
+    frame: pd.DataFrame,
+    column: str,
+    fallback: float,
+) -> float:
+    if column not in frame.columns:
+        return float(fallback)
+    vals = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return float(fallback)
+    return float(np.nanmedian(vals))
+
+
+def _to_bool_series(values: pd.Series | Any) -> pd.Series:
+    series = values if isinstance(values, pd.Series) else pd.Series(values)
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(False).astype(bool)
+    return series.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
 
 
 def compute_laterality(roi_side: str | None, stim_side: str | None) -> str | None:
@@ -72,6 +111,118 @@ def compute_trial_auc(trace: np.ndarray, fps: float, df_stim: pd.DataFrame, roi_
             }
         )
     return pd.DataFrame(auc_rows)
+
+
+def render_single_fish_50l_bpi_panel(
+    ax: plt.Axes,
+    bpi_cells_df: pd.DataFrame,
+    *,
+    axis_label: str,
+    title: str,
+    zero_band: float | None = None,
+    jitter_seed: int = 42,
+) -> dict[str, Any]:
+    if not isinstance(bpi_cells_df, pd.DataFrame) or bpi_cells_df.empty:
+        raise RuntimeError("[single-fish-50l-bpi-panel] bpi_cells_df is missing or empty.")
+
+    required_cols = {"bpi", "mean_bout_auc_dff", "mean_cont_auc_dff"}
+    missing = sorted(required_cols - set(bpi_cells_df.columns))
+    if missing:
+        raise RuntimeError(
+            f"[single-fish-50l-bpi-panel] Missing required columns {missing}; rerun [50ia]."
+        )
+
+    work = bpi_cells_df.copy()
+    work["bpi"] = pd.to_numeric(work["bpi"], errors="coerce")
+    work["mean_bout_auc_dff"] = pd.to_numeric(work["mean_bout_auc_dff"], errors="coerce")
+    work["mean_cont_auc_dff"] = pd.to_numeric(work["mean_cont_auc_dff"], errors="coerce")
+    work["mean_auc_dff"] = 0.5 * (work["mean_bout_auc_dff"] + work["mean_cont_auc_dff"])
+    work["response_is_active"] = _to_bool_series(
+        work["response_is_active"] if "response_is_active" in work.columns else pd.Series(False, index=work.index)
+    )
+    if "bpi_category" not in work.columns:
+        work["bpi_category"] = "low activity"
+    work["bpi_category"] = work["bpi_category"].fillna("low activity").astype(str).str.strip().str.lower()
+    work = work[
+        np.isfinite(work["bpi"].to_numpy(dtype=float))
+        & np.isfinite(work["mean_auc_dff"].to_numpy(dtype=float))
+        & work["bpi_category"].ne("response unavailable")
+    ].copy()
+
+    if work.empty:
+        raise RuntimeError("[single-fish-50l-bpi-panel] No plottable rows remain after filtering.")
+
+    _ = int(jitter_seed)
+    band = float(zero_band) if zero_band is not None else _resolve_reference_threshold(work, "bpi_zero_band", 0.10)
+    category_counts = {
+        category: int((work["bpi_category"] == category).sum())
+        for category in SINGLE_FISH_50L_BPI_ORDER
+        if int((work["bpi_category"] == category).sum()) > 0
+    }
+
+    for category in SINGLE_FISH_50L_BPI_ORDER:
+        sub = work[work["bpi_category"] == category].copy()
+        if sub.empty:
+            continue
+        color = SINGLE_FISH_50L_BPI_COLORS.get(category, "#999999")
+        responsive = sub[sub["response_is_active"]].copy()
+        nonresponsive = sub[~sub["response_is_active"]].copy()
+        if not responsive.empty:
+            ax.scatter(
+                responsive["mean_auc_dff"].to_numpy(dtype=float),
+                responsive["bpi"].to_numpy(dtype=float),
+                s=25,
+                facecolors=color,
+                edgecolors="none",
+                alpha=0.5,
+                zorder=3,
+            )
+        if not nonresponsive.empty:
+            ax.scatter(
+                nonresponsive["mean_auc_dff"].to_numpy(dtype=float),
+                nonresponsive["bpi"].to_numpy(dtype=float),
+                s=25,
+                facecolors="none",
+                edgecolors=color,
+                linewidths=0.7,
+                alpha=0.65,
+                zorder=4,
+            )
+
+    ax.axhline(0.0, color="gray", linestyle="-", linewidth=0.5, alpha=0.3, zorder=0)
+    ax.axhline(float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
+    ax.axhline(-float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
+    ax.set_xlabel("Mean bout/cont motion AUC (dF/F·s)")
+    ax.set_ylabel(str(axis_label))
+    ax.set_title(str(title), fontsize=11)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(True)
+    ax.spines["bottom"].set_visible(True)
+
+    legend_elements = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor=SINGLE_FISH_50L_BPI_COLORS.get(category, "#999999"),
+            markeredgecolor="none",
+            markersize=6,
+            label=f"{category.replace('-', ' ').capitalize()} (n={count})",
+        )
+        for category, count in category_counts.items()
+    ]
+    if legend_elements:
+        ax.legend(handles=legend_elements, loc="upper left", fontsize=9, frameon=True)
+
+    return {
+        "n_plotted": int(len(work)),
+        "x_limits": tuple(float(v) for v in ax.get_xlim()),
+        "category_counts": category_counts,
+        "zero_band": float(band),
+        "plot_df": work[["mean_auc_dff", "bpi", "bpi_category", "response_is_active"]].copy(),
+    }
 
 
 def plot_single_roi_57style(
@@ -158,6 +309,39 @@ def _fish_paths_for_cohort(data_root: str | Path, owner: str, fish_id: str, data
         fish_dir = (microscopy if microscopy.exists() else base) / fish_id_s
     out_reg = fish_dir / "03_analysis" / "functional" / "registration"
     return {"fish_dir": fish_dir, "out_reg": out_reg}
+
+
+def _load_hcr_unmatched_counts_from_summary(summary_csv: Path, fish_id: str) -> dict[str, int]:
+    rerun_msg = (
+        f"Missing or invalid HCR unmatched summary for fish {fish_id} at {summary_csv}; "
+        "rerun single-fish [50e] to regenerate hcr_activity_status_summary.csv."
+    )
+    if not summary_csv.exists():
+        raise RuntimeError(rerun_msg)
+    try:
+        summary_df = pd.read_csv(summary_csv)
+    except Exception as exc:
+        raise RuntimeError(rerun_msg) from exc
+    if "fish_id" in summary_df.columns:
+        summary_df = summary_df[summary_df["fish_id"].astype(str) == str(fish_id)].copy()
+    if summary_df.empty:
+        return {}
+    if "gene" not in summary_df.columns or "n_labels" not in summary_df.columns:
+        raise RuntimeError(rerun_msg)
+
+    if "inner_status" not in summary_df.columns and "outer_status" not in summary_df.columns:
+        raise RuntimeError(rerun_msg)
+    inner_series = summary_df.get("inner_status", pd.Series("", index=summary_df.index, dtype=object)).astype(str).str.strip().str.lower()
+    outer_series = summary_df.get("outer_status", pd.Series("", index=summary_df.index, dtype=object)).astype(str).str.strip().str.lower()
+    unmatched_rows = summary_df[inner_series.eq("unmatched") | outer_series.eq("unmatched")].copy()
+    if unmatched_rows.empty:
+        return {}
+    unmatched_rows["gene"] = unmatched_rows["gene"].astype(str)
+    unmatched_rows["n_labels"] = pd.to_numeric(unmatched_rows["n_labels"], errors="coerce").fillna(0).astype(int)
+    unmatched_rows = unmatched_rows[unmatched_rows["n_labels"] > 0].copy()
+    if unmatched_rows.empty:
+        return {}
+    return {str(k): int(v) for k, v in unmatched_rows.groupby("gene", dropna=False)["n_labels"].sum().to_dict().items()}
 
 
 def render_cohort_56h_by_fish(
@@ -289,19 +473,6 @@ def render_cohort_56g_diagnostics(
     cohort_fish_summary_df: pd.DataFrame | None,
     out_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    def _resolve_reference_threshold(
-        frame: pd.DataFrame,
-        column: str,
-        fallback: float,
-    ) -> float:
-        if column not in frame.columns:
-            return float(fallback)
-        vals = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
-        vals = vals[np.isfinite(vals)]
-        if vals.size == 0:
-            return float(fallback)
-        return float(np.nanmedian(vals))
-
     if not isinstance(df, pd.DataFrame) or df.empty:
         raise RuntimeError("cohort_bpi_cells_df missing; run [cohort-build] first.")
     work = df.copy()
@@ -825,14 +996,21 @@ def render_cohort_56h_status_donut_grid(
             continue
         paths = _fish_paths_for_cohort(data_root, owner, fish_id, data_mode)
         status_csv = paths["out_reg"] / "hcr_activity_status.csv"
+        summary_csv = paths["out_reg"] / "hcr_activity_status_summary.csv"
         if status_csv.exists():
-            fish_cols.append((owner, fish_id, status_csv))
+            if not summary_csv.exists():
+                raise RuntimeError(
+                    f"Missing {summary_csv}; fish {fish_id} is included in cohort donut rendering. "
+                    "Rerun single-fish [50e] first."
+                )
+            fish_cols.append((owner, fish_id, status_csv, summary_csv))
     if not fish_cols:
         raise RuntimeError("No fish with hcr_activity_status.csv available for cohort donut grid.")
     rows = []
     counts_by_fish: dict[str, dict[str, dict[str, int]]] = {}
-    for owner, fish_id, status_csv in fish_cols:
+    for owner, fish_id, status_csv, summary_csv in fish_cols:
         sdf = pd.read_csv(status_csv)
+        unmatched_by_gene = _load_hcr_unmatched_counts_from_summary(summary_csv, fish_id)
         if "fish_id" in sdf.columns:
             sdf = sdf[sdf["fish_id"].astype(str) == fish_id].copy()
         sdf["gene"] = sdf.get("gene", pd.Series(dtype=object)).astype(str)
@@ -848,6 +1026,8 @@ def render_cohort_56h_status_donut_grid(
                 "out_of_plane": int((sub["functional_status"] == "out-of-plane anatomy label").sum()),
             }
             counts["n_labels"] = int(sum(counts.values()))
+            counts["unmatched"] = int(max(0, int(unmatched_by_gene.get(str(gene), 0))))
+            counts["n_total_hq_masks"] = int(counts["n_labels"] + counts["unmatched"])
             per_gene[gene] = counts
             rows.append({"owner": owner, "fish_id": fish_id, "gene": gene, **counts})
         counts_by_fish[fish_id] = per_gene
@@ -856,7 +1036,7 @@ def render_cohort_56h_status_donut_grid(
     outdir.mkdir(parents=True, exist_ok=True)
     counts_csv = outdir / "cohort_hcr_donut_counts_by_fish_gene.csv"
     counts_df.to_csv(counts_csv, index=False)
-    fish_ids = [f for _, f, _ in fish_cols]
+    fish_ids = [f for _, f, _, _ in fish_cols]
     fig, axes = plt.subplots(
         len(gene_order_local),
         len(fish_ids),
@@ -864,13 +1044,20 @@ def render_cohort_56h_status_donut_grid(
         squeeze=False,
         subplot_kw={"aspect": "equal"},
     )
-    palette = {"responsive": "#1b9e77", "low": "#6a6a6a", "unavailable": "#fdb462", "no_func": "#d73027", "out_of_plane": "#80b1d3"}
+    palette = {
+        "responsive": "#1b9e77",
+        "low": "#6a6a6a",
+        "unavailable": "#fdb462",
+        "no_func": "#d73027",
+        "out_of_plane": "#80b1d3",
+        "unmatched": "#bdbdbd",
+    }
     inner_palette = {
         INNER_WITHIN: "#4daf4a",
         INNER_OUTSIDE: "#377eb8",
         INNER_UNMATCHED: "#bdbdbd",
     }
-    status_order = ["responsive", "low", "unavailable", "no_func", "out_of_plane"]
+    status_order = ["responsive", "low", "unavailable", "no_func", "out_of_plane", "unmatched"]
     inner_order = [INNER_WITHIN, INNER_OUTSIDE, INNER_UNMATCHED]
 
     def _wedge_midpoint(wedge: Any, radius: float) -> tuple[float, float, float]:
@@ -912,10 +1099,10 @@ def render_cohort_56h_status_donut_grid(
 
             n_within = int(d.get("responsive", 0)) + int(d.get("low", 0)) + int(d.get("unavailable", 0)) + int(d.get("no_func", 0))
             n_outside = int(d.get("out_of_plane", 0))
-            n_total = int(d.get("n_labels", n_within + n_outside))
             n_unmatched = max(0, int(d.get("unmatched", 0)))
-            if n_total > (n_within + n_outside):
-                n_unmatched = max(n_unmatched, n_total - (n_within + n_outside))
+            n_total = int(d.get("n_total_hq_masks", n_within + n_outside + n_unmatched))
+            if n_total < (n_within + n_outside + n_unmatched):
+                n_total = int(n_within + n_outside + n_unmatched)
             inner_counts = {
                 INNER_WITHIN: int(n_within),
                 INNER_OUTSIDE: int(n_outside),
@@ -984,7 +1171,7 @@ def render_cohort_56h_status_donut_grid(
         y = 0.5 * (axes[r, 0].get_position().y0 + axes[r, 0].get_position().y1)
         fig.text(0.015, y, str(gene), ha="left", va="center", fontsize=11)
     from matplotlib.patches import Patch
-    fig.legend(handles=[Patch(facecolor=palette[k], edgecolor="none", label=k.replace("_", " ")) for k in status_order], loc="lower center", bbox_to_anchor=(0.53, 0.01), ncol=5, frameon=False, fontsize=8)
+    fig.legend(handles=[Patch(facecolor=palette[k], edgecolor="none", label=k.replace("_", " ")) for k in status_order], loc="lower center", bbox_to_anchor=(0.53, 0.01), ncol=6, frameon=False, fontsize=8)
     fig.suptitle("Gene-linked anatomy labels are represented differently across fish", y=0.995, fontsize=12, fontweight="bold")
     fig.tight_layout(rect=[0.05, 0.08, 1.0, 0.95])
     out_path = outdir / "cohort_56h_hcr_donut_grid_fish_by_gene.png"
@@ -2213,6 +2400,7 @@ __all__ = [
     "compute_laterality",
     "compute_trial_auc",
     "plot_single_roi_57style",
+    "render_single_fish_50l_bpi_panel",
     "render_cohort_56h_by_fish",
     "render_cohort_56g_diagnostics",
     "render_cohort_motion_auc",
