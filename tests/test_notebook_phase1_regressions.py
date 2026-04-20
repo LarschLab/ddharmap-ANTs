@@ -155,6 +155,18 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("render_single_fish_50l_responsive_identity_donut(", cell)
         self.assertNotIn("def ", cell)
 
+    def test_cell_50l_supports_bottom_only_extra_height(self) -> None:
+        cell = _code_cell_by_tag("50l")
+        self.assertIn(
+            "COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN = float(RUN_CONFIG_LOCAL.get('COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN', 0.0))",
+            cell,
+        )
+        self.assertIn("COMPOSITE_50L_TOTAL_HEIGHT_IN = COMPOSITE_50L_FIG_HEIGHT_IN + COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN", cell)
+        self.assertIn("figsize=(COMPOSITE_50L_FIG_WIDTH_IN, COMPOSITE_50L_TOTAL_HEIGHT_IN)", cell)
+        self.assertIn("if COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN > 0:", cell)
+        self.assertIn("_top_anchor_scale_50l = COMPOSITE_50L_FIG_HEIGHT_IN / COMPOSITE_50L_TOTAL_HEIGHT_IN", cell)
+        self.assertIn("for _ax in [ax for ax in (globals().get('ax_bpi', None), ax_donut) if ax is not None]:", cell)
+
     def test_phase2_generator_tracks_extraction(self) -> None:
         source = PHASE2_GENERATOR_PATH.read_text()
         self.assertIn("DF_STIM_FISH_ID = FISH_ID", source)
