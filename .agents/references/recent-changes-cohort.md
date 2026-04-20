@@ -239,3 +239,23 @@
   - rerun `[cohort-50l-responsive-identity-donut-row]` and adjust the two notebook constants interactively for preferred panel fill.
 - Rerun implications:
   - minimum rerun: responsive-identity donut stage only.
+
+### 2026-04-20 - cohort AUC lane counts now use authoritative denominators
+
+- Slice goal:
+  - stop cohort `[cohort-auc]` lane/sample-size labels from dropping response-unavailable rows out of the denominator.
+- Passes completed in this session:
+  - traced `render_cohort_motion_auc` lane-label counts back to a plotted-points-only subset.
+  - switched lane/sample-size labels to read `n_total` from the cohort count table instead of recomputing counts from plotted rows.
+  - added a focused renderer test where lane labels must exceed the number of plotted points because response-unavailable rows remain in the denominator.
+- What changed:
+  - `src/codeants_2pf_hcr/plots/analysis.py` now derives lane/sample-size labels from `counts_df` grouped by `(group, laterality, fish_id)`, preserving response-unavailable rows in the displayed `n=...` labels.
+  - plotted-point inclusion and the actual AUC panels remain unchanged.
+- What remains broken:
+  - live cohort notebook rerun is still needed to visually confirm updated lane labels on real cached cohort inputs.
+- Remaining in-slice work:
+  - optional follow-up: surface the same denominator source more explicitly in any future cohort cache QA summary.
+- Next likely breakpoint:
+  - rerun `[cohort-auc]` in `notebooks/multi_fish_56h_56g.ipynb` and inspect all-neuron and gene lane labels against the cached count table.
+- Rerun implications:
+  - minimum rerun: `[cohort-auc]` only if cached count CSVs already reflect the updated single-fish denominators; otherwise refresh stale single-fish `[50l]`/embedded `[56i]` caches first.

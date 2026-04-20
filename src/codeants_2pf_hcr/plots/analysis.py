@@ -1089,15 +1089,20 @@ def render_cohort_motion_auc(
         group_color_map[gene] = gene_colors.get(gene, "#666666")
     mode_color_map = {group: {"bout": group_color_map[group], "continuous": _blend_color(group_color_map[group])} for group in (group_order_all + ordered_genes)}
 
-    cohort_points_tmp = pts.copy()
-    cohort_points_tmp["fish_id_norm"] = cohort_points_tmp["fish_id"].astype(str)
-    cohort_points_tmp["group_norm"] = cohort_points_tmp["group"].astype(str)
-    cohort_points_tmp["laterality_norm"] = cohort_points_tmp["laterality"].astype(str).str.strip().str.lower()
-    cohort_points_tmp["is_included_n"] = cohort_points_tmp["response_is_active"].astype(bool) | (
-        cohort_points_tmp["response_class"].astype(str).str.strip().str.lower() == RESPONSE_LOW_NORM
+    cnt["fish_id_norm"] = cnt["fish_id"].astype(str)
+    cnt["group_norm"] = cnt["group"].astype(str)
+    cnt["laterality_norm"] = cnt["laterality"].astype(str).str.strip().str.lower()
+    cnt["n_total"] = pd.to_numeric(cnt["n_total"], errors="coerce")
+    cohort_n_tbl = (
+        cnt.loc[np.isfinite(cnt["n_total"].to_numpy(dtype=float))]
+        .groupby(["group_norm", "laterality_norm", "fish_id_norm"], dropna=False)["n_total"]
+        .max()
+        .reset_index()
     )
-    cohort_n_tbl = cohort_points_tmp[cohort_points_tmp["is_included_n"]].groupby(["group_norm", "laterality_norm", "fish_id_norm"], dropna=False).size().rename("n").reset_index()
-    cohort_n_map = {(str(r["group_norm"]), str(r["laterality_norm"]), str(r["fish_id_norm"])): int(r["n"]) for _, r in cohort_n_tbl.iterrows()}
+    cohort_n_map = {
+        (str(r["group_norm"]), str(r["laterality_norm"]), str(r["fish_id_norm"])): int(r["n_total"])
+        for _, r in cohort_n_tbl.iterrows()
+    }
 
     fig = plt.figure(figsize=(AUC_FIGURE_WIDTH, AUC_FIGURE_HEIGHT), dpi=AUC_FIGURE_DPI)
     gs = fig.add_gridspec(6, 8, hspace=0.35, wspace=0.25)

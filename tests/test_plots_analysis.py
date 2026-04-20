@@ -12,6 +12,7 @@ from codeants_2pf_hcr.plots.analysis import (
     _single_fish_50l_auc_cache_stale_reasons,
     render_cohort_56h_status_donut_grid,
     render_cohort_50l_responsive_identity_donut_row,
+    render_cohort_motion_auc,
     render_single_fish_50l_responsive_identity_donut,
     render_single_fish_50l_bpi_panel,
     render_single_fish_50l_global_auc_panel,
@@ -465,6 +466,66 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertTrue(all(size > 18.0 for size in mean_sizes))
         finally:
             plt.close(fig)
+
+    def test_render_cohort_motion_auc_lane_counts_use_counts_table_denominator(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            cohort_outdir = Path(tmpdir) / "cohort_out"
+            out = render_cohort_motion_auc(
+                cohort_outdir=cohort_outdir,
+                fish_specs=[],
+                data_root=Path(tmpdir),
+                data_mode="cluster",
+                gene_order=["sst1.1"],
+                gene_colors={"sst1.1": "#d62728"},
+                cohort_fish_summary_df=pd.DataFrame({"fish_id": ["fishA"], "ok": [True]}),
+                points_df=pd.DataFrame(
+                    {
+                        "fish_id": ["fishA"] * 6,
+                        "group": ["All neurons"] * 4 + ["sst1.1"] * 2,
+                        "laterality": ["ipsi"] * 6,
+                        "stim_mode": ["bout", "continuous", "bout", "continuous", "bout", "continuous"],
+                        "auc_dff": [0.30, 0.50, 0.10, 0.12, 0.42, 0.35],
+                        "response_class": [
+                            "responsive",
+                            "responsive",
+                            "low activity",
+                            "low activity",
+                            "responsive",
+                            "responsive",
+                        ],
+                        "response_is_active": [True, True, False, False, True, True],
+                        "bpi_category": [
+                            "bout-responsive",
+                            "bout-responsive",
+                            "low activity",
+                            "low activity",
+                            "continuous-responsive",
+                            "continuous-responsive",
+                        ],
+                        "plane_idx": [0, 0, 1, 1, 2, 2],
+                        "func_label": [1, 1, 2, 2, 3, 3],
+                    }
+                ),
+                counts_df=pd.DataFrame(
+                    {
+                        "fish_id": ["fishA"] * 4,
+                        "group": ["All neurons", "All neurons", "sst1.1", "sst1.1"],
+                        "laterality": ["ipsi"] * 4,
+                        "stim_mode": ["bout", "continuous", "bout", "continuous"],
+                        "n_total": [3, 3, 2, 2],
+                        "frac_responsive_used": [1.0 / 3.0, 1.0 / 3.0, 0.5, 0.5],
+                        "frac_low_used": [1.0 / 3.0, 1.0 / 3.0, 0.0, 0.0],
+                        "frac_other": [1.0 / 3.0, 1.0 / 3.0, 0.5, 0.5],
+                    }
+                ),
+            )
+            try:
+                fig = out["fig"]
+                text_labels = [text.get_text() for ax in fig.axes for text in ax.texts]
+                self.assertIn("n=3", text_labels)
+                self.assertIn("n=2", text_labels)
+            finally:
+                plt.close(out["fig"])
 
     def _write_two_fish_fixture(self, root: Path, fish_ids: list[str], owner: str) -> None:
         for fish_id in fish_ids:

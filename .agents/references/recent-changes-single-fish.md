@@ -199,6 +199,28 @@
 - What remains broken:
   - notebook visual validation and any fish-specific stale-cache reruns still need to be done in a live notebook session.
 
+### 2026-04-20 - single-fish [50l] removes duplicate 56i figure and fixes AUC denominators
+
+- Slice goal:
+  - keep `[50l]` focused on the composite export while fixing count-strip denominators and gene-panel connector semantics.
+- Passes completed in this session:
+  - removed the stale inline standalone `[56i]` figure build/save/show path from notebook cell `[50l]` while preserving cache/table regeneration.
+  - switched all-neuron count-strip denominators to the full ROI-centric master table after laterality expansion instead of the `suite2p_is_cell`-gated AUC detail frame.
+  - updated the local `[50l]` gene-panel connector logic so only directional categories use directional connector colors.
+  - extended notebook regressions for removed standalone-output strings, denominator source, and connector-color branching.
+- What changed:
+  - `[50l]` now emits only `compound_50j_56i_unified.png/.pdf`; it no longer builds, saves, or displays `motion_auc_by_gene_ipsi_contra.png`.
+  - all-neuron count strips now include response-unavailable ROIs in `n_total`/`n_other` even though those rows remain excluded from plotted AUC points.
+  - gene-panel connectors are now blue for `bout-responsive`, orange for `continuous-responsive`, and neutral for non-directional categories.
+- What remains broken:
+  - live notebook rerun is still required to visually confirm updated count strips and connector colors on the target fish.
+- Remaining in-slice work:
+  - optional package migration to remove the remaining notebook-local `_plot_auc_block` duplication in `[50l]`.
+- Next likely breakpoint:
+  - rerun `[50l]` on a fish with stale `motion_auc_plot_points.csv` / `motion_auc_plot_counts.csv` and verify the composite is the only displayed/saved AUC figure.
+- Rerun implications:
+  - minimum rerun: `[50l]` only; it will regenerate stale `[56i]` AUC tables as needed before building the composite.
+
 ### 2026-04-20 - single-fish [50l] global AUC panels moved to package paired-point renderer
 
 - Slice goal:
