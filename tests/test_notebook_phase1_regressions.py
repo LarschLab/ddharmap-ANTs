@@ -158,7 +158,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cell_50l_supports_bottom_only_extra_height(self) -> None:
         cell = _code_cell_by_tag("50l")
         self.assertIn(
-            "COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN = float(RUN_CONFIG_LOCAL.get('COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN', 0.0))",
+            "COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN = float(RUN_CONFIG_LOCAL.get('COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN', 1.0))",
             cell,
         )
         self.assertIn("COMPOSITE_50L_TOTAL_HEIGHT_IN = COMPOSITE_50L_FIG_HEIGHT_IN + COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN", cell)
@@ -166,6 +166,17 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("if COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN > 0:", cell)
         self.assertIn("_top_anchor_scale_50l = COMPOSITE_50L_FIG_HEIGHT_IN / COMPOSITE_50L_TOTAL_HEIGHT_IN", cell)
         self.assertIn("for _ax in [ax for ax in (globals().get('ax_bpi', None), ax_donut) if ax is not None]:", cell)
+
+    def test_cell_50l_uses_package_global_auc_renderer(self) -> None:
+        cell = _code_cell_by_tag("50l")
+        self.assertIn("render_single_fish_50l_global_auc_panel", cell)
+        self.assertIn("render_single_fish_50l_global_auc_panel(", cell)
+        self.assertIn("_single_fish_50l_auc_cache_stale_reasons", cell)
+        self.assertIn("print(f\"[50l] Recomputing motion AUC tables because {_reason_50l}.\")", cell)
+        self.assertIn("RESPONSE_LOW_PLOT: '#8d8d8d'", cell)
+        self.assertIn("response_colors.get(RESPONSE_LOW, response_colors[RESPONSE_LOW_PLOT])", cell)
+        self.assertNotIn("_plot_auc_violin_all_neurons(\n    ax_all_ipsi", cell)
+        self.assertNotIn("_plot_auc_violin_all_neurons(\n    ax_all_contra", cell)
 
     def test_phase2_generator_tracks_extraction(self) -> None:
         source = PHASE2_GENERATOR_PATH.read_text()

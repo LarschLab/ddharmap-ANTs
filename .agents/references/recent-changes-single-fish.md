@@ -28,6 +28,26 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-04-20 - single-fish [50l] auto-invalidates stale [56i] motion AUC caches
+
+- Slice goal:
+  - stop `[50l]` from silently reusing stale `[56i]` motion AUC point/count CSVs after `[50ia]` or related upstream semantic updates.
+- Passes completed in this session:
+  - extracted a pure package helper for `[50l]` motion AUC cache staleness checks.
+  - replaced the notebook `[50l]` missing-only gate with stale-or-missing invalidation and explicit reason logging.
+  - added focused regression coverage for newer master/status/midline inputs and fresh-cache reuse.
+- What changed:
+  - `notebooks/2PF_to_HCR.ipynb` `[50l]` now recomputes the embedded `[56i]` motion AUC tables when either cache CSV is missing or when `functional_roi_activity_identity.csv`, `hcr_activity_status.csv`, or `midline_params_func_ref.json` is newer than either cache.
+  - `[50l]` now logs the exact file relationship that made the cache stale before rebuilding.
+- What remains broken:
+  - manual notebook acceptance on the target fish is still required to confirm refreshed bottom-panel labels and counts on real data.
+- Remaining in-slice work:
+  - optional follow-up: move more of the remaining notebook-local `[56i]` build block into a package-owned helper while preserving current outputs.
+- Next likely breakpoint:
+  - rerun `[50ia]`, leave old `motion_auc_plot_points.csv` / `motion_auc_plot_counts.csv` in place, then rerun `[50l]` and confirm the stale-cache log plus refreshed bottom panels.
+- Rerun implications:
+  - `[50l]` now auto-runs the embedded `[56i]` rebuild path for stale motion AUC caches; manual `[56i]` reruns are only needed when debugging or when upstream outputs themselves are missing/broken.
+
 ### 2026-04-12 - single-fish 50l paired AUC connectors restored
 
 - Slice goal:
@@ -178,6 +198,27 @@
   - filled markers remain responsive ROIs, hollow markers remain non-responsive-but-plottable rows, and `response unavailable` rows remain excluded.
 - What remains broken:
   - notebook visual validation and any fish-specific stale-cache reruns still need to be done in a live notebook session.
+
+### 2026-04-20 - single-fish [50l] global AUC panels moved to package paired-point renderer
+
+- Slice goal:
+  - replace the single-fish `[50l]` all-neurons AUC violin panels with package-owned paired-point panels while keeping gene panels, cached CSV contracts, and stage flow unchanged.
+- Passes completed in this session:
+  - added `render_single_fish_50l_global_auc_panel` in `src/codeants_2pf_hcr/plots/analysis.py` and exported it through `plots.__init__`.
+  - updated `[50l]` notebook orchestration to import/call the new renderer and removed the notebook-local all-neurons helper path.
+  - extended focused plot tests for fixed BPI limits, point-only global panels, paired connectors, neutral/directional styling, and directional class-mean summaries.
+- What changed:
+  - `render_single_fish_50l_bpi_panel` now clamps the top-left BPI panel to `[-1, 1]`.
+  - single-fish `[50l]` all-neurons ipsi/contra AUC panels now render one point per ROI per mode, draw within-ROI bout↔continuous connectors, keep non-directional classes neutral, and add larger bout/continuous class-mean summaries for directional classes only.
+  - count-strip bars under the all-neurons panels remain unchanged, and gene-specific panels still use the prior renderer path.
+- What remains broken:
+  - live notebook visual confirmation on fish data is still required; this session only covered focused automated regressions.
+- Remaining in-slice work:
+  - optional follow-up: reconcile the bottom AUC legend text with the new all-neurons paired-point styling if the publication-facing legend needs to describe both global and gene panels more explicitly.
+- Next likely breakpoint:
+  - rerun notebook stage `[50l]` and inspect the two global AUC panels plus the fixed-range BPI panel on real data.
+- Rerun implications:
+  - minimum rerun: `[56i]` only if `motion_auc_plot_points.csv` / `motion_auc_plot_counts.csv` are stale, then rerun `[50l]`.
 - Remaining in-slice work:
   - optional broader migration of remaining `[50l]` plotting logic into package-owned helpers/renderers.
 - Next likely breakpoint:

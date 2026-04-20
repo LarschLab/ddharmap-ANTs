@@ -44,6 +44,62 @@ SINGLE_FISH_50L_BPI_COLORS = {
     "response unavailable": "#ececec",
 }
 
+SINGLE_FISH_50L_GLOBAL_AUC_MODE_OFFSETS = {
+    "bout": -0.22,
+    "continuous": 0.22,
+}
+
+SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES = {
+    "bout-responsive": {
+        "marker": "o",
+        "facecolors": SINGLE_FISH_50L_BPI_COLORS["bout-responsive"],
+        "edgecolors": "none",
+        "linewidths": 0.0,
+        "alpha": 0.72,
+        "line_color": SINGLE_FISH_50L_BPI_COLORS["bout-responsive"],
+    },
+    "continuous-responsive": {
+        "marker": "o",
+        "facecolors": SINGLE_FISH_50L_BPI_COLORS["continuous-responsive"],
+        "edgecolors": "none",
+        "linewidths": 0.0,
+        "alpha": 0.72,
+        "line_color": SINGLE_FISH_50L_BPI_COLORS["continuous-responsive"],
+    },
+    "both-responsive": {
+        "marker": "o",
+        "facecolors": "#7a7a7a",
+        "edgecolors": "none",
+        "linewidths": 0.0,
+        "alpha": 0.62,
+        "line_color": "#8a8a8a",
+    },
+    "weak-response": {
+        "marker": "o",
+        "facecolors": "#262626",
+        "edgecolors": "none",
+        "linewidths": 0.0,
+        "alpha": 0.58,
+        "line_color": "#5a5a5a",
+    },
+    "low activity": {
+        "marker": "o",
+        "facecolors": "none",
+        "edgecolors": "#9e9e9e",
+        "linewidths": 0.9,
+        "alpha": 0.90,
+        "line_color": "#9e9e9e",
+    },
+    "response unavailable": {
+        "marker": "x",
+        "facecolors": "none",
+        "edgecolors": "#6f6f6f",
+        "linewidths": 0.9,
+        "alpha": 0.82,
+        "line_color": "#8a8a8a",
+    },
+}
+
 
 def _find_one(directory: Path, pattern: str) -> Path:
     matches = sorted(directory.glob(pattern))
@@ -78,6 +134,55 @@ def _to_bool_series(values: pd.Series | Any) -> pd.Series:
     if pd.api.types.is_bool_dtype(series):
         return series.fillna(False).astype(bool)
     return series.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+
+
+def _single_fish_50l_auc_cache_stale_reasons(
+    points_csv: Path,
+    counts_csv: Path,
+    *,
+    detail_csv: Path | None = None,
+    hcr_status_csv: Path | None = None,
+    midline_json: Path | None = None,
+) -> list[str]:
+    cache_paths = {
+        "motion_auc_plot_points.csv": Path(points_csv),
+        "motion_auc_plot_counts.csv": Path(counts_csv),
+    }
+    upstream_paths = [
+        Path(detail_csv) if detail_csv is not None else None,
+        Path(hcr_status_csv) if hcr_status_csv is not None else None,
+        Path(midline_json) if midline_json is not None else None,
+    ]
+
+    reasons: list[str] = []
+    seen: set[str] = set()
+
+    for cache_name, cache_path in cache_paths.items():
+        if cache_path.exists():
+            continue
+        reason = f"{cache_name} is missing"
+        reasons.append(reason)
+        seen.add(reason)
+
+    cache_stats = {
+        cache_name: cache_path.stat().st_mtime_ns
+        for cache_name, cache_path in cache_paths.items()
+        if cache_path.exists()
+    }
+    for upstream_path in upstream_paths:
+        if upstream_path is None or not upstream_path.exists():
+            continue
+        upstream_mtime_ns = upstream_path.stat().st_mtime_ns
+        for cache_name, cache_mtime_ns in cache_stats.items():
+            if upstream_mtime_ns <= cache_mtime_ns:
+                continue
+            reason = f"{upstream_path.name} is newer than {cache_name}"
+            if reason in seen:
+                continue
+            reasons.append(reason)
+            seen.add(reason)
+
+    return reasons
 
 
 def compute_laterality(roi_side: str | None, stim_side: str | None) -> str | None:
@@ -192,6 +297,7 @@ def render_single_fish_50l_bpi_panel(
     ax.axhline(0.0, color="gray", linestyle="-", linewidth=0.5, alpha=0.3, zorder=0)
     ax.axhline(float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
     ax.axhline(-float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
+    ax.set_ylim(-1.0, 1.0)
     ax.set_xlabel("Mean bout/cont motion AUC (dF/F·s)")
     ax.set_ylabel(str(axis_label))
     ax.set_title(str(title), fontsize=11)
@@ -200,28 +306,291 @@ def render_single_fish_50l_bpi_panel(
     ax.spines["left"].set_visible(True)
     ax.spines["bottom"].set_visible(True)
 
-    legend_elements = [
-        Line2D(
-            [0],
-            [0],
-            marker="o",
-            color="none",
-            markerfacecolor=SINGLE_FISH_50L_BPI_COLORS.get(category, "#999999"),
-            markeredgecolor="none",
-            markersize=6,
-            label=f"{category.replace('-', ' ').capitalize()} (n={count})",
+    legend_elements = []
+    for category, count in category_counts.items():
+        color = SINGLE_FISH_50L_BPI_COLORS.get(category, "#999999")
+        is_hollow = category == "low activity"
+        legend_elements.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="none",
+                markerfacecolor="none" if is_hollow else color,
+                markeredgecolor=color if is_hollow else "none",
+                markeredgewidth=0.7 if is_hollow else 0.0,
+                markersize=6,
+                label=f"{category.replace('-', ' ').capitalize()} (n={count})",
+            )
         )
-        for category, count in category_counts.items()
-    ]
     if legend_elements:
         ax.legend(handles=legend_elements, loc="upper left", fontsize=9, frameon=True)
 
     return {
         "n_plotted": int(len(work)),
         "x_limits": tuple(float(v) for v in ax.get_xlim()),
+        "y_limits": tuple(float(v) for v in ax.get_ylim()),
         "category_counts": category_counts,
         "zero_band": float(band),
         "plot_df": work[["mean_auc_dff", "bpi", "bpi_category", "response_is_active"]].copy(),
+    }
+
+
+def render_single_fish_50l_global_auc_panel(
+    ax: plt.Axes,
+    strip_ax: plt.Axes,
+    source_points_df: pd.DataFrame,
+    source_counts_df: pd.DataFrame,
+    laterality: str,
+    panel_title: str,
+    y_limits: tuple[float, float] | list[float],
+    *,
+    show_ylabel: bool = False,
+    show_count_ylabel: bool = False,
+    hide_y_ticklabels: bool = False,
+    count_bar_width: float = 0.25,
+    count_bar_height_scale: float = 1.0,
+    annot_fontsize: float = 8.5,
+    axis_label_fontsize: float = 10.0,
+    tick_fontsize: float = 9.0,
+    panel_title_fontsize: float = 11.0,
+    title_y: float = 1.0,
+) -> dict[str, Any]:
+    if not isinstance(source_points_df, pd.DataFrame) or source_points_df.empty:
+        raise RuntimeError("[single-fish-50l-global-auc] source_points_df is missing or empty.")
+    if not isinstance(source_counts_df, pd.DataFrame) or source_counts_df.empty:
+        raise RuntimeError("[single-fish-50l-global-auc] source_counts_df is missing or empty.")
+
+    required_point_cols = {"laterality", "stim_mode", "auc_dff"}
+    missing_point_cols = sorted(required_point_cols - set(source_points_df.columns))
+    if missing_point_cols:
+        raise RuntimeError(
+            f"[single-fish-50l-global-auc] Missing point columns {missing_point_cols}; rerun [56i]."
+        )
+
+    required_count_cols = {"laterality", "group", "frac_responsive_used", "frac_low_used", "frac_other", "n_total"}
+    missing_count_cols = sorted(required_count_cols - set(source_counts_df.columns))
+    if missing_count_cols:
+        raise RuntimeError(
+            f"[single-fish-50l-global-auc] Missing count columns {missing_count_cols}; rerun [56i]."
+        )
+
+    y_min = float(y_limits[0])
+    y_max = float(y_limits[1])
+    if not np.isfinite(y_min) or not np.isfinite(y_max) or y_max <= y_min:
+        raise RuntimeError("[single-fish-50l-global-auc] y_limits must be a finite increasing pair.")
+
+    laterality_norm = str(laterality).strip().lower()
+    group_name = "All neurons"
+    mode_offsets = dict(SINGLE_FISH_50L_GLOBAL_AUC_MODE_OFFSETS)
+    x_center = 0.0
+    x_bout = x_center + float(mode_offsets["bout"])
+    x_cont = x_center + float(mode_offsets["continuous"])
+    pair_key_candidates = [
+        ["plane_idx", "func_label"],
+        ["plane", "func_label"],
+        ["cell_key"],
+        ["roi_idx"],
+    ]
+
+    points = source_points_df.copy()
+    if "group" in points.columns:
+        points = points[points["group"].astype(str) == group_name].copy()
+    points["laterality"] = points["laterality"].astype(str).str.strip().str.lower()
+    points["stim_mode"] = points["stim_mode"].astype(str).str.strip().str.lower()
+    points["auc_dff"] = pd.to_numeric(points["auc_dff"], errors="coerce")
+    if "bpi_category" not in points.columns:
+        points["bpi_category"] = "low activity"
+    points["bpi_category"] = points["bpi_category"].fillna("low activity").astype(str).str.strip().str.lower()
+    points = points[
+        points["laterality"].eq(laterality_norm)
+        & points["stim_mode"].isin(tuple(mode_offsets))
+        & np.isfinite(points["auc_dff"].to_numpy(dtype=float))
+    ].copy()
+    if points.empty:
+        raise RuntimeError(f"[single-fish-50l-global-auc] No plottable rows for laterality={laterality_norm!r}.")
+
+    points["x_pos"] = points["stim_mode"].map(mode_offsets).astype(float) + x_center
+    style_map = {
+        category: dict(SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES.get(category, SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES["both-responsive"]))
+        for category in points["bpi_category"].dropna().astype(str).unique().tolist()
+    }
+
+    pair_key_cols = next((cols for cols in pair_key_candidates if all(col in points.columns for col in cols)), None)
+    pair_lines = 0
+    if pair_key_cols is not None:
+        pair_src = points[pair_key_cols + ["stim_mode", "auc_dff", "bpi_category"]].copy()
+        pair_agg = (
+            pair_src.groupby(pair_key_cols + ["stim_mode"], dropna=False)
+            .agg(
+                auc_dff=("auc_dff", "mean"),
+                bpi_category=("bpi_category", "first"),
+            )
+            .reset_index()
+        )
+        pair_wide = (
+            pair_agg.pivot_table(index=pair_key_cols, columns="stim_mode", values="auc_dff", aggfunc="mean")
+            .reset_index()
+        )
+        pair_cat = (
+            pair_agg.groupby(pair_key_cols, dropna=False)["bpi_category"]
+            .first()
+            .reset_index()
+        )
+        pair_wide = pair_wide.merge(pair_cat, on=pair_key_cols, how="left")
+        if {"bout", "continuous"}.issubset(pair_wide.columns):
+            pair_wide = pair_wide.dropna(subset=["bout", "continuous"])
+            for row in pair_wide.itertuples(index=False):
+                row_cat = str(getattr(row, "bpi_category", "both-responsive")).strip().lower()
+                row_style = SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES.get(
+                    row_cat, SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES["both-responsive"]
+                )
+                ax.plot(
+                    [x_bout, x_cont],
+                    [float(row.bout), float(row.continuous)],
+                    color=str(row_style["line_color"]),
+                    linewidth=0.75,
+                    alpha=0.26 if row_cat in {"bout-responsive", "continuous-responsive"} else 0.20,
+                    zorder=1,
+                )
+                pair_lines += 1
+
+    point_collections = 0
+    for category, style in SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES.items():
+        sub = points[points["bpi_category"] == category].copy()
+        if sub.empty:
+            continue
+        if style["marker"] == "x":
+            ax.scatter(
+                sub["x_pos"].to_numpy(dtype=float),
+                sub["auc_dff"].to_numpy(dtype=float),
+                s=22,
+                marker="x",
+                color=str(style["edgecolors"]),
+                linewidths=float(style["linewidths"]),
+                alpha=float(style["alpha"]),
+                zorder=3,
+            )
+        else:
+            ax.scatter(
+                sub["x_pos"].to_numpy(dtype=float),
+                sub["auc_dff"].to_numpy(dtype=float),
+                s=18,
+                marker=str(style["marker"]),
+                facecolors=style["facecolors"],
+                edgecolors=style["edgecolors"],
+                linewidths=float(style["linewidths"]),
+                alpha=float(style["alpha"]),
+                zorder=3,
+            )
+        point_collections += 1
+
+    mean_rows: list[dict[str, Any]] = []
+    mean_line_count = 0
+    mean_point_count = 0
+    for category in ("bout-responsive", "continuous-responsive"):
+        cat_points = points[points["bpi_category"] == category].copy()
+        if cat_points.empty:
+            continue
+        cat_means = (
+            cat_points.groupby("stim_mode", dropna=False)["auc_dff"]
+            .mean()
+            .reset_index()
+        )
+        cat_means["bpi_category"] = category
+        mean_rows.extend(cat_means.to_dict("records"))
+        if {"bout", "continuous"}.issubset(set(cat_means["stim_mode"].astype(str))):
+            mean_map = cat_means.set_index("stim_mode")["auc_dff"].to_dict()
+            ax.plot(
+                [x_bout, x_cont],
+                [float(mean_map["bout"]), float(mean_map["continuous"])],
+                color=SINGLE_FISH_50L_BPI_COLORS[category],
+                linewidth=2.0,
+                alpha=0.95,
+                zorder=4,
+            )
+            mean_line_count += 1
+        for row in cat_means.itertuples(index=False):
+            ax.scatter(
+                [x_center + float(mode_offsets[str(row.stim_mode)])],
+                [float(row.auc_dff)],
+                s=60,
+                facecolors=SINGLE_FISH_50L_BPI_COLORS[category],
+                edgecolors="white",
+                linewidths=0.8,
+                alpha=0.98,
+                zorder=5,
+            )
+            mean_point_count += 1
+
+    ax.axhline(0.0, color="#d0d0d0", linewidth=0.9, zorder=0)
+    ax.set_xlim(-0.65, 0.35)
+    ax.set_ylim(y_min, y_max)
+    ax.set_xticks([x_center])
+    ax.set_xticklabels([])
+    ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False, length=0)
+    ax.tick_params(axis="y", labelsize=tick_fontsize)
+    if hide_y_ticklabels:
+        ax.tick_params(axis="y", labelleft=False)
+    if show_ylabel:
+        ax.set_ylabel("Mean motion-window AUC (dF/F·s)", fontsize=axis_label_fontsize)
+    ax.set_title(str(panel_title), fontsize=panel_title_fontsize, y=title_y)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    counts = source_counts_df.copy()
+    if "group" in counts.columns:
+        counts = counts[counts["group"].astype(str) == group_name].copy()
+    counts["laterality"] = counts["laterality"].astype(str).str.strip().str.lower()
+    counts = counts[counts["laterality"].eq(laterality_norm)].copy()
+    if counts.empty:
+        raise RuntimeError(f"[single-fish-50l-global-auc] No count-strip rows for laterality={laterality_norm!r}.")
+
+    frac_resp = float(pd.to_numeric(counts["frac_responsive_used"], errors="coerce").fillna(0.0).iloc[0]) * count_bar_height_scale
+    frac_low = float(pd.to_numeric(counts["frac_low_used"], errors="coerce").fillna(0.0).iloc[0]) * count_bar_height_scale
+    frac_other = float(pd.to_numeric(counts["frac_other"], errors="coerce").fillna(0.0).iloc[0]) * count_bar_height_scale
+    strip_ax.bar([x_center], [frac_resp], width=count_bar_width, color="#1b9e77", edgecolor="none")
+    if frac_resp > 0.05:
+        strip_ax.text(x_center, frac_resp / 2.0, "R", ha="center", va="center", fontsize=7, fontweight="bold", color="white")
+    strip_ax.bar([x_center], [frac_low], width=count_bar_width, bottom=[frac_resp], color="#8d8d8d", edgecolor="none")
+    if frac_low > 0.05:
+        strip_ax.text(x_center, frac_resp + (frac_low / 2.0), "Low A", ha="center", va="center", fontsize=6, fontweight="bold", color="black")
+    strip_ax.bar([x_center], [frac_other], width=count_bar_width, bottom=[frac_resp + frac_low], color="#ececec", edgecolor="#d7d7d7", linewidth=0.35)
+    if frac_other > 0.05:
+        strip_ax.text(x_center, frac_resp + frac_low + (frac_other / 2.0), "NA", ha="center", va="center", fontsize=7, fontweight="bold", color="black")
+
+    counts_by_mode = counts.copy()
+    if "stim_mode" in counts_by_mode.columns:
+        counts_by_mode["stim_mode"] = counts_by_mode["stim_mode"].astype(str).str.strip().str.lower()
+        totals_map = counts_by_mode.set_index("stim_mode")["n_total"].to_dict()
+        bout_total = totals_map.get("bout")
+        cont_total = totals_map.get("continuous")
+    else:
+        bout_total = pd.to_numeric(counts["n_total"], errors="coerce").iloc[0]
+        cont_total = bout_total
+    if pd.notna(bout_total) or pd.notna(cont_total):
+        label_total = cont_total if pd.isna(bout_total) else bout_total
+        strip_ax.text(x_center, 1.03, f"n={int(label_total)}", ha="center", va="bottom", fontsize=annot_fontsize)
+
+    strip_ax.set_ylim(0.0, 1.10)
+    strip_ax.set_yticks([])
+    strip_ax.set_xticks([x_center])
+    strip_ax.set_xticklabels([group_name], rotation=32, ha="right", fontsize=tick_fontsize)
+    if show_count_ylabel:
+        strip_ax.set_ylabel("Count", fontsize=axis_label_fontsize)
+    strip_ax.spines["top"].set_visible(False)
+    strip_ax.spines["right"].set_visible(False)
+    strip_ax.spines["left"].set_visible(False)
+
+    mean_df = pd.DataFrame(mean_rows)
+    return {
+        "n_plotted": int(len(points)),
+        "pair_connector_count": int(pair_lines),
+        "mean_connector_count": int(mean_line_count),
+        "mean_point_count": int(mean_point_count),
+        "point_collection_count": int(point_collections),
+        "plot_df": points[["stim_mode", "auc_dff", "bpi_category", "x_pos"]].copy(),
+        "mean_df": mean_df[["bpi_category", "stim_mode", "auc_dff"]].copy() if not mean_df.empty else mean_df,
     }
 
 
@@ -2401,6 +2770,7 @@ __all__ = [
     "compute_trial_auc",
     "plot_single_roi_57style",
     "render_single_fish_50l_bpi_panel",
+    "render_single_fish_50l_global_auc_panel",
     "render_cohort_56h_by_fish",
     "render_cohort_56g_diagnostics",
     "render_cohort_motion_auc",

@@ -1,20 +1,103 @@
 import unittest
+import os
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 import numpy as np
 import pandas as pd
 
 from codeants_2pf_hcr.plots.analysis import (
+    _single_fish_50l_auc_cache_stale_reasons,
     render_cohort_56h_status_donut_grid,
     render_cohort_50l_responsive_identity_donut_row,
     render_single_fish_50l_responsive_identity_donut,
     render_single_fish_50l_bpi_panel,
+    render_single_fish_50l_global_auc_panel,
 )
 
 
 class PlotsAnalysisTests(unittest.TestCase):
+    def test_single_fish_50l_auc_cache_stale_reasons_tracks_missing_and_newer_inputs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            points_csv = root / "motion_auc_plot_points.csv"
+            counts_csv = root / "motion_auc_plot_counts.csv"
+            detail_csv = root / "functional_roi_activity_identity.csv"
+            status_csv = root / "hcr_activity_status.csv"
+            midline_json = root / "midline_params_func_ref.json"
+
+            def _touch(path: Path, *, mtime_ns: int) -> None:
+                path.write_text(path.name)
+                os.utime(path, ns=(mtime_ns, mtime_ns))
+
+            base_ns = 1_700_000_000_000_000_000
+            _touch(points_csv, mtime_ns=base_ns + 100)
+            _touch(counts_csv, mtime_ns=base_ns + 100)
+            _touch(detail_csv, mtime_ns=base_ns + 10)
+            _touch(status_csv, mtime_ns=base_ns + 10)
+            _touch(midline_json, mtime_ns=base_ns + 10)
+
+            fresh_reasons = _single_fish_50l_auc_cache_stale_reasons(
+                points_csv,
+                counts_csv,
+                detail_csv=detail_csv,
+                hcr_status_csv=status_csv,
+                midline_json=midline_json,
+            )
+            self.assertEqual(fresh_reasons, [])
+
+            os.utime(detail_csv, ns=(base_ns + 200, base_ns + 200))
+            detail_reasons = _single_fish_50l_auc_cache_stale_reasons(
+                points_csv,
+                counts_csv,
+                detail_csv=detail_csv,
+                hcr_status_csv=status_csv,
+                midline_json=midline_json,
+            )
+            self.assertEqual(
+                detail_reasons,
+                [
+                    "functional_roi_activity_identity.csv is newer than motion_auc_plot_points.csv",
+                    "functional_roi_activity_identity.csv is newer than motion_auc_plot_counts.csv",
+                ],
+            )
+
+            os.utime(detail_csv, ns=(base_ns + 10, base_ns + 10))
+            os.utime(status_csv, ns=(base_ns + 200, base_ns + 200))
+            status_reasons = _single_fish_50l_auc_cache_stale_reasons(
+                points_csv,
+                counts_csv,
+                detail_csv=detail_csv,
+                hcr_status_csv=status_csv,
+                midline_json=midline_json,
+            )
+            self.assertEqual(
+                status_reasons,
+                [
+                    "hcr_activity_status.csv is newer than motion_auc_plot_points.csv",
+                    "hcr_activity_status.csv is newer than motion_auc_plot_counts.csv",
+                ],
+            )
+
+            os.utime(status_csv, ns=(base_ns + 10, base_ns + 10))
+            os.utime(midline_json, ns=(base_ns + 200, base_ns + 200))
+            midline_reasons = _single_fish_50l_auc_cache_stale_reasons(
+                points_csv,
+                counts_csv,
+                detail_csv=detail_csv,
+                hcr_status_csv=status_csv,
+                midline_json=midline_json,
+            )
+            self.assertEqual(
+                midline_reasons,
+                [
+                    "midline_params_func_ref.json is newer than motion_auc_plot_points.csv",
+                    "midline_params_func_ref.json is newer than motion_auc_plot_counts.csv",
+                ],
+            )
+
     def test_render_single_fish_50l_bpi_panel_computes_mean_auc(self) -> None:
         fig, ax = plt.subplots()
         try:
@@ -122,6 +205,38 @@ class PlotsAnalysisTests(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    def test_render_single_fish_50l_bpi_panel_legend_uses_hollow_low_activity_marker(self) -> None:
+        fig, ax = plt.subplots()
+        try:
+            render_single_fish_50l_bpi_panel(
+                ax,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, 0.4],
+                        "mean_cont_auc_dff": [0.4, 0.6],
+                        "bpi": [0.3, 0.0],
+                        "bpi_category": ["bout-responsive", "low activity"],
+                        "response_is_active": [True, False],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            legend = ax.get_legend()
+            self.assertIsNotNone(legend)
+            handles = legend.legend_handles
+            labels = [text.get_text() for text in legend.get_texts()]
+            low_idx = labels.index("Low activity (n=1)")
+            low_handle = handles[low_idx]
+            self.assertEqual(low_handle.get_markerfacecolor(), "none")
+            np.testing.assert_allclose(
+                np.array(to_rgba(low_handle.get_markeredgecolor()))[:3],
+                np.array([158, 158, 158], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+        finally:
+            plt.close(fig)
+
     def test_render_single_fish_50l_bpi_panel_zero_band_prefers_column_then_fallback(self) -> None:
         fig1, ax1 = plt.subplots()
         fig2, ax2 = plt.subplots()
@@ -164,6 +279,192 @@ class PlotsAnalysisTests(unittest.TestCase):
         finally:
             plt.close(fig1)
             plt.close(fig2)
+
+    def test_render_single_fish_50l_bpi_panel_fixes_y_limits(self) -> None:
+        fig, ax = plt.subplots()
+        try:
+            out = render_single_fish_50l_bpi_panel(
+                ax,
+                pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, 0.4],
+                        "mean_cont_auc_dff": [0.4, 0.6],
+                        "bpi": [0.7, -0.6],
+                        "bpi_category": ["bout-responsive", "continuous-responsive"],
+                        "response_is_active": [True, True],
+                    }
+                ),
+                axis_label="BPI",
+                title="test",
+            )
+            self.assertEqual(tuple(round(v, 6) for v in ax.get_ylim()), (-1.0, 1.0))
+            self.assertEqual(tuple(round(v, 6) for v in out["y_limits"]), (-1.0, 1.0))
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_global_auc_panel_uses_points_not_violin_or_box(self) -> None:
+        fig, (ax, strip_ax) = plt.subplots(2, 1)
+        try:
+            out = render_single_fish_50l_global_auc_panel(
+                ax,
+                strip_ax,
+                pd.DataFrame(
+                    {
+                        "group": ["All neurons", "All neurons"],
+                        "laterality": ["ipsi", "ipsi"],
+                        "stim_mode": ["bout", "continuous"],
+                        "auc_dff": [0.4, 0.7],
+                        "plane_idx": [0, 0],
+                        "func_label": [1, 1],
+                        "bpi_category": ["bout-responsive", "bout-responsive"],
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "group": ["All neurons", "All neurons"],
+                        "laterality": ["ipsi", "ipsi"],
+                        "stim_mode": ["bout", "continuous"],
+                        "frac_responsive_used": [0.4, 0.4],
+                        "frac_low_used": [0.3, 0.3],
+                        "frac_other": [0.3, 0.3],
+                        "n_total": [10, 10],
+                    }
+                ),
+                "ipsi",
+                "Ipsi",
+                (0.0, 1.0),
+            )
+            self.assertEqual(len(ax.patches), 0)
+            self.assertEqual(out["point_collection_count"], 1)
+            self.assertGreaterEqual(len(ax.collections), 3)
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_global_auc_panel_draws_pair_connectors_and_directional_means(self) -> None:
+        fig, (ax, strip_ax) = plt.subplots(2, 1)
+        try:
+            out = render_single_fish_50l_global_auc_panel(
+                ax,
+                strip_ax,
+                pd.DataFrame(
+                    {
+                        "group": ["All neurons"] * 8,
+                        "laterality": ["ipsi"] * 8,
+                        "stim_mode": ["bout", "continuous"] * 4,
+                        "auc_dff": [0.30, 0.60, 0.45, 0.75, 0.25, 0.15, 0.10, 0.08],
+                        "plane_idx": [0, 0, 0, 0, 1, 1, 2, 2],
+                        "func_label": [1, 1, 2, 2, 3, 3, 4, 4],
+                        "bpi_category": [
+                            "bout-responsive",
+                            "bout-responsive",
+                            "continuous-responsive",
+                            "continuous-responsive",
+                            "weak-response",
+                            "weak-response",
+                            "low activity",
+                            "response unavailable",
+                        ],
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "group": ["All neurons", "All neurons"],
+                        "laterality": ["ipsi", "ipsi"],
+                        "stim_mode": ["bout", "continuous"],
+                        "frac_responsive_used": [0.5, 0.5],
+                        "frac_low_used": [0.2, 0.2],
+                        "frac_other": [0.3, 0.3],
+                        "n_total": [4, 4],
+                    }
+                ),
+                "ipsi",
+                "Ipsi",
+                (0.0, 1.0),
+            )
+            self.assertEqual(out["pair_connector_count"], 4)
+            self.assertEqual(out["mean_connector_count"], 2)
+            self.assertEqual(out["mean_point_count"], 4)
+            mean_df = out["mean_df"].sort_values(["bpi_category", "stim_mode"]).reset_index(drop=True)
+            self.assertEqual(
+                mean_df["bpi_category"].tolist(),
+                ["bout-responsive", "bout-responsive", "continuous-responsive", "continuous-responsive"],
+            )
+            np.testing.assert_allclose(
+                mean_df["auc_dff"].to_numpy(dtype=float),
+                np.array([0.30, 0.60, 0.45, 0.75]),
+                atol=1e-6,
+            )
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_global_auc_panel_uses_directional_and_neutral_styles(self) -> None:
+        fig, (ax, strip_ax) = plt.subplots(2, 1)
+        try:
+            render_single_fish_50l_global_auc_panel(
+                ax,
+                strip_ax,
+                pd.DataFrame(
+                    {
+                        "group": ["All neurons"] * 8,
+                        "laterality": ["ipsi"] * 8,
+                        "stim_mode": ["bout", "continuous"] * 4,
+                        "auc_dff": [0.30, 0.60, 0.35, 0.55, 0.25, 0.20, 0.10, 0.05],
+                        "plane_idx": [0, 0, 1, 1, 2, 2, 3, 3],
+                        "func_label": [1, 1, 2, 2, 3, 3, 4, 4],
+                        "bpi_category": [
+                            "bout-responsive",
+                            "bout-responsive",
+                            "continuous-responsive",
+                            "continuous-responsive",
+                            "weak-response",
+                            "weak-response",
+                            "low activity",
+                            "response unavailable",
+                        ],
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "group": ["All neurons", "All neurons"],
+                        "laterality": ["ipsi", "ipsi"],
+                        "stim_mode": ["bout", "continuous"],
+                        "frac_responsive_used": [0.5, 0.5],
+                        "frac_low_used": [0.2, 0.2],
+                        "frac_other": [0.3, 0.3],
+                        "n_total": [4, 4],
+                    }
+                ),
+                "ipsi",
+                "Ipsi",
+                (0.0, 1.0),
+            )
+            collections = [c for c in ax.collections if int(c.get_offsets().shape[0]) > 0]
+            self.assertGreaterEqual(len(collections), 8)
+            np.testing.assert_allclose(
+                collections[0].get_facecolors()[0, :3],
+                np.array([44, 127, 184], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                collections[1].get_facecolors()[0, :3],
+                np.array([217, 95, 14], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+            self.assertEqual(int(np.count_nonzero(collections[3].get_facecolors()[:, -1] > 0)), 0)
+            np.testing.assert_allclose(
+                collections[3].get_edgecolors()[0, :3],
+                np.array([158, 158, 158], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+            np.testing.assert_allclose(
+                collections[4].get_edgecolors()[0, :3],
+                np.array([111, 111, 111], dtype=float) / 255.0,
+                atol=1e-6,
+            )
+            mean_sizes = [float(np.asarray(c.get_sizes(), dtype=float)[0]) for c in collections[-4:]]
+            self.assertTrue(all(size > 18.0 for size in mean_sizes))
+        finally:
+            plt.close(fig)
 
     def _write_two_fish_fixture(self, root: Path, fish_ids: list[str], owner: str) -> None:
         for fish_id in fish_ids:

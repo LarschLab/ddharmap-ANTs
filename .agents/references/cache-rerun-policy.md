@@ -31,6 +31,7 @@
 - Fail fast if required response columns are missing in downstream HCR-centric consumers.
 - Do not mix old cached outputs with newly regenerated authoritative tables.
 - Distrust cached outputs whenever upstream writer-stage semantics changed, even if filenames and schemas stayed stable.
+- Single-fish `[50l]` now auto-invalidates cached `[56i]` motion AUC tables when `functional_roi_activity_identity.csv`, `hcr_activity_status.csv`, or `midline_params_func_ref.json` is newer than `motion_auc_plot_points.csv` or `motion_auc_plot_counts.csv`.
 
 ## Smoke-tier policy (efficient failure localization)
 
