@@ -332,3 +332,21 @@
 - Rerun implications:
   - minimum rerun for early checks: `[12] -> [14] -> [16] -> [20]`.
   - minimum rerun for downstream checks: `[56h] -> [56g]`, plus `[57]` for the trace plot path.
+
+### 2026-04-21 - Windows NAS default now resolves directly to 07_Data
+
+- Slice goal:
+  - fix single-fish Windows NAS setup so package-owned default path resolution points at the canonical UNC data root instead of conditionally falling back to the parent `D2c` directory.
+- Passes completed in this session:
+  - updated `src/codeants_2pf_hcr/context.py` `default_nas_root()` to return `\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c\07_Data` directly on Windows.
+  - kept the macOS path unchanged.
+- What changed:
+  - single-fish notebook setup stages that rely on package-default `NAS_ROOT` now resolve the same canonical Windows data root without probing `Path.exists()` on the share first.
+- What remains broken:
+  - no notebook rerun was done in this session, so live UNC access still needs confirmation in the user environment.
+- Remaining in-slice work:
+  - rerun the single-fish setup path stage on Windows if you want end-to-end confirmation against the NAS share.
+- Next likely breakpoint:
+  - execute notebook setup through the context stage and confirm `NAS_ROOT`, `DATA_ROOT`, and downstream derived paths for the target fish.
+- Rerun implications:
+  - minimum rerun: setup/path cells `[1]-[5]`.

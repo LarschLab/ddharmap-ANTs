@@ -24,7 +24,6 @@ import matplotlib.patheffects as path_effects
 from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
-import SimpleITK as sitk
 from skimage import color as skcolor
 from skimage import transform
 import tifffile
@@ -32,12 +31,17 @@ import tifffile
 from ..context import infer_anat_labels_path
 from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches
 from ..matching import compute_centroids
+from ..runtime import default_local_root
 from .annotations import place_labels_no_overlap
 from ..segmentation import resolve_functional_labels_for_plane
 from ..spatial import norm01
 
+try:
+    import SimpleITK as sitk
+except Exception:  # pragma: no cover
+    sitk = None
 
-DEFAULT_DATA_ROOT = Path("/Users/ddharmap/dataProcessing/2p_HCR/analysis/midThesis")
+DEFAULT_DATA_ROOT = default_local_root(fallback=Path.cwd())
 DEFAULT_FUNCTIONAL_IMAGE = DEFAULT_DATA_ROOT / "L396_f04/03_analysis/functional/derived/L396_f04_plane0_mcorrected_flipX_func_ref_in_2p_8bitnorm.tif"
 
 MODALITY_SPECS = [
@@ -75,6 +79,8 @@ def _read_image(path: Path) -> np.ndarray:
     if suffixes and suffixes[-1] in {".tif", ".tiff"}:
         return np.asarray(tifffile.imread(path), dtype=np.float32)
     if suffixes and suffixes[-1] == ".nrrd":
+        if sitk is None:
+            raise ImportError("Reading .nrrd in plots.qa requires SimpleITK.")
         return np.asarray(sitk.GetArrayFromImage(sitk.ReadImage(str(path))), dtype=np.float32)
     raise ValueError(f"Unsupported image format: {path}")
 
@@ -103,11 +109,13 @@ def _pseudocolor(norm01: np.ndarray, rgb: np.ndarray) -> np.ndarray:
 def build_best_plane_modality_merge_grid(
     *,
     fish_id: str,
-    data_root: Path = DEFAULT_DATA_ROOT,
-    functional_image: Path = DEFAULT_FUNCTIONAL_IMAGE,
+    data_root: Path | None = DEFAULT_DATA_ROOT,
+    functional_image: Path | None = DEFAULT_FUNCTIONAL_IMAGE,
     output: Path | None = None,
     dpi: int = 300,
 ) -> Path:
+    if data_root is None:
+        raise RuntimeError("data_root is required for build_best_plane_modality_merge_grid")
     fish_dir = Path(data_root) / fish_id
     qa_dir = fish_dir / "03_analysis" / "functional" / "qa"
     qa_dir.mkdir(parents=True, exist_ok=True)
@@ -121,7 +129,7 @@ def build_best_plane_modality_merge_grid(
         ((plane_label, int(entry["best_z"]), float(entry["scores"][int(entry["best_z"])])) for plane_label, entry in per_fish.items()),
         key=lambda item: item[2],
     )
-    functional_path = Path(functional_image)
+    functional_path = Path(functional_image) if functional_image is not None else fish_dir / "03_analysis" / "functional" / "derived" / f"{best_plane_label}_func_ref_in_2p.tif"
     if not functional_path.exists():
         functional_path = fish_dir / "03_analysis" / "functional" / "derived" / f"{best_plane_label}_func_ref_in_2p.tif"
     round_paths = [fish_dir / "03_analysis" / "confocal" / "aligned" / f"{fish_id}_round{round_idx}_channel1_GCaMP_in_2p.nrrd" for round_idx in (1, 2, 3)]
@@ -163,7 +171,7 @@ def build_best_plane_modality_merge_grid(
 def build_round_channel_mip_grid(
     *,
     fish_id: str,
-    data_root: Path = DEFAULT_DATA_ROOT,
+    data_root: Path | None = DEFAULT_DATA_ROOT,
     output: Path | None = None,
     z_min: int | None = None,
     z_max: int | None = None,
@@ -174,6 +182,8 @@ def build_round_channel_mip_grid(
     norm_soft_clip: float = 4.0,
     dpi: int = 300,
 ) -> Path:
+    if data_root is None:
+        raise RuntimeError("data_root is required for build_round_channel_mip_grid")
     fish_dir = Path(data_root) / fish_id
     aligned_dir = fish_dir / "03_analysis" / "confocal" / "aligned"
     qa_dir = fish_dir / "03_analysis" / "functional" / "qa"
@@ -209,7 +219,7 @@ def build_round_channel_mip_grid(
     for row_idx, row in enumerate(PANEL_LAYOUT):
         for col_idx, (round_idx, channel_idx, gene_name) in enumerate(row):
             path = aligned_dir / f"{fish_id}_round{round_idx}_channel{channel_idx}_{gene_name}_in_2p.nrrd"
-            arr = np.asarray(sitk.GetArrayFromImage(sitk.ReadImage(str(path))), dtype=np.float32)
+            arr = _read_image(path)
             subvolume = arr[z_min : z_max + 1]
             mip = subvolume.max(axis=0)
             norm01 = robust_asinh_norm(subvolume, mip) if norm_mode == "robust_asinh" else _normalize_for_display(mip, clamp_negative=True)

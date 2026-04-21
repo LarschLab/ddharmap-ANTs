@@ -259,3 +259,21 @@
   - rerun `[cohort-auc]` in `notebooks/multi_fish_56h_56g.ipynb` and inspect all-neuron and gene lane labels against the cached count table.
 - Rerun implications:
   - minimum rerun: `[cohort-auc]` only if cached count CSVs already reflect the updated single-fish denominators; otherwise refresh stale single-fish `[50l]`/embedded `[56i]` caches first.
+
+### 2026-04-21 - cohort Windows NAS default now resolves directly to 07_Data
+
+- Slice goal:
+  - align cohort Windows NAS path defaults with the canonical UNC data root used by single-fish setup.
+- Passes completed in this session:
+  - updated `src/codeants_2pf_hcr/cohort.py` `_default_nas_root()` to return `\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c\07_Data` directly on Windows.
+  - kept the macOS cohort NAS path unchanged.
+- What changed:
+  - cohort environment setup no longer conditionally falls back to the parent `D2c` directory when deriving default NAS-backed paths on Windows.
+- What remains broken:
+  - no live cohort notebook rerun was executed in this session.
+- Remaining in-slice work:
+  - rerun cohort build/setup on Windows if you want end-to-end validation against the NAS share.
+- Next likely breakpoint:
+  - execute the cohort config/build stage and verify `NAS_ROOT` and `DATA_ROOT` bindings.
+- Rerun implications:
+  - minimum rerun: cohort setup/build stage only.

@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from codeants_2pf_hcr.context import (
+    ContextStageConfig,
     build_registration_helper_stage,
     build_fish_state_audit_df,
     infer_hcr_label_paths,
@@ -15,6 +16,7 @@ from codeants_2pf_hcr.context import (
     normalize_run_config,
     prepare_notebook_paths,
     resolve_fish_context,
+    resolve_notebook_context_stage,
 )
 
 
@@ -76,6 +78,42 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(bindings["OWNER"], "Matilde")
             self.assertEqual(bindings["DATA_MODE"], "local")
             self.assertEqual(bindings["RUN_CONFIG"], dict(ctx.run_config))
+
+    def test_resolve_notebook_context_stage_accepts_local_root_override_from_config(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L395_f11"
+            (root / fish_id / "03_analysis").mkdir(parents=True)
+            (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL395_f11,south\n")
+
+            result = resolve_notebook_context_stage(
+                ContextStageConfig(
+                    fish_id=fish_id,
+                    data_mode="local",
+                    local_root_override=root,
+                )
+            )
+
+            self.assertEqual(result["ctx"].local_root, root)
+            self.assertEqual(result["bindings"]["DATA_ROOT"], root)
+
+    def test_resolve_fish_context_nas_mode_does_not_require_local_root(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            nas_root = Path(tmpdir)
+            fish_id = "L395_f11"
+            fish_dir = nas_root / "Matilde" / "Microscopy" / fish_id
+            (fish_dir / "03_analysis").mkdir(parents=True)
+
+            ctx = resolve_fish_context(
+                fish_id=fish_id,
+                owner="Matilde",
+                data_mode="nas",
+                nas_root=nas_root,
+            )
+
+            self.assertIsNone(ctx.local_root)
+            self.assertEqual(ctx.data_root, nas_root)
+            self.assertEqual(ctx.fish_dir, fish_dir)
 
     def test_infer_hcr_label_paths_prefers_canonical_raw_and_aligned_labels(self) -> None:
         with TemporaryDirectory() as tmpdir:

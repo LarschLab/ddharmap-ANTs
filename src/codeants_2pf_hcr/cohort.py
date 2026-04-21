@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from skimage.measure import regionprops_table
 
-from .plots.qa import collect_cohort_53a_tables
+from .context import default_local_root
 from .spatial import apply_func_orientation
 
 
@@ -30,13 +30,12 @@ def _as_bool_series(series_in: Any) -> pd.Series:
 
 def _default_nas_root() -> Path:
     if os.name == "nt":
-        base = Path(r"\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c")
-        return base / "07_Data" if (base / "07_Data").exists() else base
+        return Path(r"\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c\07_Data")
     return Path("/Volumes/jlarsch/default/D2c/07_Data")
 
 
 def _default_local_root() -> Path:
-    return Path("/Users/ddharmap/dataProcessing/2p_HCR/analysis/midThesis")
+    return default_local_root()
 
 
 @dataclass(frozen=True)
@@ -1762,6 +1761,8 @@ def build_cohort_outputs_stage(config: CohortBuildConfig | None = None) -> dict[
     bpi_cells_df = pd.DataFrame(cell_rows)
     if bpi_cells_df.empty:
         raise RuntimeError("No cohort cells passed BPI filters.")
+
+    from .plots.qa import collect_cohort_53a_tables
 
     cohort_53a_tables = collect_cohort_53a_tables(
         fish_specs=env["FISH_SPECS"],

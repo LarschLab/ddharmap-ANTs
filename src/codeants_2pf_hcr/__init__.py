@@ -59,6 +59,11 @@ from .activity import (
     prepare_single_fish_bpi_diagnostics_stage,
     SingleFishBpiDiagnosticsConfig,
 )
+from .runtime import (
+    NativeDependencyError,
+    build_dependency_preflight_report,
+    default_local_root,
+)
 from .matching import (
     FunctionalAnatomyDebugConfig,
     FunctionalRoiIdentityConfig,
@@ -141,6 +146,7 @@ from .traces import (
     resolve_conf_func_csv_analysis,
 )
 from .segmentation import (
+    AnatomyCellposeConfig,
     HcrCellposeConfig,
     collect_hcr_intensity_stack_paths,
     deduplicate_hcr_intensity_targets,
@@ -148,7 +154,12 @@ from .segmentation import (
     resolve_functional_labels_for_plane,
     resolve_hcr_cellpose_model_path,
     resolve_native_suite2p_labels_for_plane,
+    run_anatomy_cellpose_stage,
     run_hcr_cellpose_stage,
+)
+from .hcr_warp import (
+    run_hcr_external_bigwarp_intensity_stage,
+    run_hcr_external_bigwarp_label_stage,
 )
 from .organize import (
     organize,
@@ -177,6 +188,7 @@ from .plots.analysis import (
 
 __all__ = [
     "ActivityConfig",
+    "AnatomyCellposeConfig",
     "AnatomyNormalizationStageConfig",
     "CohortBuildConfig",
     "ContextStageConfig",
@@ -192,6 +204,7 @@ __all__ = [
     "HcrCellposeConfig",
     "MatchingConfig",
     "MotionAucPlotConfig",
+    "NativeDependencyError",
     "SingleFishBpiDiagnosticsConfig",
     "NotebookContractViolation",
     "RegistrationSearchConfig",
@@ -211,6 +224,7 @@ __all__ = [
     "apply_func_orientation",
     "best_z_by_ncc",
     "build_context_audit_stage",
+    "build_dependency_preflight_report",
     "build_cohort_outputs_stage",
     "build_final_fish_audit_stage",
     "build_anat_identity_lookup_df",
@@ -245,6 +259,7 @@ __all__ = [
     "collect_hcr_intensity_stack_paths",
     "corrcoef_img",
     "deduplicate_hcr_intensity_targets",
+    "default_local_root",
     "export_suite2p_native_labels_stage",
     "export_suite2p_trace_metadata",
     "find_figure_contract_violations",
@@ -306,6 +321,9 @@ __all__ = [
     "resolve_notebook_context_stage",
     "resolve_stimulus_context",
     "resolve_cohort_context_stage",
+    "run_anatomy_cellpose_stage",
+    "run_hcr_external_bigwarp_intensity_stage",
+    "run_hcr_external_bigwarp_label_stage",
     "run_hcr_cellpose_stage",
     "run_ncc_placement_stage",
     "run_registration_search_stage",

@@ -59,6 +59,41 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
             },
             "forbid_top_level_defs": True,
         },
+        "24a": {
+            "imports": {
+                "codeants_2pf_hcr": {
+                    "AnatomyCellposeConfig",
+                    "run_anatomy_cellpose_stage",
+                },
+            },
+            "calls": {
+                "AnatomyCellposeConfig",
+                "run_anatomy_cellpose_stage",
+            },
+            "forbid_top_level_defs": True,
+        },
+        "43": {
+            "imports": {
+                "codeants_2pf_hcr": {
+                    "run_hcr_external_bigwarp_label_stage",
+                },
+            },
+            "calls": {
+                "run_hcr_external_bigwarp_label_stage",
+            },
+            "forbid_top_level_defs": True,
+        },
+        "43b": {
+            "imports": {
+                "codeants_2pf_hcr": {
+                    "run_hcr_external_bigwarp_intensity_stage",
+                },
+            },
+            "calls": {
+                "run_hcr_external_bigwarp_intensity_stage",
+            },
+            "forbid_top_level_defs": True,
+        },
         "56g": {
             "imports": {
                 "codeants_2pf_hcr": {
@@ -195,6 +230,32 @@ def find_top_level_defs(notebook_path: str | Path) -> list[NotebookContractViola
     return violations
 
 
+def find_native_stage_import_violations(notebook_path: str | Path) -> list[NotebookContractViolation]:
+    banned_by_tag = {
+        "24a": (re.compile(r"^\s*from\s+cellpose\s+import\b", re.MULTILINE), "direct-cellpose-import"),
+        "43": (re.compile(r"^\s*import\s+ants\b", re.MULTILINE), "direct-ants-import"),
+        "43b": (re.compile(r"^\s*import\s+ants\b", re.MULTILINE), "direct-ants-import"),
+    }
+    violations: list[NotebookContractViolation] = []
+    for index, cell in _code_cells(notebook_path):
+        tag = _cell_tag(cell, index)
+        rule = banned_by_tag.get(tag)
+        if rule is None:
+            continue
+        pattern, kind = rule
+        source = "".join(cell.get("source", []))
+        if pattern.search(source):
+            violations.append(
+                NotebookContractViolation(
+                    cell_index=index,
+                    tag=tag,
+                    kind=kind,
+                    detail="native dependency import must live in package-owned stage code",
+                )
+            )
+    return violations
+
+
 def find_figure_contract_violations(
     notebook_path: str | Path,
     *,
@@ -312,15 +373,18 @@ def check_notebook_contract(notebook_path: str | Path, *, profile: str | None = 
     top_level_defs = find_top_level_defs(notebook_path)
     figure_violations = find_figure_contract_violations(notebook_path, profile=profile_name)
     required_cell_violations = find_required_cell_contract_violations(notebook_path, profile=profile_name)
+    native_stage_import_violations = find_native_stage_import_violations(notebook_path)
     return {
         "notebook_path": str(Path(notebook_path)),
         "profile": profile_name,
         "top_level_defs": [violation.__dict__ for violation in top_level_defs],
         "figure_violations": [violation.__dict__ for violation in figure_violations],
         "required_cell_violations": [violation.__dict__ for violation in required_cell_violations],
+        "native_stage_import_violations": [violation.__dict__ for violation in native_stage_import_violations],
         "n_top_level_defs": len(top_level_defs),
         "n_figure_violations": len(figure_violations),
         "n_required_cell_violations": len(required_cell_violations),
+        "n_native_stage_import_violations": len(native_stage_import_violations),
     }
 
 
@@ -328,6 +392,7 @@ __all__ = [
     "NotebookContractViolation",
     "check_notebook_contract",
     "find_figure_contract_violations",
+    "find_native_stage_import_violations",
     "find_required_cell_contract_violations",
     "find_top_level_defs",
 ]

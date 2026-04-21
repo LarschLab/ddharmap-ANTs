@@ -12,6 +12,7 @@ import pandas as pd
 import tifffile
 
 from .matching import _ensure_uint_labels
+from .runtime import optional_dependency_error
 from .spatial import imread_any, infer_voxels_tiff, norm01
 
 
@@ -24,6 +25,17 @@ class HcrCellposeConfig:
     model_path_override: str | Path | None = None
     data_mode: str = "nas"
     use_gpu: bool = True
+    verbose: bool = True
+
+
+@dataclass(frozen=True)
+class AnatomyCellposeConfig:
+    force_recompute: bool = False
+    skip_if_exists: bool = True
+    save_8bit: bool = True
+    use_anisotropy: bool = True
+    use_gpu: bool | None = None
+    compute_device: str | None = None
     verbose: bool = True
 
 
@@ -144,6 +156,104 @@ def _compute_anisotropy(
     return None, vox
 
 
+def _resolve_cellpose_gpu_flag(*, use_gpu: bool | None, compute_device: str | None) -> bool:
+    device = None if compute_device in (None, "", False) else str(compute_device).strip().lower()
+    if device in {"cpu"}:
+        return False
+    if device in {"cuda", "gpu", "mps"}:
+        return True
+    if use_gpu is not None:
+        return bool(use_gpu)
+    try:
+        import torch
+    except Exception:  # pragma: no cover
+        return False
+    try:
+        if torch.cuda.is_available():
+            return True
+    except Exception:  # pragma: no cover
+        pass
+    try:
+        mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
+        if mps_backend is not None and bool(mps_backend.is_available()):
+            return True
+    except Exception:  # pragma: no cover
+        pass
+    return False
+
+
+def _load_cellpose_model(*, cp_model: Path, use_gpu: bool, stage_tag: str, log_lines: list[str]) -> Any:
+    try:
+        from cellpose import io, models
+    except Exception as exc:  # pragma: no cover
+        raise optional_dependency_error(module_name="cellpose", stage_tag=stage_tag, exc=exc) from exc
+
+    io.logger_setup()
+    try:
+        return models.CellposeModel(gpu=use_gpu, pretrained_model=str(cp_model))
+    except Exception as exc:  # pragma: no cover
+        msg = str(exc)
+        if "weights_only" not in msg and "WeightsUnpickler" not in msg and "UnpicklingError" not in msg:
+            raise
+        log_lines.append(f"[WARN] {stage_tag} Cellpose model load failed with weights_only=True; retrying with weights_only=False")
+        try:
+            import torch.serialization as torch_serialization
+            from cellpose import vit_sam
+        except Exception as retry_exc:  # pragma: no cover
+            raise optional_dependency_error(module_name="torch/cellpose", stage_tag=stage_tag, exc=retry_exc) from retry_exc
+
+        orig_load = vit_sam.torch.load
+        try:
+            vit_sam.torch.load = lambda *a, **k: torch_serialization.load(*a, **{**k, "weights_only": False})
+            return models.CellposeModel(gpu=use_gpu, pretrained_model=str(cp_model))
+        finally:
+            vit_sam.torch.load = orig_load
+
+
+def _prepare_anat_volume(path: Path, *, log_lines: list[str]) -> np.ndarray:
+    vol = np.asarray(imread_any(path))
+    if vol.ndim == 4 and vol.shape[-1] in (3, 4):
+        vol = vol[..., 0]
+    if path.suffix.lower() == ".nrrd" and vol.ndim == 3 and vol.shape[-1] < min(vol.shape[0], vol.shape[1]):
+        vol = vol.transpose(2, 1, 0)
+        log_lines.append(f"[ANAT CP] Reordered NRRD to (Z, Y, X): {path.name} -> {vol.shape}")
+    if vol.ndim not in (2, 3):
+        raise ValueError(f"Unsupported anatomy array shape for Cellpose: {vol.shape}")
+    return vol
+
+
+def _mask_shape(path: Path) -> tuple[int, ...]:
+    arr = np.asarray(tifffile.imread(str(path)))
+    if arr.ndim == 4 and arr.shape[-1] in (3, 4):
+        arr = arr[..., 0]
+    return tuple(int(v) for v in arr.shape)
+
+
+def _to_uint8_preserve(arr: np.ndarray, *, log_lines: list[str]) -> np.ndarray:
+    arr = np.asarray(arr)
+    if arr.dtype == np.uint8:
+        return arr
+    if np.issubdtype(arr.dtype, np.integer):
+        amin = int(arr.min()) if arr.size else 0
+        amax = int(arr.max()) if arr.size else 0
+        if amin >= 0 and amax <= 255:
+            return arr.astype(np.uint8, copy=False)
+        log_lines.append(f"[ANAT CP] Integer intensity range [{amin}, {amax}] -> clipping to [0,255] (no normalization).")
+        return np.clip(arr, 0, 255).astype(np.uint8)
+
+    arrf = arr.astype(np.float32, copy=False)
+    finite = np.isfinite(arrf)
+    if not finite.any():
+        raise ValueError("Anatomy volume has no finite values.")
+    fmin = float(np.nanmin(arrf[finite]))
+    fmax = float(np.nanmax(arrf[finite]))
+    arrf = np.nan_to_num(arrf, nan=0.0, posinf=255.0, neginf=0.0)
+    if fmin >= 0.0 and fmax <= 255.0:
+        return arrf.astype(np.uint8)
+    log_lines.append(f"[ANAT CP] Float intensity range [{fmin:.3f}, {fmax:.3f}] -> clipping to [0,255] (no normalization).")
+    return np.clip(arrf, 0.0, 255.0).astype(np.uint8)
+
+
 def run_hcr_cellpose_stage(
     *,
     fish_dir: str | Path,
@@ -200,28 +310,7 @@ def run_hcr_cellpose_stage(
         cp_model = Path(cp_model_path)
         if not cp_model.exists():
             raise FileNotFoundError(f"CP_MODEL_PATH does not exist: {cp_model}")
-        try:
-            from cellpose import io, models
-        except Exception as exc:  # pragma: no cover
-            raise RuntimeError(f"Cellpose is required for [24]: {exc}") from exc
-
-        io.logger_setup()
-        try:
-            model = models.CellposeModel(gpu=bool(cfg.use_gpu), pretrained_model=str(cp_model))
-        except Exception as exc:  # pragma: no cover
-            msg = str(exc)
-            if "weights_only" not in msg and "WeightsUnpickler" not in msg and "UnpicklingError" not in msg:
-                raise
-            log_lines.append("[WARN] Cellpose model load failed with weights_only=True; retrying with weights_only=False")
-            import torch.serialization as torch_serialization
-            from cellpose import vit_sam
-
-            orig_load = vit_sam.torch.load
-            try:
-                vit_sam.torch.load = lambda *a, **k: torch_serialization.load(*a, **{**k, "weights_only": False})
-                model = models.CellposeModel(gpu=bool(cfg.use_gpu), pretrained_model=str(cp_model))
-            finally:
-                vit_sam.torch.load = orig_load
+        model = _load_cellpose_model(cp_model=cp_model, use_gpu=bool(cfg.use_gpu), stage_tag="[24]", log_lines=log_lines)
 
         log_lines.append(f"[Cellpose] stacks requiring segmentation: {len(pending)}")
         for intensity_path, mask_path in pending:
@@ -286,6 +375,147 @@ def run_hcr_cellpose_stage(
         "candidate_pairs": candidate_pairs,
         "pending_pairs": pending,
         "manifest_df": manifest_df,
+        "log_lines": log_lines,
+    }
+
+
+def run_anatomy_cellpose_stage(
+    *,
+    anat_seg_source_path: str | Path,
+    analysis_dir: str | Path,
+    anat_labels_path: str | Path | None = None,
+    anat_cp_model_path: str | Path | None,
+    vox_anat: dict[str, Any] | None = None,
+    assert_fish_compatible: Any = None,
+    fish_id: str | None = None,
+    config: AnatomyCellposeConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or AnatomyCellposeConfig()
+    log_lines: list[str] = []
+
+    anat_src = Path(anat_seg_source_path)
+    analysis_path = Path(analysis_dir)
+    out_dir = analysis_path / "structural" / "cp_masks"
+    convert_dir = analysis_path / "structural" / "raw" / "converted_nrrd_to_tif"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    convert_dir.mkdir(parents=True, exist_ok=True)
+
+    if callable(assert_fish_compatible):
+        assert_fish_compatible(anat_src, key="ANAT_SEG_SOURCE_PATH", strict=True)
+        assert_fish_compatible(out_dir, key="ANAT_SEG_OUT_DIR", strict=True)
+        assert_fish_compatible(convert_dir, key="ANAT_SEG_CONVERT_DIR", strict=True)
+    if not anat_src.exists():
+        raise FileNotFoundError(f"Anatomy source not found: {anat_src}")
+    if anat_cp_model_path in (None, "", False):
+        raise RuntimeError("Set ANAT_CP_MODEL_PATH to the anatomy Cellpose model path before running [24a].")
+
+    model_path = Path(anat_cp_model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(f"ANAT_CP_MODEL_PATH does not exist: {model_path}")
+
+    vol = _prepare_anat_volume(anat_src, log_lines=log_lines)
+    expected_shape = tuple(int(v) for v in vol.shape)
+    stem = anat_src.stem
+    anat_8bit_path = convert_dir / f"{stem}_8bit.tif"
+    anat_mask_out = out_dir / f"{stem}_8bit_cp_masks.tif"
+
+    reuse_path = None
+    existing_candidates: list[Path] = []
+    if anat_labels_path not in (None, "", False):
+        existing_candidates.append(Path(anat_labels_path))
+    existing_candidates.append(anat_mask_out)
+    fish_token = str(fish_id or "").strip()
+    for pattern in (
+        f"{fish_token}*anatomy*cp_masks*.tif",
+        f"{fish_token}*anatomy*cp_masks*.tiff",
+        f"{fish_token}*cp_masks*.tif",
+        f"{fish_token}*cp_masks*.tiff",
+        "*anatomy*cp_masks*.tif",
+        "*anatomy*cp_masks*.tiff",
+        "*cp_masks*.tif",
+        "*cp_masks*.tiff",
+    ):
+        existing_candidates.extend(sorted(out_dir.glob(pattern)))
+
+    if (not cfg.force_recompute) and cfg.skip_if_exists:
+        seen: set[str] = set()
+        for candidate in existing_candidates:
+            key = str(candidate)
+            if key in seen or not candidate.exists():
+                continue
+            seen.add(key)
+            if callable(assert_fish_compatible) and not assert_fish_compatible(candidate, key="ANAT_LABELS_PATH candidate", strict=False):
+                log_lines.append(f"[ANAT CP] Skipping stale-fish candidate: {candidate}")
+                continue
+            try:
+                if _mask_shape(candidate) == expected_shape:
+                    reuse_path = candidate
+                    break
+                log_lines.append(f"[ANAT CP] Existing mask shape mismatch ({candidate}: {_mask_shape(candidate)} vs expected {expected_shape}); recomputing.")
+            except Exception as exc:
+                log_lines.append(f"[ANAT CP] Could not validate existing mask {candidate}: {exc}; recomputing.")
+
+    if reuse_path is not None:
+        log_lines.append(f"[ANAT CP] Reusing existing anatomy masks: {reuse_path}")
+        return {
+            "status": "cached",
+            "bindings": {
+                "ANAT_SEG_SOURCE_PATH": anat_src,
+                "ANAT_SEG_OUT_DIR": out_dir,
+                "ANAT_SEG_CONVERT_DIR": convert_dir,
+                "ANAT_CP_MODEL_PATH": str(model_path),
+                "ANAT_LABELS_PATH": reuse_path,
+            },
+            "log_lines": log_lines,
+        }
+
+    anat_u8 = _to_uint8_preserve(vol, log_lines=log_lines)
+    if cfg.save_8bit and (cfg.force_recompute or (not anat_8bit_path.exists())):
+        tifffile.imwrite(str(anat_8bit_path), anat_u8, imagej=True, compression="deflate")
+        log_lines.append(f"[ANAT CP] Saved 8-bit anatomy TIFF: {anat_8bit_path}")
+
+    use_gpu = _resolve_cellpose_gpu_flag(use_gpu=cfg.use_gpu, compute_device=cfg.compute_device)
+    log_lines.append(f"[ANAT CP] device={cfg.compute_device or 'auto'} gpu={use_gpu}")
+    anat_model = _load_cellpose_model(cp_model=model_path, use_gpu=use_gpu, stage_tag="[24a]", log_lines=log_lines)
+
+    anisotropy = None
+    if cfg.use_anisotropy and vol.ndim == 3 and isinstance(vox_anat, dict):
+        try:
+            z_um = float(vox_anat.get("Z"))
+            x_um = float(vox_anat.get("X"))
+            if z_um > 0 and x_um > 0:
+                anisotropy = z_um / x_um
+        except Exception:
+            anisotropy = None
+
+    eval_kwargs = dict(channels=[0, 0], channel_axis=None)
+    if vol.ndim == 3:
+        eval_kwargs.update(dict(z_axis=0, do_3D=True, anisotropy=anisotropy))
+    else:
+        eval_kwargs.update(dict(do_3D=False))
+
+    result = anat_model.eval(anat_u8, **eval_kwargs)
+    anat_masks = result[0] if isinstance(result, (tuple, list)) else result
+    anat_masks = np.asarray(anat_masks)
+    if anat_masks.ndim == 4 and anat_masks.shape[-1] in (3, 4):
+        anat_masks = anat_masks[..., 0]
+    if anat_masks.size == 0:
+        raise RuntimeError("Cellpose returned empty anatomy mask output.")
+
+    max_lbl = int(np.max(anat_masks)) if anat_masks.size else 0
+    out_dtype = np.uint16 if max_lbl <= np.iinfo(np.uint16).max else np.uint32
+    tifffile.imwrite(str(anat_mask_out), anat_masks.astype(out_dtype), imagej=True, compression="deflate")
+    log_lines.append(f"[ANAT CP] Saved anatomy masks: {anat_mask_out} (max_label={max_lbl}, dtype={out_dtype})")
+
+    return {
+        "status": "segmented",
+        "bindings": {
+            "ANAT_SEG_SOURCE_PATH": anat_src,
+            "ANAT_SEG_OUT_DIR": out_dir,
+            "ANAT_SEG_CONVERT_DIR": convert_dir,
+            "ANAT_CP_MODEL_PATH": str(model_path),
+            "ANAT_LABELS_PATH": anat_mask_out,
+        },
         "log_lines": log_lines,
     }
 
@@ -549,6 +779,7 @@ def export_suite2p_native_labels_stage(
 
 
 __all__ = [
+    "AnatomyCellposeConfig",
     "HcrCellposeConfig",
     "collect_hcr_intensity_stack_paths",
     "deduplicate_hcr_intensity_targets",
@@ -556,5 +787,6 @@ __all__ = [
     "resolve_functional_labels_for_plane",
     "resolve_hcr_cellpose_model_path",
     "resolve_native_suite2p_labels_for_plane",
+    "run_anatomy_cellpose_stage",
     "run_hcr_cellpose_stage",
 ]

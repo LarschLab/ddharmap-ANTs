@@ -23,8 +23,9 @@ import pandas as pd
 import tifffile
 from skimage.measure import regionprops_table
 
+from codeants_2pf_hcr.runtime import default_local_root
 
-DEFAULT_DATA_ROOT = Path("/Users/ddharmap/dataProcessing/2p_HCR/analysis/midThesis")
+DEFAULT_DATA_ROOT = default_local_root(fallback=Path.cwd())
 XY_COLOR = "#4c78a8"
 Z_COLOR = "#f58518"
 REF_COLOR = "#c1121f"

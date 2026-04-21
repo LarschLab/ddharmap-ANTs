@@ -1,0 +1,19 @@
+name: codeants-2pf-hcr-win
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - matplotlib
+  - nbclient
+  - nbformat
+  - numpy
+  - pandas
+  - pynrrd
+  - scikit-image
+  - scipy
+  - tifffile
+  - pip:
+      - antspyx
+      - cellpose
+      - torch

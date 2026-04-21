@@ -17,9 +17,11 @@
    - Key object: `suite2p_by_ref_idx`.
 4. **Segmentation/geometry QA** (`[29] [33] [34a]`)
    - QC helpers only; not identity source.
+   - Native segmentation stages `[24]` and `[24a]` are package-owned and should remain orchestration-thin in the notebook.
 5. **HCR discovery/warp/HCR↔anatomy QC** (`[37] [39] [41] [42] [43] [44]`)
    - HCR mask discovery, warping, QC summaries.
    - Key object: `hcr_match_results`.
+   - External-BigWarp prep stages `[43]` and `[43b]` are package-owned wrappers with stage-local ANTs imports.
 6. **HCR-centric identified-cell activity mapping** (`[50]`)
    - Builds `hcr_activity_status.csv`, `conf_to_func_pairs_raw.csv`, response-positive `conf_to_func_pairs.csv`.
    - Owns identified-cell activity export semantics.

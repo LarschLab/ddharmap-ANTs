@@ -9,6 +9,7 @@ from typing import Any
 
 import pandas as pd
 
+from .notebook_contract import check_notebook_contract
 
 class SmokeValidationError(RuntimeError):
     """Raised when a smoke contract check fails."""
@@ -256,6 +257,15 @@ def _validate_notebook_symbol_contracts(notebook_path: Path) -> SmokeCheckResult
     if "_combine_segments = combine_segments" not in cell_56h:
         raise SmokeValidationError(
             "[56h] notebook symbol contract failed: missing _combine_segments alias binding."
+        )
+    contract = check_notebook_contract(notebook_path)
+    if contract["n_required_cell_violations"] > 0:
+        raise SmokeValidationError(
+            f"[notebook] required cell contract violations detected: {contract['required_cell_violations']}"
+        )
+    if contract["n_native_stage_import_violations"] > 0:
+        raise SmokeValidationError(
+            f"[notebook] native stage import violations detected: {contract['native_stage_import_violations']}"
         )
     return SmokeCheckResult(name="[56h] symbol-contract", path=notebook_path, rows=0)
 

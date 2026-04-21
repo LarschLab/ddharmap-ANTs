@@ -16,6 +16,7 @@ from skimage import transform
 import tifffile
 
 from .spatial import _infer_voxels_nrrd, apply_func_orientation, corrcoef_img, load_or_cache_voxels
+from .runtime import default_local_root as runtime_default_local_root
 
 
 DEFAULT_RUN_CONFIG: dict[str, Any] = {
@@ -73,7 +74,7 @@ class FishContext:
     owner: str
     data_mode: str
     nas_root: Path
-    local_root: Path
+    local_root: Path | None
     data_root: Path
     fish_dir: Path
     preproc_dir: Path
@@ -101,6 +102,7 @@ class ContextStageConfig:
     fish_id: str
     owner: str = "Matilde"
     data_mode: str = "local"
+    local_root_override: Path | str | None = None
     matching_metadata_csv_override: Path | str | None = None
     manifest_out_override: Path | str | None = None
     cellpose_model_root_override: Path | str | None = None
@@ -141,13 +143,14 @@ class AnatomyNormalizationStageConfig:
 
 def default_nas_root() -> Path:
     if os.name == "nt":
-        base = Path(r"\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c")
-        return base / "07_Data" if (base / "07_Data").exists() else base
+        return Path(r"\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c\07_Data")
     return Path("/Volumes/jlarsch/default/D2c/07_Data")
 
 
 def default_local_root() -> Path:
-    return Path("/Users/ddharmap/dataProcessing/2p_HCR/analysis/midThesis")
+    root = runtime_default_local_root(strict=True)
+    assert root is not None
+    return root
 
 
 def owner_root(data_root: Path | str, owner: str | None = None, data_mode: str = "local") -> Path:
@@ -221,7 +224,10 @@ def resolve_fish_context(
     if mode not in {"nas", "local"}:
         mode = "nas"
     nas = Path(nas_root) if nas_root is not None else default_nas_root()
-    local = Path(local_root) if local_root is not None else default_local_root()
+    if mode == "local":
+        local = Path(local_root) if local_root is not None else default_local_root()
+    else:
+        local = Path(local_root) if local_root is not None else None
     data_root = local if mode == "local" else nas
     fish_dir = resolve_fish_dir(data_root, owner, fish_id, data_mode=mode)
     analysis_dir = fish_dir / "03_analysis"
@@ -655,12 +661,13 @@ def resolve_notebook_context_stage(
     nas_root: Path | str | None = None,
     local_root: Path | str | None = None,
 ) -> dict[str, Any]:
+    resolved_local_root = config.local_root_override if config.local_root_override is not None else local_root
     ctx = resolve_fish_context(
         fish_id=config.fish_id,
         owner=config.owner,
         data_mode=config.data_mode,
         nas_root=nas_root,
-        local_root=local_root,
+        local_root=resolved_local_root,
         matching_metadata_csv_override=config.matching_metadata_csv_override,
         manifest_out_override=config.manifest_out_override,
         cellpose_model_root_override=config.cellpose_model_root_override,
