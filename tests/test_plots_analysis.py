@@ -513,6 +513,77 @@ class PlotsAnalysisTests(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    def test_render_single_fish_50l_gene_auc_panel_preserves_expanded_label_top_on_shared_axes(self) -> None:
+        fig = plt.figure()
+        ax1 = fig.add_subplot(2, 1, 1)
+        ax2 = fig.add_subplot(2, 1, 2, sharey=ax1)
+        strip1 = fig.add_subplot(2, 2, 3)
+        strip2 = fig.add_subplot(2, 2, 4)
+        try:
+            points_df = pd.DataFrame(
+                {
+                    "group": ["sst1.1", "sst1.1", "npy", "npy"],
+                    "laterality": ["ipsi"] * 4,
+                    "stim_mode": ["bout", "continuous", "bout", "continuous"],
+                    "auc_dff": [0.98, 0.99, 0.97, 0.985],
+                    "response_class": ["responsive"] * 4,
+                    "response_is_active": [True] * 4,
+                    "bpi_category": ["bout-responsive", "continuous-responsive", "bout-responsive", "continuous-responsive"],
+                    "point_label_id": ["a", "a", "b", "b"],
+                }
+            )
+            counts_df = pd.DataFrame(
+                {
+                    "group": ["sst1.1", "sst1.1", "npy", "npy"],
+                    "laterality": ["ipsi"] * 4,
+                    "stim_mode": ["bout", "continuous", "bout", "continuous"],
+                    "frac_responsive_used": [1.0, 1.0, 1.0, 1.0],
+                    "frac_low_used": [0.0, 0.0, 0.0, 0.0],
+                    "frac_other": [0.0, 0.0, 0.0, 0.0],
+                    "n_total": [1, 1, 1, 1],
+                }
+            )
+
+            render_single_fish_50l_gene_auc_panel(
+                ax1,
+                strip1,
+                points_df,
+                counts_df,
+                ["sst1.1", "npy"],
+                np.array([0.0, 0.02], dtype=float),
+                "ipsi",
+                "Ipsi",
+                (0.0, 1.0),
+                gene_colors={"sst1.1": "#d62728", "npy": "#1f9d55"},
+            )
+            first_top = float(ax1.get_ylim()[1])
+            self.assertGreater(first_top, 1.0)
+
+            label_texts_1 = [txt for txt in ax1.texts if str(txt.get_text()).startswith("med=")]
+            self.assertGreaterEqual(len(label_texts_1), 4)
+            self.assertTrue(all(float(txt.get_position()[1]) <= first_top for txt in label_texts_1))
+
+            render_single_fish_50l_gene_auc_panel(
+                ax2,
+                strip2,
+                points_df,
+                counts_df,
+                ["sst1.1", "npy"],
+                np.array([0.0, 0.02], dtype=float),
+                "ipsi",
+                "Ipsi again",
+                (0.0, 1.0),
+                gene_colors={"sst1.1": "#d62728", "npy": "#1f9d55"},
+            )
+            second_top = float(ax2.get_ylim()[1])
+            self.assertGreaterEqual(second_top, first_top)
+
+            label_texts_2 = [txt for txt in ax2.texts if str(txt.get_text()).startswith("med=")]
+            self.assertGreaterEqual(len(label_texts_2), 4)
+            self.assertTrue(all(float(txt.get_position()[1]) <= second_top for txt in label_texts_2))
+        finally:
+            plt.close(fig)
+
     def test_render_single_fish_50l_gene_auc_panel_missing_columns_raise(self) -> None:
         fig, (ax, strip_ax) = plt.subplots(2, 1)
         try:

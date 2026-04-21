@@ -875,7 +875,11 @@ def render_single_fish_50l_gene_auc_panel(
         .median()
         .reset_index()
     )
-    y_span = max(1e-6, y_max - y_min)
+    current_ylim = ax.get_ylim()
+    current_top = float(current_ylim[1]) if len(current_ylim) == 2 and np.isfinite(current_ylim[1]) else y_max
+    target_top = max(float(y_max), float(current_top))
+    ax.set_ylim(y_min, target_top)
+    y_span = max(1e-6, target_top - y_min)
     label_items: list[tuple[float, float, str, dict[str, Any]]] = []
     for group_idx, group in enumerate(group_order):
         group_stats = stats_sub[stats_sub["group_norm"] == str(group)]
@@ -889,7 +893,7 @@ def render_single_fish_50l_gene_auc_panel(
             label_items.append(
                 (
                     x_stat,
-                    y_max,
+                    target_top,
                     f"med={med_val:.2f}",
                     {
                         "color": "#111111",
@@ -917,7 +921,8 @@ def render_single_fish_50l_gene_auc_panel(
 
     ax.axhline(0.0, color="#d0d0d0", linewidth=0.9, zorder=0)
     ax.set_xlim(float(group_positions.min()) - 0.65, float(group_positions.max()) + 0.35)
-    ax.set_ylim(y_min, y_max)
+    final_top = ax.get_ylim()[1]
+    ax.set_ylim(y_min, max(float(final_top), target_top))
     ax.set_xticks(group_positions)
     ax.set_xticklabels([])
     ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False, length=0)

@@ -31,6 +31,7 @@ from codeants_2pf_hcr import (
     build_context_audit_stage,
     build_cohort_outputs_stage,
     build_final_fish_audit_stage,
+    build_hcr_mask_fate_df,
     build_functional_anatomy_debug_df,
     build_functional_anatomy_debug_stage,
     build_functional_references_stage,
@@ -150,6 +151,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_context_audit_stage)
     assert callable(build_cohort_outputs_stage)
     assert callable(build_final_fish_audit_stage)
+    assert callable(build_hcr_mask_fate_df)
     assert callable(build_functional_anatomy_debug_df)
     assert callable(build_functional_anatomy_debug_stage)
     assert callable(build_functional_references_stage)

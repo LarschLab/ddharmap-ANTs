@@ -84,6 +84,7 @@ Generated manually for the current extracted package surface.
 - `build_functional_anatomy_debug_stage`: Notebook-facing functional↔anatomy debug stage for `[34a]` that loads anatomy labels, resolves voxel scale, and returns the debug summary bindings/log lines.
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
+- `build_hcr_mask_fate_df`: Reconstruct per-confocal-label match fate rows from `[44]` `hcr_match_results` for downstream rejected-mask QA consumers such as `[50f]` and `[50g]`.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
 - `build_hcr_activity_tables`: Build HCR-centric functional candidate/status tables for `[50]`.
 - `MatchingConfig`: Typed matching-stage knob container.

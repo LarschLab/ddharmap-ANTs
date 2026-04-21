@@ -198,6 +198,155 @@ def build_anat_identity_lookup_df(
     return pd.DataFrame(rows)
 
 
+def build_hcr_mask_fate_df(
+    hcr_match_results: list[dict[str, Any]] | None,
+    *,
+    gene_from_mask_func: Callable[[str | Path | None], str] | None = None,
+    reject_reason_far: str = "too far / no overlap anatomy",
+    reject_reason_iou: str = "1-to-1 anatomy relation, IoU below threshold",
+) -> pd.DataFrame:
+    infer_gene = gene_from_mask_func if callable(gene_from_mask_func) else gene_from_mask
+    rows: list[dict[str, Any]] = []
+
+    def _pick_candidate(df: pd.DataFrame) -> pd.Series | None:
+        if df.empty:
+            return None
+        work = df.copy()
+        if "distance_um" in work.columns:
+            work["distance_um"] = pd.to_numeric(work["distance_um"], errors="coerce")
+            work = work.sort_values(["distance_um"], ascending=[True], na_position="last")
+        return work.iloc[0]
+
+    for result in hcr_match_results or []:
+        if not isinstance(result, dict):
+            continue
+        mask_path = result.get("mask_path")
+        mask_name = Path(str(mask_path)).name if mask_path is not None else ""
+        gene = str(infer_gene(mask_path if mask_path is not None else "unknown"))
+        matches = pd.DataFrame(result.get("matches", pd.DataFrame())).copy()
+        df_conf = pd.DataFrame(result.get("df_conf", pd.DataFrame())).copy()
+
+        conf_labels: list[int] = []
+        if not df_conf.empty and "label" in df_conf.columns:
+            conf_labels.extend(pd.to_numeric(df_conf["label"], errors="coerce").dropna().astype(int).tolist())
+        if not matches.empty and "conf_label" in matches.columns:
+            conf_labels.extend(pd.to_numeric(matches["conf_label"], errors="coerce").dropna().astype(int).tolist())
+        if not conf_labels:
+            continue
+
+        if matches.empty or "conf_label" not in matches.columns:
+            for conf_label in sorted(set(int(v) for v in conf_labels)):
+                rows.append(
+                    {
+                        "gene": gene,
+                        "conf_mask_name": mask_name,
+                        "conf_label": int(conf_label),
+                        "anat_unmatched_reason": reject_reason_far,
+                        "twoP_label": pd.NA,
+                        "distance_um": np.nan,
+                        "within_gate": False,
+                        "pair_type": pd.NA,
+                        "quality": pd.NA,
+                        "iou": np.nan,
+                        "overlap_voxels": np.nan,
+                    }
+                )
+            continue
+
+        matches["conf_label"] = pd.to_numeric(matches["conf_label"], errors="coerce").astype("Int64")
+        matches = matches.dropna(subset=["conf_label"]).copy()
+        if "twoP_label" in matches.columns:
+            matches["twoP_label"] = pd.to_numeric(matches["twoP_label"], errors="coerce").astype("Int64")
+        else:
+            matches["twoP_label"] = pd.Series(pd.NA, index=matches.index, dtype="Int64")
+        if "distance_um" in matches.columns:
+            matches["distance_um"] = pd.to_numeric(matches["distance_um"], errors="coerce")
+        else:
+            matches["distance_um"] = np.nan
+        if "iou" in matches.columns:
+            matches["iou"] = pd.to_numeric(matches["iou"], errors="coerce")
+        else:
+            matches["iou"] = np.nan
+        if "overlap_voxels" in matches.columns:
+            matches["overlap_voxels"] = pd.to_numeric(matches["overlap_voxels"], errors="coerce")
+        else:
+            matches["overlap_voxels"] = np.nan
+        if "within_gate" in matches.columns:
+            within_gate = matches["within_gate"]
+            if pd.api.types.is_bool_dtype(within_gate):
+                matches["within_gate"] = within_gate.fillna(False).astype(bool)
+            elif pd.api.types.is_numeric_dtype(within_gate):
+                matches["within_gate"] = within_gate.fillna(0).astype(float) != 0
+            else:
+                matches["within_gate"] = within_gate.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
+        else:
+            matches["within_gate"] = False
+        if "pair_type" not in matches.columns:
+            matches["pair_type"] = pd.NA
+        if "quality" not in matches.columns:
+            matches["quality"] = pd.NA
+
+        for conf_label in sorted(set(int(v) for v in conf_labels)):
+            sub = matches[matches["conf_label"].astype("Int64") == int(conf_label)].copy()
+            good = sub[
+                sub["within_gate"]
+                & sub["pair_type"].astype(str).eq("1-1")
+                & sub["quality"].astype(str).eq("good")
+            ].copy()
+            iou_bad = sub[
+                sub["within_gate"]
+                & sub["pair_type"].astype(str).eq("1-1")
+                & ~sub["quality"].astype(str).eq("good")
+            ].copy()
+            chosen = _pick_candidate(good)
+            reason: Any = pd.NA
+            if chosen is None:
+                chosen = _pick_candidate(iou_bad)
+                if chosen is not None:
+                    reason = reject_reason_iou
+                else:
+                    chosen = _pick_candidate(sub)
+                    reason = reject_reason_far
+            rows.append(
+                {
+                    "gene": gene,
+                    "conf_mask_name": mask_name,
+                    "conf_label": int(conf_label),
+                    "anat_unmatched_reason": reason,
+                    "twoP_label": chosen.get("twoP_label", pd.NA) if chosen is not None else pd.NA,
+                    "distance_um": float(chosen.get("distance_um", np.nan)) if chosen is not None and pd.notna(chosen.get("distance_um", np.nan)) else np.nan,
+                    "within_gate": bool(chosen.get("within_gate", False)) if chosen is not None else False,
+                    "pair_type": chosen.get("pair_type", pd.NA) if chosen is not None else pd.NA,
+                    "quality": chosen.get("quality", pd.NA) if chosen is not None else pd.NA,
+                    "iou": float(chosen.get("iou", np.nan)) if chosen is not None and pd.notna(chosen.get("iou", np.nan)) else np.nan,
+                    "overlap_voxels": float(chosen.get("overlap_voxels", np.nan)) if chosen is not None and pd.notna(chosen.get("overlap_voxels", np.nan)) else np.nan,
+                }
+            )
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return pd.DataFrame(
+            columns=[
+                "gene",
+                "conf_mask_name",
+                "conf_label",
+                "anat_unmatched_reason",
+                "twoP_label",
+                "distance_um",
+                "within_gate",
+                "pair_type",
+                "quality",
+                "iou",
+                "overlap_voxels",
+            ]
+        )
+    out = out.sort_values(["gene", "conf_mask_name", "conf_label"]).reset_index(drop=True)
+    out["conf_label"] = pd.to_numeric(out["conf_label"], errors="coerce").astype("Int64")
+    out["twoP_label"] = pd.to_numeric(out["twoP_label"], errors="coerce").astype("Int64")
+    out["within_gate"] = out["within_gate"].fillna(False).astype(bool)
+    return out
+
+
 def _ensure_uint_labels(arr: ArrayLike) -> np.ndarray:
     out = np.asarray(arr)
     if out.dtype.kind == "u":
@@ -1375,6 +1524,7 @@ __all__ = [
     "HcrActivityExportConfig",
     "MatchingConfig",
     "build_anat_identity_lookup_df",
+    "build_hcr_mask_fate_df",
     "build_functional_anatomy_debug_df",
     "build_functional_anatomy_debug_stage",
     "build_functional_roi_master_df",

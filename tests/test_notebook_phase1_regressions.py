@@ -319,6 +319,18 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("def _plot_auc_block(", cell)
         self.assertNotIn("def _plot_auc_violin_all_neurons(", cell)
 
+    def test_cells_50f_and_50g_rebuild_mask_fate_from_matching_stage(self) -> None:
+        cell_50f = _code_cell_by_tag("50f")
+        cell_50g = _code_cell_by_tag("50g")
+        self.assertIn("from codeants_2pf_hcr import build_hcr_mask_fate_df", cell_50f)
+        self.assertIn("from codeants_2pf_hcr import build_hcr_mask_fate_df", cell_50g)
+        self.assertIn("HCR_MASK_FATE_DF = build_hcr_mask_fate_df(HCR_MATCH_RESULTS_LOCAL)", cell_50f)
+        self.assertIn("HCR_MASK_FATE_DF = build_hcr_mask_fate_df(HCR_MATCH_RESULTS_LOCAL)", cell_50g)
+        self.assertIn("Need hcr_match_results from [44]; run [44] first.", cell_50f)
+        self.assertIn("Need hcr_match_results from [44]; run [44] first.", cell_50g)
+        self.assertNotIn("Need HCR_MASK_FATE_DF from [50e]", cell_50f)
+        self.assertNotIn("Need HCR_MASK_FATE_DF from [50e]", cell_50g)
+
     def test_phase2_generator_tracks_extraction(self) -> None:
         source = PHASE2_GENERATOR_PATH.read_text()
         self.assertIn("DF_STIM_FISH_ID = FISH_ID", source)
