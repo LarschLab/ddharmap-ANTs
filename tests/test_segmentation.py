@@ -15,6 +15,7 @@ from codeants_2pf_hcr.segmentation import (
     resolve_native_suite2p_labels_for_plane,
     run_hcr_cellpose_stage,
 )
+from codeants_2pf_hcr.plots.qa import show_centroid_match_qa_stage
 
 
 class SegmentationTests(unittest.TestCase):
@@ -70,6 +71,92 @@ class SegmentationTests(unittest.TestCase):
             )
             self.assertEqual(src, f"Cellpose masks: {mask_path}")
             self.assertEqual(labels.tolist(), [[1, 0], [0, 2]])
+
+    def test_resolve_functional_labels_for_plane_keeps_in_memory_func_labels_orientation(self) -> None:
+        plane_ref = {"label": "plane0", "ref_match": np.zeros((3, 3), dtype=np.float32)}
+        oriented = np.array([[0, 0, 3], [2, 0, 0], [0, 1, 0]], dtype=np.uint16)
+
+        labels, src = resolve_functional_labels_for_plane(
+            plane_ref,
+            0,
+            use_suite2p_labels=False,
+            func_labels=[oriented],
+            apply_func_orientation_func=lambda arr: np.asarray(arr)[:, ::-1],
+        )
+
+        self.assertEqual(src, "func_labels list[0]")
+        self.assertTrue(np.array_equal(labels, oriented))
+
+    def test_resolve_functional_labels_for_plane_uses_same_suite2p_source_for_26_and_34_paths(self) -> None:
+        plane_ref = {
+            "label": "plane0",
+            "ref_match": np.zeros((2, 2), dtype=np.float32),
+            "suite2p": {"labels": np.array([[0, 1], [2, 0]], dtype=np.uint16)},
+        }
+        func_labels = [np.array([[9, 9], [9, 9]], dtype=np.uint16)]
+
+        labels_26, src_26 = resolve_functional_labels_for_plane(
+            plane_ref,
+            0,
+            use_suite2p_labels=True,
+            func_labels=func_labels,
+            apply_func_orientation_func=lambda arr: np.asarray(arr)[:, ::-1],
+        )
+        labels_34, src_34 = resolve_functional_labels_for_plane(
+            plane_ref,
+            0,
+            use_suite2p_labels=True,
+            func_labels=func_labels,
+            apply_func_orientation_func=lambda arr: np.asarray(arr)[:, ::-1],
+        )
+
+        self.assertEqual(src_26, "Suite2p labels (plane_refs)")
+        self.assertEqual(src_34, "Suite2p labels (plane_refs)")
+        self.assertTrue(np.array_equal(labels_26, labels_34))
+
+    def test_resolve_functional_labels_for_plane_orients_func_labels_path_once(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            labels_path = root / "func_labels.tif"
+            tifffile.imwrite(labels_path, np.array([[[0, 1], [2, 0]]], dtype=np.uint16))
+            plane_ref = {"label": "plane0", "index": 0, "ref_match": np.zeros((2, 2), dtype=np.float32)}
+
+            labels, src = resolve_functional_labels_for_plane(
+                plane_ref,
+                0,
+                use_suite2p_labels=False,
+                func_labels_path=labels_path,
+                apply_func_orientation_func=lambda arr: np.asarray(arr)[:, ::-1],
+            )
+
+            self.assertEqual(src, f"FUNC_LABELS_PATH[0]: {labels_path.name}")
+            self.assertEqual(labels.tolist(), [[1, 0], [0, 2]])
+
+    def test_show_centroid_match_qa_stage_threads_suite2p_policy(self) -> None:
+        plane_refs = [
+            {
+                "label": "plane0",
+                "best_z": 0,
+                "ref_match": np.zeros((2, 2), dtype=np.float32),
+                "suite2p": {"labels": np.array([[0, 1], [2, 0]], dtype=np.uint16)},
+            }
+        ]
+        anat_labels = np.array([[[0, 1], [2, 0]]], dtype=np.uint16)
+        func_labels = [np.array([[9, 9], [9, 9]], dtype=np.uint16)]
+
+        result = show_centroid_match_qa_stage(
+            plane_refs=plane_refs,
+            anat_labels_all=anat_labels,
+            func_labels=func_labels,
+            use_suite2p_labels=True,
+            render_ui=False,
+            force_recompute=True,
+        )
+
+        labels, label_name, src_desc = result["helpers"]["load_func_labels_for_plane"](0)
+        self.assertEqual(label_name, "plane0")
+        self.assertEqual(src_desc, "Suite2p labels (plane_refs)")
+        self.assertTrue(np.array_equal(labels, plane_refs[0]["suite2p"]["labels"]))
 
     def test_resolve_native_suite2p_labels_for_plane_prefers_plane_ref(self) -> None:
         plane_ref = {"suite2p": {"labels": np.array([[0, 1], [0, 2]], dtype=np.uint16)}}

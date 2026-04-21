@@ -782,6 +782,7 @@ def show_centroid_match_qa_stage(
     out_seg: str | Path | None = None,
     func_labels: Any = None,
     func_labels_path: str | Path | None = None,
+    use_suite2p_labels: bool = False,
     vox_anat: dict[str, Any] | None = None,
     apply_func_orientation_func: Any = None,
     imread_func: Any = None,
@@ -826,7 +827,7 @@ def show_centroid_match_qa_stage(
         arr, src_desc = resolve_functional_labels_for_plane(
             plane_ref,
             p_idx,
-            use_suite2p_labels=False,
+            use_suite2p_labels=bool(use_suite2p_labels),
             func_labels=func_labels,
             out_seg=out_seg,
             func_labels_path=func_labels_path,
@@ -1096,7 +1097,8 @@ def show_centroid_match_qa_stage(
                 if handles:
                     ax2.legend(loc="lower right", fontsize=qa_legend_fontsize)
                 ax2.set_title(
-                    f"Anatomy context + links ≤ threshold — {label} @ Z={best_z}\nRef radius={float(reference['median_xy_radius_um']):.2f} µm"
+                    f"Anatomy context + warped functional labels ≤ threshold — {label} @ Z={best_z}\n"
+                    f"Ref radius={float(reference['median_xy_radius_um']):.2f} µm"
                 )
                 ax2.axis("off")
 

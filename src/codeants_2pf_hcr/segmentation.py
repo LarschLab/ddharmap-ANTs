@@ -309,6 +309,16 @@ def _maybe_orient_labels(arr: np.ndarray, *, apply_orient: bool, apply_func_orie
         return arr
 
 
+def _resolve_in_memory_labels(
+    arr: Any,
+    *,
+    ref_shape: tuple[int, ...] | None,
+    ensure_uint_labels_func: Callable[[Any], np.ndarray],
+) -> np.ndarray:
+    labels = ensure_uint_labels_func(arr)
+    return _rescale_labels_to_ref(labels, ref_shape)
+
+
 def resolve_functional_labels_for_plane(
     plane_ref: dict[str, Any],
     plane_idx: int,
@@ -330,22 +340,20 @@ def resolve_functional_labels_for_plane(
     if use_suite2p_labels:
         suite2p = plane_ref.get("suite2p")
         if isinstance(suite2p, dict) and suite2p.get("labels") is not None:
-            arr = ensure(suite2p["labels"])
-            arr = _rescale_labels_to_ref(arr, ref_shape)
+            arr = _resolve_in_memory_labels(suite2p["labels"], ref_shape=ref_shape, ensure_uint_labels_func=ensure)
             return arr, "Suite2p labels (plane_refs)"
         if isinstance(func_labels, list) and plane_idx < len(func_labels) and func_labels[plane_idx] is not None:
-            arr = ensure(func_labels[plane_idx])
-            arr = _rescale_labels_to_ref(arr, ref_shape)
+            arr = _resolve_in_memory_labels(func_labels[plane_idx], ref_shape=ref_shape, ensure_uint_labels_func=ensure)
             return arr, f"Suite2p labels list[{plane_idx}]"
         if func_labels is not None:
             arr = ensure(np.asarray(func_labels))
             if arr.ndim == 3:
                 src_idx = int(plane_ref.get("index", plane_idx))
                 if src_idx < arr.shape[0]:
-                    arr = _rescale_labels_to_ref(arr[src_idx], ref_shape)
+                    arr = _resolve_in_memory_labels(arr[src_idx], ref_shape=ref_shape, ensure_uint_labels_func=ensure)
                     return arr, f"Suite2p labels stack[{src_idx}]"
             elif arr.ndim == 2:
-                arr = _rescale_labels_to_ref(arr, ref_shape)
+                arr = _resolve_in_memory_labels(arr, ref_shape=ref_shape, ensure_uint_labels_func=ensure)
                 return arr, "Suite2p labels (2D)"
 
     if out_seg is not None:
@@ -364,21 +372,17 @@ def resolve_functional_labels_for_plane(
         if isinstance(func_labels, list) and plane_idx < len(func_labels):
             arr = func_labels[plane_idx]
             if arr is not None:
-                arr = ensure(arr)
-                arr = _maybe_orient_labels(arr, apply_orient=True, apply_func_orientation_func=apply_func_orientation_func)
-                arr = _rescale_labels_to_ref(arr, ref_shape)
+                arr = _resolve_in_memory_labels(arr, ref_shape=ref_shape, ensure_uint_labels_func=ensure)
                 return arr, f"func_labels list[{plane_idx}]"
         else:
             arr = ensure(np.asarray(func_labels))
             if arr.ndim == 3:
                 src_idx = int(plane_ref.get("index", plane_idx))
                 if src_idx < arr.shape[0]:
-                    arr = _maybe_orient_labels(arr[src_idx], apply_orient=True, apply_func_orientation_func=apply_func_orientation_func)
-                    arr = _rescale_labels_to_ref(arr, ref_shape)
+                    arr = _resolve_in_memory_labels(arr[src_idx], ref_shape=ref_shape, ensure_uint_labels_func=ensure)
                     return arr, f"func_labels stack[{src_idx}]"
             elif arr.ndim == 2:
-                arr = _maybe_orient_labels(arr, apply_orient=True, apply_func_orientation_func=apply_func_orientation_func)
-                arr = _rescale_labels_to_ref(arr, ref_shape)
+                arr = _resolve_in_memory_labels(arr, ref_shape=ref_shape, ensure_uint_labels_func=ensure)
                 return arr, "func_labels (2D)"
 
     if func_labels_path not in (None, "", False) and os.path.exists(str(func_labels_path)):

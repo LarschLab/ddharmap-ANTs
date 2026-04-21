@@ -28,6 +28,26 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-04-21 - single-fish [34] centroid QA now matches [26] label-source and orientation policy
+
+- Slice goal:
+  - remove the QA-only drift where `[34]` could load a different functional label source than `[26]` and could reorient already oriented in-memory labels.
+- Passes completed in this session:
+  - updated package label resolution so in-memory Suite2p / `func_labels` arrays are treated as already oriented display-space labels.
+  - added `use_suite2p_labels` threading through `show_centroid_match_qa_stage(...)` and rewired notebook `[34]` to match `[26]` source selection.
+  - added focused regression coverage for in-memory provenance, file-backed raw-mask orientation, and `[34]` helper threading.
+- What changed:
+  - `[34]`, `[34a]`, and downstream QA consumers that reuse `_load_func_labels_for_plane` now inherit the same Suite2p-vs-fallback source policy as `[26]`.
+  - `[34]` center-panel wording now explicitly describes warped functional labels in anatomy space.
+- What remains broken:
+  - live notebook rerun is still required to visually confirm the targeted fish now shows `[26]`/`[34]` consistency under the active `USE_SUITE2P_LABELS` setting.
+- Remaining in-slice work:
+  - optional follow-up only if notebook rerun shows unexpected drift in `[46]` or `[54]`; current static ownership tracing suggests canonical `[50i]` / `[50]` outputs are unaffected.
+- Next likely breakpoint:
+  - rerun `[23a] -> [26] -> [34] -> [34a]`, then spot-check `[46]` or `[54]` on the same fish.
+- Rerun implications:
+  - minimum rerun: `[23a] -> [26] -> [34] -> [34a]`; `[50i]` is only needed as a guard check if the QA rerun suggests a broader mismatch.
+
 ### 2026-04-20 - single-fish [50l] package-owns embedded [56i] tables and gene AUC panels
 
 - Slice goal:

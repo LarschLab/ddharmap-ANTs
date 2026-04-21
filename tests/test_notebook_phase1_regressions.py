@@ -374,6 +374,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("def _bundle(", cell_22d)
         self.assertIn("show_centroid_match_qa_stage", cell_34)
         self.assertIn("centroid_qa_result", cell_34)
+        self.assertIn("use_suite2p_labels=bool(globals().get('USE_SUITE2P_LABELS', False))", cell_34)
         self.assertIn("_prepare_plane_data = centroid_qa_result['helpers']['prepare_plane_data']", cell_34)
         self.assertNotIn("def _render(", cell_34)
         self.assertIn("build_functional_anatomy_debug_stage", cell_34a)
