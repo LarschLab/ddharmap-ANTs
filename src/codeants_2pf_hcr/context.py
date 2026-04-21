@@ -1,4 +1,4 @@
-"""Context and fish-scoped stage helpers for notebook cells [4], [4a], [4b], [4c], [8], [8a], and [10]."""
+"""Context and fish-scoped stage helpers for notebook cells [4], [4a], [4b], [4c], [8], [8a], [10], and [14]."""
 
 from __future__ import annotations
 
@@ -132,6 +132,11 @@ class VoxelStageConfig:
 class FunctionalOrientationStageConfig:
     overwrite_flipped: bool = False
     cache_version: int = 2
+
+
+@dataclass(frozen=True)
+class AnatomyNormalizationStageConfig:
+    force_recompute_anat_convert: bool = False
 
 
 def default_nas_root() -> Path:
@@ -862,6 +867,62 @@ def _path_from_data_root(path: Path | str | None, roots: list[Path | None]) -> s
     return str(target)
 
 
+def _resolve_anatomy_source_path(
+    *,
+    anat_stack_path: Path,
+    anat_stack_path_orig: Path | None,
+    tmp_convert_dir: Path | None,
+    preproc_dir: Path | None,
+    force_recompute: bool,
+) -> Path | None:
+    if anat_stack_path.suffix.lower() == ".nrrd":
+        return anat_stack_path
+    if not force_recompute:
+        return None
+    if anat_stack_path_orig is not None and anat_stack_path_orig.suffix.lower() == ".nrrd":
+        return anat_stack_path_orig
+    try:
+        if tmp_convert_dir is None or not str(anat_stack_path).startswith(str(tmp_convert_dir)):
+            return None
+        stem = anat_stack_path.stem
+        if stem.endswith("_converted"):
+            stem = stem[:-10]
+        anat_dir = preproc_dir / "2p_anatomy" if preproc_dir is not None else None
+        if anat_dir is None or not anat_dir.exists():
+            return None
+        hits = list(anat_dir.glob(stem + ".nrrd"))
+        return hits[0] if hits else None
+    except Exception:
+        return None
+
+
+def _read_nrrd_volume(path: Path) -> tuple[np.ndarray, str]:
+    try:
+        import nrrd
+    except Exception:  # pragma: no cover
+        nrrd = None
+    if nrrd is not None:
+        data, _ = nrrd.read(str(path))
+        return np.asarray(data), "nrrd"
+
+    try:
+        import SimpleITK as sitk
+    except Exception:  # pragma: no cover
+        sitk = None
+    if sitk is not None:
+        return np.asarray(sitk.GetArrayFromImage(sitk.ReadImage(str(path)))), "SimpleITK"
+
+    raise ImportError("Reading .nrrd requires pynrrd or SimpleITK")
+
+
+def _maybe_reorder_anatomy_stack(data: Any) -> tuple[np.ndarray, bool]:
+    arr = np.asarray(data)
+    reordered = bool(arr.ndim == 3 and arr.shape[-1] < min(arr.shape[0], arr.shape[1]))
+    if reordered:
+        arr = arr.transpose(2, 1, 0)
+    return arr, reordered
+
+
 def resolve_voxel_context_stage(
     *,
     analysis_dir: Path | str,
@@ -1084,6 +1145,101 @@ def resolve_voxel_context_stage(
         "log_lines": log_lines,
         "cache_data": cache_data,
         "run_metadata_voxels": run_meta_voxels,
+    }
+
+
+def normalize_anatomy_stack_stage(
+    *,
+    anat_stack_path: Path | str | None,
+    tmp_convert_dir: Path | str | None,
+    preproc_dir: Path | str | None,
+    anat_stack_path_orig: Path | str | None = None,
+    config: AnatomyNormalizationStageConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or AnatomyNormalizationStageConfig()
+    if anat_stack_path is None:
+        raise ValueError("ANAT_STACK_PATH is required for anatomy normalization")
+    if tmp_convert_dir is None:
+        raise ValueError("TMP_CONVERT_DIR is required for anatomy normalization")
+
+    anat_stack_path_local = Path(anat_stack_path)
+    anat_stack_path_orig_local = Path(anat_stack_path_orig) if anat_stack_path_orig is not None else anat_stack_path_local
+    tmp_convert_dir_local = Path(tmp_convert_dir)
+    preproc_dir_local = Path(preproc_dir) if preproc_dir is not None else None
+    tmp_convert_dir_local.mkdir(parents=True, exist_ok=True)
+
+    force_recompute = bool(cfg.force_recompute_anat_convert)
+    log_lines: list[str] = []
+    if force_recompute:
+        log_lines.append("[INFO] FORCE_RECOMPUTE_ANAT_CONVERT=True; rebuilding anatomy conversion")
+
+    anat_src = _resolve_anatomy_source_path(
+        anat_stack_path=anat_stack_path_local,
+        anat_stack_path_orig=anat_stack_path_orig_local,
+        tmp_convert_dir=tmp_convert_dir_local,
+        preproc_dir=preproc_dir_local,
+        force_recompute=force_recompute,
+    )
+
+    final_anat_stack_path = anat_stack_path_local
+    converted_anat_tif: Path | None = None
+    anatomy_shape: tuple[int, ...] | None = None
+    reordered_to_zxy = False
+    used_cached_conversion = False
+    source_reader: str | None = None
+    missing_nrrd_source = force_recompute and anat_src is None
+
+    if anat_src is not None:
+        nrrd_path = Path(anat_src)
+        converted_anat_tif = tmp_convert_dir_local / f"{nrrd_path.stem}_converted.tif"
+        if converted_anat_tif.exists() and not force_recompute:
+            data = tifffile.imread(converted_anat_tif)
+            anatomy_shape = tuple(int(v) for v in np.asarray(data).shape)
+            used_cached_conversion = True
+            log_lines.append(f"[INFO] Using existing converted anatomy: {converted_anat_tif}")
+        else:
+            data, source_reader = _read_nrrd_volume(nrrd_path)
+            anatomy_shape = tuple(int(v) for v in np.asarray(data).shape)
+            log_lines.append(f"NRRD anatomy shape (as read): {anatomy_shape}")
+            data, reordered_to_zxy = _maybe_reorder_anatomy_stack(data)
+            if reordered_to_zxy:
+                anatomy_shape = tuple(int(v) for v in data.shape)
+                log_lines.append(f"Reordered anatomy to (Z, X, Y): {anatomy_shape}")
+            tifffile.imwrite(converted_anat_tif, np.asarray(data))
+            log_lines.append(f"[INFO] Converted anatomy saved to {converted_anat_tif}")
+        final_anat_stack_path = converted_anat_tif
+    elif anat_stack_path_local.suffix.lower() in (".tif", ".tiff"):
+        if missing_nrrd_source:
+            log_lines.append(
+                "[INFO] FORCE_RECOMPUTE_ANAT_CONVERT=True but no NRRD source found; "
+                "set ANAT_STACK_PATH_ORIG to a .nrrd to reconvert."
+            )
+        log_lines.append("[INFO] Anatomy already TIFF; no conversion")
+    else:
+        if missing_nrrd_source:
+            log_lines.append(
+                "[INFO] FORCE_RECOMPUTE_ANAT_CONVERT=True but no NRRD source found; "
+                "set ANAT_STACK_PATH_ORIG to a .nrrd to reconvert."
+            )
+        log_lines.append("[WARN] Anatomy path is not NRRD/TIFF; no conversion")
+
+    artifacts = {
+        "anat_source_path": anat_src,
+        "converted_anat_tif": converted_anat_tif,
+        "anatomy_shape": anatomy_shape,
+        "reordered_to_zxy": reordered_to_zxy,
+        "used_cached_conversion": used_cached_conversion,
+        "source_reader": source_reader,
+    }
+    return {
+        "bindings": {
+            "FORCE_RECOMPUTE_ANAT_CONVERT": force_recompute,
+            "ANAT_STACK_PATH_ORIG": anat_stack_path_orig_local,
+            "ANAT_STACK_PATH": final_anat_stack_path,
+        },
+        "log_lines": log_lines,
+        "artifacts": artifacts,
+        "anat_stack_path": final_anat_stack_path,
     }
 
 
@@ -1615,6 +1771,7 @@ def build_fish_state_audit_df(
 
 
 __all__ = [
+    "AnatomyNormalizationStageConfig",
     "ContextStageConfig",
     "DEFAULT_RUN_CONFIG",
     "FinalFishAuditConfig",
@@ -1644,6 +1801,7 @@ __all__ = [
     "func_polarity_north",
     "normalize_run_config",
     "normalize_polarity_value",
+    "normalize_anatomy_stack_stage",
     "notebook_bindings_from_context",
     "owner_root",
     "prepare_notebook_paths",

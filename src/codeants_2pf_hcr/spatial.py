@@ -1,4 +1,4 @@
-"""Spatial/image helpers for notebook utility cells such as [6] and registration prep."""
+"""Spatial/image helpers and notebook-facing stages for functional reference cells [12], [16], and [20]."""
 
 from __future__ import annotations
 
@@ -269,6 +269,23 @@ def load_or_cache_voxels(path: str | Path, alias: str | None = None) -> dict[str
 
 
 @dataclass(frozen=True)
+class FunctionalReferenceConfig:
+    use_top_corr_refs: bool = True
+    top_corr_k: int = 20
+    top_corr_sample: int = 20
+    reuse_saved_refs: bool = True
+    force_recompute_refs: bool = False
+    top_corr_pre_smooth_sigma: float = 0.5
+
+
+@dataclass(frozen=True)
+class FunctionalPlacementConfig:
+    use_ncc_placement: bool = True
+    display_normalize_placed: bool = True
+    use_cv2: bool = True
+
+
+@dataclass(frozen=True)
 class RegistrationSearchConfig:
     rescale_func_to_anat: bool = True
     force_recompute: bool = False
@@ -306,6 +323,306 @@ def _as_bool(val: Any, default: bool = False) -> bool:
         if text in {"0", "false", "f", "no", "n", "off", ""}:
             return False
     return bool(val)
+
+
+def _functional_plane_ref(
+    *,
+    label: str,
+    ref2d_raw: np.ndarray,
+    ref2d: np.ndarray,
+    index: int | None = None,
+    vox_func: Any = None,
+) -> dict[str, Any]:
+    plane_ref = {
+        "label": label,
+        "ref2d_raw": np.asarray(ref2d_raw, dtype=np.float32),
+        "ref2d": np.asarray(ref2d, dtype=np.float32),
+    }
+    if index is not None:
+        plane_ref["index"] = int(index)
+    if vox_func is not None:
+        plane_ref["vox_func"] = vox_func
+    return plane_ref
+
+
+def _load_cached_functional_ref(raw_path: Path, norm_path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    if not raw_path.exists() or not norm_path.exists():
+        return None
+    ref2d_raw = np.asarray(imread_any(raw_path), dtype=np.float32)
+    ref2d = norm01(imread_any(norm_path))
+    return ref2d_raw, ref2d
+
+
+def build_functional_references_stage(
+    *,
+    flipped_list: list[Path | str] | None,
+    out_raw: Path | str,
+    outdir: Path | str | None = None,
+    vox_func_by_path: dict[str, Any] | None = None,
+    config: FunctionalReferenceConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or FunctionalReferenceConfig()
+    out_raw_path = Path(out_raw)
+    outdir_path = Path(outdir) if outdir is not None else None
+    out_raw_path.mkdir(parents=True, exist_ok=True)
+
+    source_paths = [Path(path) for path in (flipped_list or []) if path]
+    if not source_paths:
+        raise FileNotFoundError("No flipped functional stacks available")
+
+    reuse_saved_refs = bool(cfg.reuse_saved_refs)
+    if cfg.force_recompute_refs:
+        reuse_saved_refs = False
+
+    plane_refs: list[dict[str, Any]] = []
+    log_lines: list[str] = []
+    if cfg.force_recompute_refs:
+        log_lines.append("[12] FORCE_RECOMPUTE_REFS=True -> rebuilding functional refs")
+
+    for fp in source_paths:
+        if not fp.exists():
+            raise FileNotFoundError(f"Flipped functional stack not found: {fp}")
+
+        vox_f = vox_func_by_path.get(str(fp), {}) if vox_func_by_path else {}
+        stem = fp.stem
+        raw_path = out_raw_path / f"{stem}_ref_raw.tif"
+        norm_path = out_raw_path / f"{stem}_ref_norm.tif"
+        legacy_raw_path = (outdir_path / f"{stem}_ref_raw.tif") if outdir_path is not None else None
+        legacy_norm_path = (outdir_path / f"{stem}_ref_norm.tif") if outdir_path is not None else None
+
+        if reuse_saved_refs:
+            plane_raws = sorted(out_raw_path.glob(f"{stem}_plane*_raw.tif"))
+            if (not plane_raws) and outdir_path is not None:
+                plane_raws = sorted(outdir_path.glob(f"{stem}_plane*_raw.tif"))
+            stack_plane_refs: list[dict[str, Any]] = []
+            for rawp in plane_raws:
+                match = re.search(r"plane(\d+)", rawp.stem)
+                zi = int(match.group(1)) if match else None
+                normp = rawp.parent / f"{stem}_plane{zi}_norm.tif"
+                cached = _load_cached_functional_ref(rawp, normp)
+                if cached is None:
+                    continue
+                ref2d_raw_i, ref2d_i = cached
+                stack_plane_refs.append(
+                    _functional_plane_ref(
+                        label=f"{stem}_plane{zi}",
+                        ref2d_raw=ref2d_raw_i,
+                        ref2d=ref2d_i,
+                        index=zi,
+                        vox_func=vox_f,
+                    )
+                )
+            if stack_plane_refs:
+                plane_refs.extend(stack_plane_refs)
+                log_lines.append(f"[12] Using existing per-plane refs for {fp}")
+                continue
+
+            cached = _load_cached_functional_ref(raw_path, norm_path)
+            if cached is not None:
+                ref2d_raw, ref2d = cached
+                plane_refs.append(
+                    _functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f)
+                )
+                log_lines.append(f"[12] Using existing refs for {fp}")
+                continue
+
+            if legacy_raw_path is not None and legacy_norm_path is not None:
+                cached = _load_cached_functional_ref(legacy_raw_path, legacy_norm_path)
+                if cached is not None:
+                    ref2d_raw, ref2d = cached
+                    plane_refs.append(
+                        _functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f)
+                    )
+                    log_lines.append(f"[12] Using existing refs for {fp} (legacy)")
+                    continue
+
+        func = np.asarray(imread_any(fp), dtype=np.float32)
+        if cfg.use_top_corr_refs and func.ndim == 4:
+            _, z_count, _, _ = func.shape
+            for zi in range(z_count):
+                plane_t = func[:, zi, :, :]
+                k = min(int(cfg.top_corr_k), int(plane_t.shape[0]))
+                ref2d_raw_i, idx, _ = top_correlated_mean(
+                    plane_t,
+                    take_k=k,
+                    pre_smooth_sigma=float(cfg.top_corr_pre_smooth_sigma),
+                )
+                if int(cfg.top_corr_sample) > 0 and k > int(cfg.top_corr_sample):
+                    try:
+                        sel = np.random.choice(idx, size=int(cfg.top_corr_sample), replace=False)
+                        ref2d_raw_i = plane_t[sel].mean(axis=0).astype(np.float32)
+                    except Exception:
+                        pass
+                rawp = out_raw_path / f"{stem}_plane{zi}_raw.tif"
+                normp = out_raw_path / f"{stem}_plane{zi}_norm.tif"
+                tifffile.imwrite(rawp, np.asarray(ref2d_raw_i, dtype=np.float32))
+                ref2d_i = norm01(ref2d_raw_i)
+                tifffile.imwrite(normp, (ref2d_i * 65535).astype(np.uint16))
+                plane_refs.append(
+                    _functional_plane_ref(
+                        label=f"{stem}_plane{zi}",
+                        ref2d_raw=ref2d_raw_i,
+                        ref2d=ref2d_i,
+                        index=zi,
+                        vox_func=vox_f,
+                    )
+                )
+            log_lines.append(f"[12] Built top-correlated per-plane refs for {fp}")
+            continue
+
+        if func.ndim == 3:
+            ref2d_raw = func.mean(axis=0).astype(np.float32)
+            tifffile.imwrite(raw_path, ref2d_raw.astype(np.float32))
+            ref2d = norm01(ref2d_raw)
+            tifffile.imwrite(norm_path, (ref2d * 65535).astype(np.uint16))
+            plane_refs.append(_functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f))
+            log_lines.append(f"[12] Built mean reference for {fp}")
+            continue
+
+        if func.ndim != 4:
+            raise ValueError(f"Unsupported functional stack ndim={func.ndim} for {fp}")
+
+        _, z_count, _, _ = func.shape
+        for zi in range(z_count):
+            plane_t = func[:, zi, :, :]
+            ref2d_raw_i = plane_t.mean(axis=0).astype(np.float32)
+            rawp = out_raw_path / f"{stem}_plane{zi}_raw.tif"
+            normp = out_raw_path / f"{stem}_plane{zi}_norm.tif"
+            tifffile.imwrite(rawp, ref2d_raw_i.astype(np.float32))
+            ref2d_i = norm01(ref2d_raw_i)
+            tifffile.imwrite(normp, (ref2d_i * 65535).astype(np.uint16))
+            plane_refs.append(
+                _functional_plane_ref(
+                    label=f"{stem}_plane{zi}",
+                    ref2d_raw=ref2d_raw_i,
+                    ref2d=ref2d_i,
+                    index=zi,
+                    vox_func=vox_f,
+                )
+            )
+        log_lines.append(f"[12] Built mean per-plane refs for {fp}")
+
+    if not plane_refs:
+        raise RuntimeError("No functional planes available")
+
+    ref2d_raw = plane_refs[0]["ref2d_raw"]
+    ref2d = plane_refs[0]["ref2d"]
+    return {
+        "plane_refs": plane_refs,
+        "ref2d_raw": ref2d_raw,
+        "ref2d": ref2d,
+        "log_lines": log_lines,
+        "bindings": {
+            "plane_refs": plane_refs,
+            "ref2d_raw": ref2d_raw,
+            "ref2d": ref2d,
+        },
+    }
+
+
+def ncc_xy(template: np.ndarray, image: np.ndarray, *, use_cv2: bool = True) -> tuple[int, int, float]:
+    template_arr = np.asarray(template, dtype=np.float32)
+    image_arr = np.asarray(image, dtype=np.float32)
+    if bool(use_cv2) and cv2 is not None:
+        templ = (norm01(template_arr) * 255).astype(np.uint8)
+        img = (norm01(image_arr) * 255).astype(np.uint8)
+        res = cv2.matchTemplate(img, templ, cv2.TM_CCORR_NORMED)
+        ij = np.unravel_index(np.argmax(res), res.shape)
+        y0, x0 = int(ij[0]), int(ij[1])
+        return x0, y0, float(res[y0, x0])
+    res = feature.match_template(norm01(image_arr), norm01(template_arr), pad_input=False)
+    ij = np.unravel_index(np.argmax(res), res.shape)
+    y0, x0 = int(ij[0]), int(ij[1])
+    return x0, y0, float(res[y0, x0])
+
+
+def _place_image_on_canvas(img: np.ndarray, output_shape: tuple[int, int], x0: int, y0: int) -> np.ndarray | None:
+    placed = np.zeros(output_shape, dtype=np.float32)
+    h, w = img.shape[-2], img.shape[-1]
+    y0i = max(0, int(y0))
+    x0i = max(0, int(x0))
+    y1 = min(output_shape[0], y0i + h)
+    x1 = min(output_shape[1], x0i + w)
+    sy0 = max(0, -int(y0))
+    sx0 = max(0, -int(x0))
+    sy1 = sy0 + (y1 - y0i)
+    sx1 = sx0 + (x1 - x0i)
+    if y1 <= y0i or x1 <= x0i:
+        return None
+    placed[y0i:y1, x0i:x1] = img[sy0:sy1, sx0:sx1]
+    return placed
+
+
+def run_ncc_placement_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat_f: Any,
+    best_z: int = 0,
+    config: FunctionalPlacementConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or FunctionalPlacementConfig()
+    if not plane_refs:
+        raise RuntimeError("plane_refs missing; run [16] first.")
+    if anat_f is None:
+        raise RuntimeError("anat_f missing; run [16] first.")
+
+    anat_arr = np.asarray(anat_f, dtype=np.float32)
+    log_lines: list[str] = []
+    first_ref_warped_raw = None
+    first_ref_warped = None
+
+    for plane_idx, plane_ref in enumerate(plane_refs):
+        if plane_ref is None:
+            continue
+        label = plane_ref.get("label", f"plane{plane_idx}")
+        bz = int(plane_ref.get("best_z", best_z))
+        a_slice = anat_arr[bz]
+        ref_src = plane_ref.get("ref2d_raw", plane_ref.get("ref2d"))
+        if ref_src is None:
+            log_lines.append(f"[20a] Missing ref for {label}")
+            continue
+        ref_src = np.asarray(ref_src, dtype=np.float32)
+        ref_scaled = np.asarray(plane_ref.get("ref_match", ref_src), dtype=np.float32)
+
+        if ref_scaled.shape[0] > a_slice.shape[0] or ref_scaled.shape[1] > a_slice.shape[1]:
+            log_lines.append(
+                f"[20a] Template larger than anatomy for {label}: {tuple(ref_scaled.shape)} vs {tuple(a_slice.shape)}"
+            )
+            continue
+
+        x0, y0, score = ncc_xy(ref_scaled, a_slice, use_cv2=cfg.use_cv2)
+        plane_ref["ncc_xy"] = {"x0": x0, "y0": y0, "score": score}
+        try:
+            plane_ref["tform"] = transform.SimilarityTransform(translation=(x0, y0))
+            plane_ref["tform_src"] = "ncc_xy"
+        except Exception:
+            plane_ref["tform"] = None
+
+        if cfg.use_ncc_placement:
+            ref_vis = norm01(ref_scaled) if cfg.display_normalize_placed else ref_scaled
+            placed = _place_image_on_canvas(ref_vis, tuple(a_slice.shape), x0, y0)
+            if placed is not None:
+                plane_ref["ref_warped_raw"] = placed
+                plane_ref["ref_warped"] = placed
+                plane_ref["ref_match"] = ref_scaled
+                if plane_idx == 0:
+                    first_ref_warped_raw = placed
+                    first_ref_warped = placed
+
+        log_lines.append(f"[20a] {label} z={bz} score={score:.4f} top-left=({x0},{y0})")
+
+    bindings = {"plane_refs": plane_refs}
+    if first_ref_warped_raw is not None:
+        bindings["ref_warped_raw"] = first_ref_warped_raw
+    if first_ref_warped is not None:
+        bindings["ref_warped"] = first_ref_warped
+    return {
+        "plane_refs": plane_refs,
+        "ref_warped_raw": first_ref_warped_raw,
+        "ref_warped": first_ref_warped,
+        "log_lines": log_lines,
+        "bindings": bindings,
+    }
 
 
 def scale_image(img: np.ndarray, scale: float) -> np.ndarray:
@@ -748,6 +1065,8 @@ def run_registration_search_stage(
 
 
 __all__ = [
+    "FunctionalPlacementConfig",
+    "FunctionalReferenceConfig",
     "RegistrationSearchConfig",
     "_find_embedded_nrrd_header",
     "_infer_voxels_from_open_tiff",
@@ -758,12 +1077,15 @@ __all__ = [
     "apply_func_orientation",
     "best_z_by_ncc",
     "corrcoef_img",
+    "build_functional_references_stage",
     "imread_any",
     "infer_voxels_tiff",
     "local_unsharp",
     "load_or_cache_voxels",
+    "ncc_xy",
     "norm01",
     "registration_metric_from_scores",
+    "run_ncc_placement_stage",
     "run_registration_search_stage",
     "scale_image",
     "top_correlated_mean",

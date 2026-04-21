@@ -12,6 +12,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.context`
 
+- `AnatomyNormalizationStageConfig`: Typed anatomy-conversion knob container for notebook cell `[14]`.
 - `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
@@ -29,6 +30,7 @@ Generated manually for the current extracted package surface.
 - `build_context_audit_stage`: Notebook-facing audit stage for `[4c]`.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals and summary dataframe outputs.
+- `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
 - `orient_functional_stacks_stage`: Notebook-facing functional stack orientation/cache stage for `[10]`.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
@@ -46,6 +48,8 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.spatial`
 
+- `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`.
+- `FunctionalPlacementConfig`: Typed NCC XY placement configuration for notebook cell `[20]`.
 - `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
 - `imread_any`: Read TIFF or NRRD images with minimal notebook dependencies.
 - `zproject_mean`: Mean projection helper.
@@ -55,12 +59,18 @@ Generated manually for the current extracted package surface.
 - `top_correlated_mean`: Suite2p-like top-k frame reference builder.
 - `best_z_by_ncc`: Best-z search by NCC-like scoring.
 - `apply_func_orientation`: Apply the notebook’s functional orientation convention.
+- `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy `ref2d_raw` / `ref2d` bindings and cache filenames.
+- `ncc_xy`: Shared NCC XY placement primitive for notebook cell `[20]`.
 - `scale_image`: Resize a 2D functional reference by an empirical NCC search scale.
 - `registration_metric_from_scores`: Summarize NCC scores into best-z and peak metrics.
+- `run_ncc_placement_stage`: Notebook-facing NCC XY placement stage for `[20]` that updates `plane_refs` with placement metadata and warped reference aliases.
 - `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, and rebinds legacy globals.
 
 ## `codeants_2pf_hcr.matching`
 
+- `FunctionalAnatomyDebugConfig`: Typed functional↔anatomy debug summary configuration for notebook cell `[34a]`.
+- `FunctionalRoiIdentityConfig`: Typed per-ROI identity export configuration for notebook cell `[50i]`.
+- `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
 - `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
 - `resample_labels_nn`: Apply nearest-neighbor label resampling for functional-to-anatomy plane warps and shape harmonization.
 - `harmonize_functional_labels_to_anatomy`: Enforce the shared per-plane functional/anatomy shape contract before overlap or centroid matching.
@@ -71,6 +81,7 @@ Generated manually for the current extracted package surface.
 - `summarize_distances`: Summarize centroid-match distance arrays for QC tables.
 - `build_plane_centroid_matches`: Build per-plane centroid-link tables and overlap-aware counts for notebook QA stages `[34]`/`[34a]`.
 - `build_functional_anatomy_debug_df`: Summarize per-plane functional-to-anatomy centroid matching status for notebook debug stage `[34a]`.
+- `build_functional_anatomy_debug_stage`: Notebook-facing functional↔anatomy debug stage for `[34a]` that loads anatomy labels, resolves voxel scale, and returns the debug summary bindings/log lines.
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
@@ -98,7 +109,9 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.activity`
 
 - `ActivityConfig`: Typed response/BPI scoring configuration for `[50ia]`.
+- `SingleFishBpiDiagnosticsConfig`: Typed BPI/activity diagnostics configuration for notebook cell `[56g]`.
 - `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table.
+- `prepare_single_fish_bpi_diagnostics_stage`: Notebook-facing response-aware diagnostics prep stage for `[56g]` that resolves activity/BPI columns, backfills response metadata from the ROI master table, and publishes plotting-ready bindings.
 
 ## `codeants_2pf_hcr.suite2p`
 
@@ -121,6 +134,8 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.traces`
 
 - `TraceExportConfig`: Typed trace-export configuration for `[51]`.
+- `MotionAucPlotConfig`: Typed motion-AUC table-build configuration for the `[50l]`-embedded `[56i]` owner path.
+- `build_single_fish_motion_auc_plot_tables`: Build the single-fish motion-window AUC ROI panel / plot points / plot counts tables for `[50l]` / `[56i]`, preserving current ROI-centric all-neuron and HCR-centric gene-group semantics.
 - `export_suite2p_trace_metadata`: Export deduplicated HCR-selected Suite2p dF/F traces and metadata for `[51]`.
 - `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
 - `resolve_conf_func_csv_analysis`: Resolve the analysis-ready `conf_to_func_pairs.csv` path for `[51]`, `[56]`, `[56h]`, and `[57]`.
@@ -146,6 +161,7 @@ Generated manually for the current extracted package surface.
 
 - `plot_single_roi_57style`: Render the single-ROI `[57]` style figure and optional AUC table.
 - `render_single_fish_50l_bpi_panel`: Render the single-fish `[50l]` top-left whole-population AUC-vs-BPI scatter from `[50ia]` response/BPI outputs.
+- `render_single_fish_50l_gene_auc_panel`: Render the single-fish `[50l]` marker-specific ipsi/contra AUC box/point/count-strip panels from the package-owned motion AUC point/count tables.
 - `render_single_fish_50l_global_auc_panel`: Render the single-fish `[50l]` all-neurons ipsi/contra AUC panels as paired bout↔continuous ROI points with class-colored directional highlights, neutral non-directional classes, directional class-mean summaries, and unchanged count strips.
 - `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
 - `render_cohort_56g_diagnostics`: Render cohort [56g] activity/BPI diagnostic 2x2 panel from `cohort_bpi_cells_df`.

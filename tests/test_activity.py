@@ -1,144 +1,56 @@
-import tempfile
-import unittest
-from pathlib import Path
+from __future__ import annotations
 
-import numpy as np
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
 import pandas as pd
 
 from codeants_2pf_hcr.activity import (
-    ActivityConfig,
-    build_response_bpi_tables,
-    prepare_pairs_for_unique_cells,
-    resolve_conf_func_csv_analysis,
+    SingleFishBpiDiagnosticsConfig,
+    prepare_single_fish_bpi_diagnostics_stage,
 )
 
 
-class ActivityTests(unittest.TestCase):
-    def test_resolve_conf_func_csv_analysis_defaults_to_out_reg(self) -> None:
-        out = resolve_conf_func_csv_analysis(out_reg="/tmp/fish/registration", run_config={})
-        self.assertEqual(str(out), "/tmp/fish/registration/conf_to_func_pairs.csv")
-
-    def test_resolve_conf_func_csv_analysis_rejects_cross_fish_override(self) -> None:
-        out = resolve_conf_func_csv_analysis(
-            out_reg="/tmp/fishB/registration",
-            run_config={"CONF_FUNC_CSV_ANALYSIS": "/tmp/fishA/registration/conf_to_func_pairs.csv"},
-            fish_id="fishB",
-        )
-        self.assertEqual(str(out), "/tmp/fishB/registration/conf_to_func_pairs.csv")
-
-    def test_prepare_pairs_for_unique_cells_filters_required_surface(self) -> None:
-        pairs = pd.DataFrame(
+def test_prepare_single_fish_bpi_diagnostics_stage_backfills_response_columns() -> None:
+    with TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        master_csv = tmp_path / "functional_roi_activity_identity.csv"
+        pd.DataFrame(
             {
-                "gene": ["tac3b", "tac3b"],
-                "conf_mask": ["mask.tif", "mask.tif"],
-                "conf_label": [1, 2],
-                "anat_label": [10, 11],
-                "func_label": [5, 6],
-                "plane": [0, 0],
-                "is_selected_for_analysis": [True, False],
+                "fish_id": ["fishA", "fishA"],
+                "plane_idx": [0, 0],
+                "func_label": [1, 2],
+                "response_class": ["responsive", "low activity"],
+                "response_summary_class": ["Responsive neurons", "Low activity"],
+                "response_is_active": [True, False],
+            }
+        ).to_csv(master_csv, index=False)
+
+        bpi_cells_df = pd.DataFrame(
+            {
+                "fish_id": ["fishA", "fishA"],
+                "gene": ["sst1.1", "npy"],
+                "plane_idx": [0, 0],
+                "func_label": [1, 2],
+                "mean_bout_zdff": [0.6, 0.1],
+                "mean_cont_zdff": [0.2, 0.1],
+                "bpi": [0.5, 0.01],
             }
         )
-        out = prepare_pairs_for_unique_cells(pairs, strict=False)
-        self.assertEqual(len(out), 1)
-        self.assertEqual(int(out.iloc[0]["func_label"]), 5)
 
-    def test_prepare_pairs_for_unique_cells_drops_blank_gene_rows(self) -> None:
-        pairs = pd.DataFrame(
-            {
-                "gene": ["tac3b", " ", "nan"],
-                "conf_mask": ["mask.tif", "mask.tif", "mask.tif"],
-                "conf_label": [1, 2, 3],
-                "anat_label": [10, 11, 12],
-                "func_label": [5, 6, 7],
-                "plane": [0, 0, 0],
-                "is_selected_for_analysis": [True, True, True],
-            }
+        result = prepare_single_fish_bpi_diagnostics_stage(
+            bpi_cells_df,
+            fish_id="fishA",
+            master_detail_csv=master_csv,
+            config=SingleFishBpiDiagnosticsConfig(zero_band=0.05, n_activity_bins=4),
         )
-        out = prepare_pairs_for_unique_cells(pairs, strict=False)
-        self.assertEqual(len(out), 1)
-        self.assertEqual(out.iloc[0]["gene"], "tac3b")
 
-    def test_build_response_bpi_tables_classifies_response_states(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            metadata_dir = root / "01_raw" / "2p" / "metadata"
-            metadata_dir.mkdir(parents=True)
-            (metadata_dir / "fish_metadata.csv").write_text("parameter,value\nframerate,2\n")
-            (metadata_dir / "fish_experiment_log.csv").write_text(
-                "\n".join(
-                    [
-                        "event,time",
-                        "B1_start,0",
-                        "B1_prestim1_pause,0",
-                        "B1_stim1_LLB,1",
-                        "B1_poststim1_pause,2",
-                        "B1_prestim2_pause,2",
-                        "B1_stim2_LLB,3",
-                        "B1_poststim2_pause,4",
-                        "B1_prestim3_pause,4",
-                        "B1_stim3_LLB,5",
-                        "B1_poststim3_pause,6",
-                        "B1_prestim4_pause,6",
-                        "B1_stim4_RLC,7",
-                        "B1_poststim4_pause,8",
-                        "B1_prestim5_pause,8",
-                        "B1_stim5_RLC,9",
-                        "B1_poststim5_pause,10",
-                        "B1_prestim6_pause,10",
-                        "B1_stim6_RLC,11",
-                        "B1_poststim6_pause,12",
-                        "B1_end,13",
-                    ]
-                )
-            )
-            plane_dir = root / "suite2P" / "plane0"
-            plane_dir.mkdir(parents=True)
-            f_raw = np.asarray(
-                [
-                    [10, 10, 10, 15, 15, 15, 10, 10, 10, 15, 15, 15, 10, 10, 10, 15, 15, 15, 10, 10, 10, 11, 11, 11, 10, 10],
-                    [10, 10, 10, 10.05, 10.05, 10.05, 10, 10, 10, 10.05, 10.05, 10.05, 10, 10, 10, 10.05, 10.05, 10.05, 10, 10, 10, 10.05, 10.05, 10.05, 10, 10],
-                    [10, 10, 10, 10.68, 10.68, 10.68, 10, 10, 10, 10.68, 10.68, 10.68, 10, 10, 10, 10.68, 10.68, 10.68, 10, 10, 10, 10.56, 10.56, 10.56, 10, 10],
-                    [10, 10, 10, 15, 15, 15, 10, 10, 10, 15, 15, 15, 10, 10, 10, 15, 15, 15, 10, 10, 10, 15, 15, 15, 10, 10],
-                ],
-                dtype=np.float32,
-            )
-            np.save(plane_dir / "F.npy", f_raw)
-            np.save(plane_dir / "ops.npy", {"fs": 2.0}, allow_pickle=True)
-            detail_df = pd.DataFrame(
-                {
-                    "plane_idx": [0, 0, 0, 0],
-                    "func_label": [1, 2, 3, 4],
-                    "plane": ["p0", "p0", "p0", "p0"],
-                    "anat_label": [10, 11, 12, 13],
-                    "identity_display_label": ["g1", "g2", "g3", "g4"],
-                    "activity_class": ["Active neurons"] * 4,
-                    "is_active": [True, True, True, False],
-                    "func_source": [str(plane_dir)] * 4,
-                    "suite2p_is_cell": [True, True, True, False],
-                }
-            )
-            config = ActivityConfig(
-                stim_onset_delay_sec=0.0,
-                response_min_auc=0.03,
-                response_null_q=0.0,
-                response_null_bootstrap_n=8,
-                response_null_min_windows=1,
-                response_null_step_sec=0.5,
-                min_trials_per_class=3,
-            )
-            out = build_response_bpi_tables(
-                detail_df,
-                fish_dir=root,
-                fish_id="fish",
-                suite2p_root=root / "suite2P",
-                config=config,
-            )
-            scored = out["scored_bpi_df"].sort_values("func_label").reset_index(drop=True)
-            self.assertEqual(scored.loc[0, "response_class"], "bout-responsive")
-            self.assertEqual(scored.loc[1, "response_class"], "low activity")
-            self.assertEqual(scored.loc[2, "bpi_category"], "weak-response")
-            self.assertEqual(scored.loc[3, "response_class"], "response unavailable")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        df = result["df"]
+        assert list(df["response_summary_class"].astype(str)) == ["Responsive neurons", "Low activity"]
+        assert list(df["response_is_active"].astype(bool)) == [True, False]
+        assert result["activity_label"] == "z-scored dF/F"
+        assert result["bpi_index_col"] == "bpi"
+        assert result["summary_counts"]["n_total"] == 2
+        assert result["summary_counts"]["n_near_zero"] == 1
+        assert "bpi_activity_df" in result["bindings"]
+        assert "BPI_ACTIVITY_FISH_ID" in result["bindings"]

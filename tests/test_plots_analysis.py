@@ -15,6 +15,7 @@ from codeants_2pf_hcr.plots.analysis import (
     render_cohort_motion_auc,
     render_single_fish_50l_responsive_identity_donut,
     render_single_fish_50l_bpi_panel,
+    render_single_fish_50l_gene_auc_panel,
     render_single_fish_50l_global_auc_panel,
 )
 
@@ -464,6 +465,79 @@ class PlotsAnalysisTests(unittest.TestCase):
             )
             mean_sizes = [float(np.asarray(c.get_sizes(), dtype=float)[0]) for c in collections[-4:]]
             self.assertTrue(all(size > 18.0 for size in mean_sizes))
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_gene_auc_panel_dedicated_gene_layout(self) -> None:
+        fig, (ax, strip_ax) = plt.subplots(2, 1)
+        try:
+            out = render_single_fish_50l_gene_auc_panel(
+                ax,
+                strip_ax,
+                pd.DataFrame(
+                    {
+                        "group": ["sst1.1", "sst1.1", "npy", "npy"],
+                        "laterality": ["ipsi"] * 4,
+                        "stim_mode": ["bout", "continuous", "bout", "continuous"],
+                        "auc_dff": [0.30, 0.50, 0.20, 0.25],
+                        "response_class": ["responsive", "responsive", "low activity", "response unavailable"],
+                        "response_is_active": [True, True, False, False],
+                        "bpi_category": ["bout-responsive", "bout-responsive", "low activity", "response unavailable"],
+                        "point_label_id": ["a", "a", "b", "b"],
+                    }
+                ),
+                pd.DataFrame(
+                    {
+                        "group": ["sst1.1", "sst1.1", "npy", "npy"],
+                        "laterality": ["ipsi"] * 4,
+                        "stim_mode": ["bout", "continuous", "bout", "continuous"],
+                        "frac_responsive_used": [1.0, 1.0, 0.0, 0.0],
+                        "frac_low_used": [0.0, 0.0, 0.5, 0.5],
+                        "frac_other": [0.0, 0.0, 0.5, 0.5],
+                        "n_total": [1, 1, 2, 2],
+                    }
+                ),
+                ["sst1.1", "npy"],
+                np.array([0.0, 1.0], dtype=float),
+                "ipsi",
+                "Ipsi",
+                (0.0, 1.0),
+                gene_colors={"sst1.1": "#d62728", "npy": "#1f9d55"},
+            )
+            self.assertEqual(out["pair_connector_count"], 2)
+            self.assertEqual(out["box_count"], 4)
+            self.assertEqual(out["median_label_count"], 4)
+            self.assertEqual(out["n_labels"]["sst1.1"], "n=1")
+            self.assertEqual(out["n_labels"]["npy"], "n=2")
+            self.assertGreater(len(ax.patches), 0)
+        finally:
+            plt.close(fig)
+
+    def test_render_single_fish_50l_gene_auc_panel_missing_columns_raise(self) -> None:
+        fig, (ax, strip_ax) = plt.subplots(2, 1)
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Missing point columns"):
+                render_single_fish_50l_gene_auc_panel(
+                    ax,
+                    strip_ax,
+                    pd.DataFrame({"group": ["sst1.1"]}),
+                    pd.DataFrame(
+                        {
+                            "group": ["sst1.1"],
+                            "laterality": ["ipsi"],
+                            "stim_mode": ["bout"],
+                            "frac_responsive_used": [1.0],
+                            "frac_low_used": [0.0],
+                            "frac_other": [0.0],
+                            "n_total": [1],
+                        }
+                    ),
+                    ["sst1.1"],
+                    np.array([0.0], dtype=float),
+                    "ipsi",
+                    "Ipsi",
+                    (0.0, 1.0),
+                )
         finally:
             plt.close(fig)
 

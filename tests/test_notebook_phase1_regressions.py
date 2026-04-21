@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from codeants_2pf_hcr import cohort_cache_paths
+from codeants_2pf_hcr.notebook_contract import find_required_cell_contract_violations
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,10 @@ PHASE5_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase5.py"
 PHASE6_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase6.py"
 PHASE7_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase7.py"
 PHASE8_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase8.py"
+PHASE9_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase9.py"
+PHASE10_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase10.py"
+PHASE12_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase12.py"
+PHASE13_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase13.py"
 COHORT_PHASE1_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_cohort_phase1.py"
 COHORT_PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_cohort_phase2.py"
 
@@ -64,6 +69,76 @@ def _cohort_cfg_cell() -> str:
 
 
 class NotebookPhase1RegressionTests(unittest.TestCase):
+    def test_single_fish_required_package_owner_contract_tracks_50l_and_57a_slice(self) -> None:
+        violations = find_required_cell_contract_violations(NOTEBOOK_PATH)
+        cell_50l = _code_cell_by_tag("50l")
+
+        def _details(tag: str, kind: str) -> set[str]:
+            return {violation.detail for violation in violations if violation.tag == tag and violation.kind == kind}
+
+        self.assertNotIn(
+            "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_bpi_panel",
+            _details("50l", "required-import"),
+        )
+        self.assertNotIn(
+            "render_single_fish_50l_bpi_panel",
+            _details("50l", "required-call"),
+        )
+        self.assertNotIn(
+            "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_global_auc_panel",
+            _details("50l", "required-import"),
+        )
+        self.assertNotIn(
+            "render_single_fish_50l_global_auc_panel",
+            _details("50l", "required-call"),
+        )
+        self.assertNotIn(
+            "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_responsive_identity_donut",
+            _details("57a-responsive-identity-donut", "required-import"),
+        )
+        self.assertNotIn(
+            "render_single_fish_50l_responsive_identity_donut",
+            _details("57a-responsive-identity-donut", "required-call"),
+        )
+
+        if "build_single_fish_motion_auc_plot_tables" in cell_50l:
+            self.assertNotIn(
+                "codeants_2pf_hcr.traces:build_single_fish_motion_auc_plot_tables",
+                _details("50l", "required-import"),
+            )
+            self.assertNotIn(
+                "build_single_fish_motion_auc_plot_tables",
+                _details("50l", "required-call"),
+            )
+        else:
+            self.assertIn(
+                "codeants_2pf_hcr.traces:build_single_fish_motion_auc_plot_tables",
+                _details("50l", "required-import"),
+            )
+            self.assertIn(
+                "build_single_fish_motion_auc_plot_tables",
+                _details("50l", "required-call"),
+            )
+
+        if "render_single_fish_50l_gene_auc_panel" in cell_50l:
+            self.assertNotIn(
+                "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_gene_auc_panel",
+                _details("50l", "required-import"),
+            )
+            self.assertNotIn(
+                "render_single_fish_50l_gene_auc_panel",
+                _details("50l", "required-call"),
+            )
+        else:
+            self.assertIn(
+                "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_gene_auc_panel",
+                _details("50l", "required-import"),
+            )
+            self.assertIn(
+                "render_single_fish_50l_gene_auc_panel",
+                _details("50l", "required-call"),
+            )
+
     def test_cell_4_binds_legacy_compatibility_surface(self) -> None:
         cell = _code_cell_by_tag("4")
         self.assertIn("resolve_notebook_context_stage", cell)
@@ -110,6 +185,65 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("run_hcr_cellpose_stage", source)
         self.assertIn("show_functional_label_overlay_stage", source)
         self.assertIn("export_suite2p_native_labels_stage", source)
+
+    def test_phase9_generator_tracks_early_spatial_normalization_extraction(self) -> None:
+        source = PHASE9_GENERATOR_PATH.read_text()
+        self.assertIn("FunctionalReferenceConfig", source)
+        self.assertIn("build_functional_references_stage", source)
+        self.assertIn("AnatomyNormalizationStageConfig", source)
+        self.assertIn("normalize_anatomy_stack_stage", source)
+        self.assertIn("FunctionalPlacementConfig", source)
+        self.assertIn("run_ncc_placement_stage", source)
+
+    def test_cells_12_14_and_20_are_stage_wrappers_only(self) -> None:
+        cell_12 = _code_cell_by_tag("12")
+        cell_14 = _code_cell_by_tag("14")
+        cell_20 = _code_cell_by_tag("20")
+
+        self.assertIn("FunctionalReferenceConfig", cell_12)
+        self.assertIn("build_functional_references_stage", cell_12)
+        self.assertNotIn("def _quickshow_12(", cell_12)
+
+        self.assertIn("AnatomyNormalizationStageConfig", cell_14)
+        self.assertIn("normalize_anatomy_stack_stage", cell_14)
+        self.assertNotIn("import nrrd", cell_14)
+        self.assertNotIn("SimpleITK", cell_14)
+
+        self.assertIn("FunctionalPlacementConfig", cell_20)
+        self.assertIn("run_ncc_placement_stage", cell_20)
+        self.assertNotIn("def _ncc_xy(", cell_20)
+
+    def test_phase10_generator_tracks_small_notebook_only_cleanup(self) -> None:
+        source = PHASE10_GENERATOR_PATH.read_text()
+        self.assertIn("_response_active_truthy", source)
+        self.assertIn("effective_motion_window(", source)
+
+    def test_cells_56g_and_57_no_longer_define_local_helper_functions(self) -> None:
+        cell_56g = _code_cell_by_tag("56g")
+        cell_57 = _code_cell_by_tag("57")
+
+        self.assertNotIn("def _bool_from_any_local(", cell_56g)
+        self.assertIn("SingleFishBpiDiagnosticsConfig", cell_56g)
+        self.assertIn("prepare_single_fish_bpi_diagnostics_stage", cell_56g)
+
+        self.assertNotIn("def _effective_motion_span_57(", cell_57)
+        self.assertIn("effective_motion_window(", cell_57)
+
+    def test_phase12_generator_tracks_56g_stage_rewrite(self) -> None:
+        source = PHASE12_GENERATOR_PATH.read_text()
+        self.assertIn("SingleFishBpiDiagnosticsConfig", source)
+        self.assertIn("prepare_single_fish_bpi_diagnostics_stage", source)
+
+    def test_phase13_generator_tracks_34a_stage_rewrite(self) -> None:
+        source = PHASE13_GENERATOR_PATH.read_text()
+        self.assertIn("FunctionalAnatomyDebugConfig", source)
+        self.assertIn("build_functional_anatomy_debug_stage", source)
+
+    def test_cell_34a_is_stage_wrapper_only(self) -> None:
+        cell_34a = _code_cell_by_tag("34a")
+        self.assertIn("FunctionalAnatomyDebugConfig", cell_34a)
+        self.assertIn("build_functional_anatomy_debug_stage", cell_34a)
+        self.assertNotIn("anat_labels_all = _ensure_uint_labels(imread_any(", cell_34a)
 
     def test_cell_55_publishes_df_stim_fish_id(self) -> None:
         cell = _code_cell_by_tag("55")
@@ -169,6 +303,11 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
 
     def test_cell_50l_uses_package_global_auc_renderer(self) -> None:
         cell = _code_cell_by_tag("50l")
+        self.assertIn("build_single_fish_motion_auc_plot_tables", cell)
+        self.assertIn("build_single_fish_motion_auc_plot_tables(", cell)
+        self.assertIn("render_single_fish_50l_bpi_panel", cell)
+        self.assertIn("render_single_fish_50l_gene_auc_panel", cell)
+        self.assertIn("render_single_fish_50l_gene_auc_panel(", cell)
         self.assertIn("render_single_fish_50l_global_auc_panel", cell)
         self.assertIn("render_single_fish_50l_global_auc_panel(", cell)
         self.assertIn("_single_fish_50l_auc_cache_stale_reasons", cell)
@@ -177,12 +316,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("motion_auc_by_gene_ipsi_contra.png", cell)
         self.assertIn("RESPONSE_LOW_PLOT: '#8d8d8d'", cell)
         self.assertIn("response_colors[RESPONSE_LOW]", cell)
-        self.assertIn("all_counts_base = (\n                                detail_side_df[", cell)
-        self.assertNotIn("all_counts_base = (\n                                detail_auc_df[", cell)
-        self.assertIn("line_color = bpi_colors[bpi_cat] if bpi_cat in {BPI_BOUT, BPI_CONT} else '#5f5f5f'", cell)
-        self.assertNotIn("ax.plot([x_bout, x_cont], [y_bout, y_cont], color='#5f5f5f'", cell)
-        self.assertNotIn("_plot_auc_violin_all_neurons(\n    ax_all_ipsi", cell)
-        self.assertNotIn("_plot_auc_violin_all_neurons(\n    ax_all_contra", cell)
+        self.assertNotIn("def _plot_auc_block(", cell)
+        self.assertNotIn("def _plot_auc_violin_all_neurons(", cell)
 
     def test_phase2_generator_tracks_extraction(self) -> None:
         source = PHASE2_GENERATOR_PATH.read_text()
@@ -241,7 +376,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("centroid_qa_result", cell_34)
         self.assertIn("_prepare_plane_data = centroid_qa_result['helpers']['prepare_plane_data']", cell_34)
         self.assertNotIn("def _render(", cell_34)
-        self.assertIn("build_functional_anatomy_debug_df", cell_34a)
+        self.assertIn("build_functional_anatomy_debug_stage", cell_34a)
+        self.assertIn("FunctionalAnatomyDebugConfig", cell_34a)
         self.assertIn("resample_labels_nn", cell_34a)
         self.assertNotIn("resample_failed (name 'resample_labels_nn' is not defined)", cell_34a)
 

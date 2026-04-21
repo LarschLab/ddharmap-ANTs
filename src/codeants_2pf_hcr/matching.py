@@ -1,4 +1,4 @@
-"""Matching helpers for ROI-centric and HCR-centric notebook stages."""
+"""Matching helpers for single-fish notebook cells [34a], [50i], and [50]."""
 
 from __future__ import annotations
 
@@ -25,6 +25,57 @@ class MatchingConfig:
     min_overlap: int = 1
     max_dist_um: float = float("inf")
     match_policy_version: str = "roi_all_vs_anat_all_candidate_gated_v1"
+
+
+@dataclass(frozen=True)
+class FunctionalAnatomyDebugConfig:
+    debug_enabled: bool = True
+    min_overlap: int = 1
+    require_overlap: bool = True
+    max_link_dist_px: float = 50.0
+
+
+@dataclass(frozen=True)
+class FunctionalRoiIdentityConfig:
+    active_class: str = "Active neurons"
+    inactive_class: str = "Low-quality traces"
+    identity_none: str = "no identity assigned"
+    claim_matched: str = "matched unique anatomy"
+    claim_duplicate: str = "duplicate anatomy claim lost"
+    claim_unmatched: str = "no anatomy claim"
+    plane_unavailable: str = "plane unavailable"
+    func_match_ok: str = "anatomy match"
+    func_no_slot: str = "no 1-to-1 anatomy slot"
+    func_no_overlap: str = "no anatomy overlap candidate"
+    func_lost_overlap: str = "overlap candidate lost in 1-to-1 assignment"
+    func_too_far: str = "anatomy centroid distance above threshold"
+    func_no_anat: str = "no anatomy labels on plane"
+    min_overlap_func_anat: int = 1
+    require_overlap_func_anat: bool = True
+    max_dist_func_anat: float = float("inf")
+    match_policy_version: str = "roi_all_vs_anat_all_candidate_gated_v1"
+    default_gene_order: tuple[str, ...] = ("sst1.1", "sst1.2", "npy", "tac3b", "pth2", "cfos", "cort")
+
+
+@dataclass(frozen=True)
+class HcrActivityExportConfig:
+    recompute_conf_func_pairs: bool = True
+    active_class: str = "Active neurons"
+    inactive_class: str = "Low-quality traces"
+    response_summary_responsive: str = "Responsive neurons"
+    response_summary_low: str = "Low activity"
+    response_summary_unavailable: str = "Response unavailable"
+    response_class_unavailable: str = "response unavailable"
+    hcr_activity_match_policy: str = "hcr_anat_first_local_geometry_response_v5_identified_priority"
+    selection_rule: str = "hcr_matched_anat_label_then_local_geometry_prefer_responsive_then_low"
+    hcr_out_of_plane: str = "out-of-plane anatomy label"
+    hcr_in_plane_responsive: str = "in-plane responsive ROI"
+    hcr_in_plane_low: str = "in-plane low-activity ROI"
+    hcr_in_plane_unavailable: str = "in-plane response unavailable"
+    hcr_in_plane_no_func: str = "in-plane no functional ROI candidate"
+    min_overlap_func_anat: int = 1
+    require_overlap_func_anat: bool = True
+    max_dist_func_anat: float = float("inf")
 
 
 def gene_from_mask(path_str: str | Path | None) -> str:
@@ -646,6 +697,82 @@ def build_functional_anatomy_debug_df(
     )
 
 
+def _vox_xy_um(vox_anat: dict[str, Any] | None) -> tuple[float, float]:
+    vox = vox_anat if isinstance(vox_anat, dict) else {}
+    try:
+        vox_x = float(vox.get("X", vox.get(2, vox.get("2", 1.0))))
+        vox_y = float(vox.get("Y", vox.get(1, vox.get("1", 1.0))))
+    except Exception:
+        vox_x, vox_y = 1.0, 1.0
+    return vox_x, vox_y
+
+
+def build_functional_anatomy_debug_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat_labels_path: str | Path | None,
+    vox_anat: dict[str, Any] | None = None,
+    load_func_labels_for_plane_func: Callable[[int], tuple[ArrayLike | None, str | None, str | None] | tuple[ArrayLike | None, str | None]] | None = None,
+    config: FunctionalAnatomyDebugConfig | None = None,
+    imread_any_func: Callable[[str | Path], np.ndarray] | None = None,
+    ensure_uint_labels_func: Callable[[Any], np.ndarray] | None = None,
+    tform_for_plane_func: Callable[[dict[str, Any]], Any] | None = None,
+    resample_labels_nn_func: Callable[..., np.ndarray] | None = None,
+) -> dict[str, Any]:
+    cfg = config or FunctionalAnatomyDebugConfig()
+    log_lines: list[str] = []
+    debug_df = pd.DataFrame()
+    bindings = {"df_f2a_debug": debug_df}
+    if not bool(cfg.debug_enabled):
+        log_lines.append("[34a] Set DEBUG_F2A=True to enable debug summary.")
+        return {"status": "disabled", "bindings": bindings, "debug_df": debug_df, "log_lines": log_lines}
+    if not plane_refs:
+        log_lines.append("[34a] No plane_refs available.")
+        return {"status": "missing_plane_refs", "bindings": bindings, "debug_df": debug_df, "log_lines": log_lines}
+    anat_path = Path(anat_labels_path) if anat_labels_path not in (None, "", False) else None
+    if anat_path is None or not anat_path.exists():
+        log_lines.append("[34a] ANAT_LABELS_PATH missing; cannot debug.")
+        return {"status": "missing_anatomy_labels", "bindings": bindings, "debug_df": debug_df, "log_lines": log_lines}
+
+    ensure = ensure_uint_labels_func if callable(ensure_uint_labels_func) else _ensure_uint_labels
+    if callable(imread_any_func):
+        imread_local = imread_any_func
+    else:
+        from .spatial import imread_any as imread_local
+
+    try:
+        anat_labels_all = ensure(imread_local(anat_path))
+    except Exception as exc:
+        log_lines.append(f"[34a] Could not load anatomy labels: {exc}")
+        return {"status": "load_error", "bindings": bindings, "debug_df": debug_df, "log_lines": log_lines}
+
+    vox_x, vox_y = _vox_xy_um(vox_anat)
+    debug_df = build_functional_anatomy_debug_df(
+        list(plane_refs),
+        anat_labels_all,
+        load_func_labels_for_plane_func=load_func_labels_for_plane_func,
+        vox_x=vox_x,
+        vox_y=vox_y,
+        max_link_dist_px=float(cfg.max_link_dist_px),
+        require_overlap=bool(cfg.require_overlap),
+        min_overlap=int(cfg.min_overlap),
+        tform_for_plane_func=tform_for_plane_func,
+        resample_labels_nn_func=resample_labels_nn_func,
+    )
+    bindings = {"df_f2a_debug": debug_df}
+    if debug_df.empty:
+        log_lines.append("[34a] No planes to summarize.")
+        return {"status": "empty", "bindings": bindings, "debug_df": debug_df, "log_lines": log_lines}
+
+    log_lines.append(
+        "[34a] Functional↔Anatomy debug summary table "
+        f"(MAX_LINK_DIST_PX={cfg.max_link_dist_px}, "
+        f"REQUIRE_OVERLAP_FUNC_ANAT={bool(cfg.require_overlap)}, "
+        f"MIN_OVERLAP_FUNC_ANAT={int(cfg.min_overlap)})"
+    )
+    return {"status": "ok", "bindings": bindings, "debug_df": debug_df, "log_lines": log_lines}
+
+
 def build_functional_roi_master_df(
     suite2p_by_ref_idx: dict[int, dict[str, Any]],
     plane_refs: list[dict[str, Any]],
@@ -1243,9 +1370,13 @@ def build_hcr_activity_tables(
 
 
 __all__ = [
+    "FunctionalAnatomyDebugConfig",
+    "FunctionalRoiIdentityConfig",
+    "HcrActivityExportConfig",
     "MatchingConfig",
     "build_anat_identity_lookup_df",
     "build_functional_anatomy_debug_df",
+    "build_functional_anatomy_debug_stage",
     "build_functional_roi_master_df",
     "build_hcr_activity_tables",
     "build_plane_centroid_matches",

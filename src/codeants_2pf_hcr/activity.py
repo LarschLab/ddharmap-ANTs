@@ -59,6 +59,18 @@ class ActivityConfig:
     zscore_sigma_eps: float = 1e-6
 
 
+@dataclass(frozen=True)
+class SingleFishBpiDiagnosticsConfig:
+    bpi_index_col: str = "bpi"
+    zero_band: float | None = None
+    n_activity_bins: int = 6
+    response_low: str = "low activity"
+    response_unavailable: str = "response unavailable"
+    response_summary_responsive: str = "Responsive neurons"
+    response_summary_low: str = "Low activity"
+    response_summary_unavailable: str = "Response unavailable"
+
+
 def _as_bool_series(series_in: Any) -> pd.Series:
     s = pd.Series(series_in)
     if pd.api.types.is_bool_dtype(s):
@@ -629,7 +641,269 @@ def build_response_bpi_tables(
     }
 
 
+def prepare_single_fish_bpi_diagnostics_stage(
+    bpi_cells_df: pd.DataFrame,
+    *,
+    fish_id: str,
+    master_detail_csv: str | Path | None = None,
+    config: SingleFishBpiDiagnosticsConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or SingleFishBpiDiagnosticsConfig()
+    if not isinstance(bpi_cells_df, pd.DataFrame) or bpi_cells_df.empty:
+        raise RuntimeError("[56g] bpi_cells_df missing/empty; run [56h] first.")
+
+    log_lines: list[str] = []
+    df = bpi_cells_df.copy()
+    if "fish_id" in df.columns:
+        df = df[df["fish_id"].astype(str) == str(fish_id)].copy()
+        if df.empty:
+            raise RuntimeError("[56g] bpi_cells_df has no rows for current fish; run [56h].")
+    if "gene" not in df.columns:
+        raise RuntimeError("[56g] bpi_cells_df missing required column: gene")
+    if "plane_idx" not in df.columns and "plane" in df.columns:
+        df["plane_idx"] = pd.to_numeric(df["plane"], errors="coerce").astype("Int64")
+    if "plane_idx" not in df.columns or "func_label" not in df.columns:
+        raise RuntimeError(
+            "[56g] bpi_cells_df missing plane_idx/func_label required for response-aware low-activity annotation."
+        )
+
+    if {"mean_bout_zdff", "mean_cont_zdff"}.issubset(df.columns):
+        bout_col = "mean_bout_zdff"
+        cont_col = "mean_cont_zdff"
+        activity_label = "z-scored dF/F"
+    elif {"mean_bout_dff", "mean_cont_dff"}.issubset(df.columns):
+        bout_col = "mean_bout_dff"
+        cont_col = "mean_cont_dff"
+        activity_label = "dF/F"
+        log_lines.append("[56g] WARNING: z-scored response columns missing in bpi_cells_df; falling back to raw dF/F.")
+    else:
+        raise RuntimeError("[56g] bpi_cells_df missing both z-scored and raw bout/continuous response columns.")
+
+    bpi_col = str(cfg.bpi_index_col)
+    if bpi_col not in df.columns:
+        fallback_bpi = "bpi_z" if "bpi_z" in df.columns else ("bpi" if "bpi" in df.columns else None)
+        if fallback_bpi is None:
+            raise RuntimeError("[56g] bpi_cells_df missing bpi columns.")
+        log_lines.append(f"[56g] BPI_INDEX_COL={bpi_col} missing; using {fallback_bpi}")
+        bpi_col = fallback_bpi
+
+    for col in [bpi_col, bout_col, cont_col]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df["activity_mag"] = (df[bout_col].abs() + df[cont_col].abs()) / 2.0
+    df["bpi_metric"] = df[bpi_col]
+    df["abs_bpi"] = df["bpi_metric"].abs()
+    df = df[
+        np.isfinite(df["activity_mag"])
+        & np.isfinite(df["bpi_metric"])
+        & np.isfinite(df[bout_col])
+        & np.isfinite(df[cont_col])
+    ].copy()
+    if df.empty:
+        raise RuntimeError("[56g] no finite cells after filtering.")
+
+    need_lookup = ("response_class" not in df.columns) or ("response_summary_class" not in df.columns)
+    if need_lookup:
+        if master_detail_csv is None:
+            raise RuntimeError("[56g] Missing response-aware ROI table path; rerun [50ia] first.")
+        master_path = Path(master_detail_csv)
+        if not master_path.exists():
+            raise RuntimeError(f"[56g] Missing response-aware ROI table: {master_path}. Run [50ia] first.")
+        detail_df = pd.read_csv(master_path)
+        if "fish_id" in detail_df.columns:
+            detail_df = detail_df[detail_df["fish_id"].astype(str) == str(fish_id)].copy()
+        required_detail_cols = {
+            "plane_idx",
+            "func_label",
+            "response_class",
+            "response_summary_class",
+            "response_is_active",
+        }
+        missing_detail_cols = sorted(required_detail_cols - set(detail_df.columns))
+        if missing_detail_cols:
+            raise RuntimeError(
+                f"[56g] Master ROI table missing response columns {missing_detail_cols}; rerun [50ia]."
+            )
+
+        prior_response_class = df.get(
+            "response_class",
+            pd.Series(pd.NA, index=df.index, dtype="object"),
+        ).copy()
+        prior_response_summary_class = df.get(
+            "response_summary_class",
+            pd.Series(pd.NA, index=df.index, dtype="object"),
+        ).copy()
+        prior_response_is_active = df.get(
+            "response_is_active",
+            pd.Series(pd.NA, index=df.index, dtype="object"),
+        ).copy()
+        detail_lookup = detail_df[
+            ["plane_idx", "func_label", "response_class", "response_summary_class", "response_is_active"]
+        ].copy()
+        detail_lookup["plane_idx_key"] = pd.to_numeric(detail_lookup["plane_idx"], errors="coerce").astype("Int64")
+        detail_lookup["func_label_key"] = pd.to_numeric(detail_lookup["func_label"], errors="coerce").astype("Int64")
+        detail_lookup = (
+            detail_lookup.drop(columns=["plane_idx", "func_label"])
+            .drop_duplicates(subset=["plane_idx_key", "func_label_key"], keep="last")
+            .reset_index(drop=True)
+        )
+        detail_lookup = detail_lookup.rename(
+            columns={
+                "response_class": "_lookup_response_class",
+                "response_summary_class": "_lookup_response_summary_class",
+                "response_is_active": "_lookup_response_is_active",
+            }
+        )
+        df["plane_idx_key"] = pd.to_numeric(df["plane_idx"], errors="coerce").astype("Int64")
+        df["func_label_key"] = pd.to_numeric(df["func_label"], errors="coerce").astype("Int64")
+        df = df.merge(detail_lookup, on=["plane_idx_key", "func_label_key"], how="left")
+        lookup_response_class = df.get(
+            "_lookup_response_class",
+            pd.Series(pd.NA, index=df.index, dtype="object"),
+        )
+        lookup_response_summary_class = df.get(
+            "_lookup_response_summary_class",
+            pd.Series(pd.NA, index=df.index, dtype="object"),
+        )
+        lookup_response_is_active = df.get(
+            "_lookup_response_is_active",
+            pd.Series(pd.NA, index=df.index, dtype="object"),
+        )
+        df["response_class"] = lookup_response_class.where(lookup_response_class.notna(), prior_response_class)
+        df["response_summary_class"] = lookup_response_summary_class.where(
+            lookup_response_summary_class.notna(),
+            prior_response_summary_class,
+        )
+        df["response_is_active"] = lookup_response_is_active.where(
+            lookup_response_is_active.notna(),
+            prior_response_is_active,
+        )
+        df = df.drop(
+            columns=[
+                col
+                for col in [
+                    "_lookup_response_class",
+                    "_lookup_response_summary_class",
+                    "_lookup_response_is_active",
+                ]
+                if col in df.columns
+            ]
+        )
+
+    df["response_class"] = df["response_class"].fillna(cfg.response_unavailable).astype(str)
+    if "response_summary_class" not in df.columns:
+        df["response_summary_class"] = np.where(
+            df["response_class"].isin({"bout-responsive", "continuous-responsive", "both-responsive"}),
+            cfg.response_summary_responsive,
+            np.where(
+                df["response_class"].eq(cfg.response_low),
+                cfg.response_summary_low,
+                cfg.response_summary_unavailable,
+            ),
+        )
+    else:
+        df["response_summary_class"] = (
+            df["response_summary_class"].fillna(cfg.response_summary_unavailable).astype(str)
+        )
+    if "response_is_active" in df.columns:
+        df["response_is_active"] = _as_bool_series(df["response_is_active"]).astype(bool)
+    else:
+        df["response_is_active"] = df["response_summary_class"].eq(cfg.response_summary_responsive)
+
+    if cfg.zero_band is not None:
+        zero_band = float(cfg.zero_band)
+    elif "bpi_zero_band" in df.columns:
+        zero_vals = pd.to_numeric(df["bpi_zero_band"], errors="coerce").to_numpy(dtype=float)
+        zero_vals = zero_vals[np.isfinite(zero_vals)]
+        zero_band = float(np.nanmedian(zero_vals)) if zero_vals.size else 0.10
+    else:
+        zero_band = 0.10
+
+    df["is_bpi_near_zero"] = df["bpi_metric"].abs() <= float(zero_band)
+    df["is_low_activity"] = df["response_summary_class"].eq(cfg.response_summary_low)
+    df["is_responsive"] = df["response_summary_class"].eq(cfg.response_summary_responsive)
+    df["is_response_unavailable"] = df["response_summary_class"].eq(cfg.response_summary_unavailable)
+    df["interpretation"] = np.select(
+        [
+            df["is_bpi_near_zero"] & df["is_low_activity"],
+            df["is_bpi_near_zero"] & df["is_responsive"],
+            df["is_bpi_near_zero"] & df["is_response_unavailable"],
+        ],
+        [
+            "near-zero BPI + low activity",
+            "near-zero BPI + responsive",
+            "near-zero BPI + response unavailable",
+        ],
+        default="non-zero BPI",
+    )
+
+    n_total = int(len(df))
+    n_nz = int(df["is_bpi_near_zero"].sum())
+    n_nz_low = int((df["is_bpi_near_zero"] & df["is_low_activity"]).sum())
+    n_nz_resp = int((df["is_bpi_near_zero"] & df["is_responsive"]).sum())
+    n_nz_unavailable = int((df["is_bpi_near_zero"] & df["is_response_unavailable"]).sum())
+
+    binned_df = pd.DataFrame()
+    n_bins = min(int(cfg.n_activity_bins), int(df["activity_mag"].nunique()))
+    if n_bins >= 2:
+        try:
+            tmp = df.copy()
+            tmp["_activity_bin"] = pd.qcut(df["activity_mag"], q=n_bins, duplicates="drop")
+            binned_df = (
+                tmp.groupby("_activity_bin", observed=False)
+                .agg(
+                    activity_mid=("activity_mag", "median"),
+                    median_abs_bpi=("abs_bpi", "median"),
+                    n=("abs_bpi", "size"),
+                )
+                .reset_index(drop=True)
+            )
+        except Exception:
+            binned_df = pd.DataFrame()
+
+    breakdown_df = (
+        df.groupby(["gene", "interpretation", "response_summary_class"], observed=False)
+        .size()
+        .rename("n")
+        .reset_index()
+    )
+
+    log_lines.append(
+        f"[56g] cells={n_total}; BPI column={bpi_col}; activity columns=({bout_col}, {cont_col}); "
+        f"|BPI|<= {zero_band:.3f}: {n_nz}; near-zero+low-activity={n_nz_low}; "
+        f"near-zero+responsive={n_nz_resp}; near-zero+response-unavailable={n_nz_unavailable}; "
+        "low-activity source=response_summary_class"
+    )
+
+    return {
+        "bindings": {
+            "bpi_activity_df": df.copy(),
+            "bpi_activity_bins_df": binned_df.copy(),
+            "bpi_activity_breakdown_df": breakdown_df.copy(),
+            "BPI_ACTIVITY_FISH_ID": str(fish_id),
+        },
+        "df": df,
+        "binned_df": binned_df,
+        "breakdown_df": breakdown_df,
+        "activity_label": activity_label,
+        "bout_col": bout_col,
+        "cont_col": cont_col,
+        "bpi_index_col": bpi_col,
+        "bpi_zero_band": float(zero_band),
+        "summary_counts": {
+            "n_total": n_total,
+            "n_near_zero": n_nz,
+            "n_near_zero_low": n_nz_low,
+            "n_near_zero_responsive": n_nz_resp,
+            "n_near_zero_response_unavailable": n_nz_unavailable,
+        },
+        "log_lines": log_lines,
+    }
+
+
 __all__ = [
     "ActivityConfig",
+    "SingleFishBpiDiagnosticsConfig",
     "build_response_bpi_tables",
+    "prepare_single_fish_bpi_diagnostics_stage",
 ]

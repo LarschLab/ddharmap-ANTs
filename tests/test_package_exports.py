@@ -1,11 +1,18 @@
 from codeants_2pf_hcr import (
     ActivityConfig,
+    AnatomyNormalizationStageConfig,
     ContextStageConfig,
     CohortBuildConfig,
     FinalFishAuditConfig,
+    FunctionalAnatomyDebugConfig,
+    FunctionalPlacementConfig,
     FunctionalOrientationStageConfig,
+    FunctionalRoiIdentityConfig,
+    FunctionalReferenceConfig,
     FishStateStageConfig,
+    HcrActivityExportConfig,
     HcrCellposeConfig,
+    SingleFishBpiDiagnosticsConfig,
     NotebookContractViolation,
     RegistrationSearchConfig,
     SmokeValidationError,
@@ -25,8 +32,11 @@ from codeants_2pf_hcr import (
     build_cohort_outputs_stage,
     build_final_fish_audit_stage,
     build_functional_anatomy_debug_df,
+    build_functional_anatomy_debug_stage,
+    build_functional_references_stage,
     build_functional_roi_master_df,
     build_hcr_activity_tables,
+    build_single_fish_motion_auc_plot_tables,
     build_plane_centroid_matches,
     build_voxel_debug_stage,
     build_null_window_start_map,
@@ -57,14 +67,21 @@ from codeants_2pf_hcr import (
     load_or_cache_voxels,
     load_cohort_outputs_from_disk,
     load_cohort_analysis_state,
+    ncc_xy,
     norm01,
+    normalize_anatomy_stack_stage,
     orient_functional_stacks_stage,
+    MotionAucPlotConfig,
+    prepare_single_fish_bpi_diagnostics_stage,
     prepare_pairs_for_unique_cells,
     nearest_neighbor_match,
     registration_metric_from_scores,
     render_cohort_53a_summary,
     render_cohort_50l_donut_row,
     render_cohort_50l_responsive_identity_donut_row,
+    render_single_fish_50l_bpi_panel,
+    render_single_fish_50l_gene_auc_panel,
+    render_single_fish_50l_global_auc_panel,
     render_single_fish_50l_responsive_identity_donut,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
@@ -83,6 +100,7 @@ from codeants_2pf_hcr import (
     resolve_voxel_context_stage,
     resolve_cohort_context_stage,
     run_hcr_cellpose_stage,
+    run_ncc_placement_stage,
     run_registration_search_stage,
     organize,
     run_smoke_tier,
@@ -101,12 +119,19 @@ from codeants_2pf_hcr import (
 
 def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ActivityConfig)
+    assert callable(AnatomyNormalizationStageConfig)
     assert callable(ContextStageConfig)
     assert callable(CohortBuildConfig)
     assert callable(FinalFishAuditConfig)
+    assert callable(FunctionalAnatomyDebugConfig)
+    assert callable(FunctionalPlacementConfig)
     assert callable(FunctionalOrientationStageConfig)
+    assert callable(FunctionalRoiIdentityConfig)
+    assert callable(FunctionalReferenceConfig)
     assert callable(FishStateStageConfig)
+    assert callable(HcrActivityExportConfig)
     assert callable(HcrCellposeConfig)
+    assert callable(SingleFishBpiDiagnosticsConfig)
     assert callable(NotebookContractViolation)
     assert callable(RegistrationSearchConfig)
     assert callable(SmokeValidationError)
@@ -126,8 +151,11 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_cohort_outputs_stage)
     assert callable(build_final_fish_audit_stage)
     assert callable(build_functional_anatomy_debug_df)
+    assert callable(build_functional_anatomy_debug_stage)
+    assert callable(build_functional_references_stage)
     assert callable(build_functional_roi_master_df)
     assert callable(build_hcr_activity_tables)
+    assert callable(build_single_fish_motion_auc_plot_tables)
     assert callable(build_plane_centroid_matches)
     assert callable(build_voxel_debug_stage)
     assert callable(build_null_window_start_map)
@@ -160,9 +188,13 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(load_or_cache_voxels)
     assert callable(load_cohort_outputs_from_disk)
     assert callable(load_cohort_analysis_state)
+    assert callable(ncc_xy)
     assert callable(nearest_neighbor_match)
+    assert callable(normalize_anatomy_stack_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
+    assert callable(MotionAucPlotConfig)
+    assert callable(prepare_single_fish_bpi_diagnostics_stage)
     assert callable(prepare_pairs_for_unique_cells)
     assert callable(resolve_functional_labels_for_plane)
     assert callable(resolve_plane_transform)
@@ -171,6 +203,9 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_cohort_53a_summary)
     assert callable(render_cohort_50l_donut_row)
     assert callable(render_cohort_50l_responsive_identity_donut_row)
+    assert callable(render_single_fish_50l_bpi_panel)
+    assert callable(render_single_fish_50l_gene_auc_panel)
+    assert callable(render_single_fish_50l_global_auc_panel)
     assert callable(render_single_fish_50l_responsive_identity_donut)
     assert callable(render_cohort_56g_diagnostics)
     assert callable(render_cohort_56h_by_fish)
@@ -184,6 +219,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(resolve_voxel_context_stage)
     assert callable(resolve_cohort_context_stage)
     assert callable(run_hcr_cellpose_stage)
+    assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
