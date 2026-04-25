@@ -71,25 +71,16 @@ def _cohort_cfg_cell() -> str:
 class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_single_fish_required_package_owner_contract_tracks_50l_and_57a_slice(self) -> None:
         violations = find_required_cell_contract_violations(NOTEBOOK_PATH)
-        cell_50l = _code_cell_by_tag("50l")
 
         def _details(tag: str, kind: str) -> set[str]:
             return {violation.detail for violation in violations if violation.tag == tag and violation.kind == kind}
 
         self.assertNotIn(
-            "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_bpi_panel",
+            "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_composite",
             _details("50l", "required-import"),
         )
         self.assertNotIn(
-            "render_single_fish_50l_bpi_panel",
-            _details("50l", "required-call"),
-        )
-        self.assertNotIn(
-            "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_global_auc_panel",
-            _details("50l", "required-import"),
-        )
-        self.assertNotIn(
-            "render_single_fish_50l_global_auc_panel",
+            "render_single_fish_50l_composite",
             _details("50l", "required-call"),
         )
         self.assertNotIn(
@@ -100,44 +91,6 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
             "render_single_fish_50l_responsive_identity_donut",
             _details("57a-responsive-identity-donut", "required-call"),
         )
-
-        if "build_single_fish_motion_auc_plot_tables" in cell_50l:
-            self.assertNotIn(
-                "codeants_2pf_hcr.traces:build_single_fish_motion_auc_plot_tables",
-                _details("50l", "required-import"),
-            )
-            self.assertNotIn(
-                "build_single_fish_motion_auc_plot_tables",
-                _details("50l", "required-call"),
-            )
-        else:
-            self.assertIn(
-                "codeants_2pf_hcr.traces:build_single_fish_motion_auc_plot_tables",
-                _details("50l", "required-import"),
-            )
-            self.assertIn(
-                "build_single_fish_motion_auc_plot_tables",
-                _details("50l", "required-call"),
-            )
-
-        if "render_single_fish_50l_gene_auc_panel" in cell_50l:
-            self.assertNotIn(
-                "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_gene_auc_panel",
-                _details("50l", "required-import"),
-            )
-            self.assertNotIn(
-                "render_single_fish_50l_gene_auc_panel",
-                _details("50l", "required-call"),
-            )
-        else:
-            self.assertIn(
-                "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_gene_auc_panel",
-                _details("50l", "required-import"),
-            )
-            self.assertIn(
-                "render_single_fish_50l_gene_auc_panel",
-                _details("50l", "required-call"),
-            )
 
     def test_cell_4_binds_legacy_compatibility_surface(self) -> None:
         cell = _code_cell_by_tag("4")
@@ -289,33 +242,39 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("render_single_fish_50l_responsive_identity_donut(", cell)
         self.assertNotIn("def ", cell)
 
-    def test_cell_50l_supports_bottom_only_extra_height(self) -> None:
-        cell = _code_cell_by_tag("50l")
+    def test_cell_57b_anatomy_coexpression_summary_uses_package_renderer_only(self) -> None:
+        cell = _code_cell_by_tag("57b-anatomy-coexpression-summary")
         self.assertIn(
-            "COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN = float(RUN_CONFIG_LOCAL.get('COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN', 1.0))",
+            "import codeants_2pf_hcr.plots.qa as _plots_qa_57b",
             cell,
         )
-        self.assertIn("COMPOSITE_50L_TOTAL_HEIGHT_IN = COMPOSITE_50L_FIG_HEIGHT_IN + COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN", cell)
-        self.assertIn("figsize=(COMPOSITE_50L_FIG_WIDTH_IN, COMPOSITE_50L_TOTAL_HEIGHT_IN)", cell)
-        self.assertIn("if COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN > 0:", cell)
-        self.assertIn("_top_anchor_scale_50l = COMPOSITE_50L_FIG_HEIGHT_IN / COMPOSITE_50L_TOTAL_HEIGHT_IN", cell)
-        self.assertIn("for _ax in [ax for ax in (globals().get('ax_bpi', None), ax_donut) if ax is not None]:", cell)
+        self.assertIn("_plots_qa_57b = importlib.reload(_plots_qa_57b)", cell)
+        self.assertIn(
+            "render_single_fish_hcr_anatomy_coexpression_summary = _plots_qa_57b.render_single_fish_hcr_anatomy_coexpression_summary",
+            cell,
+        )
+        self.assertIn("render_single_fish_hcr_anatomy_coexpression_summary(", cell)
+        self.assertNotIn("def ", cell)
+
+    def test_cell_50l_supports_bottom_only_extra_height(self) -> None:
+        cell = _code_cell_by_tag("50l")
+        self.assertIn("render_single_fish_50l_composite(", cell)
+        self.assertIn("run_config=RUN_CONFIG_LOCAL", cell)
 
     def test_cell_50l_uses_package_global_auc_renderer(self) -> None:
         cell = _code_cell_by_tag("50l")
-        self.assertIn("build_single_fish_motion_auc_plot_tables", cell)
-        self.assertIn("build_single_fish_motion_auc_plot_tables(", cell)
-        self.assertIn("render_single_fish_50l_bpi_panel", cell)
-        self.assertIn("render_single_fish_50l_gene_auc_panel", cell)
-        self.assertIn("render_single_fish_50l_gene_auc_panel(", cell)
-        self.assertIn("render_single_fish_50l_global_auc_panel", cell)
-        self.assertIn("render_single_fish_50l_global_auc_panel(", cell)
-        self.assertIn("_single_fish_50l_auc_cache_stale_reasons", cell)
-        self.assertIn("print(f\"[50l] Recomputing motion AUC tables because {_reason_50l}.\")", cell)
+        self.assertIn("from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite", cell)
+        self.assertIn("render_single_fish_50l_composite(", cell)
+        self.assertIn("FIG_50L_COMPOSITE = _result_50l['FIG_50L_COMPOSITE']", cell)
+        self.assertIn("FIG_50L_COMPOSITE_RGBA = _result_50l['FIG_50L_COMPOSITE_RGBA']", cell)
+        self.assertIn("FIG_50L_COMPOSITE_PATH = _result_50l['FIG_50L_COMPOSITE_PATH']", cell)
+        self.assertIn("globals()[f\"ax_{_axis_name_50l}\"] = _axis_50l", cell)
         self.assertNotIn("Response strength stays separable across stimulus directions and modes", cell)
         self.assertNotIn("motion_auc_by_gene_ipsi_contra.png", cell)
-        self.assertIn("RESPONSE_LOW_PLOT: '#8d8d8d'", cell)
-        self.assertIn("response_colors[RESPONSE_LOW]", cell)
+        self.assertNotIn("_single_fish_50l_auc_cache_stale_reasons", cell)
+        self.assertNotIn("build_single_fish_motion_auc_plot_tables(", cell)
+        self.assertNotIn("render_single_fish_50l_gene_auc_panel(", cell)
+        self.assertNotIn("render_single_fish_50l_global_auc_panel(", cell)
         self.assertNotIn("def _plot_auc_block(", cell)
         self.assertNotIn("def _plot_auc_violin_all_neurons(", cell)
 

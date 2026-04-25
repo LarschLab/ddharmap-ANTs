@@ -15,9 +15,11 @@ from codeants_2pf_hcr.plots.analysis import (
     render_cohort_motion_auc,
     render_single_fish_50l_responsive_identity_donut,
     render_single_fish_50l_bpi_panel,
+    render_single_fish_50l_composite,
     render_single_fish_50l_gene_auc_panel,
     render_single_fish_50l_global_auc_panel,
 )
+from codeants_2pf_hcr.plots.qa import render_single_fish_hcr_anatomy_coexpression_summary
 
 
 class PlotsAnalysisTests(unittest.TestCase):
@@ -612,6 +614,130 @@ class PlotsAnalysisTests(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    def test_render_single_fish_50l_composite_saves_legacy_outputs_and_keys(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_reg = root / "registration"
+            outdir = root / "plots"
+            out_reg.mkdir()
+
+            pd.DataFrame(
+                {
+                    "response_summary_class": [
+                        "Responsive neurons",
+                        "Responsive neurons",
+                        "Low activity",
+                        "Response unavailable",
+                    ],
+                    "bpi_category": [
+                        "bout-responsive",
+                        "continuous-responsive",
+                        "low activity",
+                        "response unavailable",
+                    ],
+                    "bpi_zero_band": [0.2, 0.2, 0.2, 0.2],
+                    "response_auc_threshold": [0.05, 0.05, 0.05, 0.05],
+                    "response_null_quantile": [0.99, 0.99, 0.99, 0.99],
+                }
+            ).to_csv(out_reg / "functional_roi_activity_identity.csv", index=False)
+
+            point_rows = []
+            count_rows = []
+            specs = [
+                ("All neurons", "bout-responsive", "responsive", True, 0.30, 0.54),
+                ("sst1.1", "continuous-responsive", "responsive", True, 0.20, 0.62),
+            ]
+            for group, bpi_category, response_class, response_active, ipsi_base, contra_base in specs:
+                for laterality, base in (("ipsi", ipsi_base), ("contra", contra_base)):
+                    point_rows.extend(
+                        [
+                            {
+                                "group": group,
+                                "laterality": laterality,
+                                "stim_mode": "bout",
+                                "auc_dff": base,
+                                "response_class": response_class,
+                                "response_is_active": response_active,
+                                "bpi_category": bpi_category,
+                                "point_label_id": f"{group}-{laterality}-1",
+                                "plane_idx": 0,
+                                "func_label": 1,
+                            },
+                            {
+                                "group": group,
+                                "laterality": laterality,
+                                "stim_mode": "continuous",
+                                "auc_dff": base + 0.12,
+                                "response_class": response_class,
+                                "response_is_active": response_active,
+                                "bpi_category": bpi_category,
+                                "point_label_id": f"{group}-{laterality}-1",
+                                "plane_idx": 0,
+                                "func_label": 1,
+                            },
+                        ]
+                    )
+                    count_rows.extend(
+                        [
+                            {
+                                "group": group,
+                                "laterality": laterality,
+                                "stim_mode": "bout",
+                                "n_total": 1,
+                                "frac_responsive_used": 1.0,
+                                "frac_low_used": 0.0,
+                                "frac_other": 0.0,
+                            },
+                            {
+                                "group": group,
+                                "laterality": laterality,
+                                "stim_mode": "continuous",
+                                "n_total": 1,
+                                "frac_responsive_used": 1.0,
+                                "frac_low_used": 0.0,
+                                "frac_other": 0.0,
+                            },
+                        ]
+                    )
+            pd.DataFrame(point_rows).to_csv(out_reg / "motion_auc_plot_points.csv", index=False)
+            pd.DataFrame(count_rows).to_csv(out_reg / "motion_auc_plot_counts.csv", index=False)
+
+            out = render_single_fish_50l_composite(
+                out_reg=out_reg,
+                outdir=outdir,
+                bpi_cells_df=pd.DataFrame(
+                    {
+                        "mean_bout_auc_dff": [0.2, 0.5],
+                        "mean_cont_auc_dff": [0.4, 0.7],
+                        "bpi": [0.3, -0.3],
+                        "bpi_category": ["bout-responsive", "continuous-responsive"],
+                        "response_is_active": [True, True],
+                    }
+                ),
+                run_config={
+                    "COMPOSITE_50L_FIG_WIDTH_IN": 6.0,
+                    "COMPOSITE_50L_FIG_HEIGHT_IN": 5.0,
+                    "COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN": 0.5,
+                    "COMPOSITE_50L_DPI": 80,
+                },
+            )
+            try:
+                self.assertEqual(Path(out["out_path"]).name, "compound_50j_56i_unified.png")
+                self.assertEqual(Path(out["pdf_path"]).name, "compound_50j_56i_unified.pdf")
+                self.assertEqual(Path(out["COMPOSITE_50L_PATH"]).name, "compound_50j_56i_unified.png")
+                self.assertEqual(out["FIG_50L_COMPOSITE"], out["fig"])
+                self.assertEqual(out["FIG_50L_COMPOSITE_PATH"], str(out["out_path"]))
+                self.assertGreater(out["FIG_50L_COMPOSITE_RGBA"].shape[0], 0)
+                self.assertTrue(Path(out["out_path"]).exists())
+                self.assertTrue(Path(out["pdf_path"]).exists())
+                self.assertEqual(out["group_order"], ["All neurons", "sst1.1"])
+                self.assertGreater(out["all_y_limits"][1], 0.66)
+                self.assertEqual(out["panel_results"]["bpi"]["n_plotted"], 2)
+                self.assertEqual(out["panel_results"]["global_ipsi"]["n_plotted"], 2)
+                self.assertEqual(out["panel_results"]["gene_contra"]["n_plotted"], 2)
+            finally:
+                plt.close(out["fig"])
+
     def test_render_cohort_motion_auc_lane_counts_use_counts_table_denominator(self) -> None:
         with TemporaryDirectory() as tmpdir:
             cohort_outdir = Path(tmpdir) / "cohort_out"
@@ -1008,6 +1134,92 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertAlmostEqual(float(geom["donut_scale"]), 1.25, places=6)
             self.assertAlmostEqual(float(geom["view_limit_scale"]), 1.25, places=6)
             self.assertAlmostEqual(float(geom["outer_ring_width"] / geom["inner_ring_width"]), 0.375, places=6)
+
+    def test_render_single_fish_hcr_anatomy_coexpression_summary_outputs(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "A1_f01"
+            status_csv = root / "hcr_activity_status.csv"
+            pd.DataFrame(
+                {
+                    "fish_id": [fish_id] * 7,
+                    "gene": ["sst1.1", "npy", "sst1.1", "sst1.1", "cfos", "tac3b", "pth2"],
+                    "anat_label": [101, 101, 102, 102, 103, 104, 105],
+                    "represented_on_func_plane": [True, True, True, True, True, False, True],
+                    "functional_status": [
+                        "in-plane responsive ROI",
+                        "in-plane low-activity ROI",
+                        "in-plane response unavailable",
+                        "in-plane responsive ROI",
+                        "out-of-plane anatomy label",
+                        "in-plane responsive ROI",
+                        "in-plane no functional ROI candidate",
+                    ],
+                    "dist_conf_anat_um": [1.0, 1.1, 2.0, 2.2, 3.0, 4.0, 5.0],
+                    "selected_dist_um": [0.5, 0.6, 0.7, 0.8, np.nan, 0.9, np.nan],
+                    "selected_overlap_px": [12, 10, 8, 9, 0, 4, 0],
+                    "selected_plane": [0, 0, 1, 1, pd.NA, 1, pd.NA],
+                    "selected_func_label": [1, 1, 2, 2, pd.NA, 3, pd.NA],
+                }
+            ).to_csv(status_csv, index=False)
+
+            out = render_single_fish_hcr_anatomy_coexpression_summary(
+                fish_id=fish_id,
+                status_csv=status_csv,
+                outdir=root / "plots",
+                gene_order=["sst1.1", "npy", "tac3b", "pth2", "cfos"],
+            )
+
+            summary_df = out["summary_df"].copy()
+            combo_counts_df = out["combo_counts_df"].copy()
+            bucket_counts_df = out["bucket_counts_df"].copy()
+
+            self.assertEqual(set(summary_df["anat_label"].astype(int).tolist()), {101, 102, 105})
+            self.assertEqual(
+                summary_df.set_index("anat_label")["gene_combo_label"].astype(str).to_dict(),
+                {101: "sst1.1/npy", 102: "sst1.1", 105: "pth2"},
+            )
+            self.assertEqual(
+                summary_df.set_index("anat_label")["is_putative_coexpression"].astype(bool).to_dict(),
+                {101: True, 102: False, 105: False},
+            )
+            self.assertEqual(int(combo_counts_df.iloc[0]["n_anatomy_labels"]), 1)
+            self.assertEqual(str(combo_counts_df.iloc[0]["gene_combo_label"]), "sst1.1/npy")
+            self.assertEqual(
+                bucket_counts_df.set_index("marker_count_bucket")["n_anatomy_labels"].astype(int).to_dict(),
+                {"1": 2, "2": 1, "3+": 0},
+            )
+            self.assertTrue(Path(out["out_path"]).exists())
+            self.assertTrue(Path(out["pdf_path"]).exists())
+            self.assertTrue(Path(out["summary_csv"]).exists())
+            self.assertTrue(Path(out["combo_counts_csv"]).exists())
+            self.assertEqual(Path(out["out_path"]).name, "single_fish_hcr_anatomy_coexpression_summary.png")
+            self.assertEqual(Path(out["summary_csv"]).name, "single_fish_hcr_anatomy_coexpression_summary.csv")
+
+    def test_render_single_fish_hcr_anatomy_coexpression_summary_handles_no_multigene_labels(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "A1_f01"
+            status_csv = root / "hcr_activity_status.csv"
+            pd.DataFrame(
+                {
+                    "fish_id": [fish_id, fish_id],
+                    "gene": ["sst1.1", "npy"],
+                    "anat_label": [101, 102],
+                    "represented_on_func_plane": [True, True],
+                    "functional_status": ["in-plane responsive ROI", "in-plane no functional ROI candidate"],
+                    "dist_conf_anat_um": [1.0, 2.0],
+                }
+            ).to_csv(status_csv, index=False)
+
+            out = render_single_fish_hcr_anatomy_coexpression_summary(
+                fish_id=fish_id,
+                status_csv=status_csv,
+                outdir=root / "plots",
+            )
+
+            self.assertEqual(int(out["summary_df"]["is_putative_coexpression"].astype(bool).sum()), 0)
+            self.assertTrue(out["combo_counts_df"].empty)
 
     def test_render_cohort_56h_status_donut_grid_uses_unmatched_summary(self) -> None:
         with TemporaryDirectory() as tmpdir:

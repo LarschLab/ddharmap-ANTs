@@ -23,8 +23,18 @@
 
 For explicitly identified-cell activity figures, starting from `hcr_activity_status.csv` or `conf_to_func_pairs.csv` is valid, but scope must be clearly labeled HCR-centric.
 
+- `[57b-anatomy-coexpression-summary]` is HCR-centric and anatomy-label scoped:
+  - source from in-plane accepted `hcr_activity_status.csv` rows represented on functional planes
+  - dedupe unit remains accepted `(gene, anat_label)` labels before collapsing
+  - possible co-expression means one `anat_label` carries more than one distinct gene in that in-plane subset
+  - this stage summarizes anatomy-label evidence only; it does not imply ROI-level convergence or confirmed single-cell co-expression
+
 ## Stage-specific hybrid exception
 
+- `[50l]` is a package-rendered single-fish composite:
+  - whole-population response/BPI panels source ROI-centric `[50ia]` outputs
+  - gene-specific AUC panels source HCR-centric identified-cell rows from package-owned `[56i]` motion-AUC plot tables
+  - plotting code lives in `plots.analysis.render_single_fish_50l_composite`; the notebook cell should only provide knobs, paths, display, and legacy bindings
 - `[57a-responsive-identity-donut]` is explicitly hybrid-scoped:
   - denominator is ROI-centric and responsive-only from `functional_roi_activity_identity.csv` (`response_is_active == True` and responsive `bpi_category` classes)
   - identity assignment for the identified fraction comes from selected `conf_to_func_pairs.csv` rows collapsed to exact per-ROI gene combinations

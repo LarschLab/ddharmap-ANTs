@@ -224,6 +224,13 @@ def _load_midline_bundle(midline_json: str | Path, *, fish_id: str | None) -> tu
 
 
 def _infer_midline_space(bundle: dict[str, Any]) -> str:
+    for key in ("midline_space", "space"):
+        value = bundle.get(key)
+        if value is None:
+            continue
+        label = str(value).strip().lower()
+        if label in {"anat", "func"}:
+            return label
     src_label = ((bundle.get("base", {}) or {}).get("source_label", None))
     label = str(src_label).strip().lower() if src_label is not None else ""
     if label in {"warped", "tform-preview", "warped-raw"}:
@@ -268,9 +275,10 @@ def _annotate_midline_side(
             continue
         nx = -np.sin(th)
         ny = np.cos(th)
+        pos = out.index.get_indexer(idx)
         xv = pd.to_numeric(out.loc[idx, x_col], errors="coerce").to_numpy(dtype=float)
         yv = pd.to_numeric(out.loc[idx, y_col], errors="coerce").to_numpy(dtype=float)
-        signed[idx] = (xv - x0) * nx + (yv - y0) * ny
+        signed[pos] = (xv - x0) * nx + (yv - y0) * ny
 
     out["midline_signed_dist_px"] = signed
     out["midline_side"] = "unknown"
@@ -280,6 +288,116 @@ def _annotate_midline_side(
     out.loc[finite & (np.abs(signed) <= band), "midline_side"] = "midline"
     out["midline_uncertain"] = np.abs(signed) <= band
     return out
+
+
+def load_midline_context(midline_json: str | Path, *, fish_id: str | None = None) -> dict[str, Any]:
+    bundle, bundle_path = _load_midline_bundle(midline_json, fish_id=fish_id)
+    return {
+        "bundle": bundle,
+        "bundle_path": bundle_path,
+        "midline_space": _infer_midline_space(bundle),
+    }
+
+
+def _midline_bundle_from_context(midline_context: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    if not isinstance(midline_context, dict):
+        raise TypeError("midline_context must be a dict returned by load_midline_context or a midline bundle")
+    bundle = midline_context.get("bundle", midline_context)
+    if not isinstance(bundle, dict):
+        raise TypeError("midline_context does not contain a midline bundle")
+    space = midline_context.get("midline_space")
+    return bundle, str(space).strip().lower() if space is not None else None
+
+
+def _select_midline_xy_columns(df_in: pd.DataFrame, *, midline_space: str | None) -> tuple[str, str]:
+    if midline_space == "anat" and {"centroid_x_anat", "centroid_y_anat"}.issubset(df_in.columns):
+        return "centroid_x_anat", "centroid_y_anat"
+    if {"centroid_x_func", "centroid_y_func"}.issubset(df_in.columns):
+        return "centroid_x_func", "centroid_y_func"
+    if {"x", "y"}.issubset(df_in.columns):
+        return "x", "y"
+    raise RuntimeError("midline annotation requires centroid_x/centroid_y or x/y coordinate columns")
+
+
+def annotate_midline_side(
+    df_in: pd.DataFrame,
+    midline_context: dict[str, Any],
+    *,
+    x_col: str | None = None,
+    y_col: str | None = None,
+    plane_col: str = "plane_idx",
+) -> pd.DataFrame:
+    bundle, space = _midline_bundle_from_context(midline_context)
+    midline_space = space if space in {"anat", "func"} else _infer_midline_space(bundle)
+    if x_col is None or y_col is None:
+        x_col, y_col = _select_midline_xy_columns(df_in, midline_space=midline_space)
+    out = _annotate_midline_side(df_in, bundle, x_col=str(x_col), y_col=str(y_col), plane_col=plane_col)
+    if midline_space:
+        out["midline_space"] = midline_space
+    return out
+
+
+def filter_high_confidence_pairs(
+    pairs_df: pd.DataFrame,
+    *,
+    low_conf_columns: tuple[str, ...] = (
+        "_is_low_conf_match_any_globalR50",
+        "_is_low_conf_func_anat_globalR50",
+        "_is_low_conf_hcr_anat_globalR50",
+        "is_low_confidence_segmentation",
+    ),
+    return_stats: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, int]]:
+    out = pairs_df.copy()
+    n_before = int(len(out))
+    used_columns = [column for column in low_conf_columns if column in out.columns]
+    low_any = pd.Series(False, index=out.index)
+    stats: dict[str, int] = {"n_before": n_before}
+    for column in used_columns:
+        col_low = _as_bool_series(out[column])
+        col_low.index = out.index
+        low_any = low_any | col_low
+        stats[f"n_low_{column}"] = int(col_low.sum())
+    stats["n_low_any"] = int(low_any.sum())
+    filtered = out.loc[~low_any].copy()
+    stats["n_after"] = int(len(filtered))
+    if return_stats:
+        return filtered, stats
+    return filtered
+
+
+def extract_window_with_padding(
+    trace: np.ndarray,
+    idx0: int,
+    idx1: int,
+    *,
+    mode: str = "pad_nan",
+    min_valid_frac: float = 0.0,
+) -> tuple[np.ndarray | None, int, int]:
+    arr = np.asarray(trace)
+    n_frames = int(arr.shape[0])
+    win_len = int(idx1 - idx0)
+    if win_len <= 0:
+        return None, 0, 0
+    mode_clean = str(mode).strip().lower()
+    if mode_clean == "strict":
+        if idx0 < 0 or idx1 > n_frames:
+            return None, 0, win_len
+        seg = arr[int(idx0) : int(idx1)]
+        return seg, int(np.isfinite(seg).sum()), win_len
+    if mode_clean not in {"pad_nan", "pad", "nan"}:
+        raise ValueError(f"unsupported window extraction mode: {mode}")
+    seg = np.full(win_len, np.nan, dtype=np.float32)
+    src0 = max(int(idx0), 0)
+    src1 = min(int(idx1), n_frames)
+    if src1 > src0:
+        dst0 = src0 - int(idx0)
+        seg[dst0 : dst0 + (src1 - src0)] = arr[src0:src1]
+    n_valid = int(np.isfinite(seg).sum())
+    min_required = max(1, int(np.ceil(float(min_valid_frac) * float(win_len))))
+    if n_valid < min_required:
+        return None, n_valid, win_len
+    return seg, n_valid, win_len
 
 
 def _build_stim_tables_for_auc(
@@ -559,8 +677,9 @@ def build_single_fish_motion_auc_plot_tables(
     if status_df.empty:
         raise RuntimeError("[56i] hcr_activity_status.csv is empty for the current fish.")
 
-    bundle, bundle_path = _load_midline_bundle(midline_json_p, fish_id=fish_id)
-    coord_space = _infer_midline_space(bundle)
+    midline_context = load_midline_context(midline_json_p, fish_id=fish_id)
+    bundle_path = Path(midline_context["bundle_path"])
+    coord_space = str(midline_context["midline_space"])
     if coord_space == "anat" and {"centroid_x_anat", "centroid_y_anat"}.issubset(detail_df.columns):
         x_col = "centroid_x_anat"
         y_col = "centroid_y_anat"
@@ -570,7 +689,7 @@ def build_single_fish_motion_auc_plot_tables(
     else:
         raise RuntimeError("[56i] master ROI table missing centroid columns required for midline assignment.")
 
-    detail_side_df = _annotate_midline_side(detail_df, bundle, x_col=x_col, y_col=y_col, plane_col="plane_idx")
+    detail_side_df = annotate_midline_side(detail_df, midline_context, x_col=x_col, y_col=y_col, plane_col="plane_idx")
     detail_side_df = detail_side_df.rename(columns={"midline_side": "roi_side"})
     detail_side_df["roi_side_valid"] = detail_side_df["roi_side"].isin({"left", "right"})
     detail_side_df["func_label"] = pd.to_numeric(detail_side_df["func_label"], errors="coerce")
@@ -1119,8 +1238,12 @@ def export_suite2p_trace_metadata(
 __all__ = [
     "MotionAucPlotConfig",
     "TraceExportConfig",
+    "annotate_midline_side",
     "build_single_fish_motion_auc_plot_tables",
+    "extract_window_with_padding",
     "export_suite2p_trace_metadata",
+    "filter_high_confidence_pairs",
+    "load_midline_context",
     "prepare_pairs_for_unique_cells",
     "resolve_conf_func_csv_analysis",
 ]

@@ -68,11 +68,15 @@ from codeants_2pf_hcr import (
     load_or_cache_voxels,
     load_cohort_outputs_from_disk,
     load_cohort_analysis_state,
+    load_midline_context,
     ncc_xy,
     norm01,
     normalize_anatomy_stack_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
+    annotate_midline_side,
+    extract_window_with_padding,
+    filter_high_confidence_pairs,
     prepare_single_fish_bpi_diagnostics_stage,
     prepare_pairs_for_unique_cells,
     nearest_neighbor_match,
@@ -80,6 +84,8 @@ from codeants_2pf_hcr import (
     render_cohort_53a_summary,
     render_cohort_50l_donut_row,
     render_cohort_50l_responsive_identity_donut_row,
+    render_single_fish_hcr_anatomy_coexpression_summary,
+    render_single_fish_50l_composite,
     render_single_fish_50l_bpi_panel,
     render_single_fish_50l_gene_auc_panel,
     render_single_fish_50l_global_auc_panel,
@@ -190,12 +196,16 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(load_or_cache_voxels)
     assert callable(load_cohort_outputs_from_disk)
     assert callable(load_cohort_analysis_state)
+    assert callable(load_midline_context)
     assert callable(ncc_xy)
     assert callable(nearest_neighbor_match)
     assert callable(normalize_anatomy_stack_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
     assert callable(MotionAucPlotConfig)
+    assert callable(annotate_midline_side)
+    assert callable(extract_window_with_padding)
+    assert callable(filter_high_confidence_pairs)
     assert callable(prepare_single_fish_bpi_diagnostics_stage)
     assert callable(prepare_pairs_for_unique_cells)
     assert callable(resolve_functional_labels_for_plane)
@@ -205,6 +215,8 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_cohort_53a_summary)
     assert callable(render_cohort_50l_donut_row)
     assert callable(render_cohort_50l_responsive_identity_donut_row)
+    assert callable(render_single_fish_hcr_anatomy_coexpression_summary)
+    assert callable(render_single_fish_50l_composite)
     assert callable(render_single_fish_50l_bpi_panel)
     assert callable(render_single_fish_50l_gene_auc_panel)
     assert callable(render_single_fish_50l_global_auc_panel)

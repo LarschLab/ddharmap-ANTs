@@ -34,7 +34,7 @@
 9. **Population figures** (`[50e] [50j] [50k]`)
    - Table-driven summaries.
    - Must filter canonical tables; they do not own semantic definitions.
-10. **Trace export and stimulus-aligned analyses** (`[51] [55] [56] [56h] [56g] [57a-responsive-identity-donut] [57]`)
+10. **Trace export and stimulus-aligned analyses** (`[50l] [51] [55] [56] [56h] [56g] [57a-responsive-identity-donut] [57b-anatomy-coexpression-summary] [57]`)
     - Trace export, stimulus alignment, full-session and diagnostics figures.
 
 ## Core outputs by stage
@@ -43,7 +43,9 @@
 - Response/BPI exports: `functional_roi_activity_bpi_cells.csv`, `functional_roi_activity_bpi_summary.csv` (`[50ia]`).
 - HCR-centric identified-cell outputs: `hcr_activity_status.csv`, `conf_to_func_pairs.csv`, `hcr_func_candidates.csv` (`[50]`).
 - Single-fish donut summary output: `hcr_activity_status_summary.csv` (`[50e]`), including per-gene inner/outer status counts and unmatched rows.
+- Single-fish `[50l]` composite output: `compound_50j_56i_unified.png/.pdf`, package-rendered by `plots.analysis.render_single_fish_50l_composite` from `[50ia]` response/BPI outputs plus `[56i]` motion-AUC point/count tables.
 - Single-fish responsive hybrid donut outputs: `single_fish_50l_responsive_identity_donut.png/.pdf`, plus long/wide counts CSVs (`[57a-responsive-identity-donut]`).
+- Single-fish anatomy-label co-expression outputs: `single_fish_hcr_anatomy_coexpression_summary.png/.pdf` plus summary/combo-count CSVs (`[57b-anatomy-coexpression-summary]`).
 
 ## Concept ownership
 

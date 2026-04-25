@@ -28,6 +28,28 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-04-25 - single-fish [50l] composite now package-rendered and shared trace prep helpers added
+
+- Slice goal:
+  - continue the broad single-fish notebook refactor by completing the active `[50l]` ownership slice and adding shared trace/midline helper APIs for the larger `[56]` / `[56h]` / `[56f-qc*]` migration.
+- Passes completed in this session:
+  - added public trace helpers for midline context loading, midline-side annotation, high-confidence pair filtering, and padded trace-window extraction.
+  - added `render_single_fish_50l_composite(...)` in `plots.analysis` and rewired notebook `[50l]` to call it as a thin wrapper.
+  - updated exports, notebook owner contracts, focused tests, and reference docs.
+- What changed:
+  - `[50l]` no longer defines notebook-local helper functions and no longer imports private cache-staleness helpers directly.
+  - `[50l]` still writes `compound_50j_56i_unified.png/.pdf` and preserves legacy globals such as `FIG_50L_COMPOSITE`, `FIG_50L_COMPOSITE_RGBA`, `FIG_50L_COMPOSITE_PATH`, and panel axes.
+  - static required-cell contract violations are now zero; top-level notebook defs dropped from 127 to 120 in the current working tree.
+- What remains broken:
+  - the large `[56h]`, `[56f-qc]`, `[56f-qc-activity]`, `[56]`, and `[50]` cells still carry notebook-local helpers and should be the next broad-refactor targets.
+  - live notebook visual confirmation of the package-rendered `[50l]` composite is still required on fish data.
+- Remaining in-slice work:
+  - `[50l]` slice is package-owned and validated by focused tests; remaining work belongs to the next trace/QC ownership slice.
+- Next likely breakpoint:
+  - start with `[56h]` plus the duplicated midline/trace helpers in `[56f-qc]`, `[56f-qc-activity]`, and `[56]`, using the new `traces.py` helper APIs.
+- Rerun implications:
+  - minimum rerun for this slice: `[50l]`; it will rebuild stale `[56i]` AUC tables when given current fish paths.
+
 ### 2026-04-21 - single-fish [34] centroid QA now matches [26] label-source and orientation policy
 
 - Slice goal:
@@ -217,6 +239,24 @@
   - rerun `[50l]` in `notebooks/2PF_to_HCR.ipynb` and inspect mode-colored median labels in all-neurons and marker panels.
 - Rerun implications:
   - minimum rerun: `[56i]` (if stale) -> `[50l]`.
+
+### 2026-04-22 - single-fish anatomy-label co-expression summary stage near [57]
+
+- Slice goal:
+  - add a package-rendered single-fish `[57b-anatomy-coexpression-summary]` stage that summarizes possible multi-marker anatomy labels from the in-plane HCR status subset.
+- Passes completed in this session:
+  - added `render_single_fish_hcr_anatomy_coexpression_summary` in `plots.qa` with stable PNG/PDF/CSV exports.
+  - inserted notebook stage `[57b-anatomy-coexpression-summary]` after `[57a-responsive-identity-donut]` as a thin package-renderer call that displays the per-anatomy summary table.
+  - extended notebook contracts, package exports, and focused renderer regression tests.
+- What changed:
+  - new single-fish outputs are written under fish `04_plots` with stable filenames:
+    - `single_fish_hcr_anatomy_coexpression_summary.png`
+    - `single_fish_hcr_anatomy_coexpression_summary.pdf`
+    - `single_fish_hcr_anatomy_coexpression_summary.csv`
+    - `single_fish_hcr_anatomy_coexpression_combo_counts.csv`
+  - semantics are HCR-centric and anatomy-label scoped: one in-plane `anat_label` with more than one distinct gene is reported as a possible co-expression candidate.
+- Rerun implications:
+  - minimum rerun: `[50]` -> `[57b-anatomy-coexpression-summary]`.
 
 ### 2026-04-15 - single-fish responsive identity donut stage near [57]
 

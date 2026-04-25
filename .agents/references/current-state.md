@@ -19,6 +19,7 @@
 
 - `[50]` is response-aware via join to the `[50ia]` master ROI table.
 - Downstream HCR-centric consumers are expected to require response-aware columns and fail fast if missing.
+- `[50l]` is now package-rendered by `plots.analysis.render_single_fish_50l_composite`; its notebook cell should remain a thin wrapper around canonical `[50ia]` and `[56i]` tables.
 - `[57a-responsive-identity-donut]` is a downstream hybrid figure only; it does not redefine upstream geometry/response semantics from `[50i]`/`[50ia]`.
 - `[4c]` path audits may report stage-owned path keys as `pending` before their writer stage initializes them; treat `warn` as path drift/mismatch and `fail` as stale or missing canonical state.
 - Notebook-visible QA image stages should not rely on an import-time `Agg` backend override; package renderers are expected to display figures explicitly in notebook contexts while remaining save-safe in headless runs.

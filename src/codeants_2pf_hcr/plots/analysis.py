@@ -10,11 +10,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import to_rgb
+from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 
 from .annotations import place_labels_no_overlap
 from ..stimulus import StimulusConfig, build_stim_tables, load_events_df, load_metadata_params, parse_float, parse_unilateral_stim
-from ..traces import prepare_pairs_for_unique_cells
+from ..traces import build_single_fish_motion_auc_plot_tables, prepare_pairs_for_unique_cells
 
 
 STIM_PALETTE = {
@@ -152,6 +154,60 @@ def _blend_color(color: str | tuple[float, float, float], frac: float = 0.55, bl
         return color
     frac_f = float(np.clip(frac, 0.0, 1.0))
     return tuple((1.0 - frac_f) * src + frac_f * dst)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str) and value.strip().lower() in {"", "none", "auto"}:
+            return None
+        out = float(value)
+    except Exception:
+        return None
+    return out if np.isfinite(out) else None
+
+
+def _resolve_single_fish_50l_y_limits(
+    source_points_df: pd.DataFrame,
+    y_min_override: Any,
+    y_max_override: Any,
+) -> tuple[float, float]:
+    y_min = _optional_float(y_min_override)
+    y_max = _optional_float(y_max_override)
+    if y_min is None:
+        y_min = 0.0
+    vals = pd.to_numeric(source_points_df.get("auc_dff", pd.Series(dtype=float)), errors="coerce").to_numpy(dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if y_max is None:
+        y_max = (float(np.nanmax(vals)) + 0.2) if vals.size else (float(y_min) + 1.0)
+    if not np.isfinite(y_max) or y_max <= y_min:
+        y_max = float(y_min) + 1.0
+    return float(y_min), float(y_max)
+
+
+def _wedge_midpoint(wedge: Any, radius: float, *, center_x: float = 0.0, center_y: float = 0.0) -> tuple[float, float, float]:
+    theta = np.deg2rad((float(wedge.theta1) + float(wedge.theta2)) / 2.0)
+    return theta, float(center_x) + float(radius) * np.cos(theta), float(center_y) + float(radius) * np.sin(theta)
+
+
+def _tangent_rotation(theta_rad: float) -> float:
+    theta_deg = ((float(np.rad2deg(theta_rad)) + 180.0) % 360.0) - 180.0
+    rot = theta_deg - 90.0
+    if rot < -90.0:
+        rot += 180.0
+    elif rot > 90.0:
+        rot -= 180.0
+    return float(rot)
+
+
+def _contrast_text_color(color: Any) -> str:
+    try:
+        r, g, b = to_rgb(color)
+    except Exception:
+        return "black"
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "white" if luminance < 0.52 else "black"
 
 
 def _single_fish_50l_auc_cache_stale_reasons(
@@ -1025,6 +1081,471 @@ def render_single_fish_50l_gene_auc_panel(
         "plot_df": plot_df_out[["group", "stim_mode", "auc_dff", "response_class", "response_is_active", "bpi_category", "x_pos"]].copy()
         if not plot_df_out.empty
         else plot_df_out,
+    }
+
+
+def render_single_fish_50l_composite(
+    *,
+    out_reg: str | Path,
+    outdir: str | Path,
+    fish_id: str | None = None,
+    fish_dir: str | Path | None = None,
+    suite2p_root: str | Path | None = None,
+    run_config: dict[str, Any] | None = None,
+    detail_csv: str | Path | None = None,
+    points_csv: str | Path | None = None,
+    counts_csv: str | Path | None = None,
+    bpi_cells_csv: str | Path | None = None,
+    bpi_cells_df: pd.DataFrame | None = None,
+    hcr_status_csv: str | Path | None = None,
+    midline_json: str | Path | None = None,
+    gene_order: list[str] | None = None,
+    gene_colors: dict[str, str] | None = None,
+    save: bool = True,
+) -> dict[str, Any]:
+    """Render the package-owned single-fish [50l] composite figure."""
+    out_reg_p = Path(out_reg)
+    outdir_p = Path(outdir)
+    run_config_d = dict(run_config or {})
+    detail_csv_p = Path(detail_csv) if detail_csv is not None else out_reg_p / "functional_roi_activity_identity.csv"
+    points_csv_p = Path(points_csv) if points_csv is not None else out_reg_p / "motion_auc_plot_points.csv"
+    counts_csv_p = Path(counts_csv) if counts_csv is not None else out_reg_p / "motion_auc_plot_counts.csv"
+    hcr_status_csv_p = Path(hcr_status_csv) if hcr_status_csv is not None else out_reg_p / "hcr_activity_status.csv"
+    midline_json_p = Path(midline_json) if midline_json is not None else out_reg_p / "midline_params_func_ref.json"
+
+    stale_reasons = _single_fish_50l_auc_cache_stale_reasons(
+        points_csv_p,
+        counts_csv_p,
+        detail_csv=detail_csv_p,
+        hcr_status_csv=hcr_status_csv_p,
+        midline_json=midline_json_p,
+    )
+    auc_build_result: dict[str, Any] | None = None
+    if stale_reasons and fish_dir is not None and fish_id is not None and suite2p_root is not None:
+        auc_build_result = build_single_fish_motion_auc_plot_tables(
+            fish_dir=Path(fish_dir),
+            fish_id=str(fish_id),
+            out_reg=out_reg_p,
+            run_config=run_config_d,
+            suite2p_root=Path(suite2p_root),
+            detail_csv=detail_csv_p,
+            hcr_status_csv=hcr_status_csv_p,
+            midline_json=midline_json_p,
+            points_csv=points_csv_p,
+            counts_csv=counts_csv_p,
+            roi_panel_csv=out_reg_p / "motion_auc_roi_panels.csv",
+        )
+    elif stale_reasons and points_csv_p.exists() and counts_csv_p.exists():
+        raise RuntimeError(
+            "[single-fish-50l-composite] Motion AUC cache is stale; pass fish_id, fish_dir, and suite2p_root "
+            "so [56i] plot tables can be rebuilt. Reasons: " + "; ".join(stale_reasons)
+        )
+
+    missing_paths = []
+    for label, path, stage in (
+        ("master ROI table", detail_csv_p, "[50i]/[50ia]"),
+        ("motion AUC plot points", points_csv_p, "[56i]"),
+        ("motion AUC plot counts", counts_csv_p, "[56i]"),
+    ):
+        if not path.exists():
+            missing_paths.append(f"{label}: {path} (run {stage})")
+    if missing_paths:
+        raise RuntimeError("[single-fish-50l-composite] Missing prerequisite table(s): " + "; ".join(missing_paths))
+
+    detail_df = pd.read_csv(detail_csv_p)
+    points_df = pd.read_csv(points_csv_p)
+    counts_df = pd.read_csv(counts_csv_p)
+    if detail_df.empty:
+        raise RuntimeError("[single-fish-50l-composite] Master ROI table is empty.")
+    if points_df.empty:
+        raise RuntimeError("[single-fish-50l-composite] motion_auc_plot_points.csv is empty; rerun [56i].")
+    if counts_df.empty:
+        raise RuntimeError("[single-fish-50l-composite] motion_auc_plot_counts.csv is empty; rerun [56i].")
+
+    required_detail_cols = {"response_summary_class", "bpi_category"}
+    required_points_cols = {"group", "laterality", "stim_mode", "auc_dff", "response_class", "response_is_active", "bpi_category", "point_label_id"}
+    required_counts_cols = {"group", "laterality", "stim_mode", "n_total", "frac_responsive_used", "frac_low_used", "frac_other"}
+    missing_detail_cols = sorted(required_detail_cols - set(detail_df.columns))
+    missing_points_cols = sorted(required_points_cols - set(points_df.columns))
+    missing_counts_cols = sorted(required_counts_cols - set(counts_df.columns))
+    if missing_detail_cols:
+        raise RuntimeError(f"[single-fish-50l-composite] Master ROI table missing columns {missing_detail_cols}; rerun [50ia].")
+    if missing_points_cols:
+        raise RuntimeError(f"[single-fish-50l-composite] motion_auc_plot_points.csv missing columns {missing_points_cols}; rerun [56i].")
+    if missing_counts_cols:
+        raise RuntimeError(f"[single-fish-50l-composite] motion_auc_plot_counts.csv missing columns {missing_counts_cols}; rerun [56i].")
+
+    response_active = "Responsive neurons"
+    response_low = "Low activity"
+    response_unavailable = "Response unavailable"
+    bpi_unavailable = "response unavailable"
+    default_gene_order = ["sst1.1", "sst1.2", "npy", "tac3b", "pth2", "cfos", "cort"]
+    default_gene_colors = {
+        "sst1.1": "#d62728",
+        "sst1.2": "#d61ad2",
+        "npy": "#1f9d55",
+        "tac3b": "#ffd400",
+        "pth2": "#00bcd4",
+        "cfos": "#ff7f0e",
+        "cort": "#8c564b",
+    }
+    gene_order_l = list(gene_order or run_config_d.get("GENE_ORDER", default_gene_order))
+    gene_colors_d = dict(default_gene_colors)
+    if isinstance(run_config_d.get("GENE_COLORS"), dict):
+        gene_colors_d.update(run_config_d["GENE_COLORS"])
+    if gene_colors:
+        gene_colors_d.update(gene_colors)
+
+    detail_df = detail_df.copy()
+    points_df = points_df.copy()
+    counts_df = counts_df.copy()
+    detail_df["response_summary_class"] = detail_df["response_summary_class"].astype(str)
+    detail_df["bpi_category"] = detail_df["bpi_category"].fillna(bpi_unavailable).astype(str).str.strip().str.lower()
+    points_df["group"] = points_df["group"].astype(str)
+    points_df["laterality"] = points_df["laterality"].astype(str).str.strip().str.lower()
+    points_df["stim_mode"] = points_df["stim_mode"].astype(str).str.strip().str.lower()
+    points_df["response_class"] = points_df["response_class"].astype(str)
+    points_df["bpi_category"] = points_df["bpi_category"].fillna(bpi_unavailable).astype(str).str.strip().str.lower()
+    points_df["response_is_active"] = _to_bool_series(points_df["response_is_active"])
+    points_df["auc_dff"] = pd.to_numeric(points_df["auc_dff"], errors="coerce")
+    points_df["point_label_id"] = points_df["point_label_id"].astype(str)
+    counts_df["group"] = counts_df["group"].astype(str)
+    counts_df["laterality"] = counts_df["laterality"].astype(str).str.strip().str.lower()
+    counts_df["stim_mode"] = counts_df["stim_mode"].astype(str).str.strip().str.lower()
+    for col in ["n_total", "frac_responsive_used", "frac_low_used", "frac_other"]:
+        counts_df[col] = pd.to_numeric(counts_df[col], errors="coerce")
+
+    genes_present = [g for g in points_df["group"].dropna().astype(str).unique().tolist() if g != "All neurons"]
+    ordered_genes = [g for g in gene_order_l if g in genes_present]
+    ordered_genes.extend([g for g in genes_present if g not in ordered_genes])
+    if not ordered_genes:
+        raise RuntimeError("[single-fish-50l-composite] No gene groups found in motion AUC plot points.")
+
+    fig_width = float(run_config_d.get("COMPOSITE_50L_FIG_WIDTH_IN", 11.69 * 0.8))
+    fig_height = float(run_config_d.get("COMPOSITE_50L_FIG_HEIGHT_IN", 10.0))
+    extra_bottom = float(run_config_d.get("COMPOSITE_50L_EXTRA_BOTTOM_HEIGHT_IN", 1.0))
+    total_height = fig_height + extra_bottom
+    dpi = int(run_config_d.get("COMPOSITE_50L_DPI", 300))
+    title_fs = float(run_config_d.get("COMPOSITE_50L_TITLE_FONTSIZE", 15.0))
+    panel_fs = float(run_config_d.get("COMPOSITE_50L_PANEL_TITLE_FONTSIZE", 11.0))
+    axis_fs = float(run_config_d.get("COMPOSITE_50L_AXIS_LABEL_FONTSIZE", 10.0))
+    tick_fs = float(run_config_d.get("COMPOSITE_50L_TICK_FONTSIZE", 9.0))
+    legend_fs = float(run_config_d.get("COMPOSITE_50L_LEGEND_FONTSIZE", 9.0))
+    legend_title_fs = float(run_config_d.get("COMPOSITE_50L_LEGEND_TITLE_FONTSIZE", 10.0))
+    annot_fs = float(run_config_d.get("COMPOSITE_50L_ANNOT_FONTSIZE", 8.5))
+    cont_lighten = float(run_config_d.get("AUC_CONT_LIGHTEN", 0.55))
+    count_shift_y = float(run_config_d.get("COMPOSITE_50L_COUNT_BLOCK_SHIFT_Y", 0.01))
+    bottom_shift_y = float(run_config_d.get("COMPOSITE_50L_BOTTOM_BLOCK_SHIFT_Y", 0.015))
+
+    fig = plt.figure(figsize=(fig_width, total_height), dpi=dpi)
+    gs = GridSpec(
+        8,
+        8,
+        figure=fig,
+        wspace=float(run_config_d.get("COMPOSITE_50L_WSPACE", 0.24)),
+        hspace=float(run_config_d.get("COMPOSITE_50L_HSPACE", -0.4)),
+    )
+
+    bpi_panel_result: dict[str, Any] | None = None
+    ax_bpi: plt.Axes | None = None
+    bpi_source_df = bpi_cells_df.copy() if isinstance(bpi_cells_df, pd.DataFrame) else None
+    bpi_cells_csv_p = Path(bpi_cells_csv) if bpi_cells_csv is not None else out_reg_p / "functional_roi_activity_bpi_cells.csv"
+    if bpi_source_df is None and bpi_cells_csv_p.exists():
+        bpi_source_df = pd.read_csv(bpi_cells_csv_p)
+    if bpi_source_df is not None and not bpi_source_df.empty:
+        ax_bpi = fig.add_subplot(
+            gs[
+                int(run_config_d.get("BPI_PLOT_ROW_START", 1)): int(run_config_d.get("BPI_PLOT_ROW_END", 4)),
+                int(run_config_d.get("BPI_PLOT_COL_START", 0)): int(run_config_d.get("BPI_PLOT_COL_END", 4)),
+            ]
+        )
+        bpi_panel_result = render_single_fish_50l_bpi_panel(
+            ax_bpi,
+            bpi_source_df,
+            axis_label="BPI",
+            title="Response strength vs stimulus bias across the full ROI population",
+        )
+        ax_bpi.set_xlabel("Mean bout/cont motion AUC (dF/F·s)", fontsize=axis_fs)
+        ax_bpi.set_ylabel("BPI", fontsize=axis_fs)
+        ax_bpi.tick_params(axis="both", labelsize=tick_fs)
+        bpi_legend = ax_bpi.get_legend()
+        if bpi_legend is not None:
+            handles = list(getattr(bpi_legend, "legend_handles", [])) or list(getattr(bpi_legend, "legendHandles", []))
+            labels = [txt.get_text() for txt in bpi_legend.get_texts()]
+            bpi_legend.remove()
+            ax_bpi.legend(handles, labels, loc="lower right", frameon=True, fontsize=legend_fs)
+
+    ax_donut = fig.add_subplot(gs[0:5, 4:8], aspect="equal")
+    response_order = [response_active, response_low, response_unavailable]
+    bpi_order = SINGLE_FISH_50L_BPI_ORDER + [bpi_unavailable]
+    response_colors = {response_active: "#1b9e77", response_low: "#8d8d8d", response_unavailable: "#d9d9d9"}
+    bpi_short = {
+        "bout-responsive": "Bout-responsive",
+        "continuous-responsive": "Cont.-responsive",
+        "both-responsive": "Both-responsive",
+        "weak-response": "Weak-response",
+        "low activity": "Low activity",
+        bpi_unavailable: "Unavailable",
+    }
+    response_counts = detail_df.groupby("response_summary_class", as_index=False).size().rename(columns={"size": "n_rois"})
+    response_counts["response_order"] = response_counts["response_summary_class"].map({k: i for i, k in enumerate(response_order)}).fillna(10**6)
+    response_counts = response_counts.sort_values("response_order").reset_index(drop=True)
+    bpi_counts = detail_df.groupby(["response_summary_class", "bpi_category"], as_index=False).size().rename(columns={"size": "n_rois"})
+    bpi_counts["response_order"] = bpi_counts["response_summary_class"].map({k: i for i, k in enumerate(response_order)}).fillna(10**6)
+    bpi_counts["bpi_order"] = bpi_counts["bpi_category"].map({k: i for i, k in enumerate(bpi_order)}).fillna(10**6)
+    bpi_counts = bpi_counts.sort_values(["response_order", "bpi_order"]).reset_index(drop=True)
+
+    response_sizes = response_counts["n_rois"].astype(float).tolist()
+    response_labels = response_counts["response_summary_class"].astype(str).tolist()
+    response_cols = [response_colors.get(label, "#cccccc") for label in response_labels]
+    bpi_sizes = bpi_counts["n_rois"].astype(float).tolist()
+    bpi_labels = bpi_counts["bpi_category"].astype(str).tolist()
+    bpi_cols = [SINGLE_FISH_50L_BPI_COLORS.get(label, "#cccccc") for label in bpi_labels]
+
+    donut_scale = max(float(run_config_d.get("COMPOSITE_50L_DONUT_RADIUS_SCALE", 1.0)), 0.2)
+    donut_center_x = float(run_config_d.get("COMPOSITE_50L_DONUT_CENTER_X", -0.2))
+    activity_ring_width = 0.35
+    bpi_ring_width = activity_ring_width * 0.375
+    ring_gap = 0.02
+    outer_radius = 1.08 * donut_scale
+    inner_outer_radius = outer_radius - (bpi_ring_width * donut_scale) - (ring_gap * donut_scale)
+    centre_radius = inner_outer_radius - activity_ring_width
+    response_mid_radius = inner_outer_radius - (activity_ring_width / 2.0)
+    bpi_mid_radius = outer_radius - (bpi_ring_width / 2.0)
+    outer_label_radius = outer_radius + 0.10
+    outer_wedges, _ = ax_donut.pie(
+        bpi_sizes,
+        radius=outer_radius,
+        center=(donut_center_x, 0.0),
+        labels=None,
+        colors=bpi_cols,
+        startangle=90,
+        counterclock=False,
+        wedgeprops={"width": bpi_ring_width * donut_scale, "edgecolor": "white", "linewidth": 1.0},
+    )
+    inner_wedges, _ = ax_donut.pie(
+        response_sizes,
+        radius=inner_outer_radius,
+        center=(donut_center_x, 0.0),
+        labels=None,
+        colors=response_cols,
+        startangle=90,
+        counterclock=False,
+        wedgeprops={"width": activity_ring_width * donut_scale, "edgecolor": "white", "linewidth": 1.0},
+    )
+    total_response = float(sum(response_sizes)) if response_sizes else 0.0
+    for wedge, label, val, color in zip(inner_wedges, response_labels, response_sizes, response_cols):
+        pct = 100.0 * float(val) / total_response if total_response > 0 else 0.0
+        if pct < 6.0:
+            continue
+        theta, x_pos, y_pos = _wedge_midpoint(wedge, response_mid_radius, center_x=donut_center_x)
+        ax_donut.text(
+            x_pos,
+            y_pos,
+            f"{label}\n{int(round(val))}",
+            ha="center",
+            va="center",
+            rotation=_tangent_rotation(theta),
+            rotation_mode="anchor",
+            fontsize=float(run_config_d.get("COMPOSITE_50L_DONUT_INNER_LABEL_FONTSIZE", 10.5)),
+            color=_contrast_text_color(color),
+        )
+    total_bpi = float(sum(bpi_sizes)) if bpi_sizes else 0.0
+    outer_label_items: list[dict[str, Any]] = []
+    for wedge, label, val, color in zip(outer_wedges, bpi_labels, bpi_sizes, bpi_cols):
+        theta, x_pos, y_pos = _wedge_midpoint(wedge, bpi_mid_radius, center_x=donut_center_x)
+        pct = 100.0 * float(val) / total_bpi if total_bpi > 0 else 0.0
+        if pct >= 2.5:
+            ax_donut.text(x_pos, y_pos, f"{int(round(val))}", ha="center", va="center", rotation=_tangent_rotation(theta), rotation_mode="anchor", fontsize=annot_fs, color=_contrast_text_color(color))
+        if label == bpi_unavailable:
+            continue
+        side = 1.0 if np.cos(theta) >= 0 else -1.0
+        outer_label_items.append(
+            {
+                "label": f"{bpi_short.get(label, label)} (n={int(round(val))})",
+                "side": side,
+                "anchor_x": donut_center_x + (outer_radius + 0.01) * np.cos(theta),
+                "anchor_y": (outer_radius + 0.01) * np.sin(theta),
+                "text_x": donut_center_x + side * outer_label_radius,
+                "text_y": (outer_label_radius - 0.10) * np.sin(theta),
+                "ha": "left" if side > 0 else "right",
+            }
+        )
+    y_limit = outer_label_radius - 0.06
+    for side in (-1.0, 1.0):
+        side_items = [item for item in outer_label_items if item["side"] == side]
+        side_items.sort(key=lambda d: d["text_y"])
+        prev_y = -np.inf
+        for item in side_items:
+            if item["text_y"] - prev_y < 0.20:
+                item["text_y"] = prev_y + 0.20
+            prev_y = item["text_y"]
+        prev_y = np.inf
+        for item in reversed(side_items):
+            if prev_y - item["text_y"] < 0.20:
+                item["text_y"] = prev_y - 0.20
+            prev_y = item["text_y"]
+        for item in side_items:
+            item["text_y"] = float(np.clip(item["text_y"], -y_limit, y_limit))
+    for item in outer_label_items:
+        ax_donut.annotate(
+            item["label"],
+            xy=(item["anchor_x"], item["anchor_y"]),
+            xytext=(item["text_x"], item["text_y"]),
+            ha=item["ha"],
+            va="center",
+            fontsize=float(run_config_d.get("COMPOSITE_50L_DONUT_OUTER_LABEL_FONTSIZE", 9.5)),
+            arrowprops={"arrowstyle": "-", "color": "black", "linewidth": 0.8, "shrinkA": 0, "shrinkB": 0, "connectionstyle": f"arc3,rad={0.16 if item['side'] > 0 else -0.16}"},
+        )
+    ax_donut.add_artist(plt.Circle((donut_center_x, 0.0), centre_radius, fc="white", ec="white"))
+    zero_band = _resolve_reference_threshold(detail_df, "bpi_zero_band", 0.10)
+    auc_thr = _resolve_reference_threshold(detail_df, "response_auc_threshold", 0.05)
+    null_q = _resolve_reference_threshold(detail_df, "response_null_quantile", 0.99)
+    ax_donut.text(donut_center_x, float(run_config_d.get("COMPOSITE_50L_DONUT_SAMPLE_N_Y", 0.14)), f"n = {int(len(detail_df))}", ha="center", va="center", fontsize=panel_fs, fontweight="bold")
+    ax_donut.text(donut_center_x, -0.14, f"inner=response\nouter=stim bias\nAUC ≥ {auc_thr:.3f}\n> Q{100.0 * null_q:.0f} baseline\n|BPI| ≤ {zero_band:.2f} -> both", ha="center", va="center", fontsize=float(run_config_d.get("COMPOSITE_50L_DONUT_CENTER_FONTSIZE", 10.0)))
+    ax_donut.set_title("Population response classes", fontsize=panel_fs, pad=10)
+    view_scale = float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_SCALE", 0.8))
+    ax_donut.set_xlim(float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_XMIN", -1.66)) * view_scale, float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_XMAX", 1.72)) * view_scale)
+    ax_donut.set_ylim(float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_YMIN", -1.38)) * view_scale, float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_YMAX", 1.38)) * view_scale)
+
+    lower_gs = GridSpecFromSubplotSpec(
+        4,
+        5,
+        subplot_spec=gs[5:8, :],
+        width_ratios=[1.0, 1.0, float(run_config_d.get("COMPOSITE_50L_AUC_GROUP_GAP_RATIO", 0.2)), 3.0, 3.0],
+        hspace=0.08,
+        wspace=float(run_config_d.get("COMPOSITE_50L_AUC_PAIR_WSPACE", 0.04)),
+    )
+    ax_all_ipsi = fig.add_subplot(lower_gs[0:3, 0:1])
+    ax_all_contra = fig.add_subplot(lower_gs[0:3, 1:2], sharey=ax_all_ipsi)
+    ax_gene_ipsi = fig.add_subplot(lower_gs[0:3, 3:4])
+    ax_gene_contra = fig.add_subplot(lower_gs[0:3, 4:5], sharey=ax_gene_ipsi)
+    ax_all_strip_ipsi = fig.add_subplot(lower_gs[3:4, 0:1], sharex=ax_all_ipsi)
+    ax_all_strip_contra = fig.add_subplot(lower_gs[3:4, 1:2], sharex=ax_all_contra)
+    ax_gene_strip_ipsi = fig.add_subplot(lower_gs[3:4, 3:4], sharex=ax_gene_ipsi)
+    ax_gene_strip_contra = fig.add_subplot(lower_gs[3:4, 4:5], sharex=ax_gene_contra)
+    bottom_axes = [ax_all_ipsi, ax_all_contra, ax_gene_ipsi, ax_gene_contra, ax_all_strip_ipsi, ax_all_strip_contra, ax_gene_strip_ipsi, ax_gene_strip_contra]
+
+    all_points_df = points_df[points_df["group"] == "All neurons"].copy()
+    gene_points_df = points_df[points_df["group"] != "All neurons"].copy()
+    all_counts_df = counts_df[counts_df["group"] == "All neurons"].copy()
+    gene_counts_df = counts_df[counts_df["group"] != "All neurons"].copy()
+    all_y_limits = _resolve_single_fish_50l_y_limits(
+        all_points_df,
+        run_config_d.get("COMPOSITE_50L_AUC_ALL_Y_MIN", 0.0),
+        run_config_d.get("COMPOSITE_50L_AUC_ALL_Y_MAX", None),
+    )
+    gene_y_limits = _resolve_single_fish_50l_y_limits(
+        gene_points_df,
+        run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MIN", 0.0),
+        run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MAX", None),
+    )
+    panel_results = {
+        "bpi": bpi_panel_result,
+        "global_ipsi": render_single_fish_50l_global_auc_panel(ax_all_ipsi, ax_all_strip_ipsi, all_points_df, all_counts_df, "ipsi", "Ipsi", all_y_limits, show_ylabel=True, show_count_ylabel=True),
+        "global_contra": render_single_fish_50l_global_auc_panel(ax_all_contra, ax_all_strip_contra, all_points_df, all_counts_df, "contra", "Contra", all_y_limits, hide_y_ticklabels=True),
+        "gene_ipsi": render_single_fish_50l_gene_auc_panel(ax_gene_ipsi, ax_gene_strip_ipsi, gene_points_df, gene_counts_df, ordered_genes, np.arange(len(ordered_genes), dtype=float), "ipsi", "Ipsi", gene_y_limits, gene_colors=gene_colors_d),
+        "gene_contra": render_single_fish_50l_gene_auc_panel(ax_gene_contra, ax_gene_strip_contra, gene_points_df, gene_counts_df, ordered_genes, np.arange(len(ordered_genes), dtype=float), "contra", "Contra", gene_y_limits, gene_colors=gene_colors_d, hide_y_ticklabels=True),
+    }
+
+    fig.suptitle("Population response classes and stimulus bias support the same interpretation", y=float(run_config_d.get("COMPOSITE_50L_TITLE_Y", 0.975)), fontsize=title_fs)
+    fig.subplots_adjust(
+        left=float(run_config_d.get("COMPOSITE_50L_LEFT", 0.06)),
+        right=float(run_config_d.get("COMPOSITE_50L_RIGHT", 0.985)),
+        top=float(run_config_d.get("COMPOSITE_50L_TOP", 1.0)),
+        bottom=float(run_config_d.get("COMPOSITE_50L_BOTTOM", 0.12)),
+    )
+    if extra_bottom > 0:
+        top_anchor_scale = fig_height / total_height
+        for ax in [candidate for candidate in (ax_bpi, ax_donut) if candidate is not None]:
+            pos = ax.get_position()
+            ax.set_position([pos.x0, (pos.y0 * fig_height + extra_bottom) / total_height, pos.width, pos.height * top_anchor_scale])
+    if bottom_shift_y != 0:
+        for ax in bottom_axes:
+            pos = ax.get_position()
+            ax.set_position([pos.x0, pos.y0 - bottom_shift_y, pos.width, pos.height])
+    if count_shift_y != 0:
+        for ax in [ax_all_strip_ipsi, ax_all_strip_contra, ax_gene_strip_ipsi, ax_gene_strip_contra]:
+            pos = ax.get_position()
+            ax.set_position([pos.x0, pos.y0 - count_shift_y, pos.width, pos.height])
+
+    label_offset = float(run_config_d.get("COMPOSITE_50L_AUC_GROUP_LABEL_Y_OFFSET", 0.022))
+    fig.text(0.5 * (ax_all_ipsi.get_position().x0 + ax_all_contra.get_position().x1), max(ax_all_ipsi.get_position().y1, ax_all_contra.get_position().y1) + label_offset, "Global activity bout-like vs. continuous", ha="center", va="bottom", fontsize=panel_fs)
+    fig.text(0.5 * (ax_gene_ipsi.get_position().x0 + ax_gene_contra.get_position().x1), max(ax_gene_ipsi.get_position().y1, ax_gene_contra.get_position().y1) + label_offset, "Population activity bout-like vs. continuous", ha="center", va="bottom", fontsize=panel_fs)
+
+    legend_auc = fig.legend(
+        handles=[
+            Patch(facecolor="#555555", edgecolor="none", label="Bout box / responsive point shade"),
+            Patch(facecolor=_blend_color("#555555", frac=cont_lighten), edgecolor="none", label="Continuous box / responsive point shade"),
+            Line2D([0], [0], marker="o", color="none", markerfacecolor="#555555", markeredgecolor="none", markersize=6, label="Responsive ROI point"),
+            Line2D([0], [0], marker="o", color="none", markerfacecolor="none", markeredgecolor="#555555", markersize=6, label="Low-response ROI point"),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, float(run_config_d.get("COMPOSITE_50L_AUC_LEGEND_Y", -0.01))),
+        frameon=False,
+        fontsize=legend_fs,
+        title="AUC panels",
+        title_fontsize=legend_title_fs,
+        ncol=int(run_config_d.get("COMPOSITE_50L_AUC_LEGEND_NCOL", 4)),
+    )
+    legend_counts = fig.legend(
+        handles=[
+            Patch(facecolor=response_colors[response_active], edgecolor="none", label="Responsive"),
+            Patch(facecolor=response_colors[response_low], edgecolor="none", label="Low activity"),
+            Patch(facecolor="#ececec", edgecolor="#d7d7d7", label="Response unavailable"),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.5, float(run_config_d.get("COMPOSITE_50L_COUNT_LEGEND_Y", -0.05)) - count_shift_y),
+        frameon=False,
+        fontsize=legend_fs,
+        title="Count strips",
+        title_fontsize=legend_title_fs,
+        ncol=3,
+    )
+    for legend in (legend_auc, legend_counts):
+        legend._legend_box.align = "left"
+
+    fig.canvas.draw()
+    rgba = np.asarray(fig.canvas.buffer_rgba()).copy()
+    out_path = outdir_p / "compound_50j_56i_unified.png"
+    pdf_path = out_path.with_suffix(".pdf")
+    fig_path_str: str | None = None
+    if save:
+        outdir_p.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+        fig.savefig(pdf_path, bbox_inches="tight")
+        fig_path_str = str(out_path)
+
+    axes = {
+        "bpi": ax_bpi,
+        "donut": ax_donut,
+        "all_ipsi": ax_all_ipsi,
+        "all_contra": ax_all_contra,
+        "gene_ipsi": ax_gene_ipsi,
+        "gene_contra": ax_gene_contra,
+        "all_strip_ipsi": ax_all_strip_ipsi,
+        "all_strip_contra": ax_all_strip_contra,
+        "gene_strip_ipsi": ax_gene_strip_ipsi,
+        "gene_strip_contra": ax_gene_strip_contra,
+    }
+    return {
+        "fig": fig,
+        "axes": axes,
+        "out_path": out_path,
+        "pdf_path": pdf_path,
+        "FIG_50L_COMPOSITE": fig,
+        "FIG_50L_COMPOSITE_RGBA": rgba,
+        "FIG_50L_COMPOSITE_PATH": fig_path_str,
+        "COMPOSITE_50L_PATH": out_path,
+        "panel_results": panel_results,
+        "response_counts": response_counts,
+        "bpi_counts": bpi_counts,
+        "group_order": ["All neurons"] + ordered_genes,
+        "gene_groups": ordered_genes,
+        "all_y_limits": all_y_limits,
+        "gene_y_limits": gene_y_limits,
+        "stale_reasons": stale_reasons,
+        "auc_build_result": auc_build_result,
     }
 
 
@@ -3209,6 +3730,7 @@ __all__ = [
     "compute_trial_auc",
     "plot_single_roi_57style",
     "render_single_fish_50l_bpi_panel",
+    "render_single_fish_50l_composite",
     "render_single_fish_50l_gene_auc_panel",
     "render_single_fish_50l_global_auc_panel",
     "render_cohort_56h_by_fish",

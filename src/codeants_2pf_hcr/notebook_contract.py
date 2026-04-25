@@ -109,18 +109,12 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
         },
         "50l": {
             "imports": {
-                "codeants_2pf_hcr.traces": {"build_single_fish_motion_auc_plot_tables"},
                 "codeants_2pf_hcr.plots.analysis": {
-                    "render_single_fish_50l_bpi_panel",
-                    "render_single_fish_50l_global_auc_panel",
-                    "render_single_fish_50l_gene_auc_panel",
+                    "render_single_fish_50l_composite",
                 },
             },
             "calls": {
-                "build_single_fish_motion_auc_plot_tables",
-                "render_single_fish_50l_bpi_panel",
-                "render_single_fish_50l_global_auc_panel",
-                "render_single_fish_50l_gene_auc_panel",
+                "render_single_fish_50l_composite",
             },
             "forbid_top_level_defs": True,
         },
@@ -129,6 +123,13 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
                 "codeants_2pf_hcr.plots.analysis": {"render_single_fish_50l_responsive_identity_donut"},
             },
             "calls": {"render_single_fish_50l_responsive_identity_donut"},
+            "forbid_top_level_defs": True,
+        },
+        "57b-anatomy-coexpression-summary": {
+            "imports": {
+                "codeants_2pf_hcr.plots.qa": {"render_single_fish_hcr_anatomy_coexpression_summary"},
+            },
+            "calls": {"render_single_fish_hcr_anatomy_coexpression_summary"},
             "forbid_top_level_defs": True,
         },
     },

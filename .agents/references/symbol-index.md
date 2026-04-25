@@ -143,6 +143,10 @@ Generated manually for the current extracted package surface.
 
 - `TraceExportConfig`: Typed trace-export configuration for `[51]`.
 - `MotionAucPlotConfig`: Typed motion-AUC table-build configuration for the `[50l]`-embedded `[56i]` owner path.
+- `load_midline_context`: Load and validate the fish-scoped midline bundle for `[56]`, `[56h]`, `[56f-qc*]`, and `[50l]`/`[56i]` AUC preparation.
+- `annotate_midline_side`: Add `midline_signed_dist_px`, `midline_side`, `midline_uncertain`, and `midline_space` columns using package-owned midline semantics.
+- `filter_high_confidence_pairs`: Drop HCR/functional pair rows flagged by known low-confidence columns while optionally returning filter counts.
+- `extract_window_with_padding`: Extract trace windows with notebook-compatible `pad_nan` and `strict` behavior.
 - `build_single_fish_motion_auc_plot_tables`: Build the single-fish motion-window AUC ROI panel / plot points / plot counts tables for `[50l]` / `[56i]`, preserving current ROI-centric all-neuron and HCR-centric gene-group semantics.
 - `export_suite2p_trace_metadata`: Export deduplicated HCR-selected Suite2p dF/F traces and metadata for `[51]`.
 - `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
@@ -157,6 +161,7 @@ Generated manually for the current extracted package surface.
 - `show_region_shift_square_selector_stage`: Notebook-facing region-square QA selector stage for `[22d]`, including JSON reuse/save behavior.
 - `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
+- `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows.
 - `show_centroid_match_qa_stage`: Notebook-facing centroid-distance QA stage for `[34]` with threshold UI, plane switching, context rendering, and `[26]`-matched functional label source selection via `use_suite2p_labels`.
 - `show_functional_label_overlay_stage`: Notebook-facing functional-label overlay stage for `[26]`.
 - `show_registration_overlay_stage`: Notebook-facing interactive registration overlay stage for `[22]`.
@@ -171,6 +176,7 @@ Generated manually for the current extracted package surface.
 - `render_single_fish_50l_bpi_panel`: Render the single-fish `[50l]` top-left whole-population AUC-vs-BPI scatter from `[50ia]` response/BPI outputs.
 - `render_single_fish_50l_gene_auc_panel`: Render the single-fish `[50l]` marker-specific ipsi/contra AUC box/point/count-strip panels from the package-owned motion AUC point/count tables.
 - `render_single_fish_50l_global_auc_panel`: Render the single-fish `[50l]` all-neurons ipsi/contra AUC panels as paired bout↔continuous ROI points with class-colored directional highlights, neutral non-directional classes, directional class-mean summaries, and unchanged count strips.
+- `render_single_fish_50l_composite`: Render notebook stage `[50l]` as one package-owned composite, including stale `[56i]` AUC cache rebuilding, BPI panel, response/BPI donut, AUC panels, legacy figure globals, and `compound_50j_56i_unified.png/.pdf`.
 - `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
 - `render_cohort_56g_diagnostics`: Render cohort [56g] activity/BPI diagnostic 2x2 panel from `cohort_bpi_cells_df`.
 - `render_cohort_motion_auc`: Render cohort [cohort-auc] motion-window AUC figure; supports cached aggregate CSV reuse or per-fish aggregation fallback, optional global-median-label suppression, and mode-colored median labels.
