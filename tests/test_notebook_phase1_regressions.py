@@ -178,9 +178,11 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("def _bool_from_any_local(", cell_56g)
         self.assertIn("SingleFishBpiDiagnosticsConfig", cell_56g)
         self.assertIn("prepare_single_fish_bpi_diagnostics_stage", cell_56g)
+        self.assertIn("run_single_fish_cell_56g_stage", cell_56g)
 
         self.assertNotIn("def _effective_motion_span_57(", cell_57)
-        self.assertIn("effective_motion_window(", cell_57)
+        self.assertIn("effective_motion_window", cell_57)
+        self.assertIn("run_single_fish_cell_57_stage", cell_57)
 
     def test_phase12_generator_tracks_56g_stage_rewrite(self) -> None:
         source = PHASE12_GENERATOR_PATH.read_text()
@@ -245,12 +247,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cell_57b_anatomy_coexpression_summary_uses_package_renderer_only(self) -> None:
         cell = _code_cell_by_tag("57b-anatomy-coexpression-summary")
         self.assertIn(
-            "import codeants_2pf_hcr.plots.qa as _plots_qa_57b",
-            cell,
-        )
-        self.assertIn("_plots_qa_57b = importlib.reload(_plots_qa_57b)", cell)
-        self.assertIn(
-            "render_single_fish_hcr_anatomy_coexpression_summary = _plots_qa_57b.render_single_fish_hcr_anatomy_coexpression_summary",
+            "from codeants_2pf_hcr.plots.qa import render_single_fish_hcr_anatomy_coexpression_summary",
             cell,
         )
         self.assertIn("render_single_fish_hcr_anatomy_coexpression_summary(", cell)
@@ -281,12 +278,12 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cells_50f_and_50g_rebuild_mask_fate_from_matching_stage(self) -> None:
         cell_50f = _code_cell_by_tag("50f")
         cell_50g = _code_cell_by_tag("50g")
-        self.assertIn("from codeants_2pf_hcr import build_hcr_mask_fate_df", cell_50f)
-        self.assertIn("from codeants_2pf_hcr import build_hcr_mask_fate_df", cell_50g)
-        self.assertIn("HCR_MASK_FATE_DF = build_hcr_mask_fate_df(HCR_MATCH_RESULTS_LOCAL)", cell_50f)
-        self.assertIn("HCR_MASK_FATE_DF = build_hcr_mask_fate_df(HCR_MATCH_RESULTS_LOCAL)", cell_50g)
-        self.assertIn("Need hcr_match_results from [44]; run [44] first.", cell_50f)
-        self.assertIn("Need hcr_match_results from [44]; run [44] first.", cell_50g)
+        self.assertIn("from codeants_2pf_hcr.plots.qa import run_single_fish_cell_50f_stage", cell_50f)
+        self.assertIn("from codeants_2pf_hcr.plots.qa import run_single_fish_cell_50g_stage", cell_50g)
+        self.assertIn("run_single_fish_cell_50f_stage(globals())", cell_50f)
+        self.assertIn("run_single_fish_cell_50g_stage(globals())", cell_50g)
+        self.assertNotIn("def ", cell_50f)
+        self.assertNotIn("def ", cell_50g)
         self.assertNotIn("Need HCR_MASK_FATE_DF from [50e]", cell_50f)
         self.assertNotIn("Need HCR_MASK_FATE_DF from [50e]", cell_50g)
 

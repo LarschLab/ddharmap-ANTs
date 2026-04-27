@@ -31,6 +31,15 @@ import tifffile
 from ..context import infer_anat_labels_path
 from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches
 from ..matching import compute_centroids
+from ..single_fish_notebook_stages import (
+    run_single_fish_cell_22c_stage,
+    run_single_fish_cell_53_stage,
+    run_single_fish_cell_53a_stage,
+    run_single_fish_cell_50f_stage,
+    run_single_fish_cell_50g_stage,
+    run_single_fish_cell_56f_qc_activity_stage,
+    run_single_fish_cell_56f_qc_stage,
+)
 from ..runtime import default_local_root
 from .annotations import place_labels_no_overlap
 from ..segmentation import resolve_functional_labels_for_plane
@@ -2186,6 +2195,13 @@ __all__ = [
     "build_round_channel_mip_grid",
     "render_cohort_53a_summary",
     "render_single_fish_hcr_anatomy_coexpression_summary",
+    "run_single_fish_cell_22c_stage",
+    "run_single_fish_cell_50f_stage",
+    "run_single_fish_cell_50g_stage",
+    "run_single_fish_cell_53_stage",
+    "run_single_fish_cell_53a_stage",
+    "run_single_fish_cell_56f_qc_activity_stage",
+    "run_single_fish_cell_56f_qc_stage",
     "show_centroid_match_qa_stage",
     "show_functional_label_overlay_stage",
     "show_region_shift_square_selector_stage",

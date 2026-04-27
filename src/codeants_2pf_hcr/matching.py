@@ -15,6 +15,8 @@ from scipy.spatial.distance import cdist
 from skimage.measure import regionprops_table
 from skimage.transform import AffineTransform, SimilarityTransform, warp
 
+from .single_fish_notebook_stages import run_single_fish_cell_50_stage
+
 
 ArrayLike = Any
 
@@ -1539,5 +1541,6 @@ __all__ = [
     "nearest_neighbor_match",
     "resample_labels_nn",
     "resolve_plane_transform",
+    "run_single_fish_cell_50_stage",
     "summarize_distances",
 ]

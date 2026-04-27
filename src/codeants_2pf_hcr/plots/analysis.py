@@ -15,6 +15,13 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from .annotations import place_labels_no_overlap
+from ..single_fish_notebook_stages import (
+    run_single_fish_cell_50e_stage,
+    run_single_fish_cell_56_stage,
+    run_single_fish_cell_56g_stage,
+    run_single_fish_cell_56h_stage,
+    run_single_fish_cell_57_stage,
+)
 from ..stimulus import StimulusConfig, build_stim_tables, load_events_df, load_metadata_params, parse_float, parse_unilateral_stim
 from ..traces import build_single_fish_motion_auc_plot_tables, prepare_pairs_for_unique_cells
 
@@ -3733,6 +3740,11 @@ __all__ = [
     "render_single_fish_50l_composite",
     "render_single_fish_50l_gene_auc_panel",
     "render_single_fish_50l_global_auc_panel",
+    "run_single_fish_cell_50e_stage",
+    "run_single_fish_cell_56_stage",
+    "run_single_fish_cell_56g_stage",
+    "run_single_fish_cell_56h_stage",
+    "run_single_fish_cell_57_stage",
     "render_cohort_56h_by_fish",
     "render_cohort_56g_diagnostics",
     "render_cohort_motion_auc",

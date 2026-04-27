@@ -96,15 +96,9 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
         },
         "56g": {
             "imports": {
-                "codeants_2pf_hcr": {
-                    "SingleFishBpiDiagnosticsConfig",
-                    "prepare_single_fish_bpi_diagnostics_stage",
-                },
+                "codeants_2pf_hcr.plots.analysis": {"run_single_fish_cell_56g_stage"},
             },
-            "calls": {
-                "SingleFishBpiDiagnosticsConfig",
-                "prepare_single_fish_bpi_diagnostics_stage",
-            },
+            "calls": {"run_single_fish_cell_56g_stage"},
             "forbid_top_level_defs": True,
         },
         "50l": {

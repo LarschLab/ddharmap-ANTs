@@ -185,6 +185,22 @@ Generated manually for the current extracted package surface.
 - `render_cohort_50l_responsive_identity_donut_row`: Render cohort responsive-only fish-row donut figure with BPI inner ring and exact HCR-derived identity outer ring (plus `unidentified`) and export long/wide counts tables.
 - `render_single_fish_50l_responsive_identity_donut`: Render single-fish responsive-only donut with the same hybrid semantics as cohort responsive-identity donut and export long/wide counts tables.
 
+## `codeants_2pf_hcr.single_fish_notebook_stages`
+
+- `run_single_fish_cell_22c_stage`: Migration shim for heavy single-fish notebook cell `[22c]`.
+- `run_single_fish_cell_50_stage`: Migration shim for heavy single-fish notebook cell `[50]`.
+- `run_single_fish_cell_50e_stage`: Migration shim for heavy single-fish notebook cell `[50e]`.
+- `run_single_fish_cell_50f_stage`: Migration shim for single-fish notebook cell `[50f]`.
+- `run_single_fish_cell_50g_stage`: Migration shim for single-fish notebook cell `[50g]`.
+- `run_single_fish_cell_53_stage`: Migration shim for heavy single-fish notebook cell `[53]`.
+- `run_single_fish_cell_53a_stage`: Migration shim for heavy single-fish notebook cell `[53a]`.
+- `run_single_fish_cell_56_stage`: Migration shim for heavy single-fish notebook cell `[56]`.
+- `run_single_fish_cell_56f_qc_stage`: Migration shim for heavy single-fish notebook cell `[56f-qc]`.
+- `run_single_fish_cell_56f_qc_activity_stage`: Migration shim for heavy single-fish notebook cell `[56f-qc-activity]`.
+- `run_single_fish_cell_56g_stage`: Migration shim for single-fish notebook cell `[56g]`.
+- `run_single_fish_cell_56h_stage`: Migration shim for heavy single-fish notebook cell `[56h]`.
+- `run_single_fish_cell_57_stage`: Migration shim for single-fish notebook cell `[57]`.
+
 ## `codeants_2pf_hcr.notebook_contract`
 
 - `NotebookContractViolation`: Static notebook-contract violation record.

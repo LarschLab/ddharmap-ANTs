@@ -109,6 +109,19 @@ from codeants_2pf_hcr import (
     run_hcr_cellpose_stage,
     run_ncc_placement_stage,
     run_registration_search_stage,
+    run_single_fish_cell_22c_stage,
+    run_single_fish_cell_50_stage,
+    run_single_fish_cell_50e_stage,
+    run_single_fish_cell_50f_stage,
+    run_single_fish_cell_50g_stage,
+    run_single_fish_cell_53_stage,
+    run_single_fish_cell_53a_stage,
+    run_single_fish_cell_56_stage,
+    run_single_fish_cell_56f_qc_activity_stage,
+    run_single_fish_cell_56f_qc_stage,
+    run_single_fish_cell_56g_stage,
+    run_single_fish_cell_56h_stage,
+    run_single_fish_cell_57_stage,
     organize,
     run_smoke_tier,
     scale_image,
@@ -235,6 +248,19 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(run_hcr_cellpose_stage)
     assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
+    assert callable(run_single_fish_cell_22c_stage)
+    assert callable(run_single_fish_cell_50_stage)
+    assert callable(run_single_fish_cell_50e_stage)
+    assert callable(run_single_fish_cell_50f_stage)
+    assert callable(run_single_fish_cell_50g_stage)
+    assert callable(run_single_fish_cell_53_stage)
+    assert callable(run_single_fish_cell_53a_stage)
+    assert callable(run_single_fish_cell_56_stage)
+    assert callable(run_single_fish_cell_56f_qc_activity_stage)
+    assert callable(run_single_fish_cell_56f_qc_stage)
+    assert callable(run_single_fish_cell_56g_stage)
+    assert callable(run_single_fish_cell_56h_stage)
+    assert callable(run_single_fish_cell_57_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(scale_image)

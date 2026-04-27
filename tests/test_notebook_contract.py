@@ -76,12 +76,8 @@ def test_required_cell_contract_detects_missing_single_fish_owner_imports_and_ca
 
     violations = find_required_cell_contract_violations(notebook_path)
     pairs = {(violation.tag, violation.kind, violation.detail) for violation in violations}
-    assert ("50l", "required-import", "codeants_2pf_hcr.traces:build_single_fish_motion_auc_plot_tables") in pairs
-    assert ("50l", "required-import", "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_global_auc_panel") in pairs
-    assert ("50l", "required-import", "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_gene_auc_panel") in pairs
-    assert ("50l", "required-call", "build_single_fish_motion_auc_plot_tables") in pairs
-    assert ("50l", "required-call", "render_single_fish_50l_global_auc_panel") in pairs
-    assert ("50l", "required-call", "render_single_fish_50l_gene_auc_panel") in pairs
+    assert ("50l", "required-import", "codeants_2pf_hcr.plots.analysis:render_single_fish_50l_composite") in pairs
+    assert ("50l", "required-call", "render_single_fish_50l_composite") in pairs
     assert ("50l", "local-helper-def", "FunctionDef:_plot_auc_block") in pairs
     assert (
         "57a-responsive-identity-donut",
@@ -97,16 +93,8 @@ def test_required_cell_contract_accepts_package_owned_single_fish_cells(tmp_path
         notebook_path,
         [
             "# [50l]\n"
-            "from codeants_2pf_hcr.traces import build_single_fish_motion_auc_plot_tables\n"
-            "from codeants_2pf_hcr.plots.analysis import (\n"
-            "    render_single_fish_50l_bpi_panel,\n"
-            "    render_single_fish_50l_gene_auc_panel,\n"
-            "    render_single_fish_50l_global_auc_panel,\n"
-            ")\n"
-            "build_single_fish_motion_auc_plot_tables(detail_csv, outdir=OUT_REG)\n"
-            "render_single_fish_50l_bpi_panel(ax_bpi, bpi_plot_df)\n"
-            "render_single_fish_50l_global_auc_panel(ax_global, ax_global_strip, points_df, counts_df, 'ipsi', 'Ipsi')\n"
-            "render_single_fish_50l_gene_auc_panel(ax_gene, ax_gene_strip, points_df, counts_df, 'ipsi', 'Ipsi')\n",
+            "from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite\n"
+            "render_single_fish_50l_composite(out_reg=OUT_REG, outdir=FISH_PLOTS_DIR_50L)\n",
             "# [57a-responsive-identity-donut]\n"
             "from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_responsive_identity_donut\n"
             "render_single_fish_50l_responsive_identity_donut(fish_id=FISH_ID, master_csv=master_csv, conf_func_csv=conf_csv, outdir=outdir)\n",

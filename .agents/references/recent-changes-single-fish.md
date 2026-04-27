@@ -390,3 +390,44 @@
   - execute notebook setup through the context stage and confirm `NAS_ROOT`, `DATA_ROOT`, and downstream derived paths for the target fish.
 - Rerun implications:
   - minimum rerun: setup/path cells `[1]-[5]`.
+
+### 2026-04-26 - top-10 single-fish notebook cells slimmed to package-backed wrappers
+
+- Slice goal:
+  - reduce the 10 largest `2PF_to_HCR.ipynb` code cells to thin orchestration wrappers while preserving current outputs and stage tags.
+- Passes completed in this session:
+  - moved legacy bodies for `[22c]`, `[50]`, `[50e]`, `[53]`, `[53a]`, `[56]`, `[56f-qc]`, `[56f-qc-activity]`, and `[56h]` into package-owned migration shims.
+  - rewrote `[50l]` to call `plots.analysis.render_single_fish_50l_composite` directly.
+  - updated public exports, symbol docs, package-export coverage, and notebook contract tests for the composite `[50l]` contract.
+- What changed:
+  - targeted cells now range from 9 to 60 nonblank lines and define no top-level helpers.
+  - live notebook top-level-definition count dropped to 31; remaining contract violations are outside this top-10 milestone.
+- What remains broken:
+  - static contract still reports figure/required-cell issues in non-target cells `[50f]`, `[50g]`, `[56g]`, `[57]`, and `[57b-anatomy-coexpression-summary]`.
+- Remaining in-slice work:
+  - replace migration shims with explicit package stage APIs in later passes, starting with trace/midline `[56*]` and HCR status `[50e]`.
+- Next likely breakpoint:
+  - refactor the remaining non-target figure cells to package renderers, then retire the shimmed legacy bodies incrementally.
+- Rerun implications:
+  - minimum rerun for this milestone is unchanged by design; rerun the affected notebook cells as needed to regenerate their existing outputs.
+
+### 2026-04-26 - remaining single-fish figure-contract cells slimmed
+
+- Slice goal:
+  - apply the same wrapper cleanup to `[50f]`, `[50g]`, `[56g]`, `[57]`, and `[57b-anatomy-coexpression-summary]`.
+- Passes completed in this session:
+  - moved legacy bodies for `[50f]`, `[50g]`, `[56g]`, and `[57]` into package-owned migration shims.
+  - rewrote those notebook cells to import and call their owning `plots.*` stage runners.
+  - changed `[57b-anatomy-coexpression-summary]` to directly import `render_single_fish_hcr_anatomy_coexpression_summary`.
+  - updated notebook contract expectations, package exports, symbol docs, and focused regression tests.
+- What changed:
+  - targeted cells now range from 9 to 36 nonblank lines and define no top-level helpers.
+  - `check_notebook_contract("notebooks/2PF_to_HCR.ipynb")` reports zero figure violations and zero required-cell violations.
+- What remains broken:
+  - live notebook rerun/visual confirmation is still required for the affected QA/trace figures.
+- Remaining in-slice work:
+  - replace migration shims with explicit package stage APIs in later passes once the notebook stays stable.
+- Next likely breakpoint:
+  - retire shimmed legacy bodies one owner at a time, starting with `plots.qa` `[50f]`/`[50g]` and `plots.analysis` `[56g]`/`[57]`.
+- Rerun implications:
+  - rerun only the affected cells when their existing outputs need regeneration.
