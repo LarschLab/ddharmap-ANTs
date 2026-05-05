@@ -12,6 +12,7 @@ from codeants_2pf_hcr import (
     FishStateStageConfig,
     HcrActivityExportConfig,
     HcrCellposeConfig,
+    InPlaneRegistrationComparisonConfig,
     SingleFishBpiDiagnosticsConfig,
     NotebookContractViolation,
     RegistrationSearchConfig,
@@ -26,6 +27,7 @@ from codeants_2pf_hcr import (
     _parse_nrrd_header_text,
     _res_to_um_per_px,
     _to_um,
+    apply_square_region_mask,
     apply_func_orientation,
     best_z_by_ncc,
     build_context_audit_stage,
@@ -107,6 +109,7 @@ from codeants_2pf_hcr import (
     resolve_voxel_context_stage,
     resolve_cohort_context_stage,
     run_hcr_cellpose_stage,
+    run_in_plane_registration_comparison_stage,
     run_ncc_placement_stage,
     run_registration_search_stage,
     run_single_fish_cell_22c_stage,
@@ -128,10 +131,13 @@ from codeants_2pf_hcr import (
     save_cohort_outputs_to_disk,
     show_functional_label_overlay_stage,
     show_centroid_match_qa_stage,
+    show_ants_registration_region_selector_stage,
+    show_inplane_registration_method_comparison_stage,
     show_region_shift_square_selector_stage,
     compute_anatomy_median_xy_radius_um,
     show_registration_overlay_stage,
     summarize_distances,
+    summarize_functional_anatomy_geometry_metrics,
     top_correlated_mean,
     zproject_mean,
 )
@@ -151,6 +157,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(FishStateStageConfig)
     assert callable(HcrActivityExportConfig)
     assert callable(HcrCellposeConfig)
+    assert callable(InPlaneRegistrationComparisonConfig)
     assert callable(SingleFishBpiDiagnosticsConfig)
     assert callable(NotebookContractViolation)
     assert callable(RegistrationSearchConfig)
@@ -165,6 +172,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(_parse_nrrd_header_text)
     assert callable(_res_to_um_per_px)
     assert callable(_to_um)
+    assert callable(apply_square_region_mask)
     assert callable(apply_func_orientation)
     assert callable(best_z_by_ncc)
     assert callable(build_context_audit_stage)
@@ -246,6 +254,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(resolve_voxel_context_stage)
     assert callable(resolve_cohort_context_stage)
     assert callable(run_hcr_cellpose_stage)
+    assert callable(run_in_plane_registration_comparison_stage)
     assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
     assert callable(run_single_fish_cell_22c_stage)
@@ -266,10 +275,13 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(scale_image)
     assert callable(save_cohort_outputs_to_disk)
     assert callable(show_centroid_match_qa_stage)
+    assert callable(show_ants_registration_region_selector_stage)
+    assert callable(show_inplane_registration_method_comparison_stage)
     assert callable(show_region_shift_square_selector_stage)
     assert callable(compute_anatomy_median_xy_radius_um)
     assert callable(show_functional_label_overlay_stage)
     assert callable(show_registration_overlay_stage)
     assert callable(summarize_distances)
+    assert callable(summarize_functional_anatomy_geometry_metrics)
     assert callable(top_correlated_mean)
     assert callable(zproject_mean)

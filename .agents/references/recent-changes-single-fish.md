@@ -373,6 +373,16 @@
   - minimum rerun for early checks: `[12] -> [14] -> [16] -> [20]`.
   - minimum rerun for downstream checks: `[56h] -> [56g]`, plus `[57]` for the trace plot path.
 
+### 2026-05-05 - NCC-guided per-plane ANTs regions for [19a]
+
+- Slice goal:
+  - replace manual `[19a]` ANTs fixed-region selection with automatic NCC-guided per-plane regions using the matched functional footprint plus 10% context.
+- What changed:
+  - `[19a]` now writes `ants_registration_region_square.json` with one NCC-derived square per functional plane.
+  - `[20]` selects the current plane's region from that JSON for `ants_rigid_affine`, while legacy single-square JSON remains supported.
+- Rerun implications:
+  - minimum rerun: `[16] -> [19a] -> [20]`; rerun `[22e]` afterward to visually compare NCC and ANTs placements.
+
 ### 2026-04-21 - Windows NAS default now resolves directly to 07_Data
 
 - Slice goal:

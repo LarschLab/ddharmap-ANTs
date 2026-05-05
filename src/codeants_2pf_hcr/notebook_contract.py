@@ -41,9 +41,16 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
         },
         "20": {
             "imports": {
-                "codeants_2pf_hcr": {"FunctionalPlacementConfig", "run_ncc_placement_stage"},
+                "codeants_2pf_hcr": {"InPlaneRegistrationComparisonConfig", "run_in_plane_registration_comparison_stage"},
             },
-            "calls": {"FunctionalPlacementConfig", "run_ncc_placement_stage"},
+            "calls": {"InPlaneRegistrationComparisonConfig", "run_in_plane_registration_comparison_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "19a": {
+            "imports": {
+                "codeants_2pf_hcr": {"show_ants_registration_region_selector_stage"},
+            },
+            "calls": {"show_ants_registration_region_selector_stage"},
             "forbid_top_level_defs": True,
         },
         "34a": {

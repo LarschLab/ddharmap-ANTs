@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 from typing import Any
 
 import numpy as np
@@ -286,6 +287,22 @@ class FunctionalPlacementConfig:
 
 
 @dataclass(frozen=True)
+class InPlaneRegistrationComparisonConfig:
+    methods: tuple[str, ...] = ("ncc_xy", "ants_rigid_affine")
+    active_method: str = "ncc_xy"
+    save_outputs: bool = True
+    output_subdir: str = "inplane_registration_comparison"
+    display_normalize_placed: bool = True
+    use_cv2: bool = True
+    ants_aff_iterations: tuple[int, ...] = (2000, 1000, 500, 250, 100)
+    ants_aff_shrink_factors: tuple[int, ...] = (12, 8, 4, 2, 1)
+    ants_aff_smoothing_sigmas: tuple[int, ...] = (4, 3, 2, 1, 0)
+    clip_percentiles: tuple[float, float] = (5.0, 95.0)
+    ants_fixed_mask_json: str | Path | None = None
+    fail_on_active_method_error: bool = True
+
+
+@dataclass(frozen=True)
 class RegistrationSearchConfig:
     rescale_func_to_anat: bool = True
     force_recompute: bool = False
@@ -551,6 +568,521 @@ def _place_image_on_canvas(img: np.ndarray, output_shape: tuple[int, int], x0: i
         return None
     placed[y0i:y1, x0i:x1] = img[sy0:sy1, sx0:sx1]
     return placed
+
+
+def _clip_norm01(img: np.ndarray, pmin: float = 5.0, pmax: float = 95.0) -> np.ndarray:
+    arr = np.asarray(img, dtype=np.float32)
+    lo, hi = np.percentile(arr, (float(pmin), float(pmax)))
+    if hi <= lo:
+        return norm01(arr)
+    arr = np.clip(arr, lo, hi)
+    return norm01(arr)
+
+
+def _xy_spacing_from_vox(vox_anat: Any = None) -> tuple[float, float]:
+    vox = vox_anat if isinstance(vox_anat, dict) else {}
+    try:
+        x_spacing = float(vox.get("X", vox.get(2, vox.get("2", 1.0))))
+        y_spacing = float(vox.get("Y", vox.get(1, vox.get("1", 1.0))))
+    except Exception:
+        x_spacing, y_spacing = 1.0, 1.0
+    if not np.isfinite(x_spacing) or x_spacing <= 0:
+        x_spacing = 1.0
+    if not np.isfinite(y_spacing) or y_spacing <= 0:
+        y_spacing = 1.0
+    return x_spacing, y_spacing
+
+
+def _set_ants_2d_metadata(image: Any, *, spacing: tuple[float, float]) -> None:
+    image.set_spacing(tuple(float(v) for v in spacing))
+    image.set_origin((0.0, 0.0))
+    image.set_direction(np.eye(2))
+
+
+def _square_bounds_from_region_spec(spec: dict[str, Any], shape: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    if not isinstance(spec, dict):
+        return None
+    h, w = int(shape[0]), int(shape[1])
+    bounds = spec.get("bounds_xyxy")
+    if bounds is not None:
+        try:
+            x0, y0, x1, y1 = [int(round(float(v))) for v in bounds[:4]]
+        except Exception:
+            return None
+    else:
+        try:
+            cx = int(round(float(spec["center_x"])))
+            cy = int(round(float(spec["center_y"])))
+            size = max(1, int(round(float(spec["size_px"]))))
+        except Exception:
+            return None
+        half = size / 2.0
+        x0 = int(round(cx - half))
+        x1 = int(round(cx + half))
+        y0 = int(round(cy - half))
+        y1 = int(round(cy + half))
+    x0 = max(0, min(w, int(x0)))
+    x1 = max(0, min(w, int(x1)))
+    y0 = max(0, min(h, int(y0)))
+    y1 = max(0, min(h, int(y1)))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return x0, y0, x1, y1
+
+
+def apply_square_region_mask(
+    image: np.ndarray,
+    spec: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]]:
+    """Return a full-size image with values outside the selected anatomy-space square set to zero."""
+    arr = np.asarray(image, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError(f"Expected a 2D image for square masking, got shape {arr.shape!r}")
+    bounds = _square_bounds_from_region_spec(spec, tuple(arr.shape))
+    if bounds is None:
+        raise ValueError("Region square spec does not define a valid in-bounds square.")
+    x0, y0, x1, y1 = bounds
+    mask = np.zeros(tuple(arr.shape), dtype=bool)
+    mask[y0:y1, x0:x1] = True
+    masked = np.where(mask, arr, 0.0).astype(np.float32, copy=False)
+    return masked, mask, bounds
+
+
+def _load_square_region_mask_json(path: str | Path | None) -> tuple[dict[str, Any] | None, Path | None]:
+    if path in (None, "", False):
+        return None, None
+    mask_path = Path(path)
+    if not mask_path.exists():
+        raise FileNotFoundError(f"ANTs fixed-region mask JSON not found: {mask_path}")
+    with mask_path.open("r") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"ANTs fixed-region mask JSON must contain an object: {mask_path}")
+    return payload, mask_path
+
+
+def _select_square_region_spec_for_plane(
+    payload: dict[str, Any],
+    *,
+    plane_idx: int | None,
+    label: str | None,
+) -> dict[str, Any]:
+    regions = payload.get("regions")
+    if not isinstance(regions, list):
+        return payload
+
+    for region in regions:
+        if not isinstance(region, dict):
+            continue
+        try:
+            if plane_idx is not None and int(region.get("plane_idx")) == int(plane_idx):
+                return region
+        except Exception:
+            pass
+
+    if label not in (None, ""):
+        for region in regions:
+            if isinstance(region, dict) and str(region.get("plane_label", "")) == str(label):
+                return region
+
+    raise ValueError(f"ANTs fixed-region mask JSON has no region for plane_idx={plane_idx!r}, label={label!r}")
+
+
+def _copy_ants_transforms(transformlist: list[str], out_dir: Path, label: str, method: str) -> list[str]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(label))
+    for idx, src in enumerate(transformlist or []):
+        src_path = Path(src)
+        if not src_path.exists():
+            copied.append(str(src))
+            continue
+        suffix = "".join(src_path.suffixes) or src_path.suffix
+        dst = out_dir / f"{safe_label}_{method}_{idx}{suffix}"
+        shutil.copy2(src_path, dst)
+        copied.append(str(dst))
+    return copied
+
+
+def _valid_fraction(img: np.ndarray) -> float:
+    arr = np.asarray(img)
+    if arr.size == 0:
+        return 0.0
+    return float(np.count_nonzero(np.isfinite(arr) & (np.abs(arr) > 1e-8)) / arr.size)
+
+
+def _post_transform_ncc(warped: np.ndarray, fixed: np.ndarray) -> float:
+    warped_arr = np.asarray(warped, dtype=np.float32)
+    fixed_arr = np.asarray(fixed, dtype=np.float32)
+    if warped_arr.shape != fixed_arr.shape:
+        return float("nan")
+    mask = np.isfinite(warped_arr) & np.isfinite(fixed_arr) & (np.abs(warped_arr) > 1e-8)
+    if int(mask.sum()) < 4:
+        return float("nan")
+    return corrcoef_img(norm01(warped_arr[mask]), norm01(fixed_arr[mask]))
+
+
+def _ncc_in_plane_result(
+    *,
+    ref_scaled: np.ndarray,
+    fixed_slice: np.ndarray,
+    use_cv2: bool,
+    display_normalize_placed: bool,
+) -> dict[str, Any]:
+    x0, y0, score = ncc_xy(ref_scaled, fixed_slice, use_cv2=use_cv2)
+    metric_img = _place_image_on_canvas(np.asarray(ref_scaled, dtype=np.float32), tuple(fixed_slice.shape), x0, y0)
+    display_img = _place_image_on_canvas(
+        norm01(ref_scaled) if display_normalize_placed else np.asarray(ref_scaled, dtype=np.float32),
+        tuple(fixed_slice.shape),
+        x0,
+        y0,
+    )
+    if metric_img is None:
+        raise RuntimeError("NCC placement produced no overlap with anatomy canvas")
+    tform = transform.SimilarityTransform(translation=(int(x0), int(y0)))
+    return {
+        "status": "ok",
+        "method": "ncc_xy",
+        "warped": metric_img,
+        "display_warped": display_img if display_img is not None else metric_img,
+        "transform": tform,
+        "ncc_xy": {"x0": int(x0), "y0": int(y0), "score": float(score)},
+        "post_ncc": _post_transform_ncc(metric_img, fixed_slice),
+        "valid_fraction": _valid_fraction(metric_img),
+    }
+
+
+def _ants_rigid_affine_in_plane_result(
+    *,
+    ref_scaled: np.ndarray,
+    fixed_slice: np.ndarray,
+    plane_idx: int,
+    label: str,
+    output_dir: Path | None,
+    spacing: tuple[float, float],
+    config: InPlaneRegistrationComparisonConfig,
+) -> dict[str, Any]:
+    try:
+        import ants
+    except Exception as exc:  # pragma: no cover - depends on optional native package
+        raise ImportError("ANTsPy is required for ants_rigid_affine in-plane registration") from exc
+
+    pmin, pmax = config.clip_percentiles
+    moving_np = _clip_norm01(ref_scaled, pmin=pmin, pmax=pmax).astype(np.float32)
+    fixed_np = _clip_norm01(fixed_slice, pmin=pmin, pmax=pmax).astype(np.float32)
+    fixed_region_spec, fixed_region_path = _load_square_region_mask_json(config.ants_fixed_mask_json)
+    fixed_mask_np = None
+    fixed_region_bounds = None
+    if fixed_region_spec is not None:
+        fixed_region_spec = _select_square_region_spec_for_plane(fixed_region_spec, plane_idx=plane_idx, label=label)
+        fixed_np, fixed_mask_np, fixed_region_bounds = apply_square_region_mask(fixed_np, fixed_region_spec)
+    moving = ants.from_numpy(moving_np)
+    fixed = ants.from_numpy(fixed_np)
+    _set_ants_2d_metadata(moving, spacing=spacing)
+    _set_ants_2d_metadata(fixed, spacing=spacing)
+    fixed_mask = None
+    if fixed_mask_np is not None:
+        fixed_mask = ants.from_numpy(fixed_mask_np.astype(np.float32, copy=False))
+        _set_ants_2d_metadata(fixed_mask, spacing=spacing)
+
+    reg_kwargs = {
+        "aff_iterations": tuple(int(v) for v in config.ants_aff_iterations),
+        "aff_shrink_factors": tuple(int(v) for v in config.ants_aff_shrink_factors),
+        "aff_smoothing_sigmas": tuple(int(v) for v in config.ants_aff_smoothing_sigmas),
+    }
+    if fixed_mask is not None:
+        reg_kwargs["mask"] = fixed_mask
+        reg_kwargs["mask_all_stages"] = True
+
+    reg_rigid = ants.registration(
+        fixed=fixed,
+        moving=moving,
+        type_of_transform="Rigid",
+        **reg_kwargs,
+    )
+    reg_affine = ants.registration(
+        fixed=fixed,
+        moving=moving,
+        initial_transform=reg_rigid["fwdtransforms"][0],
+        type_of_transform="Affine",
+        **reg_kwargs,
+    )
+    transformlist = list(reg_affine.get("fwdtransforms", []))
+    if output_dir is not None:
+        transformlist = _copy_ants_transforms(transformlist, output_dir / "transforms", label, "ants_rigid_affine")
+
+    warped = np.asarray(reg_affine["warpedmovout"].numpy(), dtype=np.float32)
+    mask_img = ants.from_numpy(np.ones(tuple(moving_np.shape), dtype=np.float32))
+    _set_ants_2d_metadata(mask_img, spacing=spacing)
+    mask_warped = ants.apply_transforms(
+        fixed=fixed,
+        moving=mask_img,
+        transformlist=transformlist,
+        interpolator="nearestNeighbor",
+    )
+    valid_mask = np.asarray(mask_warped.numpy(), dtype=np.float32) > 0.5
+    warped_masked = np.where(valid_mask, warped, 0.0).astype(np.float32)
+    return {
+        "status": "ok",
+        "method": "ants_rigid_affine",
+        "warped": warped_masked,
+        "display_warped": warped_masked,
+        "transform": {
+            "type": "ants_transformlist",
+            "method": "ants_rigid_affine",
+            "transformlist": transformlist,
+            "fixed_spacing": tuple(float(v) for v in spacing),
+            "moving_spacing": tuple(float(v) for v in spacing),
+            "fixed_origin": (0.0, 0.0),
+            "moving_origin": (0.0, 0.0),
+            "fixed_direction": np.eye(2).tolist(),
+            "moving_direction": np.eye(2).tolist(),
+            "moving_shape": tuple(int(v) for v in moving_np.shape),
+            "fixed_shape": tuple(int(v) for v in fixed_np.shape),
+        },
+        "post_ncc": _post_transform_ncc(warped_masked, fixed_np),
+        "valid_fraction": float(valid_mask.mean()) if valid_mask.size else 0.0,
+        "transformlist": transformlist,
+        "ants_fixed_mask_path": str(fixed_region_path) if fixed_region_path is not None else None,
+        "ants_fixed_mask_bounds_xyxy": fixed_region_bounds,
+        "ants_fixed_mask_fraction": float(fixed_mask_np.mean()) if fixed_mask_np is not None and fixed_mask_np.size else np.nan,
+    }
+
+
+def _summarize_in_plane_recommendations(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["fish_id", "plane_idx", "plane", "recommended_method", "recommended_post_ncc"])
+    rows: list[dict[str, Any]] = []
+    for keys, sub in df[df["status"].eq("ok")].groupby(["fish_id", "plane_idx", "plane"], dropna=False):
+        fish_id, plane_idx, plane = keys
+        work = sub.copy()
+        work["post_ncc"] = pd.to_numeric(work["post_ncc"], errors="coerce")
+        work["valid_fraction"] = pd.to_numeric(work["valid_fraction"], errors="coerce")
+        work = work.sort_values(["post_ncc", "valid_fraction"], ascending=[False, False], na_position="last")
+        if work.empty:
+            continue
+        best = work.iloc[0]
+        rows.append(
+            {
+                "fish_id": fish_id,
+                "plane_idx": int(plane_idx),
+                "plane": plane,
+                "recommended_method": str(best["method"]),
+                "recommended_post_ncc": float(best["post_ncc"]) if pd.notna(best["post_ncc"]) else np.nan,
+                "recommended_valid_fraction": float(best["valid_fraction"]) if pd.notna(best["valid_fraction"]) else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def run_in_plane_registration_comparison_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat_f: Any,
+    fish_id: str | None = None,
+    out_ncc: str | Path | None = None,
+    best_z: int = 0,
+    vox_anat: Any = None,
+    config: InPlaneRegistrationComparisonConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or InPlaneRegistrationComparisonConfig()
+    if not plane_refs:
+        raise RuntimeError("plane_refs missing; run [16] first.")
+    if anat_f is None:
+        raise RuntimeError("anat_f missing; run [16] first.")
+
+    methods = tuple(str(method).strip() for method in cfg.methods if str(method).strip())
+    if not methods:
+        raise ValueError("At least one in-plane registration method is required.")
+    active_method = str(cfg.active_method).strip()
+    if active_method not in methods:
+        raise ValueError(f"active_method={active_method!r} is not included in methods={methods!r}")
+
+    anat_arr = np.asarray(anat_f, dtype=np.float32)
+    output_dir = None
+    if cfg.save_outputs and out_ncc is not None:
+        output_dir = Path(out_ncc) / str(cfg.output_subdir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+    spacing = _xy_spacing_from_vox(vox_anat)
+    rows: list[dict[str, Any]] = []
+    log_lines: list[str] = []
+    first_ref_warped_raw = None
+    first_ref_warped = None
+
+    for plane_idx, plane_ref in enumerate(plane_refs):
+        if plane_ref is None:
+            continue
+        label = str(plane_ref.get("label", f"plane{plane_idx}"))
+        bz = int(plane_ref.get("best_z", best_z))
+        if bz < 0 or bz >= anat_arr.shape[0]:
+            log_lines.append(f"[20] {label}: best_z out of bounds ({bz})")
+            continue
+        fixed_slice = anat_arr[bz]
+        ref_src = plane_ref.get("ref_match", plane_ref.get("ref2d_raw", plane_ref.get("ref2d")))
+        if ref_src is None:
+            log_lines.append(f"[20] {label}: missing functional reference")
+            continue
+        ref_scaled = np.asarray(ref_src, dtype=np.float32)
+        ncc_scores_arr = np.asarray(plane_ref.get("ncc_scores", []), dtype=np.float32)
+        depth_metrics = registration_metric_from_scores(ncc_scores_arr)
+        second_best = float(np.partition(ncc_scores_arr, -2)[-2]) if ncc_scores_arr.size >= 2 else np.nan
+        plane_results: dict[str, dict[str, Any]] = {}
+
+        for method in methods:
+            try:
+                if method == "ncc_xy":
+                    result = _ncc_in_plane_result(
+                        ref_scaled=ref_scaled,
+                        fixed_slice=fixed_slice,
+                        use_cv2=bool(cfg.use_cv2),
+                        display_normalize_placed=bool(cfg.display_normalize_placed),
+                    )
+                elif method == "ants_rigid_affine":
+                    result = _ants_rigid_affine_in_plane_result(
+                        ref_scaled=ref_scaled,
+                        fixed_slice=fixed_slice,
+                        plane_idx=plane_idx,
+                        label=label,
+                        output_dir=output_dir,
+                        spacing=spacing,
+                        config=cfg,
+                    )
+                else:
+                    raise ValueError(f"Unsupported in-plane registration method: {method}")
+                plane_results[method] = result
+                ncc_xy_record = result.get("ncc_xy", {}) if isinstance(result.get("ncc_xy"), dict) else {}
+                fixed_mask_bounds = result.get("ants_fixed_mask_bounds_xyxy")
+                rows.append(
+                    {
+                        "fish_id": fish_id,
+                        "plane_idx": int(plane_idx),
+                        "plane": label,
+                        "method": method,
+                        "selected": method == active_method,
+                        "status": "ok",
+                        "best_z": int(bz),
+                        "scale": plane_ref.get("scale", np.nan),
+                        "bestz_max_score": None if depth_metrics is None else depth_metrics.get("max_score"),
+                        "bestz_second_best": second_best,
+                        "bestz_peak_delta": None if depth_metrics is None else depth_metrics.get("peak_delta"),
+                        "bestz_peak_zscore": None if depth_metrics is None else depth_metrics.get("peak_zscore"),
+                        "bestz_z_count": int(ncc_scores_arr.size),
+                        "post_ncc": float(result.get("post_ncc", np.nan)),
+                        "valid_fraction": float(result.get("valid_fraction", np.nan)),
+                        "ncc_xy_score": ncc_xy_record.get("score", np.nan),
+                        "ncc_xy_x0": ncc_xy_record.get("x0", np.nan),
+                        "ncc_xy_y0": ncc_xy_record.get("y0", np.nan),
+                        "ref_shape": tuple(plane_ref.get("ref_shape", np.asarray(ref_scaled).shape)),
+                        "ref_scaled_shape": tuple(np.asarray(ref_scaled).shape),
+                        "transformlist": ";".join(result.get("transformlist", [])) if result.get("transformlist") else None,
+                        "ants_fixed_mask_path": result.get("ants_fixed_mask_path"),
+                        "ants_fixed_mask_bounds_xyxy": json.dumps(list(fixed_mask_bounds)) if fixed_mask_bounds is not None else None,
+                        "ants_fixed_mask_fraction": result.get("ants_fixed_mask_fraction", np.nan),
+                        "error": None,
+                    }
+                )
+                mask_msg = ""
+                if result.get("ants_fixed_mask_path"):
+                    mask_msg = (
+                        f" mask_bounds={result.get('ants_fixed_mask_bounds_xyxy')} "
+                        f"mask_fraction={float(result.get('ants_fixed_mask_fraction', np.nan)):.3f}"
+                    )
+                log_lines.append(
+                    f"[20] {label} method={method} z={bz} post_ncc={float(result.get('post_ncc', np.nan)):.4f} "
+                    f"valid={float(result.get('valid_fraction', np.nan)):.3f}{mask_msg}"
+                )
+            except Exception as exc:
+                rows.append(
+                    {
+                        "fish_id": fish_id,
+                        "plane_idx": int(plane_idx),
+                        "plane": label,
+                        "method": method,
+                        "selected": method == active_method,
+                        "status": "error",
+                        "best_z": int(bz),
+                        "scale": plane_ref.get("scale", np.nan),
+                        "bestz_max_score": None if depth_metrics is None else depth_metrics.get("max_score"),
+                        "bestz_second_best": second_best,
+                        "bestz_peak_delta": None if depth_metrics is None else depth_metrics.get("peak_delta"),
+                        "bestz_peak_zscore": None if depth_metrics is None else depth_metrics.get("peak_zscore"),
+                        "bestz_z_count": int(ncc_scores_arr.size),
+                        "post_ncc": np.nan,
+                        "valid_fraction": np.nan,
+                        "ncc_xy_score": np.nan,
+                        "ncc_xy_x0": np.nan,
+                        "ncc_xy_y0": np.nan,
+                        "ref_shape": tuple(plane_ref.get("ref_shape", np.asarray(ref_scaled).shape)),
+                        "ref_scaled_shape": tuple(np.asarray(ref_scaled).shape),
+                        "transformlist": None,
+                        "ants_fixed_mask_path": str(cfg.ants_fixed_mask_json) if cfg.ants_fixed_mask_json not in (None, "", False) else None,
+                        "ants_fixed_mask_bounds_xyxy": None,
+                        "ants_fixed_mask_fraction": np.nan,
+                        "error": str(exc),
+                    }
+                )
+                log_lines.append(f"[20] {label} method={method} ERROR: {exc}")
+                if method == active_method and bool(cfg.fail_on_active_method_error):
+                    raise
+
+        active_result = plane_results.get(active_method)
+        if active_result is None:
+            continue
+        plane_ref.setdefault("inplane_registration", {})
+        plane_ref["inplane_registration"].update({method: result for method, result in plane_results.items()})
+        plane_ref["inplane_active_method"] = active_method
+        plane_ref["ref_warped_raw"] = np.asarray(active_result["warped"], dtype=np.float32)
+        plane_ref["ref_warped"] = np.asarray(active_result["display_warped"], dtype=np.float32)
+        plane_ref["ref_match"] = ref_scaled
+        plane_ref["tform_src"] = active_method
+        if active_method == "ncc_xy":
+            plane_ref["ncc_xy"] = active_result["ncc_xy"]
+            plane_ref["tform"] = active_result["transform"]
+            plane_ref.pop("ants_transform", None)
+            plane_ref.pop("ants_transformlist", None)
+        elif active_method == "ants_rigid_affine":
+            plane_ref["ants_transform"] = active_result["transform"]
+            plane_ref["ants_transformlist"] = active_result.get("transformlist", [])
+            plane_ref.pop("tform", None)
+        if plane_idx == 0:
+            first_ref_warped_raw = plane_ref["ref_warped_raw"]
+            first_ref_warped = plane_ref["ref_warped"]
+
+        if output_dir is not None:
+            safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "_", label)
+            for method, result in plane_results.items():
+                tifffile.imwrite(output_dir / f"{safe_label}_{method}_warped.tif", np.asarray(result["warped"], dtype=np.float32))
+
+    comparison_df = pd.DataFrame(rows)
+    recommendation_df = _summarize_in_plane_recommendations(comparison_df)
+    if output_dir is not None:
+        comparison_path = output_dir / "inplane_registration_comparison.csv"
+        recommendation_path = output_dir / "inplane_registration_recommendation.csv"
+        comparison_df.to_csv(comparison_path, index=False)
+        recommendation_df.to_csv(recommendation_path, index=False)
+        log_lines.append(f"[20] Wrote in-plane comparison: {comparison_path}")
+        log_lines.append(f"[20] Wrote in-plane recommendation: {recommendation_path}")
+    else:
+        comparison_path = None
+        recommendation_path = None
+
+    bindings = {"plane_refs": plane_refs, "INPLANE_REGISTRATION_COMPARISON_DF": comparison_df}
+    if first_ref_warped_raw is not None:
+        bindings["ref_warped_raw"] = first_ref_warped_raw
+    if first_ref_warped is not None:
+        bindings["ref_warped"] = first_ref_warped
+    return {
+        "plane_refs": plane_refs,
+        "comparison_df": comparison_df,
+        "recommendation_df": recommendation_df,
+        "comparison_path": comparison_path,
+        "recommendation_path": recommendation_path,
+        "ref_warped_raw": first_ref_warped_raw,
+        "ref_warped": first_ref_warped,
+        "log_lines": log_lines,
+        "bindings": bindings,
+    }
 
 
 def run_ncc_placement_stage(
@@ -1065,6 +1597,7 @@ def run_registration_search_stage(
 
 
 __all__ = [
+    "InPlaneRegistrationComparisonConfig",
     "FunctionalPlacementConfig",
     "FunctionalReferenceConfig",
     "RegistrationSearchConfig",
@@ -1074,6 +1607,7 @@ __all__ = [
     "_parse_nrrd_header_text",
     "_res_to_um_per_px",
     "_to_um",
+    "apply_square_region_mask",
     "apply_func_orientation",
     "best_z_by_ncc",
     "corrcoef_img",
@@ -1085,6 +1619,7 @@ __all__ = [
     "ncc_xy",
     "norm01",
     "registration_metric_from_scores",
+    "run_in_plane_registration_comparison_stage",
     "run_ncc_placement_stage",
     "run_registration_search_stage",
     "scale_image",

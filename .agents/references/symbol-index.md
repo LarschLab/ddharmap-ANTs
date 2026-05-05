@@ -50,6 +50,7 @@ Generated manually for the current extracted package surface.
 
 - `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`.
 - `FunctionalPlacementConfig`: Typed NCC XY placement configuration for notebook cell `[20]`.
+- `InPlaneRegistrationComparisonConfig`: Typed in-plane method-comparison configuration for notebook cell `[20]`.
 - `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
 - `imread_any`: Read TIFF or NRRD images with minimal notebook dependencies.
 - `zproject_mean`: Mean projection helper.
@@ -59,11 +60,13 @@ Generated manually for the current extracted package surface.
 - `top_correlated_mean`: Suite2p-like top-k frame reference builder.
 - `best_z_by_ncc`: Best-z search by NCC-like scoring.
 - `apply_func_orientation`: Apply the notebook’s functional orientation convention.
+- `apply_square_region_mask`: Preserve values inside an anatomy-space square and set outside pixels to zero for masked registration.
 - `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy `ref2d_raw` / `ref2d` bindings and cache filenames.
 - `ncc_xy`: Shared NCC XY placement primitive for notebook cell `[20]`.
 - `scale_image`: Resize a 2D functional reference by an empirical NCC search scale.
 - `registration_metric_from_scores`: Summarize NCC scores into best-z and peak metrics.
 - `run_ncc_placement_stage`: Notebook-facing NCC XY placement stage for `[20]` that updates `plane_refs` with placement metadata and warped reference aliases.
+- `run_in_plane_registration_comparison_stage`: Notebook-facing `[20]` comparison stage that evaluates current NCC XY placement against optional ANTs rigid+affine placement while keeping the configured active backend explicit.
 - `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, and rebinds legacy globals.
 
 ## `codeants_2pf_hcr.matching`
@@ -79,6 +82,7 @@ Generated manually for the current extracted package surface.
 - `nearest_neighbor_match`: Build one-nearest-neighbor centroid matches for QC diagnostics.
 - `hungarian_match`: Build Hungarian centroid matches for QC diagnostics.
 - `summarize_distances`: Summarize centroid-match distance arrays for QC tables.
+- `summarize_functional_anatomy_geometry_metrics`: Summarize ROI-centric master-table geometry metrics for in-plane registration method comparison reports.
 - `build_plane_centroid_matches`: Build per-plane centroid-link tables and overlap-aware counts for notebook QA stages `[34]`/`[34a]`.
 - `build_functional_anatomy_debug_df`: Summarize per-plane functional-to-anatomy centroid matching status for notebook debug stage `[34a]`.
 - `build_functional_anatomy_debug_stage`: Notebook-facing functional↔anatomy debug stage for `[34a]` that loads anatomy labels, resolves voxel scale, and returns the debug summary bindings/log lines.
@@ -159,6 +163,8 @@ Generated manually for the current extracted package surface.
 - `collect_cohort_53a_tables`: Build pooled cohort [53a]-analogue cache tables for `multi_fish_56h_56g.ipynb` (`[cohort-build]`).
 - `_select_in_plane_hcr_status_like_53a`: Build the [53a] label-level in-plane HCR status subset (one row per accepted `(gene, anat_label)` represented on functional planes) for HCR↔anatomy QC sourcing.
 - `show_region_shift_square_selector_stage`: Notebook-facing region-square QA selector stage for `[22d]`, including JSON reuse/save behavior.
+- `show_ants_registration_region_selector_stage`: Notebook-facing NCC-guided per-plane fixed-region square writer for `[19a]` masked ANTs in-plane registration.
+- `show_inplane_registration_method_comparison_stage`: Notebook-facing regional ANTs-vs-NCC in-plane placement and ROI/anatomy-boundary review for `[22e]`, using stored `[20]` method outputs, Suite2p labels, anatomy labels, and the `[22d]` crop.
 - `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
 - `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows.

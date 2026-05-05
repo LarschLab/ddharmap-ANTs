@@ -35,6 +35,17 @@ def _code_cell_by_tag(tag: str) -> str:
     raise AssertionError(f"Notebook cell [{tag}] not found")
 
 
+def _code_cell_index_by_tag(tag: str) -> int:
+    notebook = json.loads(NOTEBOOK_PATH.read_text())
+    for idx, cell in enumerate(notebook["cells"]):
+        if cell.get("cell_type") != "code":
+            continue
+        source = "".join(cell.get("source", []))
+        if source.startswith(f"# [{tag}]"):
+            return idx
+    raise AssertionError(f"Notebook cell [{tag}] not found")
+
+
 def _code_cell_by_prefix(prefix: str) -> str:
     notebook = json.loads(NOTEBOOK_PATH.read_text())
     for cell in notebook["cells"]:
@@ -145,8 +156,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("build_functional_references_stage", source)
         self.assertIn("AnatomyNormalizationStageConfig", source)
         self.assertIn("normalize_anatomy_stack_stage", source)
-        self.assertIn("FunctionalPlacementConfig", source)
-        self.assertIn("run_ncc_placement_stage", source)
+        self.assertIn("InPlaneRegistrationComparisonConfig", source)
+        self.assertIn("run_in_plane_registration_comparison_stage", source)
 
     def test_cells_12_14_and_20_are_stage_wrappers_only(self) -> None:
         cell_12 = _code_cell_by_tag("12")
@@ -162,8 +173,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("import nrrd", cell_14)
         self.assertNotIn("SimpleITK", cell_14)
 
-        self.assertIn("FunctionalPlacementConfig", cell_20)
-        self.assertIn("run_ncc_placement_stage", cell_20)
+        self.assertIn("InPlaneRegistrationComparisonConfig", cell_20)
+        self.assertIn("run_in_plane_registration_comparison_stage", cell_20)
         self.assertNotIn("def _ncc_xy(", cell_20)
 
     def test_phase10_generator_tracks_small_notebook_only_cleanup(self) -> None:
@@ -352,14 +363,32 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
 
     def test_registration_cells_use_package_stage_wrappers(self) -> None:
         cell_16 = _code_cell_by_tag("16")
+        cell_19a = _code_cell_by_tag("19a")
+        cell_20 = _code_cell_by_tag("20")
         cell_22 = _code_cell_by_tag("22")
+        cell_22e = _code_cell_by_tag("22e")
         self.assertIn("RegistrationSearchConfig", cell_16)
         self.assertIn("run_registration_search_stage", cell_16)
         self.assertNotIn("def _search_scale_for_ref(", cell_16)
         self.assertNotIn("def _solve_plane(", cell_16)
+        self.assertIn("show_ants_registration_region_selector_stage", cell_19a)
+        self.assertIn("ANTS_REGISTRATION_REGION_MARGIN_FRACTION = 0.10", cell_19a)
+        self.assertIn("anat_stack=globals().get('anat_f', globals().get('anat'))", cell_19a)
+        self.assertNotIn("def _render(", cell_19a)
+        self.assertLess(_code_cell_index_by_tag("19a"), _code_cell_index_by_tag("20"))
+        self.assertIn("InPlaneRegistrationComparisonConfig", cell_20)
+        self.assertIn("run_in_plane_registration_comparison_stage", cell_20)
+        self.assertIn("INPLANE_ACTIVE_METHOD = 'ncc_xy'", cell_20)
+        self.assertIn("ants_fixed_mask_json=INPLANE_ANTS_REGION_MASK_JSON", cell_20)
         self.assertIn("show_registration_overlay_stage", cell_22)
         self.assertNotIn("def _render(", cell_22)
         self.assertNotIn("def _apply_color(", cell_22)
+        self.assertIn("show_inplane_registration_method_comparison_stage", cell_22e)
+        self.assertIn("methods=('ncc_xy', 'ants_rigid_affine')", cell_22e)
+        self.assertIn("anat_labels_path=globals().get('ANAT_LABELS_PATH')", cell_22e)
+        self.assertIn("use_suite2p_labels=bool(INPLANE_METHOD_REVIEW_USE_SUITE2P_LABELS)", cell_22e)
+        self.assertNotIn("def _render(", cell_22e)
+        self.assertGreater(_code_cell_index_by_tag("22e"), _code_cell_index_by_tag("23a"))
 
     def test_segmentation_cells_use_package_stage_wrappers(self) -> None:
         cell_24 = _code_cell_by_tag("24")

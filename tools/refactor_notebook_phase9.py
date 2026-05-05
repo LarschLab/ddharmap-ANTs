@@ -69,25 +69,44 @@ for _line in anatomy_result['log_lines']:
     print(_line)
 """,
     "20": """# [20]
-# NCC XY placement using per-plane best_z from [16] (for QA in [22])
-from codeants_2pf_hcr import FunctionalPlacementConfig, run_ncc_placement_stage
+# Compare in-plane functional->anatomy placement methods without changing the default canonical backend.
+from codeants_2pf_hcr import InPlaneRegistrationComparisonConfig, run_in_plane_registration_comparison_stage
 
-USE_NCC_PLACEMENT = True
-DISPLAY_NORMALIZE_PLACED = True
+INPLANE_REGISTRATION_METHODS = ('ncc_xy', 'ants_rigid_affine')
+INPLANE_ACTIVE_METHOD = 'ncc_xy'  # keep canonical behavior until the comparison report is reviewed
+INPLANE_SAVE_COMPARISON = True
+INPLANE_DISPLAY_NORMALIZE_PLACED = True
+INPLANE_FAIL_ON_ACTIVE_METHOD_ERROR = True
 
-placement_result = run_ncc_placement_stage(
+placement_result = run_in_plane_registration_comparison_stage(
     plane_refs=globals().get('plane_refs'),
     anat_f=globals().get('anat_f'),
+    fish_id=globals().get('FISH_ID'),
+    out_ncc=globals().get('OUT_NCC'),
     best_z=globals().get('best_z', 0),
-    config=FunctionalPlacementConfig(
-        use_ncc_placement=USE_NCC_PLACEMENT,
-        display_normalize_placed=DISPLAY_NORMALIZE_PLACED,
+    vox_anat=globals().get('VOX_ANAT'),
+    config=InPlaneRegistrationComparisonConfig(
+        methods=INPLANE_REGISTRATION_METHODS,
+        active_method=INPLANE_ACTIVE_METHOD,
+        save_outputs=INPLANE_SAVE_COMPARISON,
+        display_normalize_placed=INPLANE_DISPLAY_NORMALIZE_PLACED,
         use_cv2=bool(globals().get('HAS_CV2', False)),
+        fail_on_active_method_error=INPLANE_FAIL_ON_ACTIVE_METHOD_ERROR,
     ),
 )
 globals().update(placement_result['bindings'])
 for _line in placement_result['log_lines']:
     print(_line)
+
+try:
+    from IPython.display import display as _display
+except Exception:
+    _display = None
+
+if _display is not None and not placement_result['comparison_df'].empty:
+    _display(placement_result['comparison_df'])
+elif not placement_result['comparison_df'].empty:
+    print(placement_result['comparison_df'].to_string(index=False))
 """,
 }
 

@@ -11,6 +11,7 @@ from codeants_2pf_hcr.matching import (
     FunctionalAnatomyDebugConfig,
     build_hcr_mask_fate_df,
     build_functional_anatomy_debug_stage,
+    summarize_functional_anatomy_geometry_metrics,
 )
 
 
@@ -37,6 +38,34 @@ def test_build_functional_anatomy_debug_stage_returns_debug_df_bindings() -> Non
         assert "df_f2a_debug" in result["bindings"]
         assert isinstance(result["debug_df"], pd.DataFrame)
         assert not result["debug_df"].empty
+
+
+def test_summarize_functional_anatomy_geometry_metrics_reports_match_fractions() -> None:
+    master_df = pd.DataFrame(
+        {
+            "fish_id": ["F1", "F1", "F1"],
+            "plane_idx": [0, 0, 0],
+            "plane": ["plane0", "plane0", "plane0"],
+            "has_unique_anat_match": [True, False, True],
+            "selected_dist_um": [3.0, np.nan, 5.0],
+            "selected_overlap_px": [10, np.nan, 20],
+            "n_overlap_candidates_any": [1, 0, 2],
+            "n_overlap_candidates_valid": [1, 0, 1],
+            "has_identity_assigned": [True, False, False],
+        }
+    )
+
+    out = summarize_functional_anatomy_geometry_metrics(master_df, method="ncc_xy")
+
+    assert len(out) == 1
+    row = out.iloc[0]
+    assert row["method"] == "ncc_xy"
+    assert int(row["n_rois"]) == 3
+    assert int(row["n_unique_anat_match"]) == 2
+    assert np.isclose(float(row["unique_match_frac"]), 2 / 3)
+    assert float(row["median_selected_dist_um"]) == 4.0
+    assert float(row["median_selected_overlap_px"]) == 15.0
+    assert int(row["n_identity_assigned"]) == 1
 
 
 def test_build_hcr_mask_fate_df_classifies_far_iou_and_good_rows() -> None:

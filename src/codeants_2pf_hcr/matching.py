@@ -13,7 +13,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from skimage.measure import regionprops_table
-from skimage.transform import AffineTransform, SimilarityTransform, warp
+from skimage.transform import AffineTransform, SimilarityTransform, resize, warp
 
 from .single_fish_notebook_stages import run_single_fish_cell_50_stage
 
@@ -90,6 +90,18 @@ def gene_from_mask(path_str: str | Path | None) -> str:
 def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
     if not isinstance(plane_ref, dict):
         return None
+    if plane_ref.get("tform_src") == "ants_rigid_affine":
+        ants_transform = plane_ref.get("ants_transform")
+        if isinstance(ants_transform, dict) and ants_transform.get("type") == "ants_transformlist":
+            return ants_transform
+        transformlist = plane_ref.get("ants_transformlist")
+        if transformlist:
+            return {
+                "type": "ants_transformlist",
+                "method": "ants_rigid_affine",
+                "transformlist": list(transformlist),
+                "moving_shape": tuple(plane_ref.get("ref_scaled_shape", ())),
+            }
     for key in ("tform", "func_to_anat_tform", "transform", "affine_tform"):
         tform = plane_ref.get(key)
         if tform is not None:
@@ -368,6 +380,8 @@ def resample_labels_nn(
     shape = tuple(int(v) for v in tuple(output_shape))
     if len(shape) != 2:
         raise ValueError(f"Expected 2D output_shape, got {output_shape!r}")
+    if isinstance(tform, dict) and tform.get("type") == "ants_transformlist":
+        return _resample_labels_ants_nn(labels, tform, output_shape=shape)
     xform = tform if tform is not None else AffineTransform()
     warped = warp(
         labels.astype(np.float32, copy=False),
@@ -379,6 +393,50 @@ def resample_labels_nn(
         preserve_range=True,
     )
     return _ensure_uint_labels(warped)
+
+
+def _resample_labels_ants_nn(labels: np.ndarray, tform: dict[str, Any], *, output_shape: tuple[int, int]) -> np.ndarray:
+    transformlist = list(tform.get("transformlist", []))
+    if not transformlist:
+        raise ValueError("ANTs transform dictionary is missing transformlist")
+    try:
+        import ants
+    except Exception as exc:  # pragma: no cover - depends on optional native package
+        raise ImportError("ANTsPy is required to resample labels with ants_rigid_affine transforms") from exc
+
+    moving_shape_raw = tform.get("moving_shape")
+    moving_shape: tuple[int, int] | None = None
+    if isinstance(moving_shape_raw, (tuple, list)) and len(moving_shape_raw) >= 2:
+        moving_shape = (int(moving_shape_raw[-2]), int(moving_shape_raw[-1]))
+    labels_moving = labels
+    if moving_shape is not None and tuple(labels.shape) != moving_shape:
+        labels_moving = resize(
+            labels.astype(np.float32, copy=False),
+            moving_shape,
+            order=0,
+            preserve_range=True,
+            anti_aliasing=False,
+        ).astype(np.uint32)
+
+    fixed = ants.from_numpy(np.zeros(tuple(output_shape), dtype=np.float32))
+    moving = ants.from_numpy(labels_moving.astype(np.float32, copy=False))
+
+    fixed_spacing = tuple(float(v) for v in tform.get("fixed_spacing", (1.0, 1.0)))
+    moving_spacing = tuple(float(v) for v in tform.get("moving_spacing", fixed_spacing))
+    fixed.set_spacing(fixed_spacing)
+    moving.set_spacing(moving_spacing)
+    fixed.set_origin(tuple(float(v) for v in tform.get("fixed_origin", (0.0, 0.0))))
+    moving.set_origin(tuple(float(v) for v in tform.get("moving_origin", (0.0, 0.0))))
+    fixed.set_direction(np.asarray(tform.get("fixed_direction", np.eye(2)), dtype=float))
+    moving.set_direction(np.asarray(tform.get("moving_direction", np.eye(2)), dtype=float))
+
+    warped = ants.apply_transforms(
+        fixed=fixed,
+        moving=moving,
+        transformlist=transformlist,
+        interpolator="nearestNeighbor",
+    )
+    return _ensure_uint_labels(np.asarray(warped.numpy()))
 
 
 def _series_to_int_list(series: pd.Series) -> list[int]:
@@ -1160,6 +1218,81 @@ def build_functional_roi_master_df(
     return detail_df, plane_meta_df
 
 
+def summarize_functional_anatomy_geometry_metrics(
+    master_df: pd.DataFrame,
+    *,
+    method: str | None = None,
+    fish_id: str | None = None,
+) -> pd.DataFrame:
+    """Summarize ROI->anatomy geometry metrics for one completed placement backend."""
+    if master_df is None or master_df.empty:
+        return pd.DataFrame(
+            columns=[
+                "fish_id",
+                "plane_idx",
+                "plane",
+                "method",
+                "n_rois",
+                "n_unique_anat_match",
+                "unique_match_frac",
+                "unmatched_frac",
+                "median_selected_dist_um",
+                "median_selected_overlap_px",
+                "n_overlap_candidates_any",
+                "n_overlap_candidates_valid",
+                "n_identity_assigned",
+            ]
+        )
+    df = master_df.copy()
+    if "fish_id" not in df.columns:
+        df["fish_id"] = fish_id
+    if fish_id is not None:
+        df["fish_id"] = df["fish_id"].fillna(str(fish_id))
+    if "plane_idx" not in df.columns:
+        df["plane_idx"] = pd.NA
+    if "plane" not in df.columns:
+        df["plane"] = pd.NA
+    if "has_unique_anat_match" in df.columns:
+        matched = _as_bool_array(df["has_unique_anat_match"])
+    else:
+        matched = np.zeros(len(df), dtype=bool)
+    if "has_identity_assigned" in df.columns:
+        identity_assigned = _as_bool_array(df["has_identity_assigned"])
+    else:
+        identity_assigned = np.zeros(len(df), dtype=bool)
+    df["_matched_bool"] = matched
+    df["_identity_bool"] = identity_assigned
+
+    rows: list[dict[str, Any]] = []
+    group_cols = ["fish_id", "plane_idx", "plane"]
+    for keys, sub in df.groupby(group_cols, dropna=False):
+        fish_key, plane_idx, plane = keys
+        n_rois = int(len(sub))
+        n_match = int(sub["_matched_bool"].sum())
+        dist = pd.to_numeric(sub.get("selected_dist_um", pd.Series(dtype=float)), errors="coerce")
+        overlap = pd.to_numeric(sub.get("selected_overlap_px", pd.Series(dtype=float)), errors="coerce")
+        any_candidates = pd.to_numeric(sub.get("n_overlap_candidates_any", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        valid_candidates = pd.to_numeric(sub.get("n_overlap_candidates_valid", pd.Series(dtype=float)), errors="coerce").fillna(0)
+        rows.append(
+            {
+                "fish_id": fish_key,
+                "plane_idx": plane_idx,
+                "plane": plane,
+                "method": method,
+                "n_rois": n_rois,
+                "n_unique_anat_match": n_match,
+                "unique_match_frac": float(n_match / n_rois) if n_rois else np.nan,
+                "unmatched_frac": float((n_rois - n_match) / n_rois) if n_rois else np.nan,
+                "median_selected_dist_um": float(dist.dropna().median()) if not dist.dropna().empty else np.nan,
+                "median_selected_overlap_px": float(overlap.dropna().median()) if not overlap.dropna().empty else np.nan,
+                "n_overlap_candidates_any": int(any_candidates.sum()),
+                "n_overlap_candidates_valid": int(valid_candidates.sum()),
+                "n_identity_assigned": int(sub["_identity_bool"].sum()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _decorate_hcr_candidates(
     candidate_df: pd.DataFrame,
     *,
@@ -1543,4 +1676,5 @@ __all__ = [
     "resolve_plane_transform",
     "run_single_fish_cell_50_stage",
     "summarize_distances",
+    "summarize_functional_anatomy_geometry_metrics",
 ]

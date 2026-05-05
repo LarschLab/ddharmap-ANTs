@@ -25,11 +25,12 @@ from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
 from skimage import color as skcolor
+from skimage import segmentation
 from skimage import transform
 import tifffile
 
 from ..context import infer_anat_labels_path
-from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches
+from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches, resample_labels_nn
 from ..matching import compute_centroids
 from ..single_fish_notebook_stages import (
     run_single_fish_cell_22c_stage,
@@ -43,7 +44,7 @@ from ..single_fish_notebook_stages import (
 from ..runtime import default_local_root
 from .annotations import place_labels_no_overlap
 from ..segmentation import resolve_functional_labels_for_plane
-from ..spatial import norm01
+from ..spatial import ncc_xy, norm01
 
 try:
     import SimpleITK as sitk
@@ -748,6 +749,493 @@ def show_region_shift_square_selector_stage(
         "square_json_path": square_json_path,
         "legacy_square_json_path": legacy_json_path,
         "loaded_square_path": loaded_path,
+    }
+
+
+def show_ants_registration_region_selector_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat_stack: np.ndarray | None,
+    fish_id: str = "",
+    out_reg: str | Path | None = None,
+    apply_transform_2d_func: Any = None,
+    save_square: bool = True,
+    reuse_saved_square: bool = True,
+    default_size_px: int = 120,
+    func_alpha: float = 0.90,
+    anat_alpha: float = 0.75,
+    zoom: float = 1.0,
+    margin_fraction: float = 0.10,
+    use_cv2: bool = True,
+    primary_json_name: str = "ants_registration_region_square.json",
+) -> dict[str, Any]:
+    """Notebook-facing NCC-guided fixed-region builder for masked ANTs registration."""
+    del apply_transform_2d_func, default_size_px
+    log_lines: list[str] = []
+    if not plane_refs:
+        log_lines.append("[ants-region] plane_refs missing; run [16] first.")
+        return {"ok": False, "log_lines": log_lines}
+    if anat_stack is None:
+        log_lines.append("[ants-region] anatomy stack missing; run [16] first.")
+        return {"ok": False, "log_lines": log_lines}
+    if out_reg is None:
+        log_lines.append("[ants-region] OUT_REG missing; cannot resolve save path.")
+        return {"ok": False, "log_lines": log_lines}
+
+    out_reg_path = Path(out_reg)
+    square_json_path = out_reg_path / primary_json_name
+    loaded_path = None
+    if reuse_saved_square:
+        loaded_spec = _read_json_payload(square_json_path)
+        if loaded_spec is not None:
+            loaded_path = square_json_path
+            log_lines.append(f"[ants-region] existing region file will be overwritten: {square_json_path}")
+
+    anat_arr = np.asarray(anat_stack, dtype=np.float32)
+    if anat_arr.ndim != 3:
+        log_lines.append(f"[ants-region] expected a 3D anatomy stack, got shape {anat_arr.shape!r}")
+        return {"ok": False, "log_lines": log_lines}
+
+    margin = max(0.0, float(margin_fraction))
+    regions: list[dict[str, Any]] = []
+    preview_items: list[dict[str, Any]] = []
+    for plane_idx, plane_ref in enumerate(plane_refs):
+        if plane_ref is None:
+            continue
+        label = str(plane_ref.get("label", f"plane{plane_idx}"))
+        try:
+            best_z = int(plane_ref.get("best_z", plane_idx))
+        except Exception:
+            log_lines.append(f"[ants-region] {label}: invalid best_z; skipping")
+            continue
+        if best_z < 0 or best_z >= int(anat_arr.shape[0]):
+            log_lines.append(f"[ants-region] {label}: best_z out of bounds ({best_z}); skipping")
+            continue
+        ref_src = plane_ref.get("ref_match", plane_ref.get("ref2d_raw", plane_ref.get("ref2d")))
+        if ref_src is None:
+            log_lines.append(f"[ants-region] {label}: missing functional reference; skipping")
+            continue
+        fixed_slice = np.asarray(anat_arr[best_z], dtype=np.float32)
+        ref_scaled = np.asarray(ref_src, dtype=np.float32)
+        if ref_scaled.ndim != 2:
+            log_lines.append(f"[ants-region] {label}: expected 2D functional reference, got {ref_scaled.shape!r}; skipping")
+            continue
+        if ref_scaled.shape[0] > fixed_slice.shape[0] or ref_scaled.shape[1] > fixed_slice.shape[1]:
+            log_lines.append(
+                f"[ants-region] {label}: template larger than anatomy {tuple(ref_scaled.shape)} vs {tuple(fixed_slice.shape)}; skipping"
+            )
+            continue
+
+        x0, y0, score = ncc_xy(ref_scaled, fixed_slice, use_cv2=bool(use_cv2))
+        ref_h, ref_w = int(ref_scaled.shape[0]), int(ref_scaled.shape[1])
+        cx = int(round(float(x0) + (ref_w - 1) / 2.0))
+        cy = int(round(float(y0) + (ref_h - 1) / 2.0))
+        size_px = int(np.ceil(max(ref_h, ref_w) * (1.0 + margin)))
+        bx0, by0, bx1, by1 = _square_bounds(cx=cx, cy=cy, size_px=size_px, shape=fixed_slice.shape)
+        region = {
+            "plane_idx": int(plane_idx),
+            "plane_label": label,
+            "best_z": int(best_z),
+            "center_x": int(cx),
+            "center_y": int(cy),
+            "size_px": int(bx1 - bx0),
+            "requested_size_px": int(size_px),
+            "bounds_xyxy": [int(bx0), int(by0), int(bx1), int(by1)],
+            "ncc_xy": {"x0": int(x0), "y0": int(y0), "score": float(score)},
+            "ref_scaled_shape": [int(ref_h), int(ref_w)],
+        }
+        regions.append(region)
+        preview_items.append({"region": region, "fixed_slice": fixed_slice, "ref_scaled": ref_scaled})
+        log_lines.append(
+            f"[ants-region] {label} z={best_z} ncc={float(score):.4f} "
+            f"bounds=({bx0}, {by0}, {bx1}, {by1})"
+        )
+
+    if not regions:
+        log_lines.append("[ants-region] no valid NCC-guided regions could be built.")
+        return {"ok": False, "log_lines": log_lines, "ants_region_json_path": square_json_path}
+
+    payload = {
+        "fish_id": fish_id,
+        "method": "ncc_guided_ants_region_square",
+        "margin_fraction": float(margin),
+        "region_count": int(len(regions)),
+        "regions": regions,
+        "saved_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    if save_square:
+        square_json_path.parent.mkdir(parents=True, exist_ok=True)
+        square_json_path.write_text(json.dumps(payload, indent=2))
+        log_lines.append(f"[ants-region] saved NCC-guided regions -> {square_json_path}")
+
+    if preview_items:
+        item = preview_items[min(len(preview_items) - 1, max(0, len(preview_items) // 2))]
+        region = item["region"]
+        fixed_slice = item["fixed_slice"]
+        ref_scaled = item["ref_scaled"]
+        placed = np.zeros(tuple(fixed_slice.shape), dtype=np.float32)
+        nx0, ny0 = int(region["ncc_xy"]["x0"]), int(region["ncc_xy"]["y0"])
+        rh, rw = ref_scaled.shape
+        placed[ny0 : ny0 + rh, nx0 : nx0 + rw] = norm01(ref_scaled)
+        bx0, by0, bx1, by1 = [int(v) for v in region["bounds_xyxy"]]
+        rgb = np.zeros(tuple(fixed_slice.shape) + (3,), dtype=np.float32)
+        fixed_vis = norm01(fixed_slice)
+        rgb[..., 0] = fixed_vis * float(anat_alpha)
+        rgb[..., 2] = fixed_vis * float(anat_alpha)
+        rgb[..., 1] = placed * float(func_alpha)
+        fig, ax = plt.subplots(1, 1, figsize=(8.5, 8.5))
+        ax.imshow(np.clip(rgb, 0.0, 1.0))
+        ax.add_patch(
+            matplotlib.patches.Rectangle((bx0, by0), bx1 - bx0, by1 - by0, fill=False, edgecolor="yellow", linewidth=2.0)
+        )
+        ax.scatter([region["center_x"]], [region["center_y"]], s=20, c="yellow")
+        ax.set_title(
+            f"{region['plane_label']} z={region['best_z']} | NCC-guided ANTs region | "
+            f"size={int(region['size_px'])}"
+        )
+        _apply_zoom(
+            ax,
+            shape=fixed_slice.shape,
+            zoom=float(zoom),
+            center_xy=(float(region["center_x"]), float(region["center_y"])),
+        )
+        ax.axis("off")
+        _emit_figure(fig)
+
+    return {
+        "ok": True,
+        "log_lines": log_lines,
+        "square_spec": payload,
+        "square_json_path": square_json_path,
+        "legacy_square_json_path": square_json_path,
+        "loaded_square_path": loaded_path,
+        "ants_region_json_path": square_json_path,
+    }
+
+
+def _square_bounds_from_spec(spec: dict[str, Any], shape: tuple[int, int]) -> tuple[int, int, int, int] | None:
+    if not isinstance(spec, dict):
+        return None
+    h, w = int(shape[0]), int(shape[1])
+    bounds = spec.get("bounds_xyxy")
+    if bounds is not None:
+        try:
+            x0, y0, x1, y1 = [int(v) for v in bounds]
+            x0 = max(0, min(x0, w - 1))
+            y0 = max(0, min(y0, h - 1))
+            x1 = max(x0 + 1, min(x1, w))
+            y1 = max(y0 + 1, min(y1, h))
+            return x0, y0, x1, y1
+        except Exception:
+            pass
+    try:
+        return _square_bounds(
+            cx=int(spec.get("center_x", w // 2)),
+            cy=int(spec.get("center_y", h // 2)),
+            size_px=int(spec.get("size_px", min(h, w))),
+            shape=(h, w),
+        )
+    except Exception:
+        return None
+
+
+def _crop_bounds_with_pad(bounds: tuple[int, int, int, int], shape: tuple[int, int], pad_px: int) -> tuple[int, int, int, int]:
+    h, w = int(shape[0]), int(shape[1])
+    x0, y0, x1, y1 = [int(v) for v in bounds]
+    pad = int(max(0, pad_px))
+    return max(0, x0 - pad), max(0, y0 - pad), min(w, x1 + pad), min(h, y1 + pad)
+
+
+def _overlay_registration_pair(
+    anat_img: np.ndarray,
+    func_img: np.ndarray,
+    *,
+    anat_alpha: float,
+    func_alpha: float,
+) -> np.ndarray:
+    anat_vis = norm01(anat_img)
+    func_vis = norm01(func_img)
+    if func_vis.shape != anat_vis.shape:
+        func_vis = transform.resize(
+            func_vis,
+            anat_vis.shape,
+            order=1,
+            mode="reflect",
+            preserve_range=True,
+            anti_aliasing=True,
+        ).astype(np.float32)
+    out = np.zeros(anat_vis.shape + (3,), dtype=np.float32)
+    out += _apply_overlay_color(anat_vis, (1.0, 0.0, 1.0)) * float(anat_alpha)
+    out += _apply_overlay_color(func_vis, (0.0, 1.0, 0.0)) * float(func_alpha)
+    return np.clip(out, 0.0, 1.0)
+
+
+def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]) -> np.ndarray:
+    labels = _ensure_uint_labels(label_img)
+    out = np.zeros(labels.shape + (4,), dtype=np.float32)
+    if labels.size == 0:
+        return out
+    boundaries = segmentation.find_boundaries(labels, mode="outer")
+    if np.any(boundaries):
+        r, g, b, a = [float(v) for v in rgba]
+        out[boundaries, 0] = r
+        out[boundaries, 1] = g
+        out[boundaries, 2] = b
+        out[boundaries, 3] = a
+    return out
+
+
+def _method_transform_for_label_warp(method: str, result: dict[str, Any]) -> Any | None:
+    tform = result.get("transform")
+    if tform is not None:
+        return tform
+    if method == "ncc_xy":
+        ncc_xy_record = result.get("ncc_xy")
+        if isinstance(ncc_xy_record, dict) and {"x0", "y0"}.issubset(ncc_xy_record):
+            return transform.SimilarityTransform(
+                translation=(int(ncc_xy_record["x0"]), int(ncc_xy_record["y0"]))
+            )
+    return None
+
+
+def _load_anatomy_labels_for_method_review(
+    *,
+    anat_labels_all: Any = None,
+    anat_labels_path: str | Path | None = None,
+    imread_func: Any = None,
+) -> tuple[np.ndarray | None, str | None, str | None]:
+    if anat_labels_all is not None:
+        return _ensure_uint_labels(anat_labels_all), "anat_labels_all", None
+    if anat_labels_path in (None, "", False):
+        return None, None, "anatomy labels unavailable"
+    path = Path(anat_labels_path)
+    if not path.exists():
+        return None, None, f"anatomy labels path not found: {path}"
+    try:
+        reader = imread_func if callable(imread_func) else _read_image
+        return _ensure_uint_labels(reader(path)), str(path), None
+    except Exception as exc:
+        return None, None, f"could not load anatomy labels {path}: {exc}"
+
+
+def _show_missing_panel(ax: Any, title: str, message: str) -> None:
+    ax.text(0.5, 0.5, message, ha="center", va="center", transform=ax.transAxes, wrap=True)
+    ax.set_title(title)
+    ax.axis("off")
+
+
+def show_inplane_registration_method_comparison_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat: np.ndarray | None,
+    anat_labels_all: Any = None,
+    anat_labels_path: str | Path | None = None,
+    func_labels: Any = None,
+    func_labels_path: str | Path | None = None,
+    out_seg: str | Path | None = None,
+    use_suite2p_labels: bool = True,
+    apply_func_orientation_func: Any = None,
+    imread_func: Any = None,
+    fish_id: str = "",
+    out_qa: str | Path | None = None,
+    out_reg: str | Path | None = None,
+    methods: tuple[str, str] = ("ncc_xy", "ants_rigid_affine"),
+    method_titles: dict[str, str] | None = None,
+    square_json_name: str = "regional_match_qa_square.json",
+    legacy_square_json_name: str = "regional_shift_square.json",
+    crop_pad_px: int = 24,
+    save_outputs: bool = True,
+    render_display: bool = True,
+    func_alpha: float = 0.90,
+    anat_alpha: float = 0.75,
+    roi_outline_rgba: tuple[float, float, float, float] = (0.0, 1.0, 0.0, 0.95),
+    anat_outline_rgba: tuple[float, float, float, float] = (1.0, 0.2, 0.85, 0.95),
+    dpi: int = 180,
+) -> dict[str, Any]:
+    """Render per-plane regional ANTs-vs-NCC placement and boundary overlays from stored [20] results."""
+    log_lines: list[str] = []
+    if not plane_refs:
+        log_lines.append("[22e] plane_refs missing; run [20] first.")
+        return {"ok": False, "rendered": 0, "saved_paths": [], "log_lines": log_lines}
+    if anat is None:
+        log_lines.append("[22e] anatomy stack missing; run [16] first.")
+        return {"ok": False, "rendered": 0, "saved_paths": [], "log_lines": log_lines}
+    if len(methods) != 2:
+        raise ValueError("show_inplane_registration_method_comparison_stage expects exactly two methods.")
+
+    anat_arr = np.asarray(anat, dtype=np.float32)
+    if anat_arr.ndim != 3:
+        raise ValueError("anat must be a 3D stack with shape (Z, Y, X).")
+    anat_labels_arr, anat_labels_src, anat_labels_error = _load_anatomy_labels_for_method_review(
+        anat_labels_all=anat_labels_all,
+        anat_labels_path=anat_labels_path,
+        imread_func=imread_func,
+    )
+    if anat_labels_error is not None:
+        log_lines.append(f"[22e] {anat_labels_error}; row 2 will omit anatomy-label boundaries.")
+
+    square_spec = None
+    square_path = None
+    if out_reg is not None:
+        for candidate in (Path(out_reg) / square_json_name, Path(out_reg) / legacy_square_json_name):
+            payload = _read_json_payload(candidate)
+            if isinstance(payload, dict):
+                square_spec = payload
+                square_path = candidate
+                log_lines.append(f"[22e] loaded regional crop: {candidate}")
+                break
+    if square_spec is None:
+        log_lines.append("[22e] no saved regional crop found; rendering full FOV. Run [22d] to select a crop.")
+
+    title_map = {
+        "ncc_xy": "NCC placement",
+        "ants_rigid_affine": "ANTs rigid+affine",
+    }
+    if method_titles:
+        title_map.update({str(k): str(v) for k, v in method_titles.items()})
+
+    out_dir = None
+    if save_outputs and out_qa is not None:
+        out_dir = Path(out_qa) / "inplane_registration_method_comparison"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths: list[str] = []
+    rendered = 0
+    for plane_idx, plane_ref in enumerate(plane_refs):
+        if plane_ref is None:
+            continue
+        label = str(plane_ref.get("label", f"plane{plane_idx}"))
+        best_z = int(plane_ref.get("best_z", plane_idx))
+        if best_z < 0 or best_z >= int(anat_arr.shape[0]):
+            log_lines.append(f"[22e] skip {label}: best_z out of bounds ({best_z})")
+            continue
+        anat_img = anat_arr[best_z]
+        crop_bounds = _square_bounds_from_spec(square_spec, anat_img.shape) if square_spec is not None else None
+        view_bounds = (
+            _crop_bounds_with_pad(crop_bounds, anat_img.shape, crop_pad_px) if crop_bounds is not None else (0, 0, anat_img.shape[1], anat_img.shape[0])
+        )
+
+        func_label_img = None
+        func_label_src = None
+        try:
+            func_label_img, func_label_src = resolve_functional_labels_for_plane(
+                plane_ref,
+                int(plane_idx),
+                use_suite2p_labels=bool(use_suite2p_labels),
+                func_labels=func_labels,
+                out_seg=out_seg,
+                func_labels_path=func_labels_path,
+                apply_func_orientation_func=apply_func_orientation_func,
+                imread_func=imread_func,
+                ensure_uint_labels_func=_ensure_uint_labels,
+            )
+        except Exception as exc:
+            log_lines.append(f"[22e] {label}: could not resolve functional ROI labels: {exc}")
+        if func_label_img is None:
+            log_lines.append(f"[22e] {label}: functional ROI labels unavailable; row 2 will omit ROI boundaries.")
+
+        anat_label_img = None
+        if anat_labels_arr is not None:
+            if anat_labels_arr.ndim == 3 and 0 <= best_z < int(anat_labels_arr.shape[0]):
+                anat_label_img = _ensure_uint_labels(anat_labels_arr[best_z])
+            elif anat_labels_arr.ndim == 2:
+                anat_label_img = _ensure_uint_labels(anat_labels_arr)
+            else:
+                log_lines.append(f"[22e] {label}: anatomy labels have unsupported shape {anat_labels_arr.shape!r}")
+
+        fig, axes = plt.subplots(2, 2, figsize=(11.5, 11.0), constrained_layout=True)
+        method_results = plane_ref.get("inplane_registration", {})
+        if not isinstance(method_results, dict):
+            method_results = {}
+        for col_idx, method in enumerate(methods):
+            ax = axes[0, col_idx]
+            ax_bound = axes[1, col_idx]
+            result = method_results.get(method)
+            if isinstance(result, dict) and result.get("display_warped") is not None:
+                func_img = np.asarray(result["display_warped"], dtype=np.float32)
+            elif isinstance(result, dict) and result.get("warped") is not None:
+                func_img = np.asarray(result["warped"], dtype=np.float32)
+            else:
+                _show_missing_panel(ax, f"{title_map.get(method, method)}\nunavailable", f"No {method} result")
+                _show_missing_panel(ax_bound, f"{title_map.get(method, method)} boundaries\nunavailable", f"No {method} result")
+                continue
+            overlay = _overlay_registration_pair(anat_img, func_img, anat_alpha=anat_alpha, func_alpha=func_alpha)
+            ax.imshow(overlay)
+            x0, y0, x1, y1 = view_bounds
+            ax.set_xlim(x0, x1)
+            ax.set_ylim(y1, y0)
+            metric = ""
+            if isinstance(result, dict):
+                post_ncc = result.get("post_ncc", np.nan)
+                valid_fraction = result.get("valid_fraction", np.nan)
+                try:
+                    metric = f"post NCC={float(post_ncc):.3f}, valid={float(valid_fraction):.2f}"
+                except Exception:
+                    metric = ""
+            ax.set_title(f"{title_map.get(method, method)}\n{metric}".strip())
+            ax.axis("off")
+
+            bg_rgb = np.repeat(norm01(anat_img)[..., None], 3, axis=2)
+            ax_bound.imshow(bg_rgb)
+            boundary_messages = []
+            if anat_label_img is not None:
+                ax_bound.imshow(_outline_rgba(anat_label_img, anat_outline_rgba))
+            else:
+                boundary_messages.append("no anatomy labels")
+            if func_label_img is not None:
+                tform = _method_transform_for_label_warp(str(method), result)
+                if tform is None:
+                    boundary_messages.append("no method transform")
+                else:
+                    try:
+                        func_warped_labels = resample_labels_nn(func_label_img, tform, output_shape=anat_img.shape)
+                        ax_bound.imshow(_outline_rgba(func_warped_labels, roi_outline_rgba))
+                    except Exception as exc:
+                        boundary_messages.append(f"ROI warp failed: {exc}")
+                        log_lines.append(f"[22e] {label} {method}: ROI label warp failed: {exc}")
+            else:
+                boundary_messages.append("no ROI labels")
+            ax_bound.set_xlim(x0, x1)
+            ax_bound.set_ylim(y1, y0)
+            if boundary_messages:
+                ax_bound.text(
+                    0.5,
+                    0.04,
+                    "; ".join(boundary_messages),
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    transform=ax_bound.transAxes,
+                    bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.0},
+                    wrap=True,
+                )
+            ax_bound.set_title(f"{title_map.get(method, method)} boundaries\nROI green, anatomy magenta")
+            ax_bound.axis("off")
+
+        crop_label = "regional crop" if crop_bounds is not None else "full FOV"
+        fig.suptitle(f"{label}: NCC and ANTs in-plane placement review ({crop_label}, z={best_z})", y=1.02)
+        if out_dir is not None:
+            safe_label = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in label)
+            out_path = out_dir / f"inplane_method_comparison_plane{int(plane_idx)}_{safe_label}.png"
+            fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
+            saved_paths.append(str(out_path))
+        if render_display:
+            _emit_figure(fig)
+        else:
+            fig.canvas.draw()
+            plt.close(fig)
+        rendered += 1
+
+    if out_dir is not None and saved_paths:
+        log_lines.append(f"[22e] saved {len(saved_paths)} comparison figure(s) -> {out_dir}")
+    return {
+        "ok": rendered > 0,
+        "rendered": int(rendered),
+        "saved_paths": saved_paths,
+        "square_json_path": square_path,
+        "used_regional_crop": square_spec is not None,
+        "anat_labels_src": anat_labels_src,
+        "log_lines": log_lines,
     }
 
 
@@ -2203,6 +2691,7 @@ __all__ = [
     "run_single_fish_cell_56f_qc_activity_stage",
     "run_single_fish_cell_56f_qc_stage",
     "show_centroid_match_qa_stage",
+    "show_ants_registration_region_selector_stage",
     "show_functional_label_overlay_stage",
     "show_region_shift_square_selector_stage",
     "show_registration_overlay_stage",
