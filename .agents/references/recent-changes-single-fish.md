@@ -28,6 +28,100 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-05-06 - [56f-qc] yellow midline anatomy display alignment
+
+- Slice goal:
+  - fix the remaining `[56f-qc]` visual mismatch where hemisphere colors were correct but the yellow midline overlay was drawn in the wrong display space.
+- Passes completed in this session:
+  - traced `[56f-qc*]` display image selection and midline overlay rendering separately from side assignment.
+  - made anatomy-space midline QC prefer `plane_refs[*].ref_warped`/`ref_warped_raw`, matching `[22c]` preview space.
+  - made `[56f-qc*]` warp Suite2p label masks into the anatomy display with the active plane transform before rendering colored ROI boundaries.
+  - made yellow line drawing skip fixed-to-moving conversion when the panel display is already anatomy-space.
+  - propagated the activity subset figure's `display_space` from its source payload so the second `[56f-qc-activity]` figure uses the same yellow-line rule as the first.
+  - added focused regression coverage for anatomy-display selection and label-mask warping.
+- What changed:
+  - `[56f-qc]`, `[56f-qc-activity]`, and the second `[56f-qc-activity]` subset figure now render ROI colors and the yellow midline in the same coordinate space for anatomy-space midline bundles.
+- What remains broken:
+  - none known in code; active notebook kernels need restart or module reload to pick up the shim change.
+- Remaining in-slice work:
+  - visually confirm `[56f-qc]` on the affected fish.
+- Next likely breakpoint:
+  - if the yellow line is still wrong, inspect whether `plane_refs[*].ref_warped` is stale relative to the saved `midline_params_func_ref.json`.
+- Rerun implications:
+  - rerun `[56f-qc]` and `[56f-qc-activity]`; rerun `[20]`/`[22c]` only if the stored warped references or midline JSON are stale.
+
+### 2026-05-06 - [56f-qc] anatomy-centroid double-transform guard
+
+- Slice goal:
+  - diagnose why the `[22c]` interactive midline still did not propagate correctly into `[56f-qc]` hemisphere assignment.
+- Passes completed in this session:
+  - traced `[22c]` midline bundle saving, `[56f-qc*]` midline-space inference, authoritative anatomy centroid attachment, and side annotation.
+  - fixed `[56f-qc]` and `[56f-qc-activity]` so anatomy centroids are not transformed again after they are selected for anatomy-space midline assignment.
+  - made `[56f-qc*]` honor explicit `midline_space` from the saved `[22c]` bundle before falling back to legacy `base.source_label` inference.
+  - added focused regression coverage for the double-transform failure mode.
+- What changed:
+  - when `functional_roi_activity_identity.csv` supplies `centroid_x_anat`/`centroid_y_anat`, those coordinates are now used directly against anatomy-space midline parameters.
+- What remains broken:
+  - none known in code; affected notebook kernels still need a module reload or restart before rerunning the QC cells.
+- Remaining in-slice work:
+  - visually confirm `[56f-qc]` on the affected fish after rerun.
+- Next likely breakpoint:
+  - if separation remains wrong, inspect the saved `midline_params_func_ref.json` and `functional_roi_activity_identity.csv` for stale fish IDs or missing/noncurrent anatomy centroids.
+- Rerun implications:
+  - rerun `[56f-qc]` and `[56f-qc-activity]`; rerun `[22c]` only if the existing midline JSON predates explicit `midline_space` or needs manual retuning.
+
+### 2026-05-06 - [56f-qc] authoritative anatomy-centroid midline assignment
+
+- Slice goal:
+  - fix `[56f-qc]` and `[56f-qc-activity]` hemisphere assignment when the saved midline is anatomy-space and transform fallback collapses plotted ROIs to one side.
+- Passes completed in this session:
+  - made `[56f-qc*]` merge `functional_roi_activity_identity.csv` anatomy centroids onto plotted ROI rows before side annotation.
+  - made `[22c]` include explicit `midline_space` in newly saved midline bundles.
+  - added focused regression coverage for anatomy-space centroid preference and shim wiring.
+- What changed:
+  - anatomy-space midline assignment now uses authoritative ROI-centric anatomy centroids when available, keeping functional centroids for plotting only.
+- What remains broken:
+  - none known in this slice.
+- Remaining in-slice work:
+  - rerun `[56f-qc]` / `[56f-qc-activity]` on the affected fish and visually confirm both left and right counts are nonzero where expected.
+- Next likely breakpoint:
+  - if the figure still reports one side only, inspect whether `functional_roi_activity_identity.csv` is stale or missing anatomy centroid columns for the current `FISH_ID`.
+- Rerun implications:
+  - minimum rerun: `[56f-qc]` and `[56f-qc-activity]`; rerun `[22c]` only when regenerating `midline_params_func_ref.json` with explicit `midline_space`.
+
+### 2026-05-06 - [56f-qc] ANTs midline display transform fix
+
+- Slice goal:
+  - fix `[56f-qc]` and `[56f-qc-activity]` midline overlays when the saved midline is in anatomy/warped space and the active in-plane backend is ANTs.
+- Passes completed in this session:
+  - added a package-owned point transform helper for skimage and ANTs in-plane transforms.
+  - rewired the `[56f-qc*]` migration shims to transform ROI centroids into midline space and saved midline geometry back into display space.
+  - added focused transform regression tests.
+- What changed:
+  - `[56f-qc*]` no longer treats ANTs transform dictionaries as identity when drawing or assigning anatomy-space midlines.
+- What remains broken:
+  - none known in this slice.
+- Remaining in-slice work:
+  - none.
+- Next likely breakpoint:
+  - rerun notebook `[56f-qc]` / `[56f-qc-activity]` for affected fish after `[22c]`, `[23a]`, and in-plane registration state are available.
+- Rerun implications:
+  - visual-only QC rerun; canonical tables do not need regeneration unless side assignments were consumed by downstream cached analysis outputs.
+
+### 2026-05-06 - [22c] Midline commit callback contract guard
+
+- Slice goal:
+  - prevent the interactive `[22c]` Commit + Save callback from regressing to a stale `_params_for_plane(plane_idx)` contract.
+- Passes completed in this session:
+  - added an import-time source guard for the embedded `[22c]` midline commit path.
+  - added a focused regression test that verifies `_build_bundle(dy, dtheta)` passes slider values through to `_params_for_plane`.
+- What changed:
+  - stale `[22c]` embedded source now fails clearly before widget interaction instead of surfacing as a button-click TypeError.
+- What remains broken:
+  - active notebook kernels that already imported an older module still need restart or manual module reload before rerunning `[22c]`.
+- Rerun implications:
+  - rerun `[22c]` after refreshing the notebook kernel/module state; downstream caches are unaffected until a new midline JSON is saved.
+
 ### 2026-04-25 - single-fish [50l] composite now package-rendered and shared trace prep helpers added
 
 - Slice goal:

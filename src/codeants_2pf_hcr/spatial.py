@@ -289,7 +289,8 @@ class FunctionalPlacementConfig:
 @dataclass(frozen=True)
 class InPlaneRegistrationComparisonConfig:
     methods: tuple[str, ...] = ("ncc_xy", "ants_rigid_affine")
-    active_method: str = "ncc_xy"
+    active_method: str = "ants_rigid_affine"
+    fallback_method: str | None = "ncc_xy"
     save_outputs: bool = True
     output_subdir: str = "inplane_registration_comparison"
     display_normalize_placed: bool = True
@@ -299,6 +300,7 @@ class InPlaneRegistrationComparisonConfig:
     ants_aff_smoothing_sigmas: tuple[int, ...] = (4, 3, 2, 1, 0)
     clip_percentiles: tuple[float, float] = (5.0, 95.0)
     ants_fixed_mask_json: str | Path | None = None
+    ants_require_fixed_mask: bool = True
     fail_on_active_method_error: bool = True
 
 
@@ -762,6 +764,8 @@ def _ants_rigid_affine_in_plane_result(
     spacing: tuple[float, float],
     config: InPlaneRegistrationComparisonConfig,
 ) -> dict[str, Any]:
+    if bool(config.ants_require_fixed_mask) and config.ants_fixed_mask_json in (None, "", False):
+        raise RuntimeError("ants_rigid_affine requires a saved fixed-region mask JSON; run [19a] first.")
     try:
         import ants
     except Exception as exc:  # pragma: no cover - depends on optional native package
@@ -897,6 +901,9 @@ def run_in_plane_registration_comparison_stage(
     active_method = str(cfg.active_method).strip()
     if active_method not in methods:
         raise ValueError(f"active_method={active_method!r} is not included in methods={methods!r}")
+    fallback_method = None if cfg.fallback_method in (None, "", False) else str(cfg.fallback_method).strip()
+    if fallback_method and fallback_method not in methods:
+        fallback_method = None
 
     anat_arr = np.asarray(anat_f, dtype=np.float32)
     output_dir = None
@@ -928,6 +935,7 @@ def run_in_plane_registration_comparison_stage(
         depth_metrics = registration_metric_from_scores(ncc_scores_arr)
         second_best = float(np.partition(ncc_scores_arr, -2)[-2]) if ncc_scores_arr.size >= 2 else np.nan
         plane_results: dict[str, dict[str, Any]] = {}
+        plane_errors: dict[str, str] = {}
 
         for method in methods:
             try:
@@ -959,7 +967,11 @@ def run_in_plane_registration_comparison_stage(
                         "plane_idx": int(plane_idx),
                         "plane": label,
                         "method": method,
-                        "selected": method == active_method,
+                        "selected": False,
+                        "requested_active_method": active_method,
+                        "selected_method": None,
+                        "fallback_method": fallback_method,
+                        "fallback_reason": None,
                         "status": "ok",
                         "best_z": int(bz),
                         "scale": plane_ref.get("scale", np.nan),
@@ -993,13 +1005,18 @@ def run_in_plane_registration_comparison_stage(
                     f"valid={float(result.get('valid_fraction', np.nan)):.3f}{mask_msg}"
                 )
             except Exception as exc:
+                plane_errors[method] = str(exc)
                 rows.append(
                     {
                         "fish_id": fish_id,
                         "plane_idx": int(plane_idx),
                         "plane": label,
                         "method": method,
-                        "selected": method == active_method,
+                        "selected": False,
+                        "requested_active_method": active_method,
+                        "selected_method": None,
+                        "fallback_method": fallback_method,
+                        "fallback_reason": None,
                         "status": "error",
                         "best_z": int(bz),
                         "scale": plane_ref.get("scale", np.nan),
@@ -1023,25 +1040,47 @@ def run_in_plane_registration_comparison_stage(
                     }
                 )
                 log_lines.append(f"[20] {label} method={method} ERROR: {exc}")
-                if method == active_method and bool(cfg.fail_on_active_method_error):
+                if method == active_method and bool(cfg.fail_on_active_method_error) and not fallback_method:
                     raise
 
         active_result = plane_results.get(active_method)
+        selected_method = active_method
+        fallback_reason = None
         if active_result is None:
-            continue
+            if fallback_method and fallback_method in plane_results:
+                active_result = plane_results[fallback_method]
+                selected_method = fallback_method
+                fallback_reason = plane_errors.get(active_method, f"active method {active_method!r} unavailable")
+                log_lines.append(f"[20] WARNING: {label} active method {active_method} unavailable; using {fallback_method}: {fallback_reason}")
+            elif bool(cfg.fail_on_active_method_error) and active_method in plane_errors:
+                raise RuntimeError(f"{label} active method {active_method} failed: {plane_errors[active_method]}")
+            else:
+                continue
+
+        for row in rows:
+            if int(row.get("plane_idx", -1)) == int(plane_idx) and str(row.get("plane")) == label:
+                row["selected"] = str(row.get("method")) == selected_method
+                row["selected_method"] = selected_method
+                row["fallback_reason"] = fallback_reason
+
         plane_ref.setdefault("inplane_registration", {})
         plane_ref["inplane_registration"].update({method: result for method, result in plane_results.items()})
-        plane_ref["inplane_active_method"] = active_method
+        if isinstance(plane_results.get("ncc_xy", {}).get("ncc_xy"), dict):
+            plane_ref["ncc_xy"] = plane_results["ncc_xy"]["ncc_xy"]
+        plane_ref["inplane_requested_active_method"] = active_method
+        plane_ref["inplane_active_method"] = selected_method
+        plane_ref["inplane_fallback_method"] = fallback_method
+        plane_ref["inplane_fallback_reason"] = fallback_reason
         plane_ref["ref_warped_raw"] = np.asarray(active_result["warped"], dtype=np.float32)
         plane_ref["ref_warped"] = np.asarray(active_result["display_warped"], dtype=np.float32)
         plane_ref["ref_match"] = ref_scaled
-        plane_ref["tform_src"] = active_method
-        if active_method == "ncc_xy":
+        plane_ref["tform_src"] = selected_method
+        if selected_method == "ncc_xy":
             plane_ref["ncc_xy"] = active_result["ncc_xy"]
             plane_ref["tform"] = active_result["transform"]
             plane_ref.pop("ants_transform", None)
             plane_ref.pop("ants_transformlist", None)
-        elif active_method == "ants_rigid_affine":
+        elif selected_method == "ants_rigid_affine":
             plane_ref["ants_transform"] = active_result["transform"]
             plane_ref["ants_transformlist"] = active_result.get("transformlist", [])
             plane_ref.pop("tform", None)

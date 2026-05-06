@@ -69,14 +69,29 @@ for _line in anatomy_result['log_lines']:
     print(_line)
 """,
     "20": """# [20]
-# Compare in-plane functional->anatomy placement methods without changing the default canonical backend.
+# Use masked ANTs rigid+affine as the canonical in-plane functional->anatomy placement,
+# with explicit NCC fallback when ANTs or its fixed-region mask is unavailable.
+from pathlib import Path
+
 from codeants_2pf_hcr import InPlaneRegistrationComparisonConfig, run_in_plane_registration_comparison_stage
 
 INPLANE_REGISTRATION_METHODS = ('ncc_xy', 'ants_rigid_affine')
-INPLANE_ACTIVE_METHOD = 'ncc_xy'  # keep canonical behavior until the comparison report is reviewed
+INPLANE_ACTIVE_METHOD = 'ants_rigid_affine'
+INPLANE_FALLBACK_METHOD = 'ncc_xy'
+INPLANE_REQUIRE_ANTS_REGION_MASK = True
 INPLANE_SAVE_COMPARISON = True
 INPLANE_DISPLAY_NORMALIZE_PLACED = True
 INPLANE_FAIL_ON_ACTIVE_METHOD_ERROR = True
+INPLANE_ANTS_REGION_MASK_JSON = None
+try:
+    _ants_region_candidate = ANTS_REGISTRATION_REGION_JSON_PATH
+except NameError:
+    try:
+        _ants_region_candidate = Path(OUT_REG) / 'ants_registration_region_square.json'
+    except NameError:
+        _ants_region_candidate = None
+if _ants_region_candidate not in (None, '', False) and Path(_ants_region_candidate).exists():
+    INPLANE_ANTS_REGION_MASK_JSON = Path(_ants_region_candidate)
 
 placement_result = run_in_plane_registration_comparison_stage(
     plane_refs=globals().get('plane_refs'),
@@ -88,9 +103,12 @@ placement_result = run_in_plane_registration_comparison_stage(
     config=InPlaneRegistrationComparisonConfig(
         methods=INPLANE_REGISTRATION_METHODS,
         active_method=INPLANE_ACTIVE_METHOD,
+        fallback_method=INPLANE_FALLBACK_METHOD,
         save_outputs=INPLANE_SAVE_COMPARISON,
         display_normalize_placed=INPLANE_DISPLAY_NORMALIZE_PLACED,
         use_cv2=bool(globals().get('HAS_CV2', False)),
+        ants_fixed_mask_json=INPLANE_ANTS_REGION_MASK_JSON,
+        ants_require_fixed_mask=bool(INPLANE_REQUIRE_ANTS_REGION_MASK),
         fail_on_active_method_error=INPLANE_FAIL_ON_ACTIVE_METHOD_ERROR,
     ),
 )

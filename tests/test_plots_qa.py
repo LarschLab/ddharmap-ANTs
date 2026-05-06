@@ -2,14 +2,78 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 from skimage import transform
 
-from codeants_2pf_hcr.plots.qa import show_ants_registration_region_selector_stage, show_inplane_registration_method_comparison_stage
+from codeants_2pf_hcr.plots.qa import (
+    show_ants_registration_region_selector_stage,
+    show_centroid_match_qa_stage,
+    show_inplane_registration_method_comparison_stage,
+)
 
 
 class PlotsQaTests(unittest.TestCase):
+    def test_centroid_match_qa_threads_selected_ants_transform_helper(self) -> None:
+        anat_labels = np.zeros((1, 6, 6), dtype=np.uint32)
+        anat_labels[0, 2:4, 2:4] = 1
+        func_labels = np.zeros((4, 4), dtype=np.uint32)
+        func_labels[1:3, 1:3] = 2
+        ants_transform = {
+            "type": "ants_transformlist",
+            "transformlist": ["plane0_0GenericAffine.mat"],
+            "moving_shape": (4, 4),
+        }
+        plane_ref = {
+            "label": "plane0",
+            "best_z": 0,
+            "suite2p": {"labels": func_labels},
+            "tform_src": "ants_rigid_affine",
+            "ants_transform": ants_transform,
+        }
+        captured_tform_funcs = []
+
+        def fake_build_plane_centroid_matches(*args, **kwargs):
+            captured_tform_funcs.append(kwargs["tform_for_plane_func"])
+            return {
+                "status": "ok",
+                "links_df": pd.DataFrame(
+                    [
+                        {
+                            "func_label": 2,
+                            "anat_label": 1,
+                            "fx_anat_px": 2.5,
+                            "fy_anat_px": 2.5,
+                            "ax_px": 2.5,
+                            "ay_px": 2.5,
+                            "dist_px": 0.0,
+                            "dist_um": 0.0,
+                            "overlap_px": 4,
+                        }
+                    ]
+                ),
+                "func_warped": np.asarray(args[1]),
+            }
+
+        with patch(
+            "codeants_2pf_hcr.plots.qa.build_plane_centroid_matches",
+            side_effect=fake_build_plane_centroid_matches,
+        ):
+            result = show_centroid_match_qa_stage(
+                plane_refs=[plane_ref],
+                anat_labels_all=anat_labels,
+                use_suite2p_labels=True,
+                render_ui=False,
+                force_recompute=True,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertGreaterEqual(len(captured_tform_funcs), 1)
+        self.assertIs(captured_tform_funcs[0](plane_ref), ants_transform)
+        self.assertIs(result["helpers"]["tform_for_plane"](plane_ref), ants_transform)
+
     def test_ants_registration_region_selector_writes_ncc_guided_per_plane_regions(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -115,6 +115,66 @@ def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
     return None
 
 
+def _ants_point_invert_flags(transformlist: list[str | Path], *, direction: str) -> list[bool]:
+    if direction not in {"moving_to_fixed", "fixed_to_moving"}:
+        raise ValueError(f"Unsupported point transform direction: {direction!r}")
+    invert_matrix = direction == "fixed_to_moving"
+    return [bool(invert_matrix and str(path).lower().endswith(".mat")) for path in transformlist]
+
+
+def transform_points_between_spaces(
+    x: ArrayLike,
+    y: ArrayLike,
+    tform: Any | None = None,
+    *,
+    direction: str = "moving_to_fixed",
+) -> tuple[np.ndarray, np.ndarray]:
+    """Transform 2D points between functional/moving and anatomy/fixed spaces."""
+    if direction not in {"moving_to_fixed", "fixed_to_moving"}:
+        raise ValueError(f"Unsupported point transform direction: {direction!r}")
+
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    out_shape = np.broadcast_shapes(x_arr.shape, y_arr.shape)
+    x_b = np.broadcast_to(x_arr, out_shape)
+    y_b = np.broadcast_to(y_arr, out_shape)
+    if tform is None:
+        return x_b.copy(), y_b.copy()
+
+    xr = x_b.reshape(-1)
+    yr = y_b.reshape(-1)
+
+    if isinstance(tform, dict) and tform.get("type") == "ants_transformlist":
+        transformlist = [str(path) for path in list(tform.get("transformlist", []))]
+        if not transformlist:
+            return x_b.copy(), y_b.copy()
+        try:
+            import ants
+        except Exception as exc:  # pragma: no cover - depends on optional native package
+            raise ImportError("ANTsPy is required to transform points with ants_rigid_affine transforms") from exc
+
+        pts = pd.DataFrame({"x": xr.astype(float, copy=False), "y": yr.astype(float, copy=False)})
+        out = ants.apply_transforms_to_points(
+            2,
+            pts,
+            transformlist,
+            whichtoinvert=_ants_point_invert_flags(transformlist, direction=direction),
+        )
+        return (
+            pd.to_numeric(out["x"], errors="coerce").to_numpy(dtype=float).reshape(out_shape),
+            pd.to_numeric(out["y"], errors="coerce").to_numpy(dtype=float).reshape(out_shape),
+        )
+
+    pts = np.column_stack([xr, yr]).astype(float, copy=False)
+    xform = tform if direction == "moving_to_fixed" else getattr(tform, "inverse", None)
+    if xform is None:
+        return x_b.copy(), y_b.copy()
+    out = np.asarray(xform(pts), dtype=float)
+    if out.ndim != 2 or out.shape[1] < 2:
+        raise ValueError("Point transform returned an invalid coordinate array")
+    return out[:, 0].reshape(out_shape), out[:, 1].reshape(out_shape)
+
+
 def compute_centroids(mask: ArrayLike) -> pd.DataFrame:
     props = regionprops_table(np.asarray(mask), properties=("label", "centroid"))
     df = pd.DataFrame(props)
@@ -395,6 +455,34 @@ def resample_labels_nn(
     return _ensure_uint_labels(warped)
 
 
+def resample_image(
+    image_2d: ArrayLike,
+    tform: Any | None = None,
+    *,
+    output_shape: tuple[int, int] | list[int] | np.ndarray,
+    order: int = 1,
+) -> np.ndarray:
+    image = np.asarray(image_2d, dtype=np.float32)
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D image, got shape {image.shape!r}")
+    shape = tuple(int(v) for v in tuple(output_shape))
+    if len(shape) != 2:
+        raise ValueError(f"Expected 2D output_shape, got {output_shape!r}")
+    if isinstance(tform, dict) and tform.get("type") == "ants_transformlist":
+        return _resample_image_ants(image, tform, output_shape=shape)
+    xform = tform if tform is not None else AffineTransform()
+    warped = warp(
+        image,
+        xform.inverse,
+        output_shape=shape,
+        order=int(order),
+        mode="constant",
+        cval=0.0,
+        preserve_range=True,
+    )
+    return np.asarray(warped, dtype=np.float32)
+
+
 def _resample_labels_ants_nn(labels: np.ndarray, tform: dict[str, Any], *, output_shape: tuple[int, int]) -> np.ndarray:
     transformlist = list(tform.get("transformlist", []))
     if not transformlist:
@@ -437,6 +525,50 @@ def _resample_labels_ants_nn(labels: np.ndarray, tform: dict[str, Any], *, outpu
         interpolator="nearestNeighbor",
     )
     return _ensure_uint_labels(np.asarray(warped.numpy()))
+
+
+def _resample_image_ants(image: np.ndarray, tform: dict[str, Any], *, output_shape: tuple[int, int]) -> np.ndarray:
+    transformlist = list(tform.get("transformlist", []))
+    if not transformlist:
+        raise ValueError("ANTs transform dictionary is missing transformlist")
+    try:
+        import ants
+    except Exception as exc:  # pragma: no cover - depends on optional native package
+        raise ImportError("ANTsPy is required to resample images with ants_rigid_affine transforms") from exc
+
+    moving_shape_raw = tform.get("moving_shape")
+    moving_shape: tuple[int, int] | None = None
+    if isinstance(moving_shape_raw, (tuple, list)) and len(moving_shape_raw) >= 2:
+        moving_shape = (int(moving_shape_raw[-2]), int(moving_shape_raw[-1]))
+    moving_np = np.asarray(image, dtype=np.float32)
+    if moving_shape is not None and tuple(moving_np.shape) != moving_shape:
+        moving_np = resize(
+            moving_np,
+            moving_shape,
+            order=1,
+            preserve_range=True,
+            anti_aliasing=True,
+        ).astype(np.float32)
+
+    fixed = ants.from_numpy(np.zeros(tuple(output_shape), dtype=np.float32))
+    moving = ants.from_numpy(moving_np)
+
+    fixed_spacing = tuple(float(v) for v in tform.get("fixed_spacing", (1.0, 1.0)))
+    moving_spacing = tuple(float(v) for v in tform.get("moving_spacing", fixed_spacing))
+    fixed.set_spacing(fixed_spacing)
+    moving.set_spacing(moving_spacing)
+    fixed.set_origin(tuple(float(v) for v in tform.get("fixed_origin", (0.0, 0.0))))
+    moving.set_origin(tuple(float(v) for v in tform.get("moving_origin", (0.0, 0.0))))
+    fixed.set_direction(np.asarray(tform.get("fixed_direction", np.eye(2)), dtype=float))
+    moving.set_direction(np.asarray(tform.get("moving_direction", np.eye(2)), dtype=float))
+
+    warped = ants.apply_transforms(
+        fixed=fixed,
+        moving=moving,
+        transformlist=transformlist,
+        interpolator="linear",
+    )
+    return np.asarray(warped.numpy(), dtype=np.float32)
 
 
 def _series_to_int_list(series: pd.Series) -> list[int]:
@@ -1672,9 +1804,11 @@ __all__ = [
     "hungarian_match",
     "idx_to_um",
     "nearest_neighbor_match",
+    "resample_image",
     "resample_labels_nn",
     "resolve_plane_transform",
     "run_single_fish_cell_50_stage",
     "summarize_distances",
     "summarize_functional_anatomy_geometry_metrics",
+    "transform_points_between_spaces",
 ]

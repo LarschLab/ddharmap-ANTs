@@ -172,7 +172,7 @@ class SpatialTests(unittest.TestCase):
             )
 
             fail_refs = [{"label": "plane0", "ref_match": template, "best_z": 0}]
-            with self.assertRaises(ImportError):
+            with self.assertRaises(RuntimeError):
                 run_in_plane_registration_comparison_stage(
                     plane_refs=fail_refs,
                     anat_f=anat,
@@ -181,6 +181,58 @@ class SpatialTests(unittest.TestCase):
                         active_method="ants_rigid_affine",
                     ),
                 )
+
+    def test_active_ants_falls_back_to_ncc_when_mask_is_missing(self) -> None:
+        template = np.zeros((4, 4), dtype=np.float32)
+        template[1:3, 1:3] = 1.0
+        anat = np.zeros((1, 8, 8), dtype=np.float32)
+        anat[0, 2:6, 3:7] = template
+        plane_refs = [{"label": "plane0", "ref_match": template, "best_z": 0}]
+
+        result = run_in_plane_registration_comparison_stage(
+            plane_refs=plane_refs,
+            anat_f=anat,
+            fish_id="TEST_FISH",
+            config=InPlaneRegistrationComparisonConfig(
+                methods=("ncc_xy", "ants_rigid_affine"),
+                active_method="ants_rigid_affine",
+                fallback_method="ncc_xy",
+                use_cv2=False,
+                ants_fixed_mask_json=None,
+                ants_require_fixed_mask=True,
+            ),
+        )
+
+        self.assertEqual(plane_refs[0]["tform_src"], "ncc_xy")
+        self.assertEqual(plane_refs[0]["inplane_requested_active_method"], "ants_rigid_affine")
+        self.assertEqual(plane_refs[0]["inplane_active_method"], "ncc_xy")
+        self.assertIn("requires a saved fixed-region mask", plane_refs[0]["inplane_fallback_reason"])
+        rows = result["comparison_df"]
+        selected = rows.loc[rows["selected"]]
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(str(selected.iloc[0]["method"]), "ncc_xy")
+        self.assertEqual(str(selected.iloc[0]["requested_active_method"]), "ants_rigid_affine")
+        self.assertEqual(str(selected.iloc[0]["selected_method"]), "ncc_xy")
+        self.assertTrue(any("WARNING" in line and "using ncc_xy" in line for line in result["log_lines"]))
+
+    def test_ants_without_mask_fails_when_no_fallback_is_configured(self) -> None:
+        template = np.zeros((4, 4), dtype=np.float32)
+        template[1:3, 1:3] = 1.0
+        anat = np.zeros((1, 8, 8), dtype=np.float32)
+        anat[0, 2:6, 3:7] = template
+
+        with self.assertRaises(RuntimeError):
+            run_in_plane_registration_comparison_stage(
+                plane_refs=[{"label": "plane0", "ref_match": template, "best_z": 0}],
+                anat_f=anat,
+                config=InPlaneRegistrationComparisonConfig(
+                    methods=("ants_rigid_affine",),
+                    active_method="ants_rigid_affine",
+                    fallback_method=None,
+                    ants_fixed_mask_json=None,
+                    ants_require_fixed_mask=True,
+                ),
+            )
 
     @unittest.skipUnless(importlib.util.find_spec("ants") is not None, "ANTsPy is not installed")
     def test_ants_in_plane_backend_writes_transform_metadata(self) -> None:

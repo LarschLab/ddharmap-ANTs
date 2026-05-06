@@ -74,6 +74,38 @@ def test_load_and_annotate_midline_context_preserves_public_columns() -> None:
         assert out["midline_space"].tolist() == ["func", "func", "func", "func"]
 
 
+def test_annotate_midline_side_prefers_anatomy_centroids_for_anat_midline() -> None:
+    with TemporaryDirectory() as tmpdir:
+        midline_json = Path(tmpdir) / "midline.json"
+        midline_json.write_text(
+            json.dumps(
+                {
+                    "fish_id": "fishA",
+                    "midline_space": "anat",
+                    "side_labels": {"positive": "left", "negative": "right"},
+                    "manual": {"uncertain_band_px": 0.0},
+                    "per_plane": {"0": {"x0": 0.0, "y0": 0.0, "theta_deg": 0.0}},
+                }
+            )
+        )
+        ctx = load_midline_context(midline_json, fish_id="fishA")
+        df = pd.DataFrame(
+            {
+                "plane_idx": [0, 0],
+                "centroid_x_func": [0.0, 0.0],
+                "centroid_y_func": [-10.0, -20.0],
+                "centroid_x_anat": [0.0, 0.0],
+                "centroid_y_anat": [5.0, -5.0],
+            }
+        )
+
+        out = annotate_midline_side(df, ctx)
+
+        assert out["midline_signed_dist_px"].tolist() == [5.0, -5.0]
+        assert out["midline_side"].tolist() == ["left", "right"]
+        assert out["midline_space"].tolist() == ["anat", "anat"]
+
+
 def test_filter_high_confidence_pairs_uses_existing_low_confidence_columns() -> None:
     pairs = pd.DataFrame(
         {

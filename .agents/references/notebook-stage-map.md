@@ -11,7 +11,7 @@
    - Key vars: `FISH_ID`, `RUN_CONFIG`, `NAS_ROOT`, `FISH_DIR`, `OUTDIR`, `OUT_REG`, `OUT_QA`, `OUT_DERIVED`.
 2. **Spatial preparation** (`[7] [9] [11] [13] [15] [19] [19a] [21] [22d] [22e]`)
    - Orientation, voxel alignment, best-z/scale search, in-plane placement comparison, regional crop selection, QA overlays.
-   - `[19a]` writes NCC-guided per-plane fixed anatomy-space squares for masked ANTs in-plane registration; `[20]` consumes the matching plane region only when the saved JSON exists.
+   - `[19a]` writes NCC-guided per-plane fixed anatomy-space squares for masked ANTs in-plane registration; `[20]` uses masked ANTs as the default in-plane backend and explicitly falls back to NCC when ANTs or its region JSON is unavailable.
    - `[22e]` runs after Suite2p loading so the same regional review can include ROI and anatomy-label boundaries.
    - Key object: `plane_refs`.
 3. **Functional ROI extraction** (`[23a] [25]`)

@@ -5,13 +5,16 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
+from skimage.transform import SimilarityTransform
 import tifffile
 
 from codeants_2pf_hcr.matching import (
     FunctionalAnatomyDebugConfig,
     build_hcr_mask_fate_df,
     build_functional_anatomy_debug_stage,
+    resample_image,
     summarize_functional_anatomy_geometry_metrics,
+    transform_points_between_spaces,
 )
 
 
@@ -38,6 +41,60 @@ def test_build_functional_anatomy_debug_stage_returns_debug_df_bindings() -> Non
         assert "df_f2a_debug" in result["bindings"]
         assert isinstance(result["debug_df"], pd.DataFrame)
         assert not result["debug_df"].empty
+
+
+def test_resample_image_uses_plane_transform_for_intensity_exports() -> None:
+    image = np.zeros((3, 3), dtype=np.float32)
+    image[1, 1] = 5.0
+
+    out = resample_image(image, SimilarityTransform(translation=(2, 1)), output_shape=(6, 6), order=1)
+
+    assert out.shape == (6, 6)
+    assert np.isclose(float(out[2, 3]), 5.0)
+
+
+def test_transform_points_between_spaces_uses_skimage_transform_directions() -> None:
+    tform = SimilarityTransform(translation=(2, 1))
+
+    xf, yf = transform_points_between_spaces([1.0], [2.0], tform, direction="moving_to_fixed")
+    xm, ym = transform_points_between_spaces(xf, yf, tform, direction="fixed_to_moving")
+
+    assert np.allclose(xf, [3.0])
+    assert np.allclose(yf, [3.0])
+    assert np.allclose(xm, [1.0])
+    assert np.allclose(ym, [2.0])
+
+
+def test_transform_points_between_spaces_uses_ants_point_inverse_flags(monkeypatch) -> None:
+    calls = []
+
+    class FakeAnts:
+        @staticmethod
+        def apply_transforms_to_points(dim, points, transformlist, whichtoinvert=None):
+            calls.append(
+                {
+                    "dim": dim,
+                    "points": points.copy(),
+                    "transformlist": list(transformlist),
+                    "whichtoinvert": list(whichtoinvert),
+                }
+            )
+            return pd.DataFrame({"x": points["x"].astype(float) + 10.0, "y": points["y"].astype(float) + 20.0})
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "ants", FakeAnts)
+    tform = {"type": "ants_transformlist", "transformlist": ["/tmp/example.mat"]}
+
+    x, y = transform_points_between_spaces([1.0], [2.0], tform, direction="fixed_to_moving")
+
+    assert np.allclose(x, [11.0])
+    assert np.allclose(y, [22.0])
+    assert len(calls) == 1
+    assert calls[0]["dim"] == 2
+    assert calls[0]["transformlist"] == ["/tmp/example.mat"]
+    assert calls[0]["whichtoinvert"] == [True]
+    pd.testing.assert_frame_equal(calls[0]["points"], pd.DataFrame({"x": [1.0], "y": [2.0]}))
 
 
 def test_summarize_functional_anatomy_geometry_metrics_reports_match_fractions() -> None:

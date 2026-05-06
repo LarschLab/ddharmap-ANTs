@@ -105,7 +105,9 @@ from codeants_2pf_hcr import (
     resolve_native_suite2p_labels_for_plane,
     resolve_notebook_context_stage,
     resolve_plane_transform,
+    resample_image,
     resample_labels_nn,
+    transform_points_between_spaces,
     resolve_voxel_context_stage,
     resolve_cohort_context_stage,
     run_hcr_cellpose_stage,
@@ -231,7 +233,9 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(prepare_pairs_for_unique_cells)
     assert callable(resolve_functional_labels_for_plane)
     assert callable(resolve_plane_transform)
+    assert callable(resample_image)
     assert callable(resample_labels_nn)
+    assert callable(transform_points_between_spaces)
     assert callable(registration_metric_from_scores)
     assert callable(render_cohort_53a_summary)
     assert callable(render_cohort_50l_donut_row)

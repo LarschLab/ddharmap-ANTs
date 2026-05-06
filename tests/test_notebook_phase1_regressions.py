@@ -1,8 +1,15 @@
+import ast
 import json
 import unittest
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+from skimage.transform import AffineTransform, resize
+
+import codeants_2pf_hcr.single_fish_notebook_stages as single_fish_stages
 from codeants_2pf_hcr import cohort_cache_paths
+from codeants_2pf_hcr.matching import resample_labels_nn
 from codeants_2pf_hcr.notebook_contract import find_required_cell_contract_violations
 
 
@@ -79,6 +86,14 @@ def _cohort_cfg_cell() -> str:
     raise AssertionError("Cohort cfg cell not found")
 
 
+def _exec_function_from_source(source: str, function_name: str, env: dict) -> None:
+    tree = ast.parse(source)
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    module = ast.Module(body=[functions[function_name]], type_ignores=[])
+    ast.fix_missing_locations(module)
+    exec(compile(module, f"<test-{function_name}>", "exec"), env)
+
+
 class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_single_fish_required_package_owner_contract_tracks_50l_and_57a_slice(self) -> None:
         violations = find_required_cell_contract_violations(NOTEBOOK_PATH)
@@ -102,6 +117,190 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
             "render_single_fish_50l_responsive_identity_donut",
             _details("57a-responsive-identity-donut", "required-call"),
         )
+
+    def test_cell_22c_midline_commit_rebuilds_bundle_from_slider_values(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["22c"]
+        tree = ast.parse(source)
+        functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+
+        params_for_plane = functions["_params_for_plane"]
+        self.assertEqual(
+            [arg.arg for arg in params_for_plane.args.args],
+            ["plane_idx", "dy_manual", "dtheta_manual"],
+        )
+
+        build_bundle = functions["_build_bundle"]
+        calls = [
+            node
+            for node in ast.walk(build_bundle)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_params_for_plane"
+        ]
+        self.assertTrue(
+            any(
+                len(call.args) == 3
+                and isinstance(call.args[1], ast.Name)
+                and call.args[1].id == "dy_manual"
+                and isinstance(call.args[2], ast.Name)
+                and call.args[2].id == "dtheta_manual"
+                for call in calls
+            )
+        )
+        self.assertIn("bundle, per_plane = _build_bundle(dy, dth)", source)
+        self.assertIn("'midline_space': 'anat' if str(ref_src).strip().lower()", source)
+
+    def test_56f_qc_midline_uses_authoritative_anatomy_centroids_when_available(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["56f-qc"]
+
+        self.assertIn("def _load_authoritative_roi_centroids_qc():", source)
+        self.assertIn("functional_roi_activity_identity.csv", source)
+        self.assertIn("centroid_x_anat", source)
+        self.assertIn("rois_all = _attach_authoritative_roi_centroids_qc(rois_all)", source)
+        self.assertIn("_mid_x_col_qc, _mid_y_col_qc = _midline_xy_columns_qc(rois_all)", source)
+        self.assertIn(
+            "rois_all = _annotate_midline_side_qc(rois_all, x_col=_mid_x_col_qc, y_col=_mid_y_col_qc, plane_col='plane')",
+            source,
+        )
+
+    def test_56f_qc_does_not_transform_authoritative_anatomy_centroids_twice(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["56f-qc"]
+
+        def fail_transform(*_args, **_kwargs):
+            raise AssertionError("anatomy centroids are already in midline space")
+
+        env = {
+            "np": np,
+            "pd": pd,
+            "_annotate_midline_side_helper_qc": None,
+            "_MIDLINE_SPACE_QC": "anat",
+            "_midline_by_plane_qc": {0: {"x0": 0.0, "y0": 0.0, "theta_deg": 0.0}},
+            "_params_for_plane_qc": lambda plane_idx: {"x0": 0.0, "y0": 0.0, "theta_deg": 0.0},
+            "_xy_to_midline_space_qc": fail_transform,
+            "_midline_band_qc": 0.0,
+            "_midline_pos_label_qc": "left",
+            "_midline_neg_label_qc": "right",
+        }
+        _exec_function_from_source(source, "_annotate_midline_side_qc", env)
+
+        df = pd.DataFrame(
+            {
+                "plane": [0, 0],
+                "func_label": [1, 2],
+                "centroid_x_anat": [0.0, 0.0],
+                "centroid_y_anat": [5.0, -5.0],
+            }
+        )
+        out = env["_annotate_midline_side_qc"](
+            df,
+            x_col="centroid_x_anat",
+            y_col="centroid_y_anat",
+            plane_col="plane",
+        )
+
+        self.assertEqual(out["midline_signed_dist_px"].tolist(), [5.0, -5.0])
+        self.assertEqual(out["midline_side"].tolist(), ["left", "right"])
+
+    def test_56f_qc_uses_anatomy_display_for_anatomy_midline_overlay(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["56f-qc"]
+        env = {
+            "np": np,
+            "resize": resize,
+            "_MIDLINE_SPACE_QC": "anat",
+            "_plane_refs_qc": [
+                {
+                    "ref_warped": np.ones((8, 8), dtype=np.float32),
+                    "ref_match": np.zeros((5, 5), dtype=np.float32),
+                    "tform": AffineTransform(translation=(2.0, 1.0)),
+                }
+            ],
+            "_suite2p_by_ref_idx_qc": {0: {"ref_idx": 0}},
+            "_tform_for_plane_helper_qc": None,
+            "_resolve_plane_transform_helper_qc": lambda pr: pr.get("tform"),
+            "_resample_labels_nn_helper_qc": resample_labels_nn,
+            "_rescale_labels_to_ref_helper_qc": None,
+            "_56f_qc_label_ref_match_logged": set(),
+        }
+        for fn_name in (
+            "_norm01_qc",
+            "_ensure_uint_labels_qc",
+            "_rescale_labels_to_ref_shape_qc",
+            "_get_plane_ref_qc",
+            "_get_plane_tform_qc",
+            "_get_plane_visuals_qc",
+        ):
+            _exec_function_from_source(source, fn_name, env)
+
+        labels = np.zeros((5, 5), dtype=np.uint32)
+        labels[2, 2] = 1
+        vis = env["_get_plane_visuals_qc"](0, {"labels": labels, "ref_idx": 0})
+
+        self.assertEqual(vis["display_space"], "anat")
+        self.assertEqual(vis["ref_src"], "ref_warped")
+        self.assertEqual(vis["labels"].shape, (8, 8))
+        self.assertGreater(int(np.count_nonzero(vis["labels"] == 1)), 0)
+        self.assertIn("display_space=vis.get('display_space', 'func')", source)
+
+    def test_56f_qc_activity_midline_uses_authoritative_anatomy_centroids_when_available(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["56f-qc-activity"]
+
+        self.assertIn("def _load_authoritative_roi_centroids_act():", source)
+        self.assertIn("functional_roi_activity_identity.csv", source)
+        self.assertIn("centroid_y_anat", source)
+        self.assertIn("roi_df = _attach_authoritative_roi_centroids_act(roi_df)", source)
+        self.assertIn("_mid_x_col_act, _mid_y_col_act = _midline_xy_columns_act(roi_df)", source)
+        self.assertIn(
+            "roi_df = _annotate_midline_side_resilient(roi_df, x_col=_mid_x_col_act, y_col=_mid_y_col_act, plane_col='plane')",
+            source,
+        )
+
+    def test_56f_qc_activity_does_not_transform_authoritative_anatomy_centroids_twice(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["56f-qc-activity"]
+
+        def fail_transform(*_args, **_kwargs):
+            raise AssertionError("anatomy centroids are already in midline space")
+
+        env = {
+            "np": np,
+            "pd": pd,
+            "_annotate_midline_side_helper_act": None,
+            "_MIDLINE_SPACE_ACT": "anat",
+            "_midline_by_plane": {0: {"x0": 0.0, "y0": 0.0, "theta_deg": 0.0}},
+            "_params_for_plane": lambda plane_idx: {"x0": 0.0, "y0": 0.0, "theta_deg": 0.0},
+            "_xy_to_midline_space_act": fail_transform,
+            "_mid_band": 0.0,
+            "_pos_label": "left",
+            "_neg_label": "right",
+        }
+        _exec_function_from_source(source, "_annotate_midline_side_resilient", env)
+
+        df = pd.DataFrame(
+            {
+                "plane": [0, 0],
+                "func_label": [1, 2],
+                "centroid_x_anat": [0.0, 0.0],
+                "centroid_y_anat": [5.0, -5.0],
+            }
+        )
+        out = env["_annotate_midline_side_resilient"](
+            df,
+            x_col="centroid_x_anat",
+            y_col="centroid_y_anat",
+            plane_col="plane",
+        )
+
+        self.assertEqual(out["midline_signed_dist_px"].tolist(), [5.0, -5.0])
+        self.assertEqual(out["midline_side"].tolist(), ["left", "right"])
+
+    def test_56f_qc_activity_uses_anatomy_display_for_anatomy_midline_overlay(self) -> None:
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["56f-qc-activity"]
+
+        self.assertIn("ref_img = pr.get('ref_warped', None)", source)
+        self.assertIn("_resample_labels_nn_helper_act(labels, tform, output_shape=ref_img.shape)", source)
+        self.assertIn("'display_space': vis.get('display_space', 'func')", source)
+        self.assertIn("'display_space': item.get('display_space', 'func')", source)
+        self.assertIn("if str(item.get('display_space', 'func')).strip().lower() == 'anat':", source)
+        self.assertGreaterEqual(source.count("if str(item.get('display_space', 'func')).strip().lower() == 'anat':"), 2)
 
     def test_cell_4_binds_legacy_compatibility_surface(self) -> None:
         cell = _code_cell_by_tag("4")
@@ -378,8 +577,11 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertLess(_code_cell_index_by_tag("19a"), _code_cell_index_by_tag("20"))
         self.assertIn("InPlaneRegistrationComparisonConfig", cell_20)
         self.assertIn("run_in_plane_registration_comparison_stage", cell_20)
-        self.assertIn("INPLANE_ACTIVE_METHOD = 'ncc_xy'", cell_20)
+        self.assertIn("INPLANE_ACTIVE_METHOD = 'ants_rigid_affine'", cell_20)
+        self.assertIn("INPLANE_FALLBACK_METHOD = 'ncc_xy'", cell_20)
+        self.assertIn("INPLANE_REQUIRE_ANTS_REGION_MASK = True", cell_20)
         self.assertIn("ants_fixed_mask_json=INPLANE_ANTS_REGION_MASK_JSON", cell_20)
+        self.assertIn("ants_require_fixed_mask=bool(INPLANE_REQUIRE_ANTS_REGION_MASK)", cell_20)
         self.assertIn("show_registration_overlay_stage", cell_22)
         self.assertNotIn("def _render(", cell_22)
         self.assertNotIn("def _apply_color(", cell_22)

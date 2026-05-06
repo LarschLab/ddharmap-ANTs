@@ -76,6 +76,8 @@ Generated manually for the current extracted package surface.
 - `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
 - `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
 - `resample_labels_nn`: Apply nearest-neighbor label resampling for functional-to-anatomy plane warps and shape harmonization.
+- `resample_image`: Apply intensity-image resampling for functional-to-anatomy plane warps, including ANTs transform dictionaries.
+- `transform_points_between_spaces`: Transform 2D points between functional/moving and anatomy/fixed spaces for skimage and ANTs in-plane transform objects.
 - `harmonize_functional_labels_to_anatomy`: Enforce the shared per-plane functional/anatomy shape contract before overlap or centroid matching.
 - `compute_centroids`: Build label centroid tables for centroid-based QC and distance summaries.
 - `idx_to_um`: Convert centroid-index tables to micron coordinates with explicit voxel scaling.

@@ -27,10 +27,818 @@ _CELL_SOURCE_BY_TAG: dict[str, str] = {
     '57': "# [57]\n# Full-session mean dF/F per gene with stimulus spans (deduped by gene+anat_label)\nimport numpy as np\nimport pandas as pd\nimport matplotlib.pyplot as plt\nimport re\nfrom pathlib import Path\nfrom codeants_2pf_hcr import prepare_pairs_for_unique_cells\nfrom codeants_2pf_hcr.stimulus import effective_motion_window\n\ntry:\n    _require_fish_state_57 = require_fish_state\nexcept NameError:\n    _require_fish_state_57 = None\nif _require_fish_state_57 is not None and (not _require_fish_state_57()):\n    raise SystemExit\n\n# Deterministic current-fish inputs only: explicit upstream state plus fish-scoped mapping files.\ntry:\n    _suite2p_by_ref_idx_57 = suite2p_by_ref_idx\n    _s2p_fish_id = SUITE2P_FISH_ID\nexcept NameError:\n    print('[57] Suite2p data not loaded; run [23a] first.')\n    raise SystemExit\ntry:\n    _df_stim_57 = df_stim\n    _frame_rate_57 = FRAME_RATE\n    _df_stim_fish_id = DF_STIM_FISH_ID\nexcept NameError:\n    print('[57] Stimulus data not loaded; run [55] first.')\n    raise SystemExit\nif _s2p_fish_id != FISH_ID:\n    print('[57] Suite2p data from different fish; run [23a].')\n    raise SystemExit\nif _df_stim_fish_id != FISH_ID:\n    print('[57] Stimulus data from different fish; run [55].')\n    raise SystemExit\n\nFULL_TRACE_GENES = None  # list or None\nFULL_TRACE_MAX_GENES = 12\nFULL_TRACE_DOWNSAMPLE = 1\nFULL_TRACE_SMOOTH_SEC = 0.0\nFULL_TRACE_ALPHA = 0.9\nFULL_TRACE_LINEWIDTH = 1.0\nFULL_FIG_WIDTH_IN = 13.33\nFULL_FIG_HEIGHT_IN = 7.5\nFULL_FIG_DPI = 300\nSTIM_SPAN_ALPHA = 0.15\nFULL_Y_MIN = None\nFULL_Y_MAX = None\nFULL_Y_TICK = 0.02\ntry:\n    _run_config_57 = RUN_CONFIG if isinstance(RUN_CONFIG, dict) else {}\nexcept NameError:\n    _run_config_57 = {}\ntry:\n    _gene_from_mask_helper_57 = gene_from_mask\nexcept NameError:\n    _gene_from_mask_helper_57 = None\ntry:\n    MATCH_POLICY_VERSION = str(HCR_ACTIVITY_MATCH_POLICY)\nexcept NameError:\n    MATCH_POLICY_VERSION = 'hcr_anat_first_local_geometry_response_v4_suite2p_gate'\nFULL_TRACE_STIM_ONSET_DELAY_SEC = float(_run_config_57.get('STIM_ONSET_DELAY_SEC', 10.0))\n\nDEFAULT_GENE_ORDER = ['sst1.1', 'sst1.2', 'npy', 'tac3b', 'pth2', 'cfos', 'cort']\nDEFAULT_GENE_COLORS = {\n    'sst1.1': '#d62728',\n    'sst1.2': '#d61ad2',\n    'npy': '#1f9d55',\n    'tac3b': '#ffd400',\n    'pth2': '#00bcd4',\n    'cfos': '#ff7f0e',\n    'cort': '#8c564b',\n}\nGENE_ORDER = list(_run_config_57.get('GENE_ORDER', DEFAULT_GENE_ORDER))\nGENE_COLORS = dict(DEFAULT_GENE_COLORS)\ntry:\n    _gc = _run_config_57.get('GENE_COLORS', {})\n    if isinstance(_gc, dict):\n        GENE_COLORS.update(_gc)\nexcept Exception:\n    pass\n_conf_override = _run_config_57.get('CONF_FUNC_CSV_ANALYSIS', None)\nif _conf_override is not None and (str(FISH_ID) in str(_conf_override) or Path(str(_conf_override)).name.startswith('conf_to_func_pairs')):\n    CONF_FUNC_CSV = str(_conf_override)\nelse:\n    CONF_FUNC_CSV = str(OUT_REG / 'conf_to_func_pairs.csv')\n\n\nif _df_stim_57 is None or _df_stim_57.empty:\n    print('df_stim is missing; run cell [55] first.')\nelif not _suite2p_by_ref_idx_57:\n    print('Suite2p data not loaded; run cell [23a] first.')\nelif not Path(CONF_FUNC_CSV).exists():\n    print(f'Missing conf_to_func_pairs.csv: {CONF_FUNC_CSV} (run [50]).')\nelse:\n    df_stim = _df_stim_57.copy()\n    pairs = pd.read_csv(CONF_FUNC_CSV)\n    if 'fish_id' in pairs.columns:\n        pairs = pairs[pairs['fish_id'].astype(str) == str(FISH_ID)].copy()\n    pair_versions = set(pairs.get('match_policy_version', pd.Series(dtype=str)).dropna().astype(str).unique().tolist())\n    if pairs.empty:\n        print('conf_to_func_pairs.csv is empty.')\n    elif ('match_policy_version' not in pairs.columns) or (MATCH_POLICY_VERSION not in pair_versions):\n        print(f'[57] conf_to_func_pairs.csv uses stale matching policy; rerun [50] to regenerate {CONF_FUNC_CSV}.')\n    else:\n        required_pair_response_cols = {'response_is_active', 'response_class', 'response_summary_class'}\n        missing_pair_response_cols = sorted(required_pair_response_cols - set(pairs.columns))\n        if missing_pair_response_cols:\n            print(f'[57] conf_to_func_pairs.csv missing response-aware columns {missing_pair_response_cols}; rerun [50] after [50ia].')\n        else:\n            if 'gene' not in pairs.columns:\n                if 'conf_mask' in pairs.columns:\n                    if _gene_from_mask_helper_57 is not None:\n                        pairs['gene'] = pairs['conf_mask'].apply(_gene_from_mask_helper_57)\n                    else:\n                        def _gene_from_mask(path_str):\n                            name = Path(str(path_str)).name\n                            m = re.search(r'channel\\d+_(.+?)_cp_masks', name)\n                            gene = m.group(1) if m else name\n                            return gene.replace('sst1_', 'sst1.')\n                        pairs['gene'] = pairs['conf_mask'].apply(_gene_from_mask)\n                else:\n                    pairs['gene'] = 'unknown'\n\n            pairs = prepare_pairs_for_unique_cells(pairs, strict=False, tag='[57]').copy()\n            pairs['plane'] = pairs['plane'].astype(int)\n            pairs['func_label'] = pairs['func_label'].astype(int)\n\n            n_in = len(pairs)\n            if 'anat_label' in pairs.columns and pairs['anat_label'].notna().any():\n                pairs = pairs[pairs['anat_label'].notna()].copy()\n                pairs['anat_label'] = pairs['anat_label'].astype(int)\n                pairs['_sort_dist_func'] = pd.to_numeric(pairs.get('dist_func_anat_um', pd.Series(np.nan, index=pairs.index)), errors='coerce').fillna(np.inf)\n                pairs['_sort_overlap'] = pd.to_numeric(pairs.get('overlap_px_func_anat', pairs.get('overlap_px', pd.Series(np.nan, index=pairs.index))), errors='coerce').fillna(0)\n                pairs['_sort_dist_conf'] = pd.to_numeric(pairs.get('dist_conf_anat_um', pd.Series(np.nan, index=pairs.index)), errors='coerce').fillna(np.inf)\n                pairs = pairs.sort_values(\n                    ['gene', 'anat_label', '_sort_dist_func', '_sort_overlap', '_sort_dist_conf', 'plane', 'func_label'],\n                    ascending=[True, True, True, False, True, True, True],\n                )\n                pairs = pairs.drop_duplicates(subset=['gene', 'anat_label'], keep='first')\n                pairs = pairs.drop(columns=['_sort_dist_func', '_sort_overlap', '_sort_dist_conf'])\n            n_after_anat = len(pairs)\n\n            pairs = pairs.drop_duplicates(subset=['plane', 'func_label', 'gene'])\n            n_after_roi = len(pairs)\n            n_roi_reuse = int(max(0, n_after_anat - n_after_roi))\n            print(\n                f'[full] dedup rows: {n_in} -> {n_after_anat} (gene+anat) -> '\n                f'{n_after_roi} (unique plane+func+gene); reused_roi_rows={n_roi_reuse}'\n            )\n\n            s2p_map = _suite2p_by_ref_idx_57\n            pairs = pairs[pairs['plane'].isin(s2p_map.keys())].copy()\n            if pairs.empty:\n                print('No matching Suite2p planes for confocal pairs.')\n            else:\n                fps = _frame_rate_57\n                if fps is None:\n                    fs_vals = []\n                    for p in s2p_map.values():\n                        fs = p.get('ops', {}).get('fs', None)\n                        if fs is not None:\n                            fs_vals.append(float(fs))\n                    if fs_vals:\n                        fps = fs_vals[0]\n                        if len(set(fs_vals)) > 1:\n                            print('[stim] WARNING: multiple fs values found; using the first')\n                    else:\n                        print('FRAME_RATE not available; cannot build time axis.')\n                        fps = None\n\n                if fps is None or fps <= 0:\n                    print('Invalid FRAME_RATE; set FRAME_RATE or ensure metadata has framerate.')\n                else:\n                    lengths = [p['dff'].shape[1] for p in s2p_map.values() if p.get('dff') is not None]\n                    if not lengths:\n                        print('Suite2p dF/F traces missing.')\n                    else:\n                        T_min = int(min(lengths))\n                        if len(set(lengths)) > 1:\n                            print('[stim] WARNING: planes have different lengths; truncating to shortest.')\n\n                        if FULL_TRACE_DOWNSAMPLE < 1:\n                            FULL_TRACE_DOWNSAMPLE = 1\n\n                        time_full = np.arange(T_min, dtype=np.float32) / float(fps)\n                        if FULL_TRACE_DOWNSAMPLE > 1:\n                            time_full = time_full[::FULL_TRACE_DOWNSAMPLE]\n\n                        # Build gene -> plane -> roi indices\n                        gene_groups = {}\n                        for _, row in pairs.iterrows():\n                            gene = row['gene']\n                            plane = int(row['plane'])\n                            roi_idx = int(row['func_label']) - 1\n                            if roi_idx < 0:\n                                continue\n                            gene_groups.setdefault(gene, {}).setdefault(plane, set()).add(roi_idx)\n\n                        # Choose genes\n                        if FULL_TRACE_GENES is not None:\n                            genes = [g for g in FULL_TRACE_GENES if g in gene_groups]\n                        else:\n                            gene_counts = []\n                            for g, planes in gene_groups.items():\n                                n = sum(len(v) for v in planes.values())\n                                gene_counts.append((g, n))\n                            gene_counts = sorted(gene_counts, key=lambda x: x[1], reverse=True)\n                            genes = [g for g, _ in gene_counts[:FULL_TRACE_MAX_GENES]]\n\n                        if not genes:\n                            print('No genes available for full-session plot.')\n                        else:\n                            # Compute mean trace per gene\n                            gene_traces = {}\n                            for gene in genes:\n                                planes = gene_groups.get(gene, {})\n                                if not planes:\n                                    continue\n                                acc = np.zeros(T_min, dtype=np.float32)\n                                count = 0\n                                for plane, roi_set in planes.items():\n                                    dff = s2p_map[plane].get('dff', None)\n                                    if dff is None:\n                                        continue\n                                    roi_idx = np.array(sorted(roi_set), dtype=int)\n                                    roi_idx = roi_idx[(roi_idx >= 0) & (roi_idx < dff.shape[0])]\n                                    if roi_idx.size == 0:\n                                        continue\n                                    acc += dff[roi_idx, :T_min].sum(axis=0)\n                                    count += int(roi_idx.size)\n                                if count > 0:\n                                    mean = acc / float(count)\n                                    if FULL_TRACE_SMOOTH_SEC and FULL_TRACE_SMOOTH_SEC > 0:\n                                        win = int(round(FULL_TRACE_SMOOTH_SEC * fps))\n                                        if win > 1:\n                                            kernel = np.ones(win, dtype=np.float32) / float(win)\n                                            mean = np.convolve(mean, kernel, mode='same')\n                                    if FULL_TRACE_DOWNSAMPLE > 1:\n                                        mean = mean[::FULL_TRACE_DOWNSAMPLE]\n                                    gene_traces[gene] = mean\n\n                            if not gene_traces:\n                                print('No traces computed for selected genes.')\n                            else:\n                                # Stimulus spans\n                                stim_palette = None\n                                if stim_palette is None:\n                                    stim_palette = {\n                                        'LLC': '#0a5910',\n                                        'LLB': '#34B18C',\n                                        'RLC': '#4D0C2C',\n                                        'RLB': '#cf368f',\n                                        'LLC+RLC': '#281578',\n                                        'LLC+RLB': '#26200b',\n                                        'LLB+RLC': '#989999',\n                                        'LLB+RLB': '#94cae3',\n                                    }\n\n                                gene_colors = {g: GENE_COLORS.get(g, '#666666') for g in genes}\n\n                                fig, ax = plt.subplots(figsize=(FULL_FIG_WIDTH_IN, FULL_FIG_HEIGHT_IN), dpi=FULL_FIG_DPI)\n                                span_labels = set()\n                                for _, row in df_stim.iterrows():\n                                    stype = row['type']\n                                    t0, t1, _ = effective_motion_window(\n                                        row.get('start', np.nan),\n                                        row.get('duration', np.nan),\n                                        row.get('end', np.nan),\n                                        FULL_TRACE_STIM_ONSET_DELAY_SEC,\n                                    )\n                                    if not np.isfinite(t0) or not np.isfinite(t1):\n                                        continue\n                                    color = stim_palette.get(stype, '#cccccc')\n                                    label = stype if stype not in span_labels else None\n                                    ax.axvspan(t0, t1, color=color, alpha=STIM_SPAN_ALPHA, label=label)\n                                    span_labels.add(stype)\n\n                                for gene, trace in gene_traces.items():\n                                    ax.plot(time_full, trace, label=gene, color=gene_colors.get(gene), alpha=FULL_TRACE_ALPHA, linewidth=FULL_TRACE_LINEWIDTH)\n\n                                ax.set_title('Gene-linked populations retain distinct patterns across the full session')\n                                ax.set_xlabel('Time (s)')\n                                ax.set_ylabel('dF/F')\n\n                                if FULL_Y_MIN is not None or FULL_Y_MAX is not None:\n                                    ymin = float(FULL_Y_MIN) if FULL_Y_MIN is not None else None\n                                    ymax = float(FULL_Y_MAX) if FULL_Y_MAX is not None else None\n                                    ax.set_ylim(ymin, ymax)\n                                if FULL_Y_TICK and (FULL_Y_MIN is not None) and (FULL_Y_MAX is not None):\n                                    ax.set_yticks(np.arange(float(FULL_Y_MIN), float(FULL_Y_MAX) + 1e-9, float(FULL_Y_TICK)))\n\n                                # Legends: gene traces and stimulus spans\n                                gene_handles, gene_labels = ax.get_legend_handles_labels()\n                                stim_handles = []\n                                stim_labels = []\n                                for h, lab in zip(gene_handles, gene_labels):\n                                    if lab in stim_palette:\n                                        stim_handles.append(h)\n                                        stim_labels.append(lab)\n                                trace_handles = [h for h, lab in zip(gene_handles, gene_labels) if lab not in stim_palette]\n                                trace_labels = [lab for lab in gene_labels if lab not in stim_palette]\n\n                                gene_legend = None\n                                if trace_handles:\n                                    gene_legend = ax.legend(trace_handles, trace_labels, loc='upper right', fontsize=8, ncol=2, title='Genes')\n                                    ax.add_artist(gene_legend)\n                                if stim_handles:\n                                    ax.legend(stim_handles, stim_labels, loc='upper left', fontsize=8, ncol=2, title='Stimuli')\n\n                                plt.tight_layout()\n                                plt.show()\n",
 }
 
+_QC_MIDLINE_POINT_TRANSFORM_REPLACEMENTS = {
+    '56f-qc': [
+        (
+            """def _xy_to_midline_space_qc(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_QC != 'anat':
+        return x, y
+    tform = _get_plane_tform_qc(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        pts = np.column_stack([x, y]).astype(float)
+        pts_t = np.asarray(tform(pts), dtype=float)
+        return pts_t[:, 0], pts_t[:, 1]
+    except Exception:
+        return x, y
+""",
+            """def _xy_to_midline_space_qc(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_QC != 'anat':
+        return x, y
+    tform = _get_plane_tform_qc(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        return transform_points_between_spaces(x, y, tform, direction='moving_to_fixed')
+    except Exception:
+        return x, y
+""",
+        ),
+        (
+            """def _xy_to_display_space_qc(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_QC != 'anat':
+        return x, y
+    tform = _get_plane_tform_qc(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        pts = np.column_stack([x, y]).astype(float)
+        pts_t = np.asarray(tform.inverse(pts), dtype=float)
+        return pts_t[:, 0], pts_t[:, 1]
+    except Exception:
+        return x, y
+""",
+            """def _xy_to_display_space_qc(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_QC != 'anat':
+        return x, y
+    tform = _get_plane_tform_qc(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        return transform_points_between_spaces(x, y, tform, direction='fixed_to_moving')
+    except Exception:
+        return x, y
+""",
+        ),
+    ],
+    '56f-qc-activity': [
+        (
+            """def _xy_to_midline_space_act(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_ACT != 'anat':
+        return x, y
+    tform = _get_plane_tform_act(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        pts = np.column_stack([x, y]).astype(float)
+        pts_t = np.asarray(tform(pts), dtype=float)
+        return pts_t[:, 0], pts_t[:, 1]
+    except Exception:
+        return x, y
+""",
+            """def _xy_to_midline_space_act(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_ACT != 'anat':
+        return x, y
+    tform = _get_plane_tform_act(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        return transform_points_between_spaces(x, y, tform, direction='moving_to_fixed')
+    except Exception:
+        return x, y
+""",
+        ),
+        (
+            """def _xy_to_display_space_act(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_ACT != 'anat':
+        return x, y
+    tform = _get_plane_tform_act(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        pts = np.column_stack([x, y]).astype(float)
+        pts_t = np.asarray(tform.inverse(pts), dtype=float)
+        return pts_t[:, 0], pts_t[:, 1]
+    except Exception:
+        return x, y
+""",
+            """def _xy_to_display_space_act(plane_idx, x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if _MIDLINE_SPACE_ACT != 'anat':
+        return x, y
+    tform = _get_plane_tform_act(int(plane_idx))
+    if tform is None:
+        return x, y
+    try:
+        return transform_points_between_spaces(x, y, tform, direction='fixed_to_moving')
+    except Exception:
+        return x, y
+""",
+        ),
+    ],
+}
+
+for _tag, _replacements in _QC_MIDLINE_POINT_TRANSFORM_REPLACEMENTS.items():
+    _source = _CELL_SOURCE_BY_TAG.get(_tag, "")
+    for _old, _new in _replacements:
+        if _old not in _source:
+            raise RuntimeError(f"Could not patch {_tag} midline point transform source.")
+        _source = _source.replace(_old, _new)
+    _CELL_SOURCE_BY_TAG[_tag] = _source
+
+
+_MIDLINE_AUTHORITATIVE_CENTROID_REPLACEMENTS = {
+    '22c': [
+        (
+            """            'method': 'functional_ref_middle_plane',
+            'base_mode': str(base_mode),
+""",
+            """            'method': 'functional_ref_middle_plane',
+            'midline_space': 'anat' if str(ref_src).strip().lower() in {'warped', 'tform-preview', 'warped-raw'} else 'func',
+            'base_mode': str(base_mode),
+""",
+        ),
+    ],
+    '56f-qc': [
+        (
+            """def _resolve_midline_context_qc():
+""",
+            """def _load_authoritative_roi_centroids_qc():
+    if OUT_REG is None:
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    csv_path = Path(OUT_REG) / 'functional_roi_activity_identity.csv'
+    if not csv_path.exists():
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f"[56f-qc] could not read authoritative ROI table for anatomy centroids: {e}")
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    needed = {'func_label', 'centroid_x_anat', 'centroid_y_anat'}
+    if not needed.issubset(df.columns):
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    if 'fish_id' in df.columns:
+        df = df[df['fish_id'].astype(str) == str(FISH_ID)].copy()
+    if 'plane_idx' in df.columns:
+        plane_values = df['plane_idx']
+    elif 'plane' in df.columns:
+        plane_values = df['plane']
+    else:
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    out = pd.DataFrame({
+        'plane': pd.to_numeric(plane_values, errors='coerce'),
+        'func_label': pd.to_numeric(df['func_label'], errors='coerce'),
+        'centroid_x_anat': pd.to_numeric(df['centroid_x_anat'], errors='coerce'),
+        'centroid_y_anat': pd.to_numeric(df['centroid_y_anat'], errors='coerce'),
+    })
+    out = out.dropna(subset=['plane', 'func_label']).copy()
+    if out.empty:
+        return out
+    out['plane'] = out['plane'].astype(int)
+    out['func_label'] = out['func_label'].astype(int)
+    return out.drop_duplicates(subset=['plane', 'func_label'], keep='first')
+
+
+def _attach_authoritative_roi_centroids_qc(rois_df):
+    if rois_df is None or getattr(rois_df, 'empty', True):
+        return rois_df
+    roi_centroids = _load_authoritative_roi_centroids_qc()
+    if roi_centroids.empty:
+        if _MIDLINE_SPACE_QC == 'anat':
+            print('[56f-qc] authoritative anatomy centroids unavailable; using transform fallback for midline assignment.')
+        return rois_df
+    out = rois_df.merge(roi_centroids, on=['plane', 'func_label'], how='left')
+    n_with_anat = int(out[['centroid_x_anat', 'centroid_y_anat']].notna().all(axis=1).sum())
+    if _MIDLINE_SPACE_QC == 'anat' and n_with_anat == 0:
+        print('[56f-qc] no plotted ROIs joined to authoritative anatomy centroids; using transform fallback for midline assignment.')
+    return out
+
+
+def _midline_xy_columns_qc(rois_df):
+    if (
+        _MIDLINE_SPACE_QC == 'anat'
+        and {'centroid_x_anat', 'centroid_y_anat'}.issubset(rois_df.columns)
+        and rois_df[['centroid_x_anat', 'centroid_y_anat']].notna().all(axis=1).any()
+    ):
+        return 'centroid_x_anat', 'centroid_y_anat'
+    if _MIDLINE_SPACE_QC == 'anat':
+        print('[56f-qc] assigning anatomy-space midline sides from transformed display centroids.')
+    return 'x', 'y'
+
+
+def _resolve_midline_context_qc():
+""",
+        ),
+        (
+            """        rois_all = _annotate_midline_side_qc(rois_all, x_col='x', y_col='y', plane_col='plane')
+        rois_all['midline_side'] = rois_all['midline_side'].astype(str).str.strip().str.lower()
+""",
+            """        rois_all = _attach_authoritative_roi_centroids_qc(rois_all)
+        _mid_x_col_qc, _mid_y_col_qc = _midline_xy_columns_qc(rois_all)
+        rois_all = _annotate_midline_side_qc(rois_all, x_col=_mid_x_col_qc, y_col=_mid_y_col_qc, plane_col='plane')
+        rois_all['midline_side'] = rois_all['midline_side'].astype(str).str.strip().str.lower()
+""",
+        ),
+    ],
+    '56f-qc-activity': [
+        (
+            """def _resolve_midline_context():
+""",
+            """def _load_authoritative_roi_centroids_act():
+    if OUT_REG is None:
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    csv_path = Path(OUT_REG) / 'functional_roi_activity_identity.csv'
+    if not csv_path.exists():
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        print(f"[56f-qc-activity] could not read authoritative ROI table for anatomy centroids: {e}")
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    needed = {'func_label', 'centroid_x_anat', 'centroid_y_anat'}
+    if not needed.issubset(df.columns):
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    if 'fish_id' in df.columns:
+        df = df[df['fish_id'].astype(str) == str(FISH_ID)].copy()
+    if 'plane_idx' in df.columns:
+        plane_values = df['plane_idx']
+    elif 'plane' in df.columns:
+        plane_values = df['plane']
+    else:
+        return pd.DataFrame(columns=['plane', 'func_label', 'centroid_x_anat', 'centroid_y_anat'])
+    out = pd.DataFrame({
+        'plane': pd.to_numeric(plane_values, errors='coerce'),
+        'func_label': pd.to_numeric(df['func_label'], errors='coerce'),
+        'centroid_x_anat': pd.to_numeric(df['centroid_x_anat'], errors='coerce'),
+        'centroid_y_anat': pd.to_numeric(df['centroid_y_anat'], errors='coerce'),
+    })
+    out = out.dropna(subset=['plane', 'func_label']).copy()
+    if out.empty:
+        return out
+    out['plane'] = out['plane'].astype(int)
+    out['func_label'] = out['func_label'].astype(int)
+    return out.drop_duplicates(subset=['plane', 'func_label'], keep='first')
+
+
+def _attach_authoritative_roi_centroids_act(rois_df):
+    if rois_df is None or getattr(rois_df, 'empty', True):
+        return rois_df
+    roi_centroids = _load_authoritative_roi_centroids_act()
+    if roi_centroids.empty:
+        if _MIDLINE_SPACE_ACT == 'anat':
+            print('[56f-qc-activity] authoritative anatomy centroids unavailable; using transform fallback for midline assignment.')
+        return rois_df
+    out = rois_df.merge(roi_centroids, on=['plane', 'func_label'], how='left')
+    n_with_anat = int(out[['centroid_x_anat', 'centroid_y_anat']].notna().all(axis=1).sum())
+    if _MIDLINE_SPACE_ACT == 'anat' and n_with_anat == 0:
+        print('[56f-qc-activity] no plotted ROIs joined to authoritative anatomy centroids; using transform fallback for midline assignment.')
+    return out
+
+
+def _midline_xy_columns_act(rois_df):
+    if (
+        _MIDLINE_SPACE_ACT == 'anat'
+        and {'centroid_x_anat', 'centroid_y_anat'}.issubset(rois_df.columns)
+        and rois_df[['centroid_x_anat', 'centroid_y_anat']].notna().all(axis=1).any()
+    ):
+        return 'centroid_x_anat', 'centroid_y_anat'
+    if _MIDLINE_SPACE_ACT == 'anat':
+        print('[56f-qc-activity] assigning anatomy-space midline sides from transformed display centroids.')
+    return 'x', 'y'
+
+
+def _resolve_midline_context():
+""",
+        ),
+        (
+            """            roi_df = _annotate_midline_side_resilient(roi_df, x_col='x', y_col='y', plane_col='plane')
+            roi_df['midline_side'] = roi_df['midline_side'].astype(str).str.strip().str.lower()
+""",
+            """            roi_df = _attach_authoritative_roi_centroids_act(roi_df)
+            _mid_x_col_act, _mid_y_col_act = _midline_xy_columns_act(roi_df)
+            roi_df = _annotate_midline_side_resilient(roi_df, x_col=_mid_x_col_act, y_col=_mid_y_col_act, plane_col='plane')
+            roi_df['midline_side'] = roi_df['midline_side'].astype(str).str.strip().str.lower()
+""",
+        ),
+    ],
+}
+
+for _tag, _replacements in _MIDLINE_AUTHORITATIVE_CENTROID_REPLACEMENTS.items():
+    _source = _CELL_SOURCE_BY_TAG.get(_tag, "")
+    for _old, _new in _replacements:
+        if _old not in _source:
+            raise RuntimeError(f"Could not patch {_tag} authoritative midline source.")
+        _source = _source.replace(_old, _new)
+    _CELL_SOURCE_BY_TAG[_tag] = _source
+
+
+_MIDLINE_SPACE_AND_COORD_REPLACEMENTS = {
+    '56f-qc': [
+        (
+            """def _infer_midline_space_qc():
+    src_label = None
+    if _midline_globals_match_current_fish_qc():
+        mp = _midline_params_state_qc
+        if isinstance(mp, dict):
+            src_label = (mp.get('base', {}) or {}).get('source_label', None)
+    if src_label is None:
+        b, _ = _load_midline_bundle_qc()
+        if isinstance(b, dict):
+            src_label = (b.get('base', {}) or {}).get('source_label', None)
+
+    s = str(src_label).strip().lower() if src_label is not None else ''
+""",
+            """def _infer_midline_space_qc():
+    src_label = None
+    explicit_space = None
+    if _midline_globals_match_current_fish_qc():
+        mp = _midline_params_state_qc
+        if isinstance(mp, dict):
+            explicit_space = mp.get('midline_space', mp.get('space', None))
+            src_label = (mp.get('base', {}) or {}).get('source_label', None)
+    if explicit_space is None or str(explicit_space).strip().lower() not in {'anat', 'func'}:
+        b, _ = _load_midline_bundle_qc()
+        if isinstance(b, dict):
+            explicit_space = b.get('midline_space', b.get('space', explicit_space))
+            if src_label is None:
+                src_label = (b.get('base', {}) or {}).get('source_label', None)
+
+    s_space = str(explicit_space).strip().lower() if explicit_space is not None else ''
+    if s_space in {'anat', 'func'}:
+        return s_space
+
+    s = str(src_label).strip().lower() if src_label is not None else ''
+""",
+        ),
+        (
+            """        xv_m, yv_m = _xy_to_midline_space_qc(int(p_idx), xv, yv)
+        d[idx] = (xv_m - x0) * nx + (yv_m - y0) * ny
+""",
+            """        if str(x_col) == 'centroid_x_anat' and str(y_col) == 'centroid_y_anat':
+            xv_m, yv_m = xv, yv
+        else:
+            xv_m, yv_m = _xy_to_midline_space_qc(int(p_idx), xv, yv)
+        d[idx] = (xv_m - x0) * nx + (yv_m - y0) * ny
+""",
+        ),
+    ],
+    '56f-qc-activity': [
+        (
+            """def _infer_midline_space_act():
+    src_label = None
+    if _midline_globals_match_current_fish():
+        mp = _midline_params_state_act
+        if isinstance(mp, dict):
+            src_label = (mp.get('base', {}) or {}).get('source_label', None)
+    if src_label is None:
+        b, _ = _load_midline_bundle()
+        if isinstance(b, dict):
+            src_label = (b.get('base', {}) or {}).get('source_label', None)
+
+    s = str(src_label).strip().lower() if src_label is not None else ''
+""",
+            """def _infer_midline_space_act():
+    src_label = None
+    explicit_space = None
+    if _midline_globals_match_current_fish():
+        mp = _midline_params_state_act
+        if isinstance(mp, dict):
+            explicit_space = mp.get('midline_space', mp.get('space', None))
+            src_label = (mp.get('base', {}) or {}).get('source_label', None)
+    if explicit_space is None or str(explicit_space).strip().lower() not in {'anat', 'func'}:
+        b, _ = _load_midline_bundle()
+        if isinstance(b, dict):
+            explicit_space = b.get('midline_space', b.get('space', explicit_space))
+            if src_label is None:
+                src_label = (b.get('base', {}) or {}).get('source_label', None)
+
+    s_space = str(explicit_space).strip().lower() if explicit_space is not None else ''
+    if s_space in {'anat', 'func'}:
+        return s_space
+
+    s = str(src_label).strip().lower() if src_label is not None else ''
+""",
+        ),
+        (
+            """        xv_m, yv_m = _xy_to_midline_space_act(int(p_idx), xv, yv)
+        d[idx] = (xv_m - x0) * nx + (yv_m - y0) * ny
+""",
+            """        if str(x_col) == 'centroid_x_anat' and str(y_col) == 'centroid_y_anat':
+            xv_m, yv_m = xv, yv
+        else:
+            xv_m, yv_m = _xy_to_midline_space_act(int(p_idx), xv, yv)
+        d[idx] = (xv_m - x0) * nx + (yv_m - y0) * ny
+""",
+        ),
+    ],
+}
+
+for _tag, _replacements in _MIDLINE_SPACE_AND_COORD_REPLACEMENTS.items():
+    _source = _CELL_SOURCE_BY_TAG.get(_tag, "")
+    for _old, _new in _replacements:
+        if _old not in _source:
+            raise RuntimeError(f"Could not patch {_tag} midline coordinate-space source.")
+        _source = _source.replace(_old, _new)
+    _CELL_SOURCE_BY_TAG[_tag] = _source
+
+
+_MIDLINE_DISPLAY_SPACE_REPLACEMENTS = {
+    '56f-qc': [
+        (
+            """try:
+    _rescale_labels_to_ref_helper_qc = _rescale_labels_to_ref
+except NameError:
+    _rescale_labels_to_ref_helper_qc = None
+""",
+            """try:
+    _rescale_labels_to_ref_helper_qc = _rescale_labels_to_ref
+except NameError:
+    _rescale_labels_to_ref_helper_qc = None
+try:
+    _resolve_plane_transform_helper_qc = resolve_plane_transform
+except NameError:
+    _resolve_plane_transform_helper_qc = None
+try:
+    _resample_labels_nn_helper_qc = resample_labels_nn
+except NameError:
+    _resample_labels_nn_helper_qc = None
+""",
+        ),
+        (
+            """def _get_plane_tform_qc(plane_idx):
+    pr, _ = _get_plane_ref_qc(int(plane_idx))
+    if pr is None:
+        return None
+    tform = pr.get('tform', None)
+    if tform is None and _tform_for_plane_helper_qc is not None:
+        try:
+            tform = _tform_for_plane_helper_qc(pr)
+        except Exception:
+            tform = None
+    return tform
+""",
+            """def _get_plane_tform_qc(plane_idx):
+    pr, _ = _get_plane_ref_qc(int(plane_idx))
+    if pr is None:
+        return None
+    tform = None
+    if _resolve_plane_transform_helper_qc is not None:
+        try:
+            tform = _resolve_plane_transform_helper_qc(pr)
+        except Exception:
+            tform = None
+    if tform is None:
+        tform = pr.get('tform', None)
+    if tform is None and _tform_for_plane_helper_qc is not None:
+        try:
+            tform = _tform_for_plane_helper_qc(pr)
+        except Exception:
+            tform = None
+    return tform
+""",
+        ),
+        (
+            """    ref_img = None
+    ref_src = 'none'
+    if pr is not None:
+        ref_img = pr.get('ref_match', None)
+        ref_src = 'ref_match'
+        if ref_img is None:
+            ref_img = pr.get('ref2d_raw', pr.get('ref2d'))
+            ref_src = 'ref2d'
+""",
+            """    ref_img = None
+    ref_src = 'none'
+    display_space = 'func'
+    if pr is not None:
+        if _MIDLINE_SPACE_QC == 'anat':
+            ref_img = pr.get('ref_warped', None)
+            ref_src = 'ref_warped'
+            if ref_img is None:
+                ref_img = pr.get('ref_warped_raw', None)
+                ref_src = 'ref_warped_raw'
+            if ref_img is not None:
+                display_space = 'anat'
+        if ref_img is None:
+            ref_img = pr.get('ref_match', None)
+            ref_src = 'ref_match'
+        if ref_img is None:
+            ref_img = pr.get('ref2d_raw', pr.get('ref2d'))
+            ref_src = 'ref2d'
+""",
+        ),
+        (
+            """    if ref_img is not None and tuple(labels.shape) != tuple(ref_img.shape):
+        old_shape = tuple(labels.shape)
+        labels = _rescale_labels_to_ref_shape_qc(labels, ref_img.shape)
+        new_shape = tuple(labels.shape)
+        _k = (int(plane_idx), old_shape, tuple(ref_img.shape), ref_src)
+        if _k not in _56f_qc_label_ref_match_logged:
+            print(f"[56f-qc] plane {plane_idx}: rescaled labels {old_shape} -> {new_shape} to match {ref_src} {tuple(ref_img.shape)}")
+            _56f_qc_label_ref_match_logged.add(_k)
+""",
+            """    if ref_img is not None and display_space == 'anat':
+        tform = _get_plane_tform_qc(int(plane_idx))
+        if tform is not None and _resample_labels_nn_helper_qc is not None:
+            old_shape = tuple(labels.shape)
+            try:
+                labels = _ensure_uint_labels_qc(_resample_labels_nn_helper_qc(labels, tform, output_shape=ref_img.shape))
+                new_shape = tuple(labels.shape)
+                _k = (int(plane_idx), old_shape, tuple(ref_img.shape), ref_src, 'warp')
+                if _k not in _56f_qc_label_ref_match_logged:
+                    print(f"[56f-qc] plane {plane_idx}: warped labels {old_shape} -> {new_shape} to match {ref_src} {tuple(ref_img.shape)}")
+                    _56f_qc_label_ref_match_logged.add(_k)
+            except Exception as e:
+                print(f"[56f-qc] plane {plane_idx}: could not warp labels to anatomy display; using resize fallback: {e}")
+
+    if ref_img is not None and tuple(labels.shape) != tuple(ref_img.shape):
+        old_shape = tuple(labels.shape)
+        labels = _rescale_labels_to_ref_shape_qc(labels, ref_img.shape)
+        new_shape = tuple(labels.shape)
+        _k = (int(plane_idx), old_shape, tuple(ref_img.shape), ref_src, 'resize')
+        if _k not in _56f_qc_label_ref_match_logged:
+            print(f"[56f-qc] plane {plane_idx}: rescaled labels {old_shape} -> {new_shape} to match {ref_src} {tuple(ref_img.shape)}")
+            _56f_qc_label_ref_match_logged.add(_k)
+""",
+        ),
+        (
+            """        'ref_src': ref_src,
+""",
+            """        'ref_src': ref_src,
+        'display_space': display_space,
+""",
+        ),
+        (
+            """def _draw_side_overlay_qc(ax, ref_img, labels, side_df, plane_idx, title):
+""",
+            """def _draw_side_overlay_qc(ax, ref_img, labels, side_df, plane_idx, title, display_space='func'):
+""",
+        ),
+        (
+            """            (x1, y1), (x2, y2) = _line_segment_qc(float(p['x0']), float(p['y0']), float(p['theta_deg']), ref_img.shape)
+            xd, yd = _xy_to_display_space_qc(int(plane_idx), [x1, x2, float(p['x0'])], [y1, y2, float(p['y0'])])
+            ax.plot([xd[0], xd[1]], [yd[0], yd[1]], color='yellow', linewidth=1.3)
+            ax.scatter([xd[2]], [yd[2]], s=9, c='yellow')
+""",
+            """            (x1, y1), (x2, y2) = _line_segment_qc(float(p['x0']), float(p['y0']), float(p['theta_deg']), ref_img.shape)
+            if str(display_space).strip().lower() == 'anat':
+                xd = np.asarray([x1, x2, float(p['x0'])], dtype=float)
+                yd = np.asarray([y1, y2, float(p['y0'])], dtype=float)
+            else:
+                xd, yd = _xy_to_display_space_qc(int(plane_idx), [x1, x2, float(p['x0'])], [y1, y2, float(p['y0'])])
+            ax.plot([xd[0], xd[1]], [yd[0], yd[1]], color='yellow', linewidth=1.3)
+            ax.scatter([xd[2]], [yd[2]], s=9, c='yellow')
+""",
+        ),
+        (
+            """        _draw_side_overlay_qc(ax, ref_img, labels, sub, int(plane_idx), ttl)
+""",
+            """        _draw_side_overlay_qc(ax, ref_img, labels, sub, int(plane_idx), ttl, display_space=vis.get('display_space', 'func'))
+""",
+        ),
+    ],
+    '56f-qc-activity': [
+        (
+            """try:
+    _rescale_labels_to_ref_helper_act = _rescale_labels_to_ref
+except NameError:
+    _rescale_labels_to_ref_helper_act = None
+""",
+            """try:
+    _rescale_labels_to_ref_helper_act = _rescale_labels_to_ref
+except NameError:
+    _rescale_labels_to_ref_helper_act = None
+try:
+    _resolve_plane_transform_helper_act = resolve_plane_transform
+except NameError:
+    _resolve_plane_transform_helper_act = None
+try:
+    _resample_labels_nn_helper_act = resample_labels_nn
+except NameError:
+    _resample_labels_nn_helper_act = None
+""",
+        ),
+        (
+            """def _get_plane_tform_act(plane_idx):
+    pr, _ = _get_plane_ref_act(int(plane_idx))
+    if pr is None:
+        return None
+    tform = pr.get('tform', None)
+    if tform is None and _tform_for_plane_helper_act is not None:
+        try:
+            tform = _tform_for_plane_helper_act(pr)
+        except Exception:
+            tform = None
+    return tform
+""",
+            """def _get_plane_tform_act(plane_idx):
+    pr, _ = _get_plane_ref_act(int(plane_idx))
+    if pr is None:
+        return None
+    tform = None
+    if _resolve_plane_transform_helper_act is not None:
+        try:
+            tform = _resolve_plane_transform_helper_act(pr)
+        except Exception:
+            tform = None
+    if tform is None:
+        tform = pr.get('tform', None)
+    if tform is None and _tform_for_plane_helper_act is not None:
+        try:
+            tform = _tform_for_plane_helper_act(pr)
+        except Exception:
+            tform = None
+    return tform
+""",
+        ),
+        (
+            """    ref_img = None
+    ref_src = 'none'
+    if pr is not None:
+        ref_img = pr.get('ref_match', None)
+        ref_src = 'ref_match'
+        if ref_img is None:
+            ref_img = pr.get('ref2d_raw', pr.get('ref2d'))
+            ref_src = 'ref2d'
+""",
+            """    ref_img = None
+    ref_src = 'none'
+    display_space = 'func'
+    if pr is not None:
+        if _MIDLINE_SPACE_ACT == 'anat':
+            ref_img = pr.get('ref_warped', None)
+            ref_src = 'ref_warped'
+            if ref_img is None:
+                ref_img = pr.get('ref_warped_raw', None)
+                ref_src = 'ref_warped_raw'
+            if ref_img is not None:
+                display_space = 'anat'
+        if ref_img is None:
+            ref_img = pr.get('ref_match', None)
+            ref_src = 'ref_match'
+        if ref_img is None:
+            ref_img = pr.get('ref2d_raw', pr.get('ref2d'))
+            ref_src = 'ref2d'
+""",
+        ),
+        (
+            """    if ref_img is not None and tuple(labels.shape) != tuple(ref_img.shape):
+        old_shape = tuple(labels.shape)
+        labels = _rescale_labels_to_ref_shape_act(labels, ref_img.shape)
+        new_shape = tuple(labels.shape)
+        _k = (int(plane_idx), old_shape, tuple(ref_img.shape), ref_src)
+        if _k not in _56f_qc_activity_label_ref_match_logged:
+            print(f"[56f-qc-activity] plane {plane_idx}: rescaled labels {old_shape} -> {new_shape} to match {ref_src} {tuple(ref_img.shape)}")
+            _56f_qc_activity_label_ref_match_logged.add(_k)
+""",
+            """    if ref_img is not None and display_space == 'anat':
+        tform = _get_plane_tform_act(int(plane_idx))
+        if tform is not None and _resample_labels_nn_helper_act is not None:
+            old_shape = tuple(labels.shape)
+            try:
+                labels = _ensure_uint_labels_act(_resample_labels_nn_helper_act(labels, tform, output_shape=ref_img.shape))
+                new_shape = tuple(labels.shape)
+                _k = (int(plane_idx), old_shape, tuple(ref_img.shape), ref_src, 'warp')
+                if _k not in _56f_qc_activity_label_ref_match_logged:
+                    print(f"[56f-qc-activity] plane {plane_idx}: warped labels {old_shape} -> {new_shape} to match {ref_src} {tuple(ref_img.shape)}")
+                    _56f_qc_activity_label_ref_match_logged.add(_k)
+            except Exception as e:
+                print(f"[56f-qc-activity] plane {plane_idx}: could not warp labels to anatomy display; using resize fallback: {e}")
+
+    if ref_img is not None and tuple(labels.shape) != tuple(ref_img.shape):
+        old_shape = tuple(labels.shape)
+        labels = _rescale_labels_to_ref_shape_act(labels, ref_img.shape)
+        new_shape = tuple(labels.shape)
+        _k = (int(plane_idx), old_shape, tuple(ref_img.shape), ref_src, 'resize')
+        if _k not in _56f_qc_activity_label_ref_match_logged:
+            print(f"[56f-qc-activity] plane {plane_idx}: rescaled labels {old_shape} -> {new_shape} to match {ref_src} {tuple(ref_img.shape)}")
+            _56f_qc_activity_label_ref_match_logged.add(_k)
+""",
+        ),
+        (
+            """        'ref_src': ref_src,
+""",
+            """        'ref_src': ref_src,
+        'display_space': display_space,
+""",
+        ),
+        (
+            """                'side_stats': side_stats,
+                'n_events_used': int(n_events_used),
+""",
+            """                'side_stats': side_stats,
+                'display_space': vis.get('display_space', 'func'),
+                'n_events_used': int(n_events_used),
+""",
+        ),
+        (
+            """                        (x1, y1), (x2, y2) = _line_segment(float(p['x0']), float(p['y0']), float(p['theta_deg']), item['heat'].shape)
+                        xd, yd = _xy_to_display_space_act(int(item['plane']), [x1, x2, float(p['x0'])], [y1, y2, float(p['y0'])])
+                        ax.plot([xd[0], xd[1]], [yd[0], yd[1]], color='yellow', linewidth=1.2)
+                        ax.scatter([xd[2]], [yd[2]], s=9, c='yellow')
+""",
+            """                        (x1, y1), (x2, y2) = _line_segment(float(p['x0']), float(p['y0']), float(p['theta_deg']), item['heat'].shape)
+                        if str(item.get('display_space', 'func')).strip().lower() == 'anat':
+                            xd = np.asarray([x1, x2, float(p['x0'])], dtype=float)
+                            yd = np.asarray([y1, y2, float(p['y0'])], dtype=float)
+                        else:
+                            xd, yd = _xy_to_display_space_act(int(item['plane']), [x1, x2, float(p['x0'])], [y1, y2, float(p['y0'])])
+                        ax.plot([xd[0], xd[1]], [yd[0], yd[1]], color='yellow', linewidth=1.2)
+                        ax.scatter([xd[2]], [yd[2]], s=9, c='yellow')
+""",
+        ),
+    ],
+}
+
+for _tag, _replacements in _MIDLINE_DISPLAY_SPACE_REPLACEMENTS.items():
+    _source = _CELL_SOURCE_BY_TAG.get(_tag, "")
+    for _old, _new in _replacements:
+        if _old not in _source:
+            raise RuntimeError(f"Could not patch {_tag} midline display-space source.")
+        _source = _source.replace(_old, _new)
+    _CELL_SOURCE_BY_TAG[_tag] = _source
+
+
+_MIDLINE_ACTIVITY_SUBSET_DISPLAY_REPLACEMENTS = {
+    '56f-qc-activity': [
+        (
+            """                                'side_stats': side_sub,
+                                'n_events_used': int(item.get('n_events_used', -1)),
+""",
+            """                                'side_stats': side_sub,
+                                'display_space': item.get('display_space', 'func'),
+                                'n_events_used': int(item.get('n_events_used', -1)),
+""",
+        ),
+        (
+            """                                    (x1, y1), (x2, y2) = _line_segment(float(p['x0']), float(p['y0']), float(p['theta_deg']), item['heat'].shape)
+                                    xd, yd = _xy_to_display_space_act(int(item['plane']), [x1, x2, float(p['x0'])], [y1, y2, float(p['y0'])])
+                                    ax.plot([xd[0], xd[1]], [yd[0], yd[1]], color='yellow', linewidth=1.2)
+                                    ax.scatter([xd[2]], [yd[2]], s=9, c='yellow')
+""",
+            """                                    (x1, y1), (x2, y2) = _line_segment(float(p['x0']), float(p['y0']), float(p['theta_deg']), item['heat'].shape)
+                                    if str(item.get('display_space', 'func')).strip().lower() == 'anat':
+                                        xd = np.asarray([x1, x2, float(p['x0'])], dtype=float)
+                                        yd = np.asarray([y1, y2, float(p['y0'])], dtype=float)
+                                    else:
+                                        xd, yd = _xy_to_display_space_act(int(item['plane']), [x1, x2, float(p['x0'])], [y1, y2, float(p['y0'])])
+                                    ax.plot([xd[0], xd[1]], [yd[0], yd[1]], color='yellow', linewidth=1.2)
+                                    ax.scatter([xd[2]], [yd[2]], s=9, c='yellow')
+""",
+        ),
+    ],
+}
+
+for _tag, _replacements in _MIDLINE_ACTIVITY_SUBSET_DISPLAY_REPLACEMENTS.items():
+    _source = _CELL_SOURCE_BY_TAG.get(_tag, "")
+    for _old, _new in _replacements:
+        if _old not in _source:
+            raise RuntimeError(f"Could not patch {_tag} activity subset display-space source.")
+        _source = _source.replace(_old, _new)
+    _CELL_SOURCE_BY_TAG[_tag] = _source
+
+
+def _validate_22c_midline_commit_source() -> None:
+    source = _CELL_SOURCE_BY_TAG.get("22c", "")
+    required_snippets = (
+        "def _params_for_plane(plane_idx, dy_manual, dtheta_manual):",
+        "p = _params_for_plane(int(item['plane_idx']), dy_manual, dtheta_manual)",
+        "bundle, per_plane = _build_bundle(dy, dth)",
+        "'midline_space': 'anat' if str(ref_src).strip().lower()",
+    )
+    missing = [snippet for snippet in required_snippets if snippet not in source]
+    if missing:
+        raise RuntimeError("[22c] midline commit source contract is stale; _params_for_plane must accept slider values.")
+
+
+_validate_22c_midline_commit_source()
+
 
 def _exec_stage(tag: str, namespace: MutableMapping[str, Any]) -> None:
     if not isinstance(namespace, MutableMapping):
         raise TypeError("namespace must be a mutable mapping, usually globals()")
+    if tag in _QC_MIDLINE_POINT_TRANSFORM_REPLACEMENTS:
+        from .matching import resolve_plane_transform, resample_labels_nn, transform_points_between_spaces
+
+        namespace.setdefault("transform_points_between_spaces", transform_points_between_spaces)
+        namespace.setdefault("resolve_plane_transform", resolve_plane_transform)
+        namespace.setdefault("resample_labels_nn", resample_labels_nn)
     source = _CELL_SOURCE_BY_TAG[tag]
     code = compile(source, f"<single-fish-notebook-cell-{tag}>", "exec")
     exec(code, namespace)

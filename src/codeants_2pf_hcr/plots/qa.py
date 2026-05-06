@@ -30,7 +30,13 @@ from skimage import transform
 import tifffile
 
 from ..context import infer_anat_labels_path
-from ..matching import _ensure_uint_labels, _regionprops_centroids_2d, build_plane_centroid_matches, resample_labels_nn
+from ..matching import (
+    _ensure_uint_labels,
+    _regionprops_centroids_2d,
+    build_plane_centroid_matches,
+    resample_labels_nn,
+    resolve_plane_transform,
+)
 from ..matching import compute_centroids
 from ..single_fish_notebook_stages import (
     run_single_fish_cell_22c_stage,
@@ -1327,6 +1333,9 @@ def show_centroid_match_qa_stage(
     all_anat_points_cache: dict[int, pd.DataFrame] = {}
     all_func_points_cache: dict[int, pd.DataFrame] = {}
 
+    def _tform_for_plane(plane_ref: dict[str, Any]) -> Any:
+        return resolve_plane_transform(plane_ref)
+
     def _load_func_labels_for_plane(p_idx: int) -> tuple[np.ndarray | None, str | None, str | None]:
         p_idx = int(max(0, min(len(plane_refs) - 1, int(p_idx))))
         plane_ref = plane_refs[p_idx]
@@ -1404,7 +1413,7 @@ def show_centroid_match_qa_stage(
             max_link_dist_px=max_link_dist_px,
             require_overlap=require_overlap,
             min_overlap=min_overlap,
-            tform_for_plane_func=lambda _plane_ref: _plane_ref.get("tform"),
+            tform_for_plane_func=_tform_for_plane,
             resample_labels_nn_func=None,
         )
         status = str(match_result.get("status", "ok"))
@@ -1455,7 +1464,7 @@ def show_centroid_match_qa_stage(
                 max_link_dist_px=float("inf"),
                 require_overlap=False,
                 min_overlap=0,
-                tform_for_plane_func=lambda _plane_ref: _plane_ref.get("tform"),
+                tform_for_plane_func=_tform_for_plane,
                 resample_labels_nn_func=None,
             ).get("func_warped")
             all_func_points_cache[p_idx] = _regionprops_centroids_2d(warped) if warped is not None else pd.DataFrame(columns=["label", "cy", "cx"])
@@ -1668,7 +1677,7 @@ def show_centroid_match_qa_stage(
             "load_func_labels_for_plane": _load_func_labels_for_plane,
             "prepare_plane_data": _prepare_plane_data,
             "collect_global_data": _collect_global_data,
-            "tform_for_plane": (lambda plane_ref: plane_ref.get("tform")),
+            "tform_for_plane": _tform_for_plane,
         },
         "initial_plane_snapshot": initial_plane_snapshot,
         "render_log": render_log,
