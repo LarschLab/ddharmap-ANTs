@@ -15,7 +15,12 @@ from scipy.spatial.distance import cdist
 from skimage.measure import regionprops_table
 from skimage.transform import AffineTransform, SimilarityTransform, resize, warp
 
-from .single_fish_notebook_stages import run_single_fish_cell_50_stage
+from .single_fish_notebook_stages import (
+    run_single_fish_cell_44_stage,
+    run_single_fish_cell_46_stage,
+    run_single_fish_cell_50_stage,
+    run_single_fish_cell_50i_stage,
+)
 
 
 ArrayLike = Any
@@ -1807,7 +1812,10 @@ __all__ = [
     "resample_image",
     "resample_labels_nn",
     "resolve_plane_transform",
+    "run_single_fish_cell_44_stage",
+    "run_single_fish_cell_46_stage",
     "run_single_fish_cell_50_stage",
+    "run_single_fish_cell_50i_stage",
     "summarize_distances",
     "summarize_functional_anatomy_geometry_metrics",
     "transform_points_between_spaces",

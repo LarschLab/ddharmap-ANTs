@@ -12,7 +12,7 @@ from typing import Any
 
 _TAG_RE = re.compile(r"^\s*#\s*\[([^\]]+)\]")
 _PROFILE_FIGURE_TAGS = {
-    "single-fish": {"50e", "50f", "50g", "50l", "56", "56f-qc", "56f-qc-activity", "56h", "56g", "57a-responsive-identity-donut", "57"},
+    "single-fish": {"50e", "50f", "50g", "50l", "56", "56d", "56f-qc", "56f-qc-activity", "56h", "56g", "57a-responsive-identity-donut", "57"},
     "cohort": {
         "53a-cohort",
         "56h-cohort",
@@ -79,6 +79,69 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
             },
             "forbid_top_level_defs": True,
         },
+        "30": {
+            "imports": {
+                "codeants_2pf_hcr.plots.qa": {"run_single_fish_cell_30_stage"},
+            },
+            "calls": {"run_single_fish_cell_30_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "34c": {
+            "imports": {
+                "codeants_2pf_hcr.plots.qa": {"run_single_fish_cell_34c_stage"},
+            },
+            "calls": {"run_single_fish_cell_34c_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "38": {
+            "imports": {
+                "codeants_2pf_hcr.hcr_warp": {"run_single_fish_cell_38_stage"},
+            },
+            "calls": {"run_single_fish_cell_38_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "40": {
+            "imports": {
+                "codeants_2pf_hcr.hcr_warp": {"run_single_fish_cell_40_stage"},
+            },
+            "calls": {"run_single_fish_cell_40_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "41": {
+            "imports": {
+                "codeants_2pf_hcr.hcr_warp": {"run_single_fish_cell_41_stage"},
+            },
+            "calls": {"run_single_fish_cell_41_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "44": {
+            "imports": {
+                "codeants_2pf_hcr.matching": {"run_single_fish_cell_44_stage"},
+            },
+            "calls": {"run_single_fish_cell_44_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "46": {
+            "imports": {
+                "codeants_2pf_hcr.matching": {"run_single_fish_cell_46_stage"},
+            },
+            "calls": {"run_single_fish_cell_46_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "47": {
+            "imports": {
+                "codeants_2pf_hcr.plots.qa": {"run_single_fish_cell_47_stage"},
+            },
+            "calls": {"run_single_fish_cell_47_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "47b": {
+            "imports": {
+                "codeants_2pf_hcr.plots.qa": {"run_single_fish_cell_47b_stage"},
+            },
+            "calls": {"run_single_fish_cell_47b_stage"},
+            "forbid_top_level_defs": True,
+        },
         "43": {
             "imports": {
                 "codeants_2pf_hcr": {
@@ -99,6 +162,41 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
             "calls": {
                 "run_hcr_external_bigwarp_intensity_stage",
             },
+            "forbid_top_level_defs": True,
+        },
+        "50i": {
+            "imports": {
+                "codeants_2pf_hcr.matching": {"run_single_fish_cell_50i_stage"},
+            },
+            "calls": {"run_single_fish_cell_50i_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "50ia": {
+            "imports": {
+                "codeants_2pf_hcr.activity": {"run_single_fish_cell_50ia_stage"},
+            },
+            "calls": {"run_single_fish_cell_50ia_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "51": {
+            "imports": {
+                "codeants_2pf_hcr.traces": {"run_single_fish_cell_51_stage"},
+            },
+            "calls": {"run_single_fish_cell_51_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "54": {
+            "imports": {
+                "codeants_2pf_hcr.plots.qa": {"run_single_fish_cell_54_stage"},
+            },
+            "calls": {"run_single_fish_cell_54_stage"},
+            "forbid_top_level_defs": True,
+        },
+        "56d": {
+            "imports": {
+                "codeants_2pf_hcr.plots.analysis": {"run_single_fish_cell_56d_stage"},
+            },
+            "calls": {"run_single_fish_cell_56d_stage"},
             "forbid_top_level_defs": True,
         },
         "56g": {

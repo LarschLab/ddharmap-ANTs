@@ -18,6 +18,7 @@ from .annotations import place_labels_no_overlap
 from ..single_fish_notebook_stages import (
     run_single_fish_cell_50e_stage,
     run_single_fish_cell_56_stage,
+    run_single_fish_cell_56d_stage,
     run_single_fish_cell_56g_stage,
     run_single_fish_cell_56h_stage,
     run_single_fish_cell_57_stage,
@@ -3742,6 +3743,7 @@ __all__ = [
     "render_single_fish_50l_global_auc_panel",
     "run_single_fish_cell_50e_stage",
     "run_single_fish_cell_56_stage",
+    "run_single_fish_cell_56d_stage",
     "run_single_fish_cell_56g_stage",
     "run_single_fish_cell_56h_stage",
     "run_single_fish_cell_57_stage",

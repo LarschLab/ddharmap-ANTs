@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from ._hcr_warp_stage_cells import CELL_43_SOURCE, CELL_43B_SOURCE
+from .single_fish_notebook_stages import (
+    run_single_fish_cell_38_stage,
+    run_single_fish_cell_40_stage,
+    run_single_fish_cell_41_stage,
+)
 
 
 def _exec_stage_source(*, source: str, stage_tag: str, env: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -30,6 +35,9 @@ def run_hcr_external_bigwarp_intensity_stage(*, env: dict[str, Any] | None = Non
 
 
 __all__ = [
+    "run_single_fish_cell_38_stage",
+    "run_single_fish_cell_40_stage",
+    "run_single_fish_cell_41_stage",
     "run_hcr_external_bigwarp_intensity_stage",
     "run_hcr_external_bigwarp_label_stage",
 ]

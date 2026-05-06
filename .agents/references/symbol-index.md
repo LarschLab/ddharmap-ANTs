@@ -196,13 +196,27 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.single_fish_notebook_stages`
 
 - `run_single_fish_cell_22c_stage`: Migration shim for heavy single-fish notebook cell `[22c]`.
+- `run_single_fish_cell_30_stage`: Migration shim for single-fish segmentation-diameter QA cell `[30]`.
+- `run_single_fish_cell_34c_stage`: Migration shim for single-fish regional match review cell `[34c]`.
+- `run_single_fish_cell_38_stage`: Migration shim for single-fish HCR manifest/discovery cell `[38]`.
+- `run_single_fish_cell_40_stage`: Migration shim for single-fish run metadata snapshot cell `[40]`.
+- `run_single_fish_cell_41_stage`: Migration shim for single-fish HCR transform configuration cell `[41]`.
+- `run_single_fish_cell_44_stage`: Migration shim for single-fish HCR↔anatomy matching/QC cell `[44]`.
+- `run_single_fish_cell_46_stage`: Migration shim for single-fish functional↔anatomy matching summary cell `[46]`.
+- `run_single_fish_cell_47_stage`: Migration shim for single-fish per-plane 3D viewer cell `[47]`.
+- `run_single_fish_cell_47b_stage`: Migration shim for single-fish HCR/anatomy 3D viewer cell `[47b]`.
 - `run_single_fish_cell_50_stage`: Migration shim for heavy single-fish notebook cell `[50]`.
+- `run_single_fish_cell_50i_stage`: Migration shim for single-fish ROI-centric master-table writer cell `[50i]`.
+- `run_single_fish_cell_50ia_stage`: Migration shim for single-fish response/BPI writer cell `[50ia]`.
 - `run_single_fish_cell_50e_stage`: Migration shim for heavy single-fish notebook cell `[50e]`.
 - `run_single_fish_cell_50f_stage`: Migration shim for single-fish notebook cell `[50f]`.
 - `run_single_fish_cell_50g_stage`: Migration shim for single-fish notebook cell `[50g]`.
+- `run_single_fish_cell_51_stage`: Migration shim for single-fish Suite2p trace export cell `[51]`.
 - `run_single_fish_cell_53_stage`: Migration shim for heavy single-fish notebook cell `[53]`.
 - `run_single_fish_cell_53a_stage`: Migration shim for heavy single-fish notebook cell `[53a]`.
+- `run_single_fish_cell_54_stage`: Migration shim for single-fish functional warp export cell `[54]`.
 - `run_single_fish_cell_56_stage`: Migration shim for heavy single-fish notebook cell `[56]`.
+- `run_single_fish_cell_56d_stage`: Migration shim for single-fish `[53a]` + `[56]` side-by-side composite cell `[56d]`.
 - `run_single_fish_cell_56f_qc_stage`: Migration shim for heavy single-fish notebook cell `[56f-qc]`.
 - `run_single_fish_cell_56f_qc_activity_stage`: Migration shim for heavy single-fish notebook cell `[56f-qc-activity]`.
 - `run_single_fish_cell_56g_stage`: Migration shim for single-fish notebook cell `[56g]`.

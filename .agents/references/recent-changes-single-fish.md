@@ -28,6 +28,26 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-05-06 - single-fish notebook contract-clean migration wrappers
+
+- Slice goal:
+  - finish the remaining single-fish notebook refactor surface by removing top-level helper definitions and visible bulky alias/helper blocks from the notebook.
+- Passes completed in this session:
+  - moved remaining def-heavy and bulky support cells into package-owned migration wrappers: `[30]`, `[34c]`, `[38]`, `[40]`, `[41]`, `[44]`, `[46]`, `[47]`, `[47b]`, `[50i]`, `[50ia]`, `[51]`, `[54]`, and `[56d]`.
+  - rewired the notebook cells to thin public package calls and added notebook-contract ownership rules for the migrated tags.
+  - updated package exports and symbol/stage/current-state docs.
+- What changed:
+  - `notebooks/2PF_to_HCR.ipynb` now reports zero top-level helper definitions, zero figure violations, zero required-cell violations, and zero native-stage import violations.
+  - the `[56d]` user-facing cell no longer contains the `FIG_53A_RGBA_LOCAL` / `FIG_56_RGBA_LOCAL` alias clutter; that legacy behavior is hidden behind the package wrapper.
+- What remains broken:
+  - none known from static/package validation; live notebook rerun on fish data is still needed for visual confirmation of migrated legacy stages.
+- Remaining in-slice work:
+  - optional future pass: replace embedded migration-source strings with explicit owner APIs where the legacy code is still too large for long-term maintenance.
+- Next likely breakpoint:
+  - rerun the newly wrapped notebook cells in order on an active fish and inspect any failure at the package wrapper boundary for missing upstream globals.
+- Rerun implications:
+  - no canonical output filenames changed; rerun the touched cells only when validating the notebook experience or refreshing their outputs.
+
 ### 2026-05-06 - [56f-qc] yellow midline anatomy display alignment
 
 - Slice goal:

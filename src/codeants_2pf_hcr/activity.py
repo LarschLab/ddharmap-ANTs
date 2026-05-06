@@ -25,6 +25,7 @@ from .stimulus import (
     parse_float,
 )
 from .suite2p import infer_frame_rate_from_detail, load_suite2p_dff_map
+from .single_fish_notebook_stages import run_single_fish_cell_50ia_stage
 
 
 @dataclass(frozen=True)
@@ -906,4 +907,5 @@ __all__ = [
     "SingleFishBpiDiagnosticsConfig",
     "build_response_bpi_tables",
     "prepare_single_fish_bpi_diagnostics_stage",
+    "run_single_fish_cell_50ia_stage",
 ]

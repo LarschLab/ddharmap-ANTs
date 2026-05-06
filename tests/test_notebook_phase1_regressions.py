@@ -319,8 +319,10 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
 
     def test_metadata_cell_records_raw_functional_source_path(self) -> None:
         cell = _code_cell_by_tag("40")
-        self.assertIn("FUNC_RAW_STACK_PATH_LOCAL = FUNC_RAW_STACK_PATH", cell)
-        self.assertIn("'FUNC_STACK_PATH': str(FUNC_RAW_STACK_PATH_LOCAL) if FUNC_RAW_STACK_PATH_LOCAL else None", cell)
+        self.assertIn("run_single_fish_cell_40_stage", cell)
+        source = single_fish_stages._CELL_SOURCE_BY_TAG["40"]
+        self.assertIn("FUNC_RAW_STACK_PATH_LOCAL = FUNC_RAW_STACK_PATH", source)
+        self.assertIn("'FUNC_STACK_PATH': str(FUNC_RAW_STACK_PATH_LOCAL) if FUNC_RAW_STACK_PATH_LOCAL else None", source)
 
     def test_generator_contains_phase1_binding_fixes(self) -> None:
         source = PHASE5_GENERATOR_PATH.read_text()
@@ -423,9 +425,17 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("load_suite2p_stage", cell_23a)
         self.assertNotIn("def _build_labels_from_stat(", cell_23a)
         self.assertNotIn("def _find_suite2p_file(", cell_23a)
-        self.assertIn("from codeants_2pf_hcr import build_anat_identity_lookup_df, build_functional_roi_master_df, gene_from_mask", cell_50i)
+        self.assertIn("run_single_fish_cell_50i_stage", cell_50i)
         self.assertIn("from codeants_2pf_hcr import build_hcr_activity_tables, gene_from_mask", cell_50)
-        self.assertIn("from codeants_2pf_hcr import ActivityConfig, build_response_bpi_tables", cell_50ia)
+        self.assertIn("run_single_fish_cell_50ia_stage", cell_50ia)
+        self.assertIn(
+            "from codeants_2pf_hcr import build_anat_identity_lookup_df, build_functional_roi_master_df, gene_from_mask",
+            single_fish_stages._CELL_SOURCE_BY_TAG["50i"],
+        )
+        self.assertIn(
+            "from codeants_2pf_hcr import ActivityConfig, build_response_bpi_tables",
+            single_fish_stages._CELL_SOURCE_BY_TAG["50ia"],
+        )
         self.assertNotIn("def _build_prestim_baseline_windows_local", cell_50ia)
         self.assertNotIn("def _load_suite2p_dff_map_from_disk_local", cell_50ia)
 

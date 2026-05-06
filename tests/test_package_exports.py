@@ -115,13 +115,27 @@ from codeants_2pf_hcr import (
     run_ncc_placement_stage,
     run_registration_search_stage,
     run_single_fish_cell_22c_stage,
+    run_single_fish_cell_30_stage,
+    run_single_fish_cell_34c_stage,
+    run_single_fish_cell_38_stage,
+    run_single_fish_cell_40_stage,
+    run_single_fish_cell_41_stage,
+    run_single_fish_cell_44_stage,
+    run_single_fish_cell_46_stage,
+    run_single_fish_cell_47_stage,
+    run_single_fish_cell_47b_stage,
     run_single_fish_cell_50_stage,
+    run_single_fish_cell_50i_stage,
+    run_single_fish_cell_50ia_stage,
     run_single_fish_cell_50e_stage,
     run_single_fish_cell_50f_stage,
     run_single_fish_cell_50g_stage,
+    run_single_fish_cell_51_stage,
     run_single_fish_cell_53_stage,
     run_single_fish_cell_53a_stage,
+    run_single_fish_cell_54_stage,
     run_single_fish_cell_56_stage,
+    run_single_fish_cell_56d_stage,
     run_single_fish_cell_56f_qc_activity_stage,
     run_single_fish_cell_56f_qc_stage,
     run_single_fish_cell_56g_stage,
@@ -262,13 +276,27 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
     assert callable(run_single_fish_cell_22c_stage)
+    assert callable(run_single_fish_cell_30_stage)
+    assert callable(run_single_fish_cell_34c_stage)
+    assert callable(run_single_fish_cell_38_stage)
+    assert callable(run_single_fish_cell_40_stage)
+    assert callable(run_single_fish_cell_41_stage)
+    assert callable(run_single_fish_cell_44_stage)
+    assert callable(run_single_fish_cell_46_stage)
+    assert callable(run_single_fish_cell_47_stage)
+    assert callable(run_single_fish_cell_47b_stage)
     assert callable(run_single_fish_cell_50_stage)
+    assert callable(run_single_fish_cell_50i_stage)
+    assert callable(run_single_fish_cell_50ia_stage)
     assert callable(run_single_fish_cell_50e_stage)
     assert callable(run_single_fish_cell_50f_stage)
     assert callable(run_single_fish_cell_50g_stage)
+    assert callable(run_single_fish_cell_51_stage)
     assert callable(run_single_fish_cell_53_stage)
     assert callable(run_single_fish_cell_53a_stage)
+    assert callable(run_single_fish_cell_54_stage)
     assert callable(run_single_fish_cell_56_stage)
+    assert callable(run_single_fish_cell_56d_stage)
     assert callable(run_single_fish_cell_56f_qc_activity_stage)
     assert callable(run_single_fish_cell_56f_qc_stage)
     assert callable(run_single_fish_cell_56g_stage)

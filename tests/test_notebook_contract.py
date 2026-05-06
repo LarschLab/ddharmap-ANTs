@@ -41,6 +41,14 @@ def test_notebook_contract_audit_returns_counts() -> None:
     assert isinstance(result["required_cell_violations"], list)
 
 
+def test_single_fish_notebook_contract_has_zero_violations() -> None:
+    result = check_notebook_contract(NOTEBOOK_PATH)
+    assert result["n_top_level_defs"] == 0
+    assert result["n_figure_violations"] == 0
+    assert result["n_required_cell_violations"] == 0
+    assert result["n_native_stage_import_violations"] == 0
+
+
 def test_cohort_notebook_contract_audit_returns_counts() -> None:
     result = check_notebook_contract(COHORT_NOTEBOOK_PATH)
     assert result["notebook_path"].endswith("notebooks/multi_fish_56h_56g.ipynb")

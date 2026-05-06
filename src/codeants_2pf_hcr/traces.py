@@ -22,6 +22,7 @@ from .stimulus import (
     parse_unilateral_stim,
 )
 from .suite2p import infer_frame_rate_from_detail
+from .single_fish_notebook_stages import run_single_fish_cell_51_stage
 
 
 def _as_bool_series(series_in: Any) -> pd.Series:
@@ -1246,4 +1247,5 @@ __all__ = [
     "load_midline_context",
     "prepare_pairs_for_unique_cells",
     "resolve_conf_func_csv_analysis",
+    "run_single_fish_cell_51_stage",
 ]

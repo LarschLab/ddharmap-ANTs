@@ -19,10 +19,12 @@
    - Key object: `suite2p_by_ref_idx`.
 4. **Segmentation/geometry QA** (`[29] [33] [34a]`)
    - QC helpers only; not identity source.
+   - Diameter and regional-review support cells `[30]` and `[34c]` are package-owned migration wrappers.
    - Native segmentation stages `[24]` and `[24a]` are package-owned and should remain orchestration-thin in the notebook.
 5. **HCR discovery/warp/HCR↔anatomy QC** (`[37] [39] [41] [42] [43] [44]`)
    - HCR mask discovery, warping, QC summaries.
    - Key object: `hcr_match_results`.
+   - HCR discovery/config/metadata/matching support cells `[38]`, `[40]`, `[41]`, `[44]`, `[46]`, `[47]`, and `[47b]` are now package-owned migration wrappers; notebook cells should stay def-free.
    - External-BigWarp prep stages `[43]` and `[43b]` are package-owned wrappers with stage-local ANTs imports.
 6. **HCR-centric identified-cell activity mapping** (`[50]`)
    - Builds `hcr_activity_status.csv`, `conf_to_func_pairs_raw.csv`, response-positive `conf_to_func_pairs.csv`.
@@ -38,6 +40,7 @@
    - Must filter canonical tables; they do not own semantic definitions.
 10. **Trace export and stimulus-aligned analyses** (`[50l] [51] [55] [56] [56h] [56g] [57a-responsive-identity-donut] [57b-anatomy-coexpression-summary] [57]`)
     - Trace export, stimulus alignment, full-session and diagnostics figures.
+    - Late trace/figure migration wrappers include `[51]`, `[54]`, and `[56d]`; their notebook cells should contain only the public package call and display/binding code.
 
 ## Core outputs by stage
 
