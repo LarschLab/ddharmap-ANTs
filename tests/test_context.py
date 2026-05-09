@@ -10,6 +10,7 @@ import numpy as np
 from codeants_2pf_hcr.context import (
     ContextStageConfig,
     build_registration_helper_stage,
+    default_cellpose_model_root,
     build_fish_state_audit_df,
     infer_hcr_label_paths,
     notebook_bindings_from_context,
@@ -78,6 +79,16 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(bindings["OWNER"], "Matilde")
             self.assertEqual(bindings["DATA_MODE"], "local")
             self.assertEqual(bindings["RUN_CONFIG"], dict(ctx.run_config))
+
+    def test_default_cellpose_model_root_prefers_lowercase_local_directory(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "cellpose" / "models").mkdir(parents=True)
+
+            self.assertEqual(
+                default_cellpose_model_root(root, "local", root / "nas"),
+                root / "cellpose" / "models",
+            )
 
     def test_resolve_notebook_context_stage_accepts_local_root_override_from_config(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -67,6 +67,22 @@ Historical ROI-first and label-first flows can disagree under competition. ROI-c
 
 Final matching decisions are expressed in anatomy space.
 
+## Functional imaging sessions and planes
+
+Some fish are acquired in more than one functional imaging session. After the first session, the Z focus can be shifted so that a new set of functional planes is visible. These later-session planes are scientifically separate planes, not repeated views of the earlier-session planes.
+
+Policy:
+
+- Plane indices are global within a fish after preprocessing.
+- Session 1 (`r1`) owns its output planes, typically `0-4` for five-plane acquisitions.
+- Session 2 (`r2`) owns its output planes, typically `5-9` when a second five-plane acquisition is appended after a Z-focus shift.
+- The preprocessing metadata is the authority for the exact session-to-plane mapping; do not infer it from activity, identity, or downstream tables.
+- Each plane must use the experiment log and metadata from the imaging session that produced that plane.
+- Response/BPI and stimulus-window analyses are plane-session aware: r2 planes use r2 timing/metadata, r1 planes use r1 timing/metadata.
+- Geometry matching remains per plane in shared anatomy space. Sessions do not change the rule that geometry is decided before identity and activity.
+- Do not merge planes across sessions by local plane number. Use the global `plane_idx`/`plane` assigned after preprocessing.
+- Figures and exports must preserve the global plane identity or explicitly document any session grouping.
+
 ## Matching guidance for refactors
 
 Preferred structure:

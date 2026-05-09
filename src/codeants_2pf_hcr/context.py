@@ -1,4 +1,4 @@
-"""Context and fish-scoped stage helpers for notebook cells [4], [4a], [4b], [4c], [8], [8a], [10], and [14]."""
+"""Context and fish-scoped stage helpers for notebook cells [4], [4a], [4b], [4c], [8], [8a], [10], [14], and [14a]."""
 
 from __future__ import annotations
 
@@ -141,6 +141,15 @@ class AnatomyNormalizationStageConfig:
     force_recompute_anat_convert: bool = False
 
 
+@dataclass(frozen=True)
+class AnatomyUint8PreprocessingConfig:
+    force_recompute_anat_uint8: bool = False
+    use_source_path_orig: bool = True
+    apply_func_orientation: bool = True
+    target_xy_shape: tuple[int, int] | None = (750, 750)
+    cache_version: int = 2
+
+
 def default_nas_root() -> Path:
     if os.name == "nt":
         return Path(r"\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c\07_Data")
@@ -193,6 +202,9 @@ def default_matching_metadata_csv(data_root: Path | str, data_mode: str) -> Path
 def default_cellpose_model_root(data_root: Path | str, data_mode: str, nas_root: Path | str) -> Path:
     root = Path(data_root)
     if str(data_mode).strip().lower() == "local":
+        lowercase = root / "cellpose" / "models"
+        if lowercase.exists():
+            return lowercase
         return root / "Cellpose" / "models"
     return Path(nas_root) / "Danin" / "Cellpose" / "models"
 
@@ -621,11 +633,69 @@ def infer_func_labels_path(
     return None
 
 
+def infer_anatomy_stack_path(fish_dir: Path | str, fish_id: str | None = None) -> Path | None:
+    fish_path = Path(fish_dir)
+    fish_token = str(fish_id or fish_path.name).strip()
+    search_specs: tuple[tuple[Path, tuple[str, ...]], ...] = (
+        (
+            fish_path / "02_reg" / "00_preprocessing" / "2p_anatomy",
+            (
+                f"{fish_token}*_anatomy_2P_GCaMP_uint8.tif",
+                f"{fish_token}*_anatomy_2P_GCaMP_uint8.tiff",
+                f"{fish_token}*_anatomy_2P_GCaMP.tif",
+                f"{fish_token}*_anatomy_2P_GCaMP.tiff",
+                f"{fish_token}*_anatomy_2P_GCaMP.nrrd",
+                "*_anatomy_2P_GCaMP_uint8.tif",
+                "*_anatomy_2P_GCaMP_uint8.tiff",
+                "*_anatomy_2P_GCaMP.tif",
+                "*_anatomy_2P_GCaMP.tiff",
+                "*_anatomy_2P_GCaMP.nrrd",
+                "*anatomy*.tif",
+                "*anatomy*.tiff",
+                "*anatomy*.nrrd",
+            ),
+        ),
+        (
+            fish_path / "01_raw" / "2p" / "anatomy",
+            (
+                f"{fish_token}*.tif",
+                f"{fish_token}*.tiff",
+                f"{fish_token}*.nrrd",
+                "*anatomy*.tif",
+                "*anatomy*.tiff",
+                "*anatomy*.nrrd",
+                "*.tif",
+                "*.tiff",
+                "*.nrrd",
+            ),
+        ),
+    )
+    excluded_tokens = ("cp_masks", "mask", "label", "overlay")
+    for directory, patterns in search_specs:
+        if not directory.exists():
+            continue
+        hits: list[Path] = []
+        seen: set[Path] = set()
+        for pattern in patterns:
+            for hit in sorted(directory.glob(pattern)):
+                if not hit.is_file():
+                    continue
+                name_lower = hit.name.lower()
+                if any(token in name_lower for token in excluded_tokens):
+                    continue
+                if hit not in seen:
+                    hits.append(hit)
+                    seen.add(hit)
+        if hits:
+            return hits[0]
+    return None
+
+
 def prepare_notebook_paths(ctx: FishContext, polarity_override: Any = None) -> dict[str, Any]:
     polarity, polarity_source = resolve_func_polarity(ctx.fish_id, ctx.matching_metadata_csv, polarity_override=polarity_override)
     func_raw_stack_path = first_match(ctx.fish_dir, ["01_raw/2p/functional/*.tif", "01_raw/2p/functional/*.tiff"])
     func_nonflipped_list = first_match(ctx.fish_dir, ["02_reg/00_preprocessing/2p_functional/02_motionCorrected/*mcorrected*.tif"], all_hits=True) or []
-    anat_stack_path = first_match(ctx.fish_dir, ["02_reg/00_preprocessing/2p_anatomy/*_anatomy_2P_GCaMP.*"])
+    anat_stack_path = infer_anatomy_stack_path(ctx.fish_dir, ctx.fish_id)
     hcr_stack_paths = infer_hcr_stack_paths(ctx.preproc_dir, ctx.fish_id)
     hcr_labels_paths = infer_hcr_label_paths(ctx.fish_dir, ctx.fish_id)
     anat_labels_path = infer_anat_labels_path(ctx.fish_dir, ctx.fish_id)
@@ -928,6 +998,141 @@ def _maybe_reorder_anatomy_stack(data: Any) -> tuple[np.ndarray, bool]:
     if reordered:
         arr = arr.transpose(2, 1, 0)
     return arr, reordered
+
+
+def _load_anatomy_volume_for_uint8(path: Path) -> tuple[np.ndarray, str, bool]:
+    if path.suffix.lower() == ".nrrd":
+        data, reader = _read_nrrd_volume(path)
+        data, reordered = _maybe_reorder_anatomy_stack(data)
+        return np.asarray(data), reader, reordered
+    return np.asarray(tifffile.imread(path)), "tifffile", False
+
+
+def _signed_stack_to_uint8(arr: np.ndarray) -> tuple[np.ndarray, dict[str, int | float]]:
+    data = np.asarray(arr)
+    if data.size == 0:
+        raise ValueError("Anatomy stack is empty.")
+    if not np.issubdtype(data.dtype, np.integer):
+        raise TypeError(f"Expected an integer anatomy stack, got {data.dtype}.")
+
+    raw_min = int(np.min(data))
+    raw_max = int(np.max(data))
+    offset = abs(raw_min) if raw_min < 0 else 0
+    corrected = data.astype(np.int32, copy=False)
+    if offset:
+        corrected = corrected + int(offset)
+    corrected = np.clip(corrected, 0, 65535)
+    corrected_min = int(np.min(corrected))
+    corrected_max = int(np.max(corrected))
+
+    if corrected_max <= corrected_min:
+        out = np.zeros(corrected.shape, dtype=np.uint8)
+    else:
+        scaled = (corrected.astype(np.float32) - float(corrected_min)) * (255.0 / float(corrected_max - corrected_min))
+        out = np.clip(np.rint(scaled), 0, 255).astype(np.uint8)
+
+    stats: dict[str, int | float] = {
+        "raw_min": raw_min,
+        "raw_max": raw_max,
+        "negative_offset": int(offset),
+        "corrected_min": corrected_min,
+        "corrected_max": corrected_max,
+        "output_min": int(np.min(out)) if out.size else 0,
+        "output_max": int(np.max(out)) if out.size else 0,
+    }
+    return out, stats
+
+
+def _normalize_target_xy_shape(value: Any) -> tuple[int, int] | None:
+    if value is None or value is False:
+        return None
+    if isinstance(value, (int, np.integer)):
+        size = int(value)
+        if size <= 0:
+            raise ValueError("target_xy_shape must contain positive integers")
+        return size, size
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        y_size = int(value[0])
+        x_size = int(value[1])
+        if y_size <= 0 or x_size <= 0:
+            raise ValueError("target_xy_shape must contain positive integers")
+        return y_size, x_size
+    raise TypeError("target_xy_shape must be None, an integer, or a two-item tuple/list")
+
+
+def _resize_uint8_xy(arr: np.ndarray, target_xy_shape: tuple[int, int] | None) -> tuple[np.ndarray, bool]:
+    target = _normalize_target_xy_shape(target_xy_shape)
+    data = np.asarray(arr)
+    if target is None:
+        return data, False
+    if data.ndim < 2:
+        raise ValueError("Cannot resize anatomy stack with fewer than two dimensions")
+    current_xy = tuple(int(v) for v in data.shape[-2:])
+    if current_xy == target:
+        return data, False
+
+    leading_shape = data.shape[:-2]
+    flat = data.reshape((-1, current_xy[0], current_xy[1]))
+    resized = np.empty((flat.shape[0], target[0], target[1]), dtype=np.uint8)
+    for idx, plane in enumerate(flat):
+        plane_resized = transform.resize(
+            plane,
+            target,
+            order=1,
+            preserve_range=True,
+            anti_aliasing=True,
+        )
+        resized[idx] = np.clip(np.rint(plane_resized), 0, 255).astype(np.uint8)
+    return resized.reshape((*leading_shape, target[0], target[1])), True
+
+
+def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, str | None]:
+    if path.suffix.lower() not in {".tif", ".tiff"}:
+        return None, None, None
+    try:
+        with tifffile.TiffFile(path) as tf:
+            page0 = tf.pages[0]
+            x_tag = page0.tags.get("XResolution")
+            y_tag = page0.tags.get("YResolution")
+            unit_tag = page0.tags.get("ResolutionUnit")
+            unit_name = None
+            if unit_tag is not None:
+                try:
+                    unit_name = unit_tag.value.name
+                except Exception:
+                    unit_name = str(unit_tag.value)
+            x_res = x_tag.value if x_tag is not None else None
+            y_res = y_tag.value if y_tag is not None else None
+            if isinstance(x_res, tuple) and len(x_res) == 2:
+                x_res = x_res[0] / x_res[1] if x_res[1] else None
+            if isinstance(y_res, tuple) and len(y_res) == 2:
+                y_res = y_res[0] / y_res[1] if y_res[1] else None
+            return (
+                float(x_res) if x_res is not None else None,
+                float(y_res) if y_res is not None else None,
+                unit_name,
+            )
+    except Exception:
+        return None, None, None
+
+
+def _scaled_tiff_resolution(
+    source_path: Path,
+    source_xy_shape: tuple[int, int],
+    output_xy_shape: tuple[int, int],
+) -> tuple[tuple[float, float] | None, str | None]:
+    x_res, y_res, unit_name = _read_tiff_xy_resolution(source_path)
+    if x_res is None or y_res is None or unit_name is None:
+        return None, None
+    if output_xy_shape[0] <= 0 or output_xy_shape[1] <= 0:
+        return None, None
+    scaled_x_res = float(x_res) * (float(output_xy_shape[1]) / float(source_xy_shape[1]))
+    scaled_y_res = float(y_res) * (float(output_xy_shape[0]) / float(source_xy_shape[0]))
+    return (scaled_x_res, scaled_y_res), unit_name
+
+
+def _anatomy_uint8_cache_metadata_path(out_path: Path) -> Path:
+    return out_path.with_name(out_path.name + ".json")
 
 
 def resolve_voxel_context_stage(
@@ -1247,6 +1452,176 @@ def normalize_anatomy_stack_stage(
         "log_lines": log_lines,
         "artifacts": artifacts,
         "anat_stack_path": final_anat_stack_path,
+    }
+
+
+def preprocess_anatomy_uint8_stage(
+    *,
+    anat_stack_path: Path | str | None,
+    preproc_dir: Path | str | None,
+    anat_stack_path_orig: Path | str | None = None,
+    output_path: Path | str | None = None,
+    polarity: str | None = None,
+    polarity_source: str | None = None,
+    config: AnatomyUint8PreprocessingConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or AnatomyUint8PreprocessingConfig()
+    if anat_stack_path is None:
+        raise ValueError("ANAT_STACK_PATH is required for anatomy uint8 preprocessing")
+    if preproc_dir is None and output_path is None:
+        raise ValueError("PREPROC_DIR or output_path is required for anatomy uint8 preprocessing")
+
+    current_anat_path = Path(anat_stack_path)
+    original_anat_path = Path(anat_stack_path_orig) if anat_stack_path_orig is not None else current_anat_path
+    source_path = original_anat_path if bool(cfg.use_source_path_orig) and original_anat_path.exists() else current_anat_path
+    if not source_path.exists():
+        raise FileNotFoundError(f"Anatomy source not found: {source_path}")
+
+    if output_path is None:
+        out_dir = Path(preproc_dir) / "2p_anatomy"
+        out_path = out_dir / f"{source_path.stem}_uint8.tif"
+    else:
+        out_path = Path(output_path)
+        out_dir = out_path.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    force_recompute = bool(cfg.force_recompute_anat_uint8)
+    apply_orientation = bool(cfg.apply_func_orientation)
+    target_xy_shape = _normalize_target_xy_shape(cfg.target_xy_shape)
+    orient_mode = func_orientation_mode(polarity) if apply_orientation else "none"
+    polarity_norm = normalize_polarity_value(polarity)
+    meta_path = _anatomy_uint8_cache_metadata_path(out_path)
+    log_lines: list[str] = []
+    use_cached = bool(out_path.exists() and not force_recompute)
+    if use_cached:
+        with tifffile.TiffFile(out_path) as tf:
+            shape = tuple(int(v) for v in tf.series[0].shape)
+            dtype_name = str(tf.series[0].dtype)
+        if dtype_name != "uint8":
+            log_lines.append(f"[INFO] Existing anatomy preprocessing output is {dtype_name}; rebuilding uint8 TIFF.")
+            use_cached = False
+        elif target_xy_shape is not None and tuple(shape[-2:]) != tuple(target_xy_shape):
+            log_lines.append(
+                "[INFO] Existing anatomy preprocessing output has "
+                f"Y/X={tuple(shape[-2:])}; rebuilding for Y/X={tuple(target_xy_shape)}."
+            )
+            use_cached = False
+        else:
+            cache_meta = _read_json_dict(meta_path)
+            cache_target = cache_meta.get("target_xy_shape")
+            cache_target_tuple = tuple(int(v) for v in cache_target) if isinstance(cache_target, list | tuple) and len(cache_target) == 2 else None
+            cache_ok = (
+                int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
+                and bool(cache_meta.get("apply_func_orientation", False)) == apply_orientation
+                and str(cache_meta.get("orientation_mode", "")) == str(orient_mode)
+                and normalize_polarity_value(cache_meta.get("polarity")) == polarity_norm
+                and cache_target_tuple == target_xy_shape
+            )
+            if not cache_ok:
+                log_lines.append("[INFO] Existing anatomy preprocessing output lacks current orientation/resize metadata; rebuilding.")
+                use_cached = False
+    if use_cached:
+        log_lines.append(f"[INFO] Using existing 8-bit anatomy preprocessing output: {out_path}")
+        stats: dict[str, Any] = {
+            "output_shape": shape,
+            "output_dtype": dtype_name,
+            "used_cached_uint8": True,
+            "orientation_mode": orient_mode,
+            "polarity": polarity_norm,
+            "polarity_source": polarity_source,
+            "target_xy_shape": target_xy_shape,
+        }
+    else:
+        vol, reader, reordered_to_zxy = _load_anatomy_volume_for_uint8(source_path)
+        anatomy_shape = tuple(int(v) for v in vol.shape)
+        log_lines.append(f"[INFO] Anatomy uint8 source: {source_path}")
+        log_lines.append(f"[INFO] Anatomy source shape={anatomy_shape} dtype={vol.dtype}")
+        if reordered_to_zxy:
+            log_lines.append(f"[INFO] Reordered anatomy to (Z, X, Y): {anatomy_shape}")
+        anat_u8, range_stats = _signed_stack_to_uint8(vol)
+        source_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
+        if apply_orientation:
+            anat_u8 = np.asarray(apply_func_orientation(anat_u8, polarity=polarity_norm, flip_x=True), dtype=np.uint8)
+            log_lines.append(
+                f"[INFO] Applied anatomy orientation mode={orient_mode} "
+                f"polarity={polarity_norm} source={polarity_source}"
+            )
+        anat_u8, resized_xy = _resize_uint8_xy(anat_u8, target_xy_shape)
+        output_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
+        if resized_xy and source_xy_shape is not None and output_xy_shape is not None:
+            log_lines.append(f"[INFO] Resized anatomy Y/X from {source_xy_shape} to {output_xy_shape}")
+        resolution = None
+        resolutionunit = None
+        if source_xy_shape is not None and output_xy_shape is not None:
+            resolution, resolutionunit = _scaled_tiff_resolution(source_path, source_xy_shape, output_xy_shape)
+        imwrite_kwargs: dict[str, Any] = {
+            "compression": "deflate",
+            "metadata": {"axes": "ZYX"} if anat_u8.ndim == 3 else None,
+        }
+        if resolution is not None and resolutionunit is not None:
+            imwrite_kwargs["resolution"] = resolution
+            imwrite_kwargs["resolutionunit"] = resolutionunit
+        tifffile.imwrite(
+            out_path,
+            anat_u8,
+            **imwrite_kwargs,
+        )
+        write_meta = {
+            "cache_version": int(cfg.cache_version),
+            "source_path": str(source_path),
+            "output_path": str(out_path),
+            "apply_func_orientation": apply_orientation,
+            "orientation_mode": orient_mode,
+            "polarity": polarity_norm,
+            "polarity_source": polarity_source,
+            "target_xy_shape": list(target_xy_shape) if target_xy_shape is not None else None,
+            "source_xy_shape": list(source_xy_shape) if source_xy_shape is not None else None,
+            "output_shape": [int(v) for v in anat_u8.shape],
+            "resolution": list(resolution) if resolution is not None else None,
+            "resolutionunit": resolutionunit,
+        }
+        try:
+            meta_path.write_text(json.dumps(write_meta, indent=2, sort_keys=True))
+        except Exception as exc:
+            log_lines.append(f"[WARN] Could not write anatomy preprocessing metadata {meta_path}: {exc}")
+        log_lines.append(
+            "[INFO] Signed anatomy range "
+            f"[{range_stats['raw_min']}, {range_stats['raw_max']}] "
+            f"offset={range_stats['negative_offset']} -> uint8 "
+            f"[{range_stats['output_min']}, {range_stats['output_max']}]"
+        )
+        log_lines.append(f"[INFO] Saved 8-bit anatomy preprocessing output: {out_path}")
+        stats = {
+            **range_stats,
+            "output_shape": tuple(int(v) for v in anat_u8.shape),
+            "output_dtype": str(anat_u8.dtype),
+            "source_reader": reader,
+            "reordered_to_zxy": reordered_to_zxy,
+            "used_cached_uint8": False,
+            "apply_func_orientation": apply_orientation,
+            "orientation_mode": orient_mode,
+            "polarity": polarity_norm,
+            "polarity_source": polarity_source,
+            "target_xy_shape": target_xy_shape,
+            "resized_xy": resized_xy,
+            "metadata_path": meta_path,
+        }
+
+    return {
+        "bindings": {
+            "FORCE_RECOMPUTE_ANAT_UINT8": force_recompute,
+            "ANAT_STACK_PATH_ORIG": original_anat_path,
+            "ANAT_STACK_PATH_16BIT": current_anat_path,
+            "ANAT_8BIT_STACK_PATH": out_path,
+            "ANAT_STACK_PATH": out_path,
+        },
+        "log_lines": log_lines,
+        "artifacts": {
+            "anat_uint8_source_path": source_path,
+            "anat_uint8_path": out_path,
+            **stats,
+        },
+        "anat_stack_path": out_path,
     }
 
 
@@ -1779,6 +2154,7 @@ def build_fish_state_audit_df(
 
 __all__ = [
     "AnatomyNormalizationStageConfig",
+    "AnatomyUint8PreprocessingConfig",
     "ContextStageConfig",
     "DEFAULT_RUN_CONFIG",
     "FinalFishAuditConfig",
@@ -1812,6 +2188,7 @@ __all__ = [
     "notebook_bindings_from_context",
     "owner_root",
     "prepare_notebook_paths",
+    "preprocess_anatomy_uint8_stage",
     "read_matching_metadata_polarity",
     "require_fish_state",
     "reset_fish_state",

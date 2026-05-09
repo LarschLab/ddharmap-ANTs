@@ -13,6 +13,7 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.context`
 
 - `AnatomyNormalizationStageConfig`: Typed anatomy-conversion knob container for notebook cell `[14]`.
+- `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including orientation, cache-version, and target Y/X shape controls.
 - `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
@@ -31,6 +32,7 @@ Generated manually for the current extracted package surface.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals and summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
+- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
 - `orient_functional_stacks_stage`: Notebook-facing functional stack orientation/cache stage for `[10]`.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
@@ -98,8 +100,10 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.stimulus`
 
 - `StimulusConfig`: Typed stimulus parsing configuration.
-- `find_experiment_log`: Discover the fish experiment log CSV.
-- `find_metadata_csv`: Discover the fish metadata CSV.
+- `normalize_session_label`: Normalize imaging-session identifiers such as `2`/`r2` for stimulus metadata lookup.
+- `discover_functional_sessions`: Read preprocessing metadata to map output functional planes to imaging sessions.
+- `find_experiment_log`: Discover the fish experiment log CSV, optionally constrained to an imaging session.
+- `find_metadata_csv`: Discover the fish metadata CSV, optionally constrained to an imaging session.
 - `load_events_df`: Normalize event/time columns from the experiment log.
 - `load_metadata_params`: Read metadata key-value pairs.
 - `parse_float`: Robust numeric parser for mixed metadata values.
@@ -112,6 +116,7 @@ Generated manually for the current extracted package surface.
 - `parse_unilateral_stim`: Parse unilateral stimulus code to side/mode.
 - `build_stim_tables`: Build block and trial tables from event logs.
 - `resolve_stimulus_context`: End-to-end notebook-facing stimulus loader for `[55]`.
+- `resolve_plane_stimulus_contexts`: Resolve per-plane stimulus contexts so multi-session fish use the session-specific experiment/meta CSVs.
 
 ## `codeants_2pf_hcr.activity`
 

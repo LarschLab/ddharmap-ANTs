@@ -318,6 +318,10 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("def _vox_complete(", cell)
         self.assertNotIn("def _path_from_data_root(", cell)
 
+    def test_anatomy_preprocessing_runs_before_voxel_resolution(self) -> None:
+        self.assertLess(_code_cell_index_by_tag("14"), _code_cell_index_by_tag("8"))
+        self.assertLess(_code_cell_index_by_tag("14a"), _code_cell_index_by_tag("8"))
+
     def test_metadata_cell_records_raw_functional_source_path(self) -> None:
         cell = _code_cell_by_tag("40")
         self.assertIn("run_single_fish_cell_40_stage", cell)

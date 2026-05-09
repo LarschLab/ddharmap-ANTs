@@ -5,11 +5,13 @@ import tifffile
 
 from codeants_2pf_hcr import (
     AnatomyNormalizationStageConfig,
+    AnatomyUint8PreprocessingConfig,
     FunctionalPlacementConfig,
     FunctionalReferenceConfig,
     RegistrationSearchConfig,
     build_functional_references_stage,
     normalize_anatomy_stack_stage,
+    preprocess_anatomy_uint8_stage,
     run_ncc_placement_stage,
     run_registration_search_stage,
 )
@@ -29,6 +31,124 @@ def test_normalize_anatomy_stack_stage_keeps_tiff_path_when_no_conversion_needed
     assert result["bindings"]["ANAT_STACK_PATH"] == anat_path
     assert result["bindings"]["ANAT_STACK_PATH_ORIG"] == anat_path
     assert "[INFO] Anatomy already TIFF; no conversion" in result["log_lines"]
+
+
+def test_preprocess_anatomy_uint8_stage_offsets_signed_stack_and_rebinds_path(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[-10, 0], [10, 30]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        anat_stack_path_orig=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=None,
+        ),
+    )
+
+    out_path = result["bindings"]["ANAT_8BIT_STACK_PATH"]
+    out = tifffile.imread(out_path)
+    assert out.dtype == np.uint8
+    assert out.tolist() == [[[0, 64], [128, 255]]]
+    assert out_path == preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP_uint8.tif"
+    assert result["bindings"]["ANAT_STACK_PATH"] == out_path
+    assert result["bindings"]["ANAT_STACK_PATH_ORIG"] == raw_path
+    assert result["bindings"]["ANAT_STACK_PATH_16BIT"] == raw_path
+    assert result["artifacts"]["negative_offset"] == 10
+
+
+def test_preprocess_anatomy_uint8_stage_handles_constant_signed_stack(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    tifffile.imwrite(raw_path, np.full((2, 2), -4, dtype=np.int16))
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=None,
+        ),
+    )
+
+    out = tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"])
+    assert out.dtype == np.uint8
+    assert int(out.min()) == 0
+    assert int(out.max()) == 0
+    assert result["artifacts"]["negative_offset"] == 4
+
+
+def test_preprocess_anatomy_uint8_stage_applies_functional_orientation(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[1, 2], [3, 4]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        preproc_dir=preproc_dir,
+        polarity="north",
+        polarity_source="test",
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            target_xy_shape=None,
+        ),
+    )
+
+    out = tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"])
+    assert out.tolist() == [[[170, 255], [0, 85]]]
+    assert result["artifacts"]["orientation_mode"] == "rot180+flipX"
+    assert result["artifacts"]["polarity"] == "north"
+
+
+def test_preprocess_anatomy_uint8_stage_defaults_to_750_xy(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[1, 2], [3, 4]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(force_recompute_anat_uint8=True),
+    )
+
+    out = tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"])
+    assert out.dtype == np.uint8
+    assert out.shape == (1, 750, 750)
+    assert result["artifacts"]["target_xy_shape"] == (750, 750)
+
+
+def test_preprocess_anatomy_uint8_stage_rebuilds_unversioned_cache(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[1, 2], [3, 4]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+    cached_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP_uint8.tif"
+    tifffile.imwrite(cached_path, np.zeros((1, 2, 2), dtype=np.uint8))
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            apply_func_orientation=False,
+            target_xy_shape=None,
+        ),
+    )
+
+    out = tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"])
+    assert out.tolist() == [[[0, 85], [170, 255]]]
+    assert result["artifacts"]["used_cached_uint8"] is False
 
 
 def test_functional_reference_registration_and_placement_stage_chain(tmp_path: Path) -> None:

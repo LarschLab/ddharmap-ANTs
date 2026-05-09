@@ -1,6 +1,7 @@
 from codeants_2pf_hcr import (
     ActivityConfig,
     AnatomyNormalizationStageConfig,
+    AnatomyUint8PreprocessingConfig,
     ContextStageConfig,
     CohortBuildConfig,
     FinalFishAuditConfig,
@@ -74,6 +75,7 @@ from codeants_2pf_hcr import (
     ncc_xy,
     norm01,
     normalize_anatomy_stack_stage,
+    preprocess_anatomy_uint8_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
     annotate_midline_side,
@@ -163,6 +165,7 @@ from codeants_2pf_hcr import (
 def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ActivityConfig)
     assert callable(AnatomyNormalizationStageConfig)
+    assert callable(AnatomyUint8PreprocessingConfig)
     assert callable(ContextStageConfig)
     assert callable(CohortBuildConfig)
     assert callable(FinalFishAuditConfig)
@@ -238,6 +241,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ncc_xy)
     assert callable(nearest_neighbor_match)
     assert callable(normalize_anatomy_stack_stage)
+    assert callable(preprocess_anatomy_uint8_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
     assert callable(MotionAucPlotConfig)

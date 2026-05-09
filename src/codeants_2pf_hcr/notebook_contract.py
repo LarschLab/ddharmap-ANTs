@@ -39,6 +39,13 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
             "calls": {"AnatomyNormalizationStageConfig", "normalize_anatomy_stack_stage"},
             "forbid_top_level_defs": True,
         },
+        "14a": {
+            "imports": {
+                "codeants_2pf_hcr": {"AnatomyUint8PreprocessingConfig", "preprocess_anatomy_uint8_stage"},
+            },
+            "calls": {"AnatomyUint8PreprocessingConfig", "preprocess_anatomy_uint8_stage"},
+            "forbid_top_level_defs": True,
+        },
         "20": {
             "imports": {
                 "codeants_2pf_hcr": {"InPlaneRegistrationComparisonConfig", "run_in_plane_registration_comparison_stage"},

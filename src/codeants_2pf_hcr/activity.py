@@ -14,15 +14,10 @@ from .stimulus import (
     build_null_window_start_map,
     build_prestim_baseline_windows,
     build_prestim_trial_windows,
-    build_stim_tables,
     classify_stim_type,
     compute_zscore_stats,
     effective_motion_window,
-    find_experiment_log,
-    find_metadata_csv,
-    load_events_df,
-    load_metadata_params,
-    parse_float,
+    resolve_plane_stimulus_contexts,
 )
 from .suite2p import infer_frame_rate_from_detail, load_suite2p_dff_map
 from .single_fish_notebook_stages import run_single_fish_cell_50ia_stage
@@ -154,41 +149,72 @@ def _compute_bootstrap_null_quantiles(
     return out
 
 
-def _resolve_stim_context_for_activity(
-    detail_df: pd.DataFrame,
+def _build_activity_stimulus_context(
+    ctx: dict[str, Any],
     *,
-    fish_dir: str | Path,
-    fish_id: str,
-    config: ActivityConfig,
-    experiment_log_csv: str | Path | None = None,
-    experiment_meta_csv: str | Path | None = None,
-    frame_rate: float | None = None,
-    suite2p_root: str | Path | None = None,
-) -> tuple[float, pd.DataFrame, pd.DataFrame, str]:
-    meta_path = Path(experiment_meta_csv) if experiment_meta_csv else find_metadata_csv(fish_dir, fish_id)
-    fps = frame_rate
-    if fps is None and meta_path is not None and meta_path.exists():
-        params = load_metadata_params(meta_path)
-        fps = parse_float(params.get("framerate", params.get("frame_rate", params.get("fps"))))
-    if fps is None or float(fps) <= 0:
-        fps = infer_frame_rate_from_detail(detail_df, suite2p_root=suite2p_root)
-    if fps is None or float(fps) <= 0:
-        raise RuntimeError("could not determine frame rate for response/BPI computation")
+    fps: float,
+    cfg: ActivityConfig,
+) -> dict[str, Any]:
+    df_evt = ctx["df_evt"]
+    df_stim = ctx["df_stim"]
+    baseline_windows = build_prestim_baseline_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
+    prestim_trial_windows = build_prestim_trial_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
 
-    log_path = Path(experiment_log_csv) if experiment_log_csv else find_experiment_log(fish_dir, fish_id)
-    if log_path is None or not log_path.exists():
-        raise RuntimeError("experiment log not found for response/BPI computation")
-    df_evt = load_events_df(log_path)
-    df_evt["time"] = df_evt["time"].astype(float) * float(config.stim_time_scale)
-    df_evt, df_stim = build_stim_tables(
-        df_evt,
-        fps=float(fps),
-        onset_delay_sec=float(config.stim_onset_delay_sec),
-        remove_interblock_gaps=bool(config.remove_interblock_gaps),
-        measure_start_block=config.measure_start_block,
-        measure_start_event=config.measure_start_event,
+    df_stim_work = df_stim.copy()
+    df_stim_work["stim_class"] = df_stim_work["type"].map(classify_stim_type)
+    df_stim_work = df_stim_work[df_stim_work["stim_class"].isin(["bout", "continuous"])].copy()
+    if df_stim_work.empty:
+        raise RuntimeError("No pure bout/continuous stimuli available for response/BPI computation")
+
+    stim_events: list[dict[str, Any]] = []
+    for _, row in df_stim_work.iterrows():
+        t0, t1, duration = effective_motion_window(
+            row.get("start", np.nan),
+            row.get("duration", np.nan),
+            row.get("end", np.nan),
+            float(cfg.stim_onset_delay_sec),
+        )
+        if not np.isfinite(t0) or not np.isfinite(t1) or not np.isfinite(duration):
+            continue
+        idx0 = int(round(t0 * float(fps)))
+        idx1 = int(round(t1 * float(fps)))
+        if idx1 <= idx0:
+            continue
+        stim_events.append(
+            {
+                "block": row.get("block", pd.NA),
+                "stim_idx": int(row.get("stim_idx", -1)) if pd.notna(row.get("stim_idx", np.nan)) else -1,
+                "stim_type": str(row.get("type", "")),
+                "stim_class": str(row.get("stim_class", "")),
+                "idx0": idx0,
+                "idx1": idx1,
+                "duration_s": float(duration),
+                "duration_frames": int(idx1 - idx0),
+                "session_label": ctx.get("session_label", pd.NA),
+            }
+        )
+    if not stim_events:
+        raise RuntimeError("Stimulus events could not be constructed for response/BPI computation")
+
+    step_frames = max(1, int(round(float(cfg.response_null_step_sec) * float(fps))))
+    null_starts_by_duration = build_null_window_start_map(
+        prestim_trial_windows,
+        [event["duration_frames"] for event in stim_events],
+        step_frames=step_frames,
+        min_windows=int(cfg.response_null_min_windows),
     )
-    return float(fps), df_evt, df_stim, str(log_path)
+    return {
+        "fps": float(fps),
+        "df_evt": df_evt,
+        "df_stim": df_stim,
+        "stim_events": stim_events,
+        "stim_source": str(ctx.get("log_path")),
+        "meta_path": ctx.get("meta_path"),
+        "session_label": ctx.get("session_label"),
+        "baseline_windows": baseline_windows,
+        "prestim_trial_windows": prestim_trial_windows,
+        "null_starts_by_duration": null_starts_by_duration,
+    }
 
 
 def build_response_bpi_tables(
@@ -243,67 +269,50 @@ def build_response_bpi_tables(
     detail["plane_idx"] = pd.to_numeric(detail["plane_idx"], errors="coerce").astype("Int64")
     detail["func_label"] = pd.to_numeric(detail["func_label"], errors="coerce").astype("Int64")
 
-    fps, df_evt, df_stim, stim_source = _resolve_stim_context_for_activity(
-        detail,
-        fish_dir=fish_dir,
-        fish_id=fish_id,
-        config=cfg,
-        experiment_log_csv=experiment_log_csv,
-        experiment_meta_csv=experiment_meta_csv,
-        frame_rate=frame_rate,
-        suite2p_root=suite2p_root,
-    )
-    baseline_windows = build_prestim_baseline_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
-    prestim_trial_windows = build_prestim_trial_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
-
-    df_stim_work = df_stim.copy()
-    df_stim_work["stim_class"] = df_stim_work["type"].map(classify_stim_type)
-    df_stim_work = df_stim_work[df_stim_work["stim_class"].isin(["bout", "continuous"])].copy()
-    if df_stim_work.empty:
-        raise RuntimeError("No pure bout/continuous stimuli available for response/BPI computation")
-
-    stim_events: list[dict[str, Any]] = []
-    for _, row in df_stim_work.iterrows():
-        t0, t1, duration = effective_motion_window(
-            row.get("start", np.nan),
-            row.get("duration", np.nan),
-            row.get("end", np.nan),
-            float(cfg.stim_onset_delay_sec),
-        )
-        if not np.isfinite(t0) or not np.isfinite(t1) or not np.isfinite(duration):
-            continue
-        idx0 = int(round(t0 * float(fps)))
-        idx1 = int(round(t1 * float(fps)))
-        if idx1 <= idx0:
-            continue
-        stim_events.append(
-            {
-                "block": row.get("block", pd.NA),
-                "stim_idx": int(row.get("stim_idx", -1)) if pd.notna(row.get("stim_idx", np.nan)) else -1,
-                "stim_type": str(row.get("type", "")),
-                "stim_class": str(row.get("stim_class", "")),
-                "idx0": idx0,
-                "idx1": idx1,
-                "duration_s": float(duration),
-                "duration_frames": int(idx1 - idx0),
-            }
-        )
-    if not stim_events:
-        raise RuntimeError("Stimulus events could not be constructed for response/BPI computation")
-
-    step_frames = max(1, int(round(float(cfg.response_null_step_sec) * float(fps))))
-    null_starts_by_duration = build_null_window_start_map(
-        prestim_trial_windows,
-        [event["duration_frames"] for event in stim_events],
-        step_frames=step_frames,
-        min_windows=int(cfg.response_null_min_windows),
-    )
     s2p_map = load_suite2p_dff_map(
         detail,
         suite2p_root=suite2p_root,
         dfof_baseline_pct=float(cfg.dfof_baseline_pct),
         dfof_eps=float(cfg.dfof_eps),
     )
+    plane_indices = sorted(set(detail["plane_idx"].dropna().astype(int).tolist()))
+    stim_cfg = StimulusConfig(
+        stim_time_scale=float(cfg.stim_time_scale),
+        measure_start_block=cfg.measure_start_block,
+        measure_start_event=cfg.measure_start_event,
+        remove_interblock_gaps=bool(cfg.remove_interblock_gaps),
+        onset_delay_sec=float(cfg.stim_onset_delay_sec),
+    )
+    raw_plane_stim_contexts = resolve_plane_stimulus_contexts(
+        fish_dir=fish_dir,
+        fish_id=fish_id,
+        plane_indices=plane_indices,
+        experiment_log_csv=experiment_log_csv,
+        experiment_meta_csv=experiment_meta_csv,
+        frame_rate=frame_rate,
+        config=stim_cfg,
+    )
+    inferred_fps = frame_rate
+    if inferred_fps is None:
+        inferred_fps = infer_frame_rate_from_detail(detail, suite2p_root=suite2p_root)
+
+    prepared_contexts: dict[int, dict[str, Any]] = {}
+    prepared_by_key: dict[tuple[Any, str], dict[str, Any]] = {}
+    for plane_idx in plane_indices:
+        ctx = raw_plane_stim_contexts.get(int(plane_idx))
+        if ctx is None:
+            continue
+        fps_value = ctx.get("frame_rate")
+        if fps_value is None or float(fps_value) <= 0:
+            fps_value = inferred_fps
+        if fps_value is None or float(fps_value) <= 0:
+            raise RuntimeError("could not determine frame rate for response/BPI computation")
+        key = (ctx.get("session_label"), str(ctx.get("log_path")))
+        if key not in prepared_by_key:
+            prepared_by_key[key] = _build_activity_stimulus_context(ctx, fps=float(fps_value), cfg=cfg)
+        prepared_contexts[int(plane_idx)] = prepared_by_key[key]
+    if not prepared_contexts:
+        raise RuntimeError("could not resolve stimulus metadata for response/BPI computation")
 
     zstats_by_plane: dict[int, dict[str, np.ndarray]] = {}
     null_q_by_plane: dict[int, dict[str, np.ndarray]] = {}
@@ -311,21 +320,46 @@ def build_response_bpi_tables(
         dff = plane_data.get("dff")
         if dff is None:
             continue
+        stim_context = prepared_contexts.get(int(plane_idx))
+        if stim_context is None:
+            continue
         zstats_by_plane[int(plane_idx)] = compute_zscore_stats(
             dff,
-            baseline_windows,
+            stim_context["baseline_windows"],
             min_points=int(cfg.zscore_min_points),
             sigma_eps=float(cfg.zscore_sigma_eps),
         )
         null_q_by_plane[int(plane_idx)] = _compute_bootstrap_null_quantiles(
             dff,
-            stim_events,
-            null_starts_by_duration,
-            fps=float(fps),
+            stim_context["stim_events"],
+            stim_context["null_starts_by_duration"],
+            fps=float(stim_context["fps"]),
             n_boot=int(cfg.response_null_bootstrap_n),
             q=float(cfg.response_null_q),
             seed=int(cfg.response_rng_seed) + int(plane_idx) * 100,
         )
+
+    unique_contexts = list(prepared_by_key.values())
+    fps_values = [float(ctx["fps"]) for ctx in unique_contexts]
+    fps = fps_values[0] if fps_values and all(abs(val - fps_values[0]) <= 1e-6 for val in fps_values) else float("nan")
+    df_evt = pd.concat(
+        [
+            ctx["df_evt"].assign(session_label=ctx.get("session_label"), stim_source=ctx.get("stim_source"))
+            for ctx in unique_contexts
+        ],
+        ignore_index=True,
+    )
+    df_stim = pd.concat(
+        [
+            ctx["df_stim"].assign(session_label=ctx.get("session_label"), stim_source=ctx.get("stim_source"))
+            for ctx in unique_contexts
+        ],
+        ignore_index=True,
+    )
+    stim_events = [event for ctx in unique_contexts for event in ctx["stim_events"]]
+    stim_source = ";".join(dict.fromkeys(str(ctx.get("stim_source")) for ctx in unique_contexts))
+    baseline_windows = unique_contexts[0]["baseline_windows"] if len(unique_contexts) == 1 else []
+    prestim_trial_windows = unique_contexts[0]["prestim_trial_windows"] if len(unique_contexts) == 1 else []
 
     roi_rows = detail.drop_duplicates(subset=["plane_idx", "func_label"], keep="first").copy()
     roi_rows = roi_rows[roi_rows[["plane_idx", "func_label"]].notna().all(axis=1)].copy()
@@ -398,6 +432,11 @@ def build_response_bpi_tables(
             base_row["bpi_status"] = "low_quality_trace"
             cell_rows.append(base_row)
             continue
+        stim_context = prepared_contexts.get(plane_idx)
+        if stim_context is None:
+            base_row["bpi_status"] = "missing_stimulus_context"
+            cell_rows.append(base_row)
+            continue
 
         trace = np.asarray(dff[roi_idx], dtype=np.float32)
         zstats = zstats_by_plane.get(plane_idx)
@@ -411,7 +450,8 @@ def build_response_bpi_tables(
         cont_auc: list[float] = []
         bout_z: list[float] = []
         cont_z: list[float] = []
-        for event in stim_events:
+        plane_fps = float(stim_context["fps"])
+        for event in stim_context["stim_events"]:
             seg, _, _ = _extract_window(
                 trace,
                 int(event["idx0"]),
@@ -422,7 +462,7 @@ def build_response_bpi_tables(
             if seg is None:
                 continue
             resp_mean = float(np.nanmean(seg))
-            resp_auc = float(np.nansum(seg) / float(fps))
+            resp_auc = float(np.nansum(seg) / plane_fps)
             if not np.isfinite(resp_mean) or not np.isfinite(resp_auc):
                 continue
             if event["stim_class"] == "bout":

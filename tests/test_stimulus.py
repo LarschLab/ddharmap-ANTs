@@ -1,4 +1,7 @@
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
@@ -11,8 +14,12 @@ from codeants_2pf_hcr.stimulus import (
     classify_stim_type,
     combine_segments,
     compute_zscore_stats,
+    discover_functional_sessions,
     effective_motion_window,
+    find_experiment_log,
+    find_metadata_csv,
     parse_unilateral_stim,
+    resolve_plane_stimulus_contexts,
 )
 
 
@@ -73,6 +80,48 @@ class StimulusTests(unittest.TestCase):
         self.assertTrue(np.allclose(mean, np.asarray([2.0, 3.0], dtype=np.float32), equal_nan=True))
         self.assertTrue(np.isfinite(sem[0]))
         self.assertTrue(np.isnan(sem[1]))
+
+    def test_resolve_plane_stimulus_contexts_uses_preprocessing_session_planes(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f02"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            preproc_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes"
+            meta_dir.mkdir(parents=True)
+            preproc_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,2.0\n")
+            (meta_dir / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\nB1_start,0\nB1_stim1_LLB,1\nB1_poststim1_pause,3\nB1_end,4\n"
+            )
+            (meta_dir / f"2026_f{fish_id}_r2_metadata.csv").write_text("parameter,value\nframerate,4.0\n")
+            (meta_dir / f"2026_f{fish_id}_r2_experiment_log.csv").write_text(
+                "event,timestamp\nB1_start,0\nB1_stim1_RLC,2\nB1_poststim1_pause,5\nB1_end,6\n"
+            )
+            (preproc_dir / f"{fish_id}_preprocessing_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "sessions": [
+                            {"session_label": "r1", "output_planes": [0, 1, 2, 3, 4]},
+                            {"session_label": "r2", "output_planes": [5, 6, 7, 8, 9]},
+                        ]
+                    }
+                )
+            )
+
+            sessions = discover_functional_sessions(fish_dir, fish_id)
+            self.assertEqual(sessions[0]["output_planes"], [0, 1, 2, 3, 4])
+            self.assertEqual(find_experiment_log(fish_dir, fish_id, session_label="r2").name, f"2026_f{fish_id}_r2_experiment_log.csv")
+            self.assertEqual(find_metadata_csv(fish_dir, fish_id, session_label="r1").name, f"2026_f{fish_id}_metadata.csv")
+
+            contexts = resolve_plane_stimulus_contexts(fish_dir=fish_dir, fish_id=fish_id, plane_indices=[0, 5])
+
+            self.assertEqual(contexts[0]["session_label"], "r1")
+            self.assertEqual(contexts[5]["session_label"], "r2")
+            self.assertEqual(contexts[0]["frame_rate"], 2.0)
+            self.assertEqual(contexts[5]["frame_rate"], 4.0)
+            self.assertEqual(contexts[0]["df_stim"].loc[0, "type"], "LLB")
+            self.assertEqual(contexts[5]["df_stim"].loc[0, "type"], "RLC")
 
 
 if __name__ == "__main__":

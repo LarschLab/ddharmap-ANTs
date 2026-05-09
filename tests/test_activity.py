@@ -1,15 +1,107 @@
-from __future__ import annotations
-
+import json
+import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import numpy as np
 import pandas as pd
 
 from codeants_2pf_hcr.activity import (
+    ActivityConfig,
     SingleFishBpiDiagnosticsConfig,
+    build_response_bpi_tables,
     prepare_single_fish_bpi_diagnostics_stage,
 )
 
+
+class ActivityTests(unittest.TestCase):
+    def test_build_response_bpi_tables_uses_plane_session_stimulus_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f02"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            preproc_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes"
+            suite2p_root = fish_dir / "03_analysis" / "functional" / "suite2P"
+            meta_dir.mkdir(parents=True)
+            preproc_dir.mkdir(parents=True)
+            for plane_idx in (0, 5):
+                (suite2p_root / f"plane{plane_idx}").mkdir(parents=True)
+
+            (meta_dir / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (meta_dir / f"2026_f{fish_id}_r2_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (meta_dir / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B1_start,0\n"
+                "B1_prestim1_pause,0\n"
+                "B1_stim1_LLB,2\n"
+                "B1_poststim1_pause,4\n"
+                "B1_prestim2_pause,5\n"
+                "B1_stim2_RLC,7\n"
+                "B1_poststim2_pause,9\n"
+                "B1_end,10\n"
+            )
+            (meta_dir / f"2026_f{fish_id}_r2_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B1_start,0\n"
+                "B1_prestim1_pause,0\n"
+                "B1_stim1_LLB,4\n"
+                "B1_poststim1_pause,6\n"
+                "B1_prestim2_pause,6\n"
+                "B1_stim2_RLC,8\n"
+                "B1_poststim2_pause,10\n"
+                "B1_end,11\n"
+            )
+            (preproc_dir / f"{fish_id}_preprocessing_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "sessions": [
+                            {"session_label": "r1", "output_planes": [0, 1, 2, 3, 4]},
+                            {"session_label": "r2", "output_planes": [5, 6, 7, 8, 9]},
+                        ]
+                    }
+                )
+            )
+
+            plane0 = np.ones((1, 12), dtype=np.float32)
+            plane0[0, 2:4] = 2.0
+            plane0[0, 7:9] = 3.0
+            plane5 = np.ones((1, 12), dtype=np.float32)
+            plane5[0, 4:6] = 30.0
+            plane5[0, 8:10] = 40.0
+            np.save(suite2p_root / "plane0" / "F.npy", plane0)
+            np.save(suite2p_root / "plane5" / "F.npy", plane5)
+
+            detail = pd.DataFrame(
+                {
+                    "plane_idx": [0, 5],
+                    "func_label": [1, 1],
+                    "activity_class": ["Active neurons", "Active neurons"],
+                    "is_active": [True, True],
+                }
+            )
+
+            result = build_response_bpi_tables(
+                detail,
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_root=suite2p_root,
+                config=ActivityConfig(
+                    min_trials_per_class=1,
+                    stim_onset_delay_sec=0.0,
+                    response_null_min_windows=1,
+                    response_null_bootstrap_n=5,
+                    dfof_baseline_pct=0.0,
+                    zscore_min_points=1,
+                ),
+            )
+
+            scored = result["scored_bpi_df"].sort_values("plane_idx").reset_index(drop=True)
+            self.assertEqual(scored.loc[0, "n_bout_trials"], 1)
+            self.assertEqual(scored.loc[1, "n_bout_trials"], 1)
+            self.assertGreater(scored.loc[1, "mean_bout_dff"], 20.0)
+            self.assertIn("r1", set(result["df_stim"]["session_label"]))
+            self.assertIn("r2", set(result["df_stim"]["session_label"]))
 
 def test_prepare_single_fish_bpi_diagnostics_stage_backfills_response_columns() -> None:
     with TemporaryDirectory() as tmpdir:
@@ -54,3 +146,7 @@ def test_prepare_single_fish_bpi_diagnostics_stage_backfills_response_columns() 
         assert result["summary_counts"]["n_near_zero"] == 1
         assert "bpi_activity_df" in result["bindings"]
         assert "BPI_ACTIVITY_FISH_ID" in result["bindings"]
+
+
+if __name__ == "__main__":
+    unittest.main()

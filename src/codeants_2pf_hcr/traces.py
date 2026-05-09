@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .stimulus import (
+    StimulusConfig,
     build_stim_tables,
     effective_motion_window,
     find_experiment_log,
@@ -20,6 +21,7 @@ from .stimulus import (
     load_metadata_params,
     parse_float,
     parse_unilateral_stim,
+    resolve_plane_stimulus_contexts,
 )
 from .suite2p import infer_frame_rate_from_detail
 from .single_fish_notebook_stages import run_single_fish_cell_51_stage
@@ -725,24 +727,6 @@ def build_single_fish_motion_auc_plot_tables(
     if detail_auc_df.empty:
         raise RuntimeError("[56i] No high-quality Suite2p traces available for AUC plotting after applying the suite2p_is_cell gate.")
 
-    fps, _, df_stim_local, meta_path, log_path = _build_stim_tables_for_auc(
-        detail_side_df,
-        fish_dir=fish_dir,
-        fish_id=fish_id,
-        config=cfg,
-        experiment_log_csv=experiment_log_csv,
-        experiment_meta_csv=experiment_meta_csv,
-        suite2p_root=suite2p_root,
-    )
-    stim_trials = df_stim_local[
-        df_stim_local["stim_side"].notna()
-        & df_stim_local["stim_mode"].isin({"bout", "continuous"})
-        & np.isfinite(df_stim_local["motion_start"])
-        & np.isfinite(df_stim_local["motion_end"])
-    ].copy()
-    if stim_trials.empty:
-        raise RuntimeError("[56i] No unilateral stimulus windows available for AUC plotting.")
-
     s2p_map = _load_suite2p_dff_map_for_auc(
         detail_auc_df,
         suite2p_root=suite2p_root,
@@ -752,13 +736,83 @@ def build_single_fish_motion_auc_plot_tables(
     if not s2p_map:
         raise RuntimeError("[56i] Could not load Suite2p traces from disk for AUC plotting.")
 
-    roi_trial_auc_df = _compute_roi_trial_auc_table(
-        detail_auc_df,
-        s2p_map,
-        stim_trials,
-        fps=fps,
-        min_valid_frac=float(cfg.min_valid_frac),
+    plane_indices = sorted(set(detail_auc_df["plane_idx"].dropna().astype(int).tolist()))
+    stim_cfg = StimulusConfig(
+        stim_time_scale=float(cfg.stim_time_scale),
+        measure_start_block=cfg.measure_start_block,
+        measure_start_event=cfg.measure_start_event,
+        remove_interblock_gaps=bool(cfg.remove_interblock_gaps),
+        onset_delay_sec=float(cfg.onset_delay_sec),
     )
+    plane_stim_contexts = resolve_plane_stimulus_contexts(
+        fish_dir=fish_dir,
+        fish_id=fish_id,
+        plane_indices=plane_indices,
+        experiment_log_csv=experiment_log_csv,
+        experiment_meta_csv=experiment_meta_csv,
+        config=stim_cfg,
+    )
+    inferred_fps = infer_frame_rate_from_detail(detail_side_df, suite2p_root=suite2p_root)
+
+    roi_trial_tables: list[pd.DataFrame] = []
+    stim_trial_tables: list[pd.DataFrame] = []
+    source_rows: list[dict[str, Any]] = []
+    for plane_idx in plane_indices:
+        ctx = plane_stim_contexts.get(int(plane_idx))
+        if ctx is None or int(plane_idx) not in s2p_map:
+            continue
+        fps_value = ctx.get("frame_rate")
+        if fps_value is None or float(fps_value) <= 0:
+            fps_value = inferred_fps
+        if fps_value is None or float(fps_value) <= 0:
+            raise RuntimeError("[56i] could not determine frame rate for AUC computation")
+        df_stim_plane = ctx["df_stim"].copy()
+        stim_trials_plane = df_stim_plane[
+            df_stim_plane["stim_side"].notna()
+            & df_stim_plane["stim_mode"].isin({"bout", "continuous"})
+            & np.isfinite(df_stim_plane["motion_start"])
+            & np.isfinite(df_stim_plane["motion_end"])
+        ].copy()
+        if stim_trials_plane.empty:
+            continue
+        session_label = ctx.get("session_label")
+        stim_trials_plane["plane_idx"] = int(plane_idx)
+        stim_trials_plane["session_label"] = session_label
+        stim_trials_plane["stim_source"] = str(ctx.get("log_path"))
+        plane_detail = detail_auc_df[detail_auc_df["plane_idx"] == int(plane_idx)].copy()
+        plane_auc = _compute_roi_trial_auc_table(
+            plane_detail,
+            {int(plane_idx): s2p_map[int(plane_idx)]},
+            stim_trials_plane,
+            fps=float(fps_value),
+            min_valid_frac=float(cfg.min_valid_frac),
+        )
+        if not plane_auc.empty:
+            plane_auc["session_label"] = session_label
+            plane_auc["stim_source"] = str(ctx.get("log_path"))
+            roi_trial_tables.append(plane_auc)
+        stim_trial_tables.append(stim_trials_plane)
+        source_rows.append(
+            {
+                "plane_idx": int(plane_idx),
+                "session_label": session_label,
+                "fps": float(fps_value),
+                "log_path": ctx.get("log_path"),
+                "meta_path": ctx.get("meta_path"),
+                "n_trials": len(stim_trials_plane),
+            }
+        )
+
+    if not stim_trial_tables:
+        raise RuntimeError("[56i] No unilateral stimulus windows available for AUC plotting.")
+    stim_trials = pd.concat(stim_trial_tables, ignore_index=True)
+    df_stim_local = stim_trials.copy()
+    fps_values = [float(row["fps"]) for row in source_rows]
+    fps = fps_values[0] if fps_values and all(abs(val - fps_values[0]) <= 1e-6 for val in fps_values) else float("nan")
+    log_path = ";".join(dict.fromkeys(str(row["log_path"]) for row in source_rows))
+    meta_paths = [str(row["meta_path"]) for row in source_rows if row.get("meta_path") is not None]
+    meta_path = ";".join(dict.fromkeys(meta_paths)) if meta_paths else None
+    roi_trial_auc_df = pd.concat(roi_trial_tables, ignore_index=True) if roi_trial_tables else pd.DataFrame()
     if roi_trial_auc_df.empty:
         raise RuntimeError("[56i] No ROI AUC values could be computed from the motion windows.")
 

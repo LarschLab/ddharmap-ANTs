@@ -2,6 +2,7 @@
 
 from .context import (
     AnatomyNormalizationStageConfig,
+    AnatomyUint8PreprocessingConfig,
     ContextStageConfig,
     FinalFishAuditConfig,
     FunctionalOrientationStageConfig,
@@ -12,6 +13,7 @@ from .context import (
     build_final_fish_audit_stage,
     build_fish_state_audit_df,
     normalize_anatomy_stack_stage,
+    preprocess_anatomy_uint8_stage,
     build_registration_helper_stage,
     build_run_config_stage,
     build_voxel_debug_stage,
@@ -232,6 +234,7 @@ __all__ = [
     "ActivityConfig",
     "AnatomyCellposeConfig",
     "AnatomyNormalizationStageConfig",
+    "AnatomyUint8PreprocessingConfig",
     "CohortBuildConfig",
     "ContextStageConfig",
     "FishContext",
@@ -335,6 +338,7 @@ __all__ = [
     "load_cohort_analysis_state",
     "ncc_xy",
     "normalize_anatomy_stack_stage",
+    "preprocess_anatomy_uint8_stage",
     "normalize_run_config",
     "norm01",
     "notebook_bindings_from_context",

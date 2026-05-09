@@ -28,6 +28,26 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-05-09 - local root and multi-session plane metadata
+
+- Slice goal:
+  - update single-fish path/stimulus ownership for the new local data root and two-session functional acquisitions.
+- Passes completed in this session:
+  - made local root discovery prefer `/Users/ddharmap/dataProcessing/2p_processing`.
+  - made local Cellpose model discovery prefer lowercase `cellpose/models` when present.
+  - added preprocessing-metadata-driven plane-to-session stimulus context resolution.
+  - updated `[50ia]` response/BPI and `[56i]` motion-AUC table construction to use per-plane session logs/metadata.
+- What changed:
+  - fish such as `L758_f02` now resolve planes `0-4` to r1 metadata/logs and planes `5-9` to r2 metadata/logs when preprocessing metadata records those sessions.
+- What remains broken:
+  - none known from package validation; live notebook rerun is still needed to refresh canonical CSVs for affected fish.
+- Remaining in-slice work:
+  - rerun affected single-fish notebooks from stimulus/response stages onward.
+- Next likely breakpoint:
+  - stale `[50ia]` or `[56i]` outputs that were generated before per-plane session metadata was applied.
+- Rerun implications:
+  - rerun `[50ia]` to refresh `functional_roi_activity_identity.csv` response/BPI columns, then rerun `[56i]` and downstream figures that consume motion-AUC or response-aware tables.
+
 ### 2026-05-06 - single-fish notebook contract-clean migration wrappers
 
 - Slice goal:
@@ -555,3 +575,18 @@
   - retire shimmed legacy bodies one owner at a time, starting with `plots.qa` `[50f]`/`[50g]` and `plots.analysis` `[56g]`/`[57]`.
 - Rerun implications:
   - rerun only the affected cells when their existing outputs need regeneration.
+
+### 2026-05-09 - single-fish `[14a]` anatomy preprocessing now matches functional orientation
+
+- Slice goal:
+  - make `[14a]` preprocess 2P anatomy into the same gross orientation as functional data and standardize the output canvas to `750x750` pixels in Y/X.
+- Passes completed in this session:
+  - extended `preprocess_anatomy_uint8_stage` with metadata-driven functional orientation, default Y/X resizing to `750x750`, and cache metadata invalidation for old uint8 TIFFs.
+  - updated the notebook `[14a]` wrapper to pass resolved `POLARITY` and `POLARITY_SOURCE`.
+  - added focused regression coverage for intensity conversion, north-polarity orientation, default `750x750` output, and stale-cache rebuild.
+- What changed:
+  - `[14a]` outputs are now signed-16-bit-corrected uint8 TIFFs that match functional orientation and use a fixed `750x750` anatomy pixel grid before voxel inference.
+- What remains broken:
+  - no live notebook rerun was done in this session.
+- Rerun implications:
+  - minimum rerun: `[14a] -> [7]/[8] -> downstream spatial registration stages` for fish that still have old preprocessed anatomy caches.

@@ -38,9 +38,11 @@ def candidate_local_roots() -> list[Path]:
 
     home = Path.home()
     if os.name == "nt":
+        add(home / "dataProcessing" / "2p_processing")
         add(home / "dataProcessing" / "2p_HCR" / "analysis" / "midThesis")
         add(home / "Documents" / "2p_HCR" / "analysis" / "midThesis")
     else:
+        add(home / "dataProcessing" / "2p_processing")
         add(home / "dataProcessing" / "2p_HCR" / "analysis" / "midThesis")
         add(home / "Documents" / "2p_HCR" / "analysis" / "midThesis")
     return candidates

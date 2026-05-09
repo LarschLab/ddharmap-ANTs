@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -56,7 +57,47 @@ def block_key(block: str) -> tuple[int, str]:
     return 10**9, str(block)
 
 
-def find_experiment_log(fish_dir: str | Path, fish_id: str) -> Path | None:
+def normalize_session_label(session_label: str | int | None) -> str | None:
+    if session_label in (None, "", False):
+        return None
+    text = str(session_label).strip().lower()
+    if text in {"", "none", "nan", "null"}:
+        return None
+    if text.isdigit():
+        return f"r{int(text)}"
+    match = re.search(r"r(\d+)", text)
+    if match:
+        return f"r{int(match.group(1))}"
+    return text
+
+
+def _session_token_in_name(path: str | Path, fish_id: str | None = None) -> str:
+    name = Path(path).name.lower()
+    fish = "" if fish_id is None else re.escape(str(fish_id).lower())
+    if fish:
+        match = re.search(rf"(?:^|[_-])f?{fish}_r(\d+)(?:[_-]|$)", name)
+        if match:
+            return f"r{int(match.group(1))}"
+    match = re.search(r"(?:^|[_-])r(\d+)(?:[_-]|$)", name)
+    if match:
+        return f"r{int(match.group(1))}"
+    return "r1"
+
+
+def _filter_session_files(hits: list[Path], fish_id: str, session_label: str | int | None) -> list[Path]:
+    session = normalize_session_label(session_label)
+    if session is None:
+        return hits
+    return [path for path in hits if _session_token_in_name(path, fish_id) == session]
+
+
+def _latest_file(hits: list[Path]) -> Path | None:
+    if not hits:
+        return None
+    return sorted(set(hits), key=lambda path: (path.stat().st_mtime, path.name))[-1]
+
+
+def find_experiment_log(fish_dir: str | Path, fish_id: str, session_label: str | int | None = None) -> Path | None:
     base = Path(fish_dir) / "01_raw" / "2p" / "metadata"
     if not base.exists():
         return None
@@ -64,13 +105,11 @@ def find_experiment_log(fish_dir: str | Path, fish_id: str) -> Path | None:
     hits: list[Path] = []
     for pattern in patterns:
         hits.extend(sorted(base.glob(pattern)))
-    if not hits:
-        return None
-    hits = sorted(set(hits), key=lambda path: path.stat().st_mtime)
-    return hits[-1]
+    hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
+    return _latest_file(hits)
 
 
-def find_metadata_csv(fish_dir: str | Path, fish_id: str) -> Path | None:
+def find_metadata_csv(fish_dir: str | Path, fish_id: str, session_label: str | int | None = None) -> Path | None:
     base = Path(fish_dir) / "01_raw" / "2p" / "metadata"
     if not base.exists():
         return None
@@ -79,10 +118,49 @@ def find_metadata_csv(fish_dir: str | Path, fish_id: str) -> Path | None:
     for pattern in patterns:
         hits.extend(sorted(base.glob(pattern)))
     hits = [path for path in hits if "experiment_log" not in path.name.lower()]
-    if not hits:
-        return None
-    hits = sorted(set(hits), key=lambda path: path.stat().st_mtime)
-    return hits[-1]
+    hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
+    return _latest_file(hits)
+
+
+def discover_functional_sessions(fish_dir: str | Path, fish_id: str) -> list[dict[str, Any]]:
+    preproc = Path(fish_dir) / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes"
+    candidates = sorted(preproc.glob(f"*{fish_id}*preprocessing_metadata.json")) if preproc.exists() else []
+    if not candidates and preproc.exists():
+        candidates = sorted(preproc.glob("*preprocessing_metadata.json"))
+    for path in reversed(candidates):
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            continue
+        sessions = payload.get("sessions")
+        if not isinstance(sessions, list):
+            continue
+        out: list[dict[str, Any]] = []
+        for idx, session in enumerate(sessions):
+            if not isinstance(session, dict):
+                continue
+            label = normalize_session_label(session.get("session_label") or session.get("session_number") or idx + 1)
+            planes_raw = session.get("output_planes", [])
+            planes: list[int] = []
+            for value in planes_raw if isinstance(planes_raw, list) else []:
+                try:
+                    planes.append(int(value))
+                except Exception:
+                    pass
+            if not planes:
+                continue
+            out.append(
+                {
+                    "session_label": label or f"r{idx + 1}",
+                    "session_number": session.get("session_number"),
+                    "plane_offset": session.get("plane_offset"),
+                    "output_planes": sorted(set(planes)),
+                    "preprocessing_metadata": path,
+                }
+            )
+        if out:
+            return out
+    return []
 
 
 def load_events_df(csv_path: str | Path) -> pd.DataFrame:
@@ -525,6 +603,85 @@ def resolve_stimulus_context(
     }
 
 
+def resolve_plane_stimulus_contexts(
+    *,
+    fish_dir: str | Path,
+    fish_id: str,
+    plane_indices: list[int] | np.ndarray | pd.Series | None = None,
+    experiment_log_csv: str | Path | None = None,
+    experiment_meta_csv: str | Path | None = None,
+    frame_rate: float | None = None,
+    config: StimulusConfig | None = None,
+) -> dict[int, dict[str, Any]]:
+    if plane_indices is None:
+        planes: list[int] = []
+    else:
+        plane_series = pd.to_numeric(pd.Series(plane_indices), errors="coerce").dropna()
+        planes = sorted(set(plane_series.astype(int).tolist()))
+
+    if experiment_log_csv is not None or experiment_meta_csv is not None:
+        ctx = resolve_stimulus_context(
+            fish_dir=fish_dir,
+            fish_id=fish_id,
+            experiment_log_csv=experiment_log_csv,
+            experiment_meta_csv=experiment_meta_csv,
+            frame_rate=frame_rate,
+            config=config,
+        )
+        ctx["session_label"] = "override"
+        return {int(plane): ctx for plane in planes}
+
+    sessions = discover_functional_sessions(fish_dir, fish_id)
+    if not sessions:
+        ctx = resolve_stimulus_context(
+            fish_dir=fish_dir,
+            fish_id=fish_id,
+            frame_rate=frame_rate,
+            config=config,
+        )
+        ctx["session_label"] = _session_token_in_name(ctx["log_path"], fish_id)
+        return {int(plane): ctx for plane in planes}
+
+    out: dict[int, dict[str, Any]] = {}
+    requested = set(planes)
+    for session in sessions:
+        session_label = normalize_session_label(session.get("session_label"))
+        session_planes = [int(plane) for plane in session.get("output_planes", [])]
+        target_planes = sorted(requested.intersection(session_planes)) if requested else session_planes
+        if not target_planes:
+            continue
+        log_path = find_experiment_log(fish_dir, fish_id, session_label=session_label)
+        meta_path = find_metadata_csv(fish_dir, fish_id, session_label=session_label)
+        if log_path is None:
+            raise FileNotFoundError(f"[stim] experiment log not found for session {session_label} ({fish_id})")
+        ctx = resolve_stimulus_context(
+            fish_dir=fish_dir,
+            fish_id=fish_id,
+            experiment_log_csv=log_path,
+            experiment_meta_csv=meta_path,
+            frame_rate=frame_rate,
+            config=config,
+        )
+        ctx["session_label"] = session_label
+        ctx["session_planes"] = session_planes
+        ctx["preprocessing_metadata"] = session.get("preprocessing_metadata")
+        for plane in target_planes:
+            out[int(plane)] = ctx
+
+    missing = sorted(requested - set(out))
+    if missing:
+        fallback = resolve_stimulus_context(
+            fish_dir=fish_dir,
+            fish_id=fish_id,
+            frame_rate=frame_rate,
+            config=config,
+        )
+        fallback["session_label"] = _session_token_in_name(fallback["log_path"], fish_id)
+        for plane in missing:
+            out[int(plane)] = fallback
+    return out
+
+
 __all__ = [
     "StimulusConfig",
     "block_key",
@@ -535,12 +692,15 @@ __all__ = [
     "classify_stim_type",
     "combine_segments",
     "compute_zscore_stats",
+    "discover_functional_sessions",
     "effective_motion_window",
     "find_experiment_log",
     "find_metadata_csv",
     "load_events_df",
     "load_metadata_params",
+    "normalize_session_label",
     "parse_float",
     "parse_unilateral_stim",
+    "resolve_plane_stimulus_contexts",
     "resolve_stimulus_context",
 ]
