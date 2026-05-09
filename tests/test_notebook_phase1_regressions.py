@@ -543,6 +543,8 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertNotIn("def _read_nrrd_header(", cell_8a)
         self.assertIn("orient_functional_stacks_stage", cell_10)
         self.assertIn("FunctionalOrientationStageConfig", cell_10)
+        self.assertIn("SAVE_ORIENTED_FUNCTIONAL_STACKS = False", cell_10)
+        self.assertIn("save_oriented_stacks=SAVE_ORIENTED_FUNCTIONAL_STACKS", cell_10)
         self.assertNotIn("def _resolve_mode_local(", cell_10)
         self.assertIn("build_final_fish_audit_stage", cell_99)
         self.assertNotIn("def _maybe(", cell_99)

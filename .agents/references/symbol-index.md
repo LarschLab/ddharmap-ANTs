@@ -18,7 +18,7 @@ Generated manually for the current extracted package surface.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
 - `VoxelStageConfig`: Typed voxel-resolution stage configuration for notebook cell `[8]`.
-- `FunctionalOrientationStageConfig`: Typed functional-stack orientation configuration for notebook cell `[10]`.
+- `FunctionalOrientationStageConfig`: Typed functional orientation/audit configuration for notebook cell `[10]`; full oriented movie stack saves are opt-in.
 - `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.
 - `resolve_notebook_context_stage`: Notebook-facing setup stage for `[4]` that returns context, legacy bindings, and discovered paths.
 - `notebook_bindings_from_context`: Rebind package-resolved context back to legacy notebook variable names.
@@ -30,11 +30,11 @@ Generated manually for the current extracted package surface.
 - `build_fish_state_audit_df`: Build the audit dataframe used by cell `[4c]`.
 - `build_context_audit_stage`: Notebook-facing audit stage for `[4c]`.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
-- `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals and summary dataframe outputs.
+- `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
-- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
-- `orient_functional_stacks_stage`: Notebook-facing functional stack orientation/cache stage for `[10]`.
+- `orient_functional_stacks_stage`: Notebook-facing functional orientation stage for `[10]` that audits legacy full-stack caches and only writes oriented movie stacks when explicitly requested.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
 
 ## `codeants_2pf_hcr.cohort`
@@ -50,7 +50,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.spatial`
 
-- `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`.
+- `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`; oriented references can be built from original motion-corrected stacks without saving full oriented movies.
 - `FunctionalPlacementConfig`: Typed NCC XY placement configuration for notebook cell `[20]`.
 - `InPlaneRegistrationComparisonConfig`: Typed in-plane method-comparison configuration for notebook cell `[20]`.
 - `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
@@ -63,7 +63,7 @@ Generated manually for the current extracted package surface.
 - `best_z_by_ncc`: Best-z search by NCC-like scoring.
 - `apply_func_orientation`: Apply the notebook’s functional orientation convention.
 - `apply_square_region_mask`: Preserve values inside an anatomy-space square and set outside pixels to zero for masked registration.
-- `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy `ref2d_raw` / `ref2d` bindings and cache filenames.
+- `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy `ref2d_raw` / `ref2d` bindings and cache filenames while applying functional orientation to derived 2D references.
 - `ncc_xy`: Shared NCC XY placement primitive for notebook cell `[20]`.
 - `scale_image`: Resize a 2D functional reference by an empirical NCC search scale.
 - `registration_metric_from_scores`: Summarize NCC scores into best-z and peak metrics.

@@ -576,6 +576,21 @@
 - Rerun implications:
   - rerun only the affected cells when their existing outputs need regeneration.
 
+### 2026-05-09 - functional orientation stops writing full movie caches by default
+
+- Slice goal:
+  - prevent single-fish pipeline bloat from generated full-stack `_flipX.tif` functional movies while keeping oriented references, Suite2p masks, and activity outputs aligned.
+- Passes completed in this session:
+  - changed `[10]`/`orient_functional_stacks_stage` to audit legacy oriented movie caches by default instead of writing them.
+  - changed `[12]`/`build_functional_references_stage` to build oriented 2D references from original motion-corrected stacks while preserving legacy `_flipX` reference names.
+  - updated voxel mapping so original functional source paths and legacy flipped aliases share functional voxel metadata.
+- What changed:
+  - new runs no longer create multi-GB full oriented functional movie TIFFs unless `SAVE_ORIENTED_FUNCTIONAL_STACKS=True` is set explicitly in `[10]`.
+- What remains broken:
+  - existing `_flipX.tif` movie caches are audit-only in this pass; no deletion or archive action is automatic.
+- Rerun implications:
+  - rerun `[8] -> [10] -> [12]` to refresh voxel/source bindings and reference generation behavior; downstream spatial stages only need reruns when references are regenerated.
+
 ### 2026-05-09 - single-fish `[14a]` anatomy preprocessing now matches functional orientation
 
 - Slice goal:
@@ -590,3 +605,18 @@
   - no live notebook rerun was done in this session.
 - Rerun implications:
   - minimum rerun: `[14a] -> [7]/[8] -> downstream spatial registration stages` for fish that still have old preprocessed anatomy caches.
+
+### 2026-05-09 - anatomy uint8 preprocessing is rerun-idempotent
+
+- Slice goal:
+  - prevent reruns from selecting an existing preprocessed anatomy TIFF as a raw source and creating chained `*_uint8_uint8.tif` files with doubled orientation transforms.
+- Passes completed in this session:
+  - changed anatomy discovery to prefer raw `01_raw/2p/anatomy` inputs, then non-derived preprocessed anatomy sources, and only use existing uint8 outputs as fallback.
+  - made `[14a]` reuse a uint8 input in place unless its sidecar metadata points to a raw source and force recompute is requested.
+  - added regression tests for discovery priority, no chained uint8 output, and force recompute through metadata.
+- What changed:
+  - `[14a]` now writes/reuses one canonical `*_uint8.tif` per source and avoids applying functional orientation twice on notebook rerun.
+- What remains broken:
+  - existing stray `*_uint8_uint8.tif` files are not deleted automatically.
+- Rerun implications:
+  - rerun `[4] -> [14] -> [14a] -> [8]` to refresh path discovery and voxel reporting for affected fish.

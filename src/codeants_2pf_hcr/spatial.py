@@ -372,22 +372,39 @@ def _load_cached_functional_ref(raw_path: Path, norm_path: Path) -> tuple[np.nda
     return ref2d_raw, ref2d
 
 
+def _legacy_oriented_path_for_source(source_path: Path, flipped_paths: list[Path], source_idx: int, out_raw_path: Path) -> Path:
+    if source_idx < len(flipped_paths):
+        return flipped_paths[source_idx]
+    if source_path.stem.endswith("_flipX"):
+        return source_path
+    return out_raw_path / f"{source_path.stem}_flipX.tif"
+
+
 def build_functional_references_stage(
     *,
     flipped_list: list[Path | str] | None,
+    func_nonflipped_list: list[Path | str] | None = None,
     out_raw: Path | str,
     outdir: Path | str | None = None,
     vox_func_by_path: dict[str, Any] | None = None,
+    polarity: str | None = None,
+    polarity_source: str | None = None,
     config: FunctionalReferenceConfig | None = None,
 ) -> dict[str, Any]:
+    del polarity_source
     cfg = config or FunctionalReferenceConfig()
     out_raw_path = Path(out_raw)
     outdir_path = Path(outdir) if outdir is not None else None
     out_raw_path.mkdir(parents=True, exist_ok=True)
 
-    source_paths = [Path(path) for path in (flipped_list or []) if path]
+    flipped_paths = [Path(path) for path in (flipped_list or []) if path]
+    source_paths = [Path(path) for path in (func_nonflipped_list or []) if path]
+    source_is_preoriented = False
     if not source_paths:
-        raise FileNotFoundError("No flipped functional stacks available")
+        source_paths = flipped_paths
+        source_is_preoriented = True
+    if not source_paths:
+        raise FileNotFoundError("No functional stacks available")
 
     reuse_saved_refs = bool(cfg.reuse_saved_refs)
     if cfg.force_recompute_refs:
@@ -398,12 +415,15 @@ def build_functional_references_stage(
     if cfg.force_recompute_refs:
         log_lines.append("[12] FORCE_RECOMPUTE_REFS=True -> rebuilding functional refs")
 
-    for fp in source_paths:
+    for source_idx, fp in enumerate(source_paths):
         if not fp.exists():
-            raise FileNotFoundError(f"Flipped functional stack not found: {fp}")
+            raise FileNotFoundError(f"Functional stack not found: {fp}")
 
-        vox_f = vox_func_by_path.get(str(fp), {}) if vox_func_by_path else {}
-        stem = fp.stem
+        legacy_oriented_path = _legacy_oriented_path_for_source(fp, flipped_paths, source_idx, out_raw_path)
+        vox_f = {}
+        if vox_func_by_path:
+            vox_f = vox_func_by_path.get(str(fp), {}) or vox_func_by_path.get(str(legacy_oriented_path), {}) or {}
+        stem = legacy_oriented_path.stem
         raw_path = out_raw_path / f"{stem}_ref_raw.tif"
         norm_path = out_raw_path / f"{stem}_ref_norm.tif"
         legacy_raw_path = (outdir_path / f"{stem}_ref_raw.tif") if outdir_path is not None else None
@@ -433,7 +453,7 @@ def build_functional_references_stage(
                 )
             if stack_plane_refs:
                 plane_refs.extend(stack_plane_refs)
-                log_lines.append(f"[12] Using existing per-plane refs for {fp}")
+                log_lines.append(f"[12] Using existing per-plane refs for {legacy_oriented_path}")
                 continue
 
             cached = _load_cached_functional_ref(raw_path, norm_path)
@@ -442,7 +462,7 @@ def build_functional_references_stage(
                 plane_refs.append(
                     _functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f)
                 )
-                log_lines.append(f"[12] Using existing refs for {fp}")
+                log_lines.append(f"[12] Using existing refs for {legacy_oriented_path}")
                 continue
 
             if legacy_raw_path is not None and legacy_norm_path is not None:
@@ -452,10 +472,16 @@ def build_functional_references_stage(
                     plane_refs.append(
                         _functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f)
                     )
-                    log_lines.append(f"[12] Using existing refs for {fp} (legacy)")
+                    log_lines.append(f"[12] Using existing refs for {legacy_oriented_path} (legacy)")
                     continue
 
         func = np.asarray(imread_any(fp), dtype=np.float32)
+
+        def orient_ref(arr: np.ndarray) -> np.ndarray:
+            if source_is_preoriented:
+                return np.asarray(arr, dtype=np.float32)
+            return np.asarray(apply_func_orientation(arr, polarity=polarity, flip_x=True), dtype=np.float32)
+
         if cfg.use_top_corr_refs and func.ndim == 4:
             _, z_count, _, _ = func.shape
             for zi in range(z_count):
@@ -472,6 +498,7 @@ def build_functional_references_stage(
                         ref2d_raw_i = plane_t[sel].mean(axis=0).astype(np.float32)
                     except Exception:
                         pass
+                ref2d_raw_i = orient_ref(ref2d_raw_i)
                 rawp = out_raw_path / f"{stem}_plane{zi}_raw.tif"
                 normp = out_raw_path / f"{stem}_plane{zi}_norm.tif"
                 tifffile.imwrite(rawp, np.asarray(ref2d_raw_i, dtype=np.float32))
@@ -486,16 +513,17 @@ def build_functional_references_stage(
                         vox_func=vox_f,
                     )
                 )
-            log_lines.append(f"[12] Built top-correlated per-plane refs for {fp}")
+            log_lines.append(f"[12] Built top-correlated per-plane refs for {fp} -> {legacy_oriented_path.stem}")
             continue
 
         if func.ndim == 3:
             ref2d_raw = func.mean(axis=0).astype(np.float32)
+            ref2d_raw = orient_ref(ref2d_raw)
             tifffile.imwrite(raw_path, ref2d_raw.astype(np.float32))
             ref2d = norm01(ref2d_raw)
             tifffile.imwrite(norm_path, (ref2d * 65535).astype(np.uint16))
             plane_refs.append(_functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f))
-            log_lines.append(f"[12] Built mean reference for {fp}")
+            log_lines.append(f"[12] Built mean reference for {fp} -> {legacy_oriented_path.stem}")
             continue
 
         if func.ndim != 4:
@@ -505,6 +533,7 @@ def build_functional_references_stage(
         for zi in range(z_count):
             plane_t = func[:, zi, :, :]
             ref2d_raw_i = plane_t.mean(axis=0).astype(np.float32)
+            ref2d_raw_i = orient_ref(ref2d_raw_i)
             rawp = out_raw_path / f"{stem}_plane{zi}_raw.tif"
             normp = out_raw_path / f"{stem}_plane{zi}_norm.tif"
             tifffile.imwrite(rawp, ref2d_raw_i.astype(np.float32))
@@ -519,7 +548,7 @@ def build_functional_references_stage(
                     vox_func=vox_f,
                 )
             )
-        log_lines.append(f"[12] Built mean per-plane refs for {fp}")
+        log_lines.append(f"[12] Built mean per-plane refs for {fp} -> {legacy_oriented_path.stem}")
 
     if not plane_refs:
         raise RuntimeError("No functional planes available")

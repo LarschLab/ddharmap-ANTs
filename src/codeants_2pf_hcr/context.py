@@ -133,6 +133,7 @@ class VoxelStageConfig:
 @dataclass(frozen=True)
 class FunctionalOrientationStageConfig:
     overwrite_flipped: bool = False
+    save_oriented_stacks: bool = False
     cache_version: int = 2
 
 
@@ -633,61 +634,99 @@ def infer_func_labels_path(
     return None
 
 
+def _is_uint8_anatomy_preprocess_path(path: Path | str) -> bool:
+    target = Path(path)
+    return target.suffix.lower() in {".tif", ".tiff"} and target.stem.endswith("_uint8")
+
+
+def _anatomy_uint8_source_stem(path: Path | str) -> str:
+    stem = Path(path).stem
+    return stem[:-6] if stem.endswith("_uint8") else stem
+
+
+def _collect_anatomy_stack_candidates(
+    directory: Path,
+    patterns: tuple[str, ...],
+    excluded_tokens: tuple[str, ...],
+) -> list[Path]:
+    if not directory.exists():
+        return []
+    hits: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in patterns:
+        for hit in sorted(directory.glob(pattern)):
+            if not hit.is_file():
+                continue
+            name_lower = hit.name.lower()
+            if any(token in name_lower for token in excluded_tokens):
+                continue
+            if hit not in seen:
+                hits.append(hit)
+                seen.add(hit)
+    return hits
+
+
 def infer_anatomy_stack_path(fish_dir: Path | str, fish_id: str | None = None) -> Path | None:
     fish_path = Path(fish_dir)
     fish_token = str(fish_id or fish_path.name).strip()
-    search_specs: tuple[tuple[Path, tuple[str, ...]], ...] = (
-        (
-            fish_path / "02_reg" / "00_preprocessing" / "2p_anatomy",
-            (
-                f"{fish_token}*_anatomy_2P_GCaMP_uint8.tif",
-                f"{fish_token}*_anatomy_2P_GCaMP_uint8.tiff",
-                f"{fish_token}*_anatomy_2P_GCaMP.tif",
-                f"{fish_token}*_anatomy_2P_GCaMP.tiff",
-                f"{fish_token}*_anatomy_2P_GCaMP.nrrd",
-                "*_anatomy_2P_GCaMP_uint8.tif",
-                "*_anatomy_2P_GCaMP_uint8.tiff",
-                "*_anatomy_2P_GCaMP.tif",
-                "*_anatomy_2P_GCaMP.tiff",
-                "*_anatomy_2P_GCaMP.nrrd",
-                "*anatomy*.tif",
-                "*anatomy*.tiff",
-                "*anatomy*.nrrd",
-            ),
-        ),
-        (
-            fish_path / "01_raw" / "2p" / "anatomy",
-            (
-                f"{fish_token}*.tif",
-                f"{fish_token}*.tiff",
-                f"{fish_token}*.nrrd",
-                "*anatomy*.tif",
-                "*anatomy*.tiff",
-                "*anatomy*.nrrd",
-                "*.tif",
-                "*.tiff",
-                "*.nrrd",
-            ),
-        ),
+    raw_patterns = (
+        f"{fish_token}*.tif",
+        f"{fish_token}*.tiff",
+        f"{fish_token}*.nrrd",
+        "*anatomy*.tif",
+        "*anatomy*.tiff",
+        "*anatomy*.nrrd",
+        "*.tif",
+        "*.tiff",
+        "*.nrrd",
+    )
+    preproc_patterns = (
+        f"{fish_token}*_anatomy_2P_GCaMP.tif",
+        f"{fish_token}*_anatomy_2P_GCaMP.tiff",
+        f"{fish_token}*_anatomy_2P_GCaMP.nrrd",
+        "*_anatomy_2P_GCaMP.tif",
+        "*_anatomy_2P_GCaMP.tiff",
+        "*_anatomy_2P_GCaMP.nrrd",
+        "*anatomy*.tif",
+        "*anatomy*.tiff",
+        "*anatomy*.nrrd",
+    )
+    derived_patterns = (
+        f"{fish_token}*_anatomy_2P_GCaMP_uint8.tif",
+        f"{fish_token}*_anatomy_2P_GCaMP_uint8.tiff",
+        "*_anatomy_2P_GCaMP_uint8.tif",
+        "*_anatomy_2P_GCaMP_uint8.tiff",
+        "*anatomy*_uint8.tif",
+        "*anatomy*_uint8.tiff",
     )
     excluded_tokens = ("cp_masks", "mask", "label", "overlay")
-    for directory, patterns in search_specs:
-        if not directory.exists():
-            continue
-        hits: list[Path] = []
-        seen: set[Path] = set()
-        for pattern in patterns:
-            for hit in sorted(directory.glob(pattern)):
-                if not hit.is_file():
-                    continue
-                name_lower = hit.name.lower()
-                if any(token in name_lower for token in excluded_tokens):
-                    continue
-                if hit not in seen:
-                    hits.append(hit)
-                    seen.add(hit)
-        if hits:
-            return hits[0]
+    raw_hits = _collect_anatomy_stack_candidates(
+        fish_path / "01_raw" / "2p" / "anatomy",
+        raw_patterns,
+        excluded_tokens,
+    )
+    if raw_hits:
+        return raw_hits[0]
+
+    preproc_hits = [
+        hit
+        for hit in _collect_anatomy_stack_candidates(
+            fish_path / "02_reg" / "00_preprocessing" / "2p_anatomy",
+            preproc_patterns,
+            excluded_tokens,
+        )
+        if not _is_uint8_anatomy_preprocess_path(hit)
+    ]
+    if preproc_hits:
+        return preproc_hits[0]
+
+    derived_hits = _collect_anatomy_stack_candidates(
+        fish_path / "02_reg" / "00_preprocessing" / "2p_anatomy",
+        derived_patterns,
+        excluded_tokens,
+    )
+    if derived_hits:
+        return derived_hits[0]
     return None
 
 
@@ -1151,9 +1190,10 @@ def resolve_voxel_context_stage(
     vox_anat_manual: dict[str, Any] | None,
     vox_hcr_manual: dict[str, Any] | None,
     flipped_list: list[Path | str] | None,
-    data_root: Path | str | None,
-    local_root: Path | str | None,
-    nas_root: Path | str | None,
+    func_source_list: list[Path | str] | None = None,
+    data_root: Path | str | None = None,
+    local_root: Path | str | None = None,
+    nas_root: Path | str | None = None,
     config: VoxelStageConfig | None = None,
 ) -> dict[str, Any]:
     cfg = config or VoxelStageConfig()
@@ -1166,6 +1206,7 @@ def resolve_voxel_context_stage(
 
     data_mode_local = str(data_mode or "nas").strip().lower()
     flipped_list_local = [Path(path) for path in (flipped_list or []) if path]
+    func_source_list_local = [Path(path) for path in (func_source_list or []) if path]
     func_stack_path_local = Path(func_stack_path) if func_stack_path else None
     func_raw_stack_path_local = Path(func_raw_stack_path) if func_raw_stack_path else None
     anat_stack_path_local = Path(anat_stack_path) if anat_stack_path else None
@@ -1194,7 +1235,7 @@ def resolve_voxel_context_stage(
         for key in ("func", "anat", "hcr"):
             run_meta_voxels[key] = _norm_vox(run_meta["voxels"].get(key))
 
-    func_paths = flipped_list_local if flipped_list_local else ([func_stack_path_local] if func_stack_path_local else [])
+    func_paths = func_source_list_local or flipped_list_local or ([func_stack_path_local] if func_stack_path_local else [])
     func_scale: dict[str, Any] = {}
     func_scale_source: str | None = None
     if vox_func_auto_local:
@@ -1224,9 +1265,14 @@ def resolve_voxel_context_stage(
         log_lines.append(f"[Vox] Functional voxel fallback source: {func_scale_source}")
 
     vox_func_by_path: dict[str, dict[str, Any]] = {}
-    for func_path in func_paths:
+    for path_idx, func_path in enumerate(func_paths):
+        legacy_flipped_path = flipped_list_local[path_idx] if path_idx < len(flipped_list_local) else None
         aliases = [f"func_{func_path.name}", func_path.name, "func"]
+        if legacy_flipped_path is not None:
+            aliases.extend([f"func_{legacy_flipped_path.name}", legacy_flipped_path.name])
         vox = _cache_lookup(cache_data, path=func_path, aliases=aliases)
+        if not _vox_complete(vox) and legacy_flipped_path is not None:
+            vox = _cache_lookup(cache_data, path=legacy_flipped_path, aliases=aliases)
         vox = _merge_missing(vox, run_meta_voxels.get("func"))
         vox = _merge_missing(vox, func_scale)
         if (not _vox_complete(vox)) and func_path.exists():
@@ -1238,6 +1284,8 @@ def resolve_voxel_context_stage(
         if vox.get("Z") is None and (vox.get("X") is not None or vox.get("Y") is not None):
             vox["Z"] = func_scale.get("Z", 1.0)
         vox_func_by_path[str(func_path)] = dict(vox)
+        if legacy_flipped_path is not None:
+            vox_func_by_path[str(legacy_flipped_path)] = dict(vox)
 
     vox_anat = _cache_lookup(cache_data, path=anat_stack_path_local, aliases=["anat"])
     vox_anat = _merge_missing(vox_anat, run_meta_voxels.get("anat"))
@@ -1305,7 +1353,8 @@ def resolve_voxel_context_stage(
     vox_func = vox_func_by_path.get(str(func_paths[0]), {}) if func_paths else {}
 
     rows: list[dict[str, Any]] = []
-    for func_path, vox in vox_func_by_path.items():
+    for func_path in [str(path) for path in func_paths]:
+        vox = vox_func_by_path.get(func_path, {})
         rows.append(
             {
                 "dataset": "func",
@@ -1471,28 +1520,52 @@ def preprocess_anatomy_uint8_stage(
     if preproc_dir is None and output_path is None:
         raise ValueError("PREPROC_DIR or output_path is required for anatomy uint8 preprocessing")
 
+    force_recompute = bool(cfg.force_recompute_anat_uint8)
     current_anat_path = Path(anat_stack_path)
     original_anat_path = Path(anat_stack_path_orig) if anat_stack_path_orig is not None else current_anat_path
-    source_path = original_anat_path if bool(cfg.use_source_path_orig) and original_anat_path.exists() else current_anat_path
-    if not source_path.exists():
-        raise FileNotFoundError(f"Anatomy source not found: {source_path}")
+    requested_source_path = original_anat_path if bool(cfg.use_source_path_orig) and original_anat_path.exists() else current_anat_path
+    if not requested_source_path.exists():
+        raise FileNotFoundError(f"Anatomy source not found: {requested_source_path}")
+
+    requested_is_uint8 = _is_uint8_anatomy_preprocess_path(requested_source_path)
+    derived_input_path = requested_source_path if requested_is_uint8 else None
 
     if output_path is None:
         out_dir = Path(preproc_dir) / "2p_anatomy"
-        out_path = out_dir / f"{source_path.stem}_uint8.tif"
+        out_path = derived_input_path if derived_input_path is not None else out_dir / f"{_anatomy_uint8_source_stem(requested_source_path)}_uint8.tif"
     else:
         out_path = Path(output_path)
         out_dir = out_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    force_recompute = bool(cfg.force_recompute_anat_uint8)
+    source_path = requested_source_path
+    passthrough_uint8_input = False
+    if derived_input_path is not None:
+        source_path = derived_input_path
+        out_path = derived_input_path
+        meta_source_path: Path | None = None
+        meta_source = _read_json_dict(_anatomy_uint8_cache_metadata_path(derived_input_path)).get("source_path")
+        if meta_source:
+            meta_source_candidate = Path(meta_source)
+            if meta_source_candidate.exists() and not _is_uint8_anatomy_preprocess_path(meta_source_candidate):
+                meta_source_path = meta_source_candidate
+        if force_recompute and meta_source_path is not None:
+            source_path = meta_source_path
+        else:
+            passthrough_uint8_input = True
+
     apply_orientation = bool(cfg.apply_func_orientation)
     target_xy_shape = _normalize_target_xy_shape(cfg.target_xy_shape)
     orient_mode = func_orientation_mode(polarity) if apply_orientation else "none"
     polarity_norm = normalize_polarity_value(polarity)
     meta_path = _anatomy_uint8_cache_metadata_path(out_path)
     log_lines: list[str] = []
-    use_cached = bool(out_path.exists() and not force_recompute)
+    if passthrough_uint8_input and force_recompute:
+        log_lines.append(
+            "[INFO] Existing anatomy preprocessing input has no raw source metadata; "
+            "reusing it to avoid applying orientation twice."
+        )
+    use_cached = bool(out_path.exists() and (not force_recompute or passthrough_uint8_input))
     if use_cached:
         with tifffile.TiffFile(out_path) as tf:
             shape = tuple(int(v) for v in tf.series[0].shape)
@@ -1501,21 +1574,31 @@ def preprocess_anatomy_uint8_stage(
             log_lines.append(f"[INFO] Existing anatomy preprocessing output is {dtype_name}; rebuilding uint8 TIFF.")
             use_cached = False
         elif target_xy_shape is not None and tuple(shape[-2:]) != tuple(target_xy_shape):
-            log_lines.append(
-                "[INFO] Existing anatomy preprocessing output has "
-                f"Y/X={tuple(shape[-2:])}; rebuilding for Y/X={tuple(target_xy_shape)}."
-            )
-            use_cached = False
+            if passthrough_uint8_input:
+                log_lines.append(
+                    "[INFO] Existing anatomy preprocessing input has "
+                    f"Y/X={tuple(shape[-2:])}; reusing it to avoid applying orientation twice."
+                )
+                use_cached = True
+            else:
+                log_lines.append(
+                    "[INFO] Existing anatomy preprocessing output has "
+                    f"Y/X={tuple(shape[-2:])}; rebuilding for Y/X={tuple(target_xy_shape)}."
+                )
+                use_cached = False
         else:
             cache_meta = _read_json_dict(meta_path)
             cache_target = cache_meta.get("target_xy_shape")
             cache_target_tuple = tuple(int(v) for v in cache_target) if isinstance(cache_target, list | tuple) and len(cache_target) == 2 else None
             cache_ok = (
-                int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
-                and bool(cache_meta.get("apply_func_orientation", False)) == apply_orientation
-                and str(cache_meta.get("orientation_mode", "")) == str(orient_mode)
-                and normalize_polarity_value(cache_meta.get("polarity")) == polarity_norm
-                and cache_target_tuple == target_xy_shape
+                passthrough_uint8_input
+                or (
+                    int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
+                    and bool(cache_meta.get("apply_func_orientation", False)) == apply_orientation
+                    and str(cache_meta.get("orientation_mode", "")) == str(orient_mode)
+                    and normalize_polarity_value(cache_meta.get("polarity")) == polarity_norm
+                    and cache_target_tuple == target_xy_shape
+                )
             )
             if not cache_ok:
                 log_lines.append("[INFO] Existing anatomy preprocessing output lacks current orientation/resize metadata; rebuilding.")
@@ -1732,6 +1815,8 @@ def orient_functional_stacks_stage(
     mode = "rot180+flipX" if str(polarity or "").lower() == "north" else "flipX"
     source_paths = [Path(path) for path in (func_nonflipped_list or []) if path]
     target_paths = [Path(path) for path in (flipped_list or []) if path]
+    if len(target_paths) < len(source_paths):
+        target_paths.extend(Path(out_raw) / f"{path.stem}_flipX.tif" for path in source_paths[len(target_paths) :])
 
     def orient_sample(arr: Any) -> Any:
         if arr is None:
@@ -1829,21 +1914,65 @@ def orient_functional_stacks_stage(
 
     if not source_paths:
         log_lines.append("[WARN] No unflipped functional stacks found")
+        audit_df = pd.DataFrame()
         return {
             "bindings": {
                 "ORIENT_MANIFEST_PATH": orient_manifest_path,
                 "ORIENT_CACHE_VERSION": int(cfg.cache_version),
+                "FUNCTIONAL_ORIENTATION_AUDIT_DF": audit_df,
             },
+            "audit_df": audit_df,
             "log_lines": log_lines,
             "mode": mode,
         }
 
     orient_manifest = load_manifest()
     fish_id_str = str(fish_id)
+    audit_rows: list[dict[str, Any]] = []
+    for src_path, dst_path in zip(source_paths, target_paths):
+        src_exists = src_path.exists()
+        dst_exists = dst_path.exists()
+        if dst_exists and not cfg.save_oriented_stacks:
+            cache_status = "legacy_cache_unused"
+        elif cfg.save_oriented_stacks:
+            cache_status = "will_write_if_needed"
+        else:
+            cache_status = "no_cache"
+        audit_rows.append(
+            {
+                "fish_id": fish_id_str,
+                "source_path": str(src_path),
+                "oriented_cache_path": str(dst_path),
+                "source_exists": bool(src_exists),
+                "oriented_cache_exists": bool(dst_exists),
+                "source_size_bytes": int(src_path.stat().st_size) if src_exists else None,
+                "oriented_cache_size_bytes": int(dst_path.stat().st_size) if dst_exists else None,
+                "status": cache_status,
+            }
+        )
+    audit_df = pd.DataFrame(audit_rows)
     log_lines.append(
         f"[10] mode={mode} polarity={polarity} source={polarity_source} "
-        f"overwrite={cfg.overwrite_flipped} stacks={len(source_paths)}"
+        f"overwrite={cfg.overwrite_flipped} save_oriented_stacks={cfg.save_oriented_stacks} stacks={len(source_paths)}"
     )
+    if not cfg.save_oriented_stacks:
+        n_existing = int(audit_df["oriented_cache_exists"].sum()) if "oriented_cache_exists" in audit_df.columns else 0
+        bytes_existing = int(audit_df["oriented_cache_size_bytes"].dropna().sum()) if "oriented_cache_size_bytes" in audit_df.columns else 0
+        log_lines.append(
+            f"[10] Not saving full oriented functional movie stacks; existing legacy caches={n_existing} "
+            f"({bytes_existing / (1024 ** 3):.2f} GiB)."
+        )
+        return {
+            "bindings": {
+                "ORIENT_MANIFEST_PATH": orient_manifest_path,
+                "ORIENT_CACHE_VERSION": int(cfg.cache_version),
+                "FUNCTIONAL_ORIENTATION_AUDIT_DF": audit_df,
+            },
+            "audit_df": audit_df,
+            "log_lines": log_lines,
+            "mode": mode,
+        }
+
     for idx, (src_path, dst_path) in enumerate(zip(source_paths, target_paths), start=1):
         if not src_path.exists():
             log_lines.append(f"[WARN] Non-flipped functional not found: {src_path}")
@@ -1918,7 +2047,9 @@ def orient_functional_stacks_stage(
         "bindings": {
             "ORIENT_MANIFEST_PATH": orient_manifest_path,
             "ORIENT_CACHE_VERSION": int(cfg.cache_version),
+            "FUNCTIONAL_ORIENTATION_AUDIT_DF": audit_df,
         },
+        "audit_df": audit_df,
         "log_lines": log_lines,
         "mode": mode,
     }

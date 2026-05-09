@@ -6,18 +6,23 @@ import sys
 from tempfile import TemporaryDirectory
 
 import numpy as np
+import tifffile
 
 from codeants_2pf_hcr.context import (
     ContextStageConfig,
+    FunctionalOrientationStageConfig,
     build_registration_helper_stage,
     default_cellpose_model_root,
     build_fish_state_audit_df,
+    infer_anatomy_stack_path,
     infer_hcr_label_paths,
     notebook_bindings_from_context,
     normalize_run_config,
     prepare_notebook_paths,
     resolve_fish_context,
     resolve_notebook_context_stage,
+    resolve_voxel_context_stage,
+    orient_functional_stacks_stage,
 )
 
 
@@ -64,6 +69,48 @@ class ContextTests(unittest.TestCase):
                 paths["FUNC_LABELS_PATH"],
                 fish_dir / "03_analysis" / "functional" / "segmentation" / f"{fish_id}_functional_labels.tif",
             )
+
+    def test_infer_anatomy_stack_path_prefers_raw_source_over_derived_uint8(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L395_f11"
+            fish_dir = root / fish_id
+            raw_dir = fish_dir / "01_raw" / "2p" / "anatomy"
+            preproc_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_anatomy"
+            raw_dir.mkdir(parents=True)
+            preproc_dir.mkdir(parents=True)
+            raw_path = raw_dir / f"{fish_id}_anatomy_00001.tif"
+            derived_path = preproc_dir / f"{fish_id}_anatomy_2P_GCaMP_uint8.tif"
+            raw_path.touch()
+            derived_path.touch()
+
+            self.assertEqual(infer_anatomy_stack_path(fish_dir, fish_id), raw_path)
+
+    def test_infer_anatomy_stack_path_prefers_nonderived_preprocessed_source_over_uint8(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L395_f11"
+            fish_dir = root / fish_id
+            preproc_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_anatomy"
+            preproc_dir.mkdir(parents=True)
+            source_path = preproc_dir / f"{fish_id}_anatomy_2P_GCaMP.nrrd"
+            derived_path = preproc_dir / f"{fish_id}_anatomy_2P_GCaMP_uint8.tif"
+            source_path.touch()
+            derived_path.touch()
+
+            self.assertEqual(infer_anatomy_stack_path(fish_dir, fish_id), source_path)
+
+    def test_infer_anatomy_stack_path_falls_back_to_uint8_when_no_source_exists(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L395_f11"
+            fish_dir = root / fish_id
+            preproc_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_anatomy"
+            preproc_dir.mkdir(parents=True)
+            derived_path = preproc_dir / f"{fish_id}_anatomy_2P_GCaMP_uint8.tif"
+            derived_path.touch()
+
+            self.assertEqual(infer_anatomy_stack_path(fish_dir, fish_id), derived_path)
 
     def test_notebook_bindings_from_context_exposes_legacy_bindings(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -186,6 +233,89 @@ class ContextTests(unittest.TestCase):
 
         corr = helpers["_corr2"](oriented, ref_float)
         self.assertTrue(np.isfinite(corr))
+
+    def test_orient_functional_stacks_stage_defaults_to_audit_without_writing_movie(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            src = root / "fish_mcorrected.tif"
+            dst = root / "raw" / "fish_mcorrected_flipX.tif"
+            dst.parent.mkdir()
+            tifffile.imwrite(src, np.arange(8, dtype=np.uint16).reshape(2, 2, 2))
+
+            result = orient_functional_stacks_stage(
+                func_nonflipped_list=[src],
+                flipped_list=[dst],
+                out_raw=dst.parent,
+                fish_id="fish",
+                polarity="south",
+                polarity_source="test",
+                config=FunctionalOrientationStageConfig(),
+            )
+
+            self.assertFalse(dst.exists())
+            self.assertIn("FUNCTIONAL_ORIENTATION_AUDIT_DF", result["bindings"])
+            audit_df = result["audit_df"]
+            self.assertEqual(audit_df.loc[0, "status"], "no_cache")
+            self.assertTrue(audit_df.loc[0, "source_exists"])
+
+    def test_orient_functional_stacks_stage_opt_in_writes_oriented_movie(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            src = root / "fish_mcorrected.tif"
+            dst = root / "raw" / "fish_mcorrected_flipX.tif"
+            dst.parent.mkdir()
+            arr = np.array([[[1, 2], [3, 4]]], dtype=np.uint16)
+            tifffile.imwrite(src, arr)
+
+            orient_functional_stacks_stage(
+                func_nonflipped_list=[src],
+                flipped_list=[dst],
+                out_raw=dst.parent,
+                fish_id="fish",
+                polarity="south",
+                polarity_source="test",
+                config=FunctionalOrientationStageConfig(save_oriented_stacks=True),
+            )
+
+            self.assertTrue(dst.exists())
+            np.testing.assert_array_equal(tifffile.imread(dst), arr[..., ::-1])
+
+    def test_resolve_voxel_context_stage_uses_source_paths_and_legacy_flip_aliases(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            analysis_dir = root / "analysis"
+            out_reg = root / "reg"
+            outdir = root / "out"
+            analysis_dir.mkdir()
+            out_reg.mkdir()
+            outdir.mkdir()
+            src = root / "fish_mcorrected.tif"
+            flipped = root / "raw" / "fish_mcorrected_flipX.tif"
+            flipped.parent.mkdir()
+            tifffile.imwrite(src, np.zeros((1, 2, 2), dtype=np.uint16))
+
+            result = resolve_voxel_context_stage(
+                analysis_dir=analysis_dir,
+                outdir=outdir,
+                out_reg=out_reg,
+                data_mode="local",
+                func_stack_path=None,
+                func_raw_stack_path=None,
+                anat_stack_path=None,
+                hcr_stack_paths=None,
+                hcr_stack_path=None,
+                vox_func_auto=None,
+                vox_func_manual={"X": 1.0, "Y": 2.0, "Z": 3.0},
+                vox_anat_manual=None,
+                vox_hcr_manual=None,
+                flipped_list=[flipped],
+                func_source_list=[src],
+            )
+
+            vox_by_path = result["bindings"]["VOX_FUNC_BY_PATH"]
+            self.assertEqual(vox_by_path[str(src)]["X"], 1.0)
+            self.assertEqual(vox_by_path[str(flipped)]["Y"], 2.0)
+            self.assertEqual(result["df_vox"].loc[0, "path"], str(src))
 
     def test_package_import_preserves_preconfigured_matplotlib_backend(self) -> None:
         env = dict(os.environ)

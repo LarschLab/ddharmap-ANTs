@@ -11,7 +11,9 @@
    - Key vars: `FISH_ID`, `RUN_CONFIG`, `NAS_ROOT`, `FISH_DIR`, `OUTDIR`, `OUT_REG`, `OUT_QA`, `OUT_DERIVED`.
 2. **Spatial preparation** (`[13] [14a] [7] [9] [11] [15] [19] [19a] [21] [22d] [22e]`)
    - Orientation, voxel alignment, best-z/scale search, in-plane placement comparison, regional crop selection, QA overlays.
-   - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy` and rebinds `ANAT_STACK_PATH` for downstream anatomy consumers.
+   - `[10]` resolves functional orientation and audits legacy full-stack `_flipX.tif` caches; it no longer saves full oriented functional movies by default.
+   - `[12]` builds/reuses oriented 2D functional references from original motion-corrected stacks while preserving legacy reference filenames and `plane_refs` labels.
+   - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy`, rebinds `ANAT_STACK_PATH` for downstream anatomy consumers, and is rerun-idempotent when the uint8 output already exists.
    - `[19a]` writes NCC-guided per-plane fixed anatomy-space squares for masked ANTs in-plane registration; `[20]` uses masked ANTs as the default in-plane backend and explicitly falls back to NCC when ANTs or its region JSON is unavailable.
    - `[22e]` runs after Suite2p loading so the same regional review can include ROI and anatomy-label boundaries.
    - Key object: `plane_refs`.

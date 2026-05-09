@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import json
 import numpy as np
 import tifffile
 
@@ -151,6 +152,103 @@ def test_preprocess_anatomy_uint8_stage_rebuilds_unversioned_cache(tmp_path: Pat
     assert result["artifacts"]["used_cached_uint8"] is False
 
 
+def test_preprocess_anatomy_uint8_stage_reuses_uint8_input_without_chaining_or_reorienting(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[1, 2], [3, 4]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+
+    first_result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        anat_stack_path_orig=raw_path,
+        preproc_dir=preproc_dir,
+        polarity="north",
+        polarity_source="test",
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            target_xy_shape=None,
+        ),
+    )
+    out_path = first_result["bindings"]["ANAT_8BIT_STACK_PATH"]
+    first_out = tifffile.imread(out_path)
+
+    second_result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=out_path,
+        anat_stack_path_orig=out_path,
+        preproc_dir=preproc_dir,
+        polarity="north",
+        polarity_source="test",
+        config=AnatomyUint8PreprocessingConfig(target_xy_shape=None),
+    )
+
+    assert second_result["bindings"]["ANAT_8BIT_STACK_PATH"] == out_path
+    assert second_result["bindings"]["ANAT_STACK_PATH"] == out_path
+    assert not (out_path.parent / "fish_anatomy_2P_GCaMP_uint8_uint8.tif").exists()
+    np.testing.assert_array_equal(tifffile.imread(out_path), first_out)
+    assert second_result["artifacts"]["used_cached_uint8"] is True
+
+
+def test_preprocess_anatomy_uint8_stage_reuses_uint8_input_without_metadata(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    out_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP_uint8.tif"
+    out_path.parent.mkdir(parents=True)
+    anat_u8 = np.array([[[10, 20], [30, 40]]], dtype=np.uint8)
+    tifffile.imwrite(out_path, anat_u8)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=out_path,
+        anat_stack_path_orig=out_path,
+        preproc_dir=preproc_dir,
+        polarity="north",
+        polarity_source="test",
+        config=AnatomyUint8PreprocessingConfig(target_xy_shape=None),
+    )
+
+    assert result["bindings"]["ANAT_8BIT_STACK_PATH"] == out_path
+    assert result["artifacts"]["used_cached_uint8"] is True
+    assert not (out_path.parent / "fish_anatomy_2P_GCaMP_uint8_uint8.tif").exists()
+    np.testing.assert_array_equal(tifffile.imread(out_path), anat_u8)
+
+
+def test_preprocess_anatomy_uint8_stage_force_recomputes_uint8_input_from_metadata_source(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    tifffile.imwrite(raw_path, np.array([[[1, 2], [3, 4]]], dtype=np.int16))
+
+    first_result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        anat_stack_path_orig=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=None,
+        ),
+    )
+    out_path = first_result["bindings"]["ANAT_8BIT_STACK_PATH"]
+    meta = json.loads((out_path.parent / f"{out_path.name}.json").read_text())
+    assert Path(meta["source_path"]) == raw_path
+
+    tifffile.imwrite(raw_path, np.array([[[0, 10], [20, 30]]], dtype=np.int16))
+    second_result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=out_path,
+        anat_stack_path_orig=out_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=None,
+        ),
+    )
+
+    assert second_result["bindings"]["ANAT_8BIT_STACK_PATH"] == out_path
+    assert second_result["artifacts"]["anat_uint8_source_path"] == raw_path
+    assert second_result["artifacts"]["used_cached_uint8"] is False
+    assert tifffile.imread(out_path).tolist() == [[[0, 85], [170, 255]]]
+
+
 def test_functional_reference_registration_and_placement_stage_chain(tmp_path: Path) -> None:
     out_raw = tmp_path / "raw"
     out_ncc = tmp_path / "ncc"
@@ -244,3 +342,44 @@ def test_functional_reference_registration_and_placement_stage_chain(tmp_path: P
         assert "ncc_xy" in plane_ref
         assert plane_ref.get("tform_src") == "ncc_xy"
         assert plane_ref.get("ref_warped") is not None
+
+
+def test_functional_references_from_nonflipped_stack_preserve_legacy_flipx_names(tmp_path: Path) -> None:
+    out_raw = tmp_path / "raw"
+    out_raw.mkdir()
+    source_path = tmp_path / "fish_plane_stack.tif"
+    legacy_flip_path = out_raw / "fish_plane_stack_flipX.tif"
+    func = np.array(
+        [
+            [
+                [[1, 2], [3, 4]],
+                [[5, 6], [7, 8]],
+            ],
+            [
+                [[2, 4], [6, 8]],
+                [[10, 12], [14, 16]],
+            ],
+        ],
+        dtype=np.float32,
+    )
+    tifffile.imwrite(source_path, func)
+
+    refs_result = build_functional_references_stage(
+        flipped_list=[legacy_flip_path],
+        func_nonflipped_list=[source_path],
+        out_raw=out_raw,
+        vox_func_by_path={str(source_path): {"X": 1.0, "Y": 1.0, "Z": 1.0}},
+        polarity="south",
+        config=FunctionalReferenceConfig(
+            use_top_corr_refs=False,
+            reuse_saved_refs=False,
+        ),
+    )
+
+    plane_refs = refs_result["plane_refs"]
+    assert len(plane_refs) == 2
+    assert plane_refs[0]["label"] == "fish_plane_stack_flipX_plane0"
+    assert (out_raw / "fish_plane_stack_flipX_plane0_raw.tif").exists()
+    np.testing.assert_array_equal(plane_refs[0]["ref2d_raw"], func[:, 0, :, :].mean(axis=0)[:, ::-1])
+    np.testing.assert_array_equal(plane_refs[1]["ref2d_raw"], func[:, 1, :, :].mean(axis=0)[:, ::-1])
+    assert not legacy_flip_path.exists()

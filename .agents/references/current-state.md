@@ -26,7 +26,8 @@
 - Notebook-visible QA image stages should not rely on an import-time `Agg` backend override; package renderers are expected to display figures explicitly in notebook contexts while remaining save-safe in headless runs.
 - Optional native dependencies are expected to fail stage-locally: base package imports and early notebook setup cells should not require `SimpleITK`, `cellpose`, or `ANTsPy` at import time.
 - `notebooks/2PF_to_HCR.ipynb` is static-contract clean for top-level helper definitions; remaining heavy legacy behavior for migrated cells is package-owned through public stage wrappers.
-- Early anatomy preprocessing now includes `[14a]` before voxel inference `[8]`; it writes a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy` and rebinds `ANAT_STACK_PATH` downstream.
+- Single-fish functional orientation no longer writes full `_flipX.tif` movie stacks by default. `[10]` audits existing legacy oriented movie caches, and `[12]` applies orientation to derived functional references from the original motion-corrected stacks.
+- Early anatomy preprocessing now includes `[14a]` before voxel inference `[8]`; it writes a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy`, rebinds `ANAT_STACK_PATH` downstream, and avoids chained `*_uint8_uint8.tif` outputs on rerun.
 - Keep path purposes separate:
   - ROI-centric for whole-population inference
   - HCR-centric for identified-cell activity reporting/export
