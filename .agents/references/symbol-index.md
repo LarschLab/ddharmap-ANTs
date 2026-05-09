@@ -167,6 +167,7 @@ Generated manually for the current extracted package surface.
 - `show_region_shift_square_selector_stage`: Notebook-facing region-square QA selector stage for `[22d]`, including JSON reuse/save behavior.
 - `show_ants_registration_region_selector_stage`: Notebook-facing NCC-guided per-plane fixed-region square writer for `[19a]` masked ANTs in-plane registration.
 - `show_inplane_registration_method_comparison_stage`: Notebook-facing regional ANTs-vs-NCC in-plane placement and ROI/anatomy-boundary review for `[22e]`, using stored `[20]` method outputs, Suite2p labels, anatomy labels, and the `[22d]` crop.
+- `show_regional_match_review_stage`: Notebook-facing anatomy-space ROI/anatomy regional overlay for `[34c]`, using the `[22d]` crop and selected in-plane transform to warp functional labels forward.
 - `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
 - `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows.

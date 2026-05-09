@@ -856,8 +856,32 @@ def run_single_fish_cell_30_stage(namespace: MutableMapping[str, Any]) -> None:
     _exec_stage('30', namespace)
 
 def run_single_fish_cell_34c_stage(namespace: MutableMapping[str, Any]) -> None:
-    """Run package-owned legacy notebook cell [34c] in ``namespace``."""
-    _exec_stage('34c', namespace)
+    """Run package-owned regional ROI/anatomy review cell [34c] in ``namespace``."""
+    if not isinstance(namespace, MutableMapping):
+        raise TypeError("namespace must be a mutable mapping, usually globals()")
+    from .plots.qa import show_regional_match_review_stage
+
+    result = show_regional_match_review_stage(
+        plane_refs=namespace.get("plane_refs"),
+        anat_labels_path=namespace.get("ANAT_LABELS_PATH"),
+        anat_stack=namespace.get("anat", namespace.get("anat_f")),
+        func_labels=namespace.get("func_labels"),
+        func_labels_path=namespace.get("FUNC_LABELS_PATH"),
+        out_seg=namespace.get("OUT_SEG"),
+        suite2p_by_ref_idx=namespace.get("suite2p_by_ref_idx"),
+        out_reg=namespace.get("OUT_REG"),
+        out_qa=namespace.get("OUT_QA"),
+        plane_indices="all",
+        use_suite2p_labels=True,
+        apply_func_orientation_func=namespace.get("apply_func_orientation"),
+        imread_func=namespace.get("imread_any"),
+        crop_pad_px=24,
+        save_outputs=True,
+        render_display=True,
+    )
+    namespace["regional_match_review_result"] = result
+    for line in result.get("log_lines", []):
+        print(line)
 
 def run_single_fish_cell_38_stage(namespace: MutableMapping[str, Any]) -> None:
     """Run package-owned legacy notebook cell [38] in ``namespace``."""

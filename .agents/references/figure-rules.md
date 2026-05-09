@@ -31,6 +31,10 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 
 ## Stage-specific hybrid exception
 
+- `[34c]` is an anatomy-space regional QA overlay:
+  - source the saved `[22d]` regional crop in anatomy-space coordinates
+  - warp functional ROI labels forward into anatomy space with the selected in-plane transform
+  - overlay ROI boundaries on the fixed anatomy/anatomy-label slice; do not inverse-warp anatomy labels into functional display space
 - `[50l]` is a package-rendered single-fish composite:
   - whole-population response/BPI panels source ROI-centric `[50ia]` outputs
   - gene-specific AUC panels source HCR-centric identified-cell rows from package-owned `[56i]` motion-AUC plot tables

@@ -204,6 +204,7 @@ from .plots.qa import (
     show_centroid_match_qa_stage,
     show_functional_label_overlay_stage,
     show_inplane_registration_method_comparison_stage,
+    show_regional_match_review_stage,
     show_region_shift_square_selector_stage,
     show_registration_overlay_stage,
 )
@@ -414,6 +415,7 @@ __all__ = [
     "show_ants_registration_region_selector_stage",
     "show_functional_label_overlay_stage",
     "show_inplane_registration_method_comparison_stage",
+    "show_regional_match_review_stage",
     "show_region_shift_square_selector_stage",
     "show_registration_overlay_stage",
     "summarize_distances",

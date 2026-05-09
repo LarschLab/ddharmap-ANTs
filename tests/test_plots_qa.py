@@ -8,10 +8,12 @@ import numpy as np
 import pandas as pd
 from skimage import transform
 
+from codeants_2pf_hcr.matching import resample_labels_nn as matching_resample_labels_nn
 from codeants_2pf_hcr.plots.qa import (
     show_ants_registration_region_selector_stage,
     show_centroid_match_qa_stage,
     show_inplane_registration_method_comparison_stage,
+    show_regional_match_review_stage,
 )
 
 
@@ -108,6 +110,56 @@ class PlotsQaTests(unittest.TestCase):
             self.assertEqual(payload["regions"][1]["ncc_xy"]["x0"], 2)
             self.assertEqual(payload["regions"][1]["ncc_xy"]["y0"], 5)
             self.assertEqual(payload["regions"][0]["requested_size_px"], 5)
+
+    def test_regional_match_review_warps_roi_labels_into_anatomy_space(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_reg = root / "reg"
+            out_qa = root / "qa"
+            out_reg.mkdir()
+            (out_reg / "regional_match_qa_square.json").write_text(
+                json.dumps({"bounds_xyxy": [3, 3, 8, 8]})
+            )
+            anat_labels = np.zeros((1, 10, 10), dtype=np.uint32)
+            anat_labels[0, 4:6, 4:6] = 7
+            anat = np.zeros((1, 10, 10), dtype=np.float32)
+            anat[0, 4:6, 4:6] = 1.0
+            roi_labels = np.zeros((4, 4), dtype=np.uint32)
+            roi_labels[1:3, 1:3] = 2
+            tform = transform.SimilarityTransform(translation=(3, 3))
+            plane_refs = [
+                {
+                    "label": "plane0",
+                    "best_z": 0,
+                    "ref_match": np.zeros((4, 4), dtype=np.float32),
+                    "suite2p": {"labels": roi_labels},
+                    "tform": tform,
+                }
+            ]
+
+            with patch(
+                "codeants_2pf_hcr.plots.qa.resample_labels_nn",
+                wraps=matching_resample_labels_nn,
+            ) as resample_mock:
+                result = show_regional_match_review_stage(
+                    plane_refs=plane_refs,
+                    anat_labels_all=anat_labels,
+                    anat_stack=anat,
+                    out_reg=out_reg,
+                    out_qa=out_qa,
+                    render_display=False,
+                    save_outputs=True,
+                )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["rendered"], 1)
+            self.assertEqual(len(result["saved_paths"]), 1)
+            self.assertTrue(Path(result["saved_paths"][0]).exists())
+            self.assertEqual(resample_mock.call_count, 1)
+            self.assertIs(resample_mock.call_args.args[1], tform)
+            self.assertEqual(resample_mock.call_args.kwargs["output_shape"], (10, 10))
+            self.assertTrue(bool(result["review_df"].iloc[0]["transform_applied"]))
+            self.assertEqual(int(result["review_df"].iloc[0]["n_anat_labels"]), 1)
 
     def test_inplane_method_comparison_saves_regional_review(self) -> None:
         with TemporaryDirectory() as tmpdir:

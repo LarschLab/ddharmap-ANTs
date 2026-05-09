@@ -149,6 +149,7 @@ from codeants_2pf_hcr import (
     show_centroid_match_qa_stage,
     show_ants_registration_region_selector_stage,
     show_inplane_registration_method_comparison_stage,
+    show_regional_match_review_stage,
     show_region_shift_square_selector_stage,
     compute_anatomy_median_xy_radius_um,
     show_registration_overlay_stage,
@@ -309,6 +310,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(show_centroid_match_qa_stage)
     assert callable(show_ants_registration_region_selector_stage)
     assert callable(show_inplane_registration_method_comparison_stage)
+    assert callable(show_regional_match_review_stage)
     assert callable(show_region_shift_square_selector_stage)
     assert callable(compute_anatomy_median_xy_radius_um)
     assert callable(show_functional_label_overlay_stage)

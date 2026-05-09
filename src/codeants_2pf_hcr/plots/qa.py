@@ -1250,6 +1250,211 @@ def show_inplane_registration_method_comparison_stage(
     }
 
 
+def show_regional_match_review_stage(
+    *,
+    plane_refs: list[dict[str, Any]] | None,
+    anat_labels_all: Any = None,
+    anat_labels_path: str | Path | None = None,
+    anat_stack: Any = None,
+    func_labels: Any = None,
+    func_labels_path: str | Path | None = None,
+    out_seg: str | Path | None = None,
+    suite2p_by_ref_idx: dict[int, Any] | None = None,
+    out_reg: str | Path | None = None,
+    out_qa: str | Path | None = None,
+    plane_indices: Any = "all",
+    use_suite2p_labels: bool = True,
+    apply_func_orientation_func: Any = None,
+    imread_func: Any = None,
+    square_json_name: str = "regional_match_qa_square.json",
+    legacy_square_json_name: str = "regional_shift_square.json",
+    crop_pad_px: int = 24,
+    save_outputs: bool = True,
+    render_display: bool = True,
+    roi_outline_rgba: tuple[float, float, float, float] = (0.0, 1.0, 0.0, 0.95),
+    anat_outline_rgba: tuple[float, float, float, float] = (1.0, 0.2, 0.85, 0.90),
+    dpi: int = 180,
+) -> dict[str, Any]:
+    """Render [34c] regional ROI/anatomy review in anatomy-space coordinates."""
+    log_lines: list[str] = []
+    if not plane_refs:
+        log_lines.append("[34c] plane_refs missing; run [16] first.")
+        return {"ok": False, "rendered": 0, "saved_paths": [], "log_lines": log_lines}
+
+    anat_labels_arr, anat_labels_src, anat_labels_error = _load_anatomy_labels_for_method_review(
+        anat_labels_all=anat_labels_all,
+        anat_labels_path=anat_labels_path,
+        imread_func=imread_func,
+    )
+    if anat_labels_error is not None or anat_labels_arr is None:
+        log_lines.append(f"[34c] {anat_labels_error or 'anatomy labels unavailable'}")
+        return {"ok": False, "rendered": 0, "saved_paths": [], "log_lines": log_lines}
+    if anat_labels_arr.ndim not in (2, 3):
+        raise ValueError("[34c] anatomy labels must be a 2D label image or 3D label stack (Z,Y,X).")
+
+    square_spec = None
+    square_path = None
+    if out_reg is not None:
+        for candidate in (Path(out_reg) / square_json_name, Path(out_reg) / legacy_square_json_name):
+            payload = _read_json_payload(candidate)
+            if isinstance(payload, dict):
+                square_spec = payload
+                square_path = candidate
+                log_lines.append(f"[34c] loaded regional crop: {candidate}")
+                break
+    if not isinstance(square_spec, dict):
+        log_lines.append("[34c] no saved QA square found; run [22d] first.")
+        return {"ok": False, "rendered": 0, "saved_paths": [], "log_lines": log_lines}
+
+    if isinstance(plane_indices, str) and plane_indices.strip().lower() == "all":
+        if isinstance(suite2p_by_ref_idx, dict) and suite2p_by_ref_idx:
+            selected_plane_indices = sorted(int(k) for k in suite2p_by_ref_idx.keys())
+        else:
+            selected_plane_indices = list(range(len(plane_refs)))
+    elif plane_indices is None:
+        selected_plane_indices = list(range(len(plane_refs)))
+    elif isinstance(plane_indices, (list, tuple, set, np.ndarray)):
+        selected_plane_indices = sorted({int(v) for v in plane_indices})
+    else:
+        selected_plane_indices = []
+        for part in str(plane_indices).split(","):
+            part = part.strip()
+            if part:
+                selected_plane_indices.append(int(part))
+        selected_plane_indices = sorted(set(selected_plane_indices))
+
+    out_dir = None
+    if save_outputs and out_qa is not None:
+        out_dir = Path(out_qa) / "regional_match_review"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    anat_stack_arr = None if anat_stack is None else np.asarray(anat_stack, dtype=np.float32)
+    saved_paths: list[str] = []
+    rendered = 0
+    review_rows: list[dict[str, Any]] = []
+
+    for plane_idx in selected_plane_indices:
+        if plane_idx < 0 or plane_idx >= len(plane_refs):
+            log_lines.append(f"[34c] skip plane {plane_idx}: out of range")
+            continue
+        plane_ref = plane_refs[int(plane_idx)]
+        if plane_ref is None:
+            continue
+        label = str(plane_ref.get("label", f"plane{plane_idx}"))
+        try:
+            best_z = int(plane_ref.get("best_z", plane_idx))
+        except Exception:
+            best_z = -1
+        if anat_labels_arr.ndim == 3:
+            if best_z < 0 or best_z >= int(anat_labels_arr.shape[0]):
+                log_lines.append(f"[34c] skip {label}: best_z out of bounds ({best_z})")
+                continue
+            anat_slice = _ensure_uint_labels(anat_labels_arr[best_z])
+        else:
+            anat_slice = _ensure_uint_labels(anat_labels_arr)
+
+        try:
+            func_label_img, func_label_src = resolve_functional_labels_for_plane(
+                plane_ref,
+                int(plane_idx),
+                use_suite2p_labels=bool(use_suite2p_labels),
+                func_labels=func_labels,
+                out_seg=out_seg,
+                func_labels_path=func_labels_path,
+                apply_func_orientation_func=apply_func_orientation_func,
+                imread_func=imread_func,
+                ensure_uint_labels_func=_ensure_uint_labels,
+            )
+        except Exception as exc:
+            log_lines.append(f"[34c] {label}: could not resolve functional ROI labels: {exc}")
+            continue
+        if func_label_img is None:
+            log_lines.append(f"[34c] skip {label}: no functional labels available")
+            continue
+
+        tform = resolve_plane_transform(plane_ref)
+        try:
+            func_warped_labels = resample_labels_nn(func_label_img, tform, output_shape=anat_slice.shape)
+        except Exception as exc:
+            log_lines.append(f"[34c] {label}: ROI label warp failed: {exc}")
+            continue
+
+        crop_bounds = _square_bounds_from_spec(square_spec, anat_slice.shape)
+        x0, y0, x1, y1 = crop_bounds
+        square_labels = np.unique(anat_slice[y0:y1, x0:x1])
+        square_labels = [int(v) for v in square_labels if int(v) != 0]
+        if square_labels:
+            anat_review_labels = np.where(
+                np.isin(anat_slice, np.asarray(square_labels, dtype=np.int64)),
+                anat_slice,
+                0,
+            ).astype(anat_slice.dtype, copy=False)
+        else:
+            anat_review_labels = np.zeros_like(anat_slice, dtype=anat_slice.dtype)
+        view_bounds = _crop_bounds_with_pad(crop_bounds, anat_slice.shape, crop_pad_px)
+
+        if anat_stack_arr is not None and anat_stack_arr.ndim == 3 and 0 <= best_z < int(anat_stack_arr.shape[0]):
+            bg = np.repeat(norm01(anat_stack_arr[best_z])[..., None], 3, axis=2)
+            bg_src = "anatomy intensity"
+        else:
+            bg = np.repeat(norm01(anat_slice.astype(np.float32))[..., None], 3, axis=2)
+            bg_src = "anatomy labels"
+
+        fig, ax = plt.subplots(1, 1, figsize=(5.8, 5.8))
+        ax.imshow(bg)
+        ax.imshow(_outline_rgba(anat_review_labels, anat_outline_rgba))
+        ax.imshow(_outline_rgba(func_warped_labels, roi_outline_rgba))
+        vx0, vy0, vx1, vy1 = view_bounds
+        ax.set_xlim(vx0, vx1)
+        ax.set_ylim(vy1, vy0)
+        ax.set_title(f"{label}: ROI and anatomy boundaries in anatomy space (z={best_z})")
+        ax.axis("off")
+        fig.suptitle(
+            f"Regional match review | ROI green, anatomy magenta | labels={len(square_labels)} | source={func_label_src}",
+            y=0.98,
+        )
+        plt.tight_layout()
+
+        if out_dir is not None:
+            out_path = out_dir / f"regional_match_review_plane{int(plane_idx)}.png"
+            fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
+            saved_paths.append(str(out_path))
+        if render_display:
+            _emit_figure(fig)
+        else:
+            fig.canvas.draw()
+            plt.close(fig)
+        rendered += 1
+        review_rows.append(
+            {
+                "plane_idx": int(plane_idx),
+                "plane_label": label,
+                "best_z": int(best_z),
+                "func_label_src": str(func_label_src),
+                "background_src": bg_src,
+                "transform_applied": tform is not None,
+                "crop_bounds_anat": tuple(int(v) for v in crop_bounds),
+                "n_anat_labels": int(len(square_labels)),
+                "n_func_labels": int(len(np.unique(func_warped_labels)) - (1 if np.any(func_warped_labels == 0) else 0)),
+            }
+        )
+
+    if out_dir is not None and saved_paths:
+        log_lines.append(f"[34c] rendered {len(saved_paths)} plane QA figure(s) from square {square_path} -> {out_dir}")
+    if rendered == 0:
+        log_lines.append("[34c] no planes available for regional QA rendering.")
+    return {
+        "ok": rendered > 0,
+        "rendered": int(rendered),
+        "saved_paths": saved_paths,
+        "square_json_path": square_path,
+        "anat_labels_src": anat_labels_src,
+        "used_regional_crop": True,
+        "review_df": pd.DataFrame(review_rows),
+        "log_lines": log_lines,
+    }
+
+
 def compute_anatomy_median_xy_radius_um(
     anat_labels_all: np.ndarray,
     *,
@@ -2712,6 +2917,8 @@ __all__ = [
     "show_centroid_match_qa_stage",
     "show_ants_registration_region_selector_stage",
     "show_functional_label_overlay_stage",
+    "show_inplane_registration_method_comparison_stage",
+    "show_regional_match_review_stage",
     "show_region_shift_square_selector_stage",
     "show_registration_overlay_stage",
 ]

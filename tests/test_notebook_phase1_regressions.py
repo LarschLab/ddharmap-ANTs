@@ -1,4 +1,5 @@
 import ast
+import inspect
 import json
 import unittest
 from pathlib import Path
@@ -569,6 +570,13 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("FunctionalAnatomyDebugConfig", cell_34a)
         self.assertIn("resample_labels_nn", cell_34a)
         self.assertNotIn("resample_failed (name 'resample_labels_nn' is not defined)", cell_34a)
+
+    def test_34c_wrapper_uses_anatomy_space_package_renderer(self) -> None:
+        source = inspect.getsource(single_fish_stages.run_single_fish_cell_34c_stage)
+        self.assertIn("show_regional_match_review_stage", source)
+        self.assertNotIn("_exec_stage('34c'", source)
+        self.assertNotIn("_invert_tform_local", source)
+        self.assertNotIn("_transform_bounds_to_ref", source)
 
     def test_registration_cells_use_package_stage_wrappers(self) -> None:
         cell_16 = _code_cell_by_tag("16")
