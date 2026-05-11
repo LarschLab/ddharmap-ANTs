@@ -1,5 +1,6 @@
 name: codeants-2pf-hcr-win
 channels:
+  - pytorch
   - conda-forge
 dependencies:
   - python=3.10
@@ -10,10 +11,10 @@ dependencies:
   - numpy
   - pandas
   - pynrrd
+  - pytorch-cpu
   - scikit-image
   - scipy
   - tifffile
   - pip:
       - antspyx
       - cellpose
-      - torch

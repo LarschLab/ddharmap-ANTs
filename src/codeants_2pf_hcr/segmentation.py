@@ -11,9 +11,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 
-from .matching import _ensure_uint_labels
 from .runtime import optional_dependency_error
-from .spatial import imread_any, infer_voxels_tiff, norm01
 
 
 @dataclass(frozen=True)
@@ -37,6 +35,30 @@ class AnatomyCellposeConfig:
     use_gpu: bool | None = None
     compute_device: str | None = None
     verbose: bool = True
+
+
+def _ensure_uint_labels_local() -> Callable[[Any], np.ndarray]:
+    from .matching import _ensure_uint_labels
+
+    return _ensure_uint_labels
+
+
+def _imread_any(path: str | Path) -> np.ndarray:
+    from .spatial import imread_any
+
+    return imread_any(path)
+
+
+def _infer_voxels_tiff(path: str | Path) -> dict[str, float]:
+    from .spatial import infer_voxels_tiff
+
+    return infer_voxels_tiff(path)
+
+
+def _norm01(arr: np.ndarray) -> np.ndarray:
+    from .spatial import norm01
+
+    return norm01(arr)
 
 
 def resolve_hcr_cellpose_model_path(
@@ -128,7 +150,7 @@ def _pending_pairs(candidate_pairs: list[tuple[Path, Path]], *, skip_if_exists: 
 def _normalize_to_uint8(arr: np.ndarray) -> tuple[np.ndarray, str]:
     if arr.dtype == np.uint8 or (np.issubdtype(arr.dtype, np.integer) and arr.max() <= 255 and arr.min() >= 0):
         return arr.astype(np.uint8, copy=False), "native"
-    return (norm01(arr) * 255).astype(np.uint8), f"normalized_from_{arr.dtype}"
+    return (_norm01(arr) * 255).astype(np.uint8), f"normalized_from_{arr.dtype}"
 
 
 def _compute_anisotropy(
@@ -146,7 +168,7 @@ def _compute_anisotropy(
         return anisotropy, {"override": anisotropy}
     vox = None
     try:
-        vox = infer_voxels_tiff(intensity_path)
+        vox = _infer_voxels_tiff(intensity_path)
     except Exception:
         vox = None
     if vox and vox.get("Z") and vox.get("X"):
@@ -211,7 +233,7 @@ def _load_cellpose_model(*, cp_model: Path, use_gpu: bool, stage_tag: str, log_l
 
 
 def _prepare_anat_volume(path: Path, *, log_lines: list[str]) -> np.ndarray:
-    vol = np.asarray(imread_any(path))
+    vol = np.asarray(_imread_any(path))
     if vol.ndim == 4 and vol.shape[-1] in (3, 4):
         vol = vol[..., 0]
     if path.suffix.lower() == ".nrrd" and vol.ndim == 3 and vol.shape[-1] < min(vol.shape[0], vol.shape[1]):
@@ -322,7 +344,7 @@ def run_hcr_cellpose_stage(
                 "anisotropy": None,
                 "vox": None,
             }
-            arr = imread_any(intensity_path)
+            arr = _imread_any(intensity_path)
             if intensity_path.suffix.lower() == ".nrrd" and arr.ndim == 3 and arr.shape[-1] < min(arr.shape[0], arr.shape[1]):
                 arr = arr.transpose(2, 1, 0)
                 log_lines.append(f"[INFO] Reordered NRRD to (Z, Y, X): {intensity_path.name} -> {arr.shape}")
@@ -561,7 +583,7 @@ def resolve_functional_labels_for_plane(
     imread_func: Callable[[str | Path], np.ndarray] | None = None,
     ensure_uint_labels_func: Callable[[Any], np.ndarray] | None = None,
 ) -> tuple[np.ndarray | None, str | None]:
-    ensure = ensure_uint_labels_func if callable(ensure_uint_labels_func) else _ensure_uint_labels
+    ensure = ensure_uint_labels_func if callable(ensure_uint_labels_func) else _ensure_uint_labels_local()
     imread_local = imread_func if callable(imread_func) else tifffile.imread
     label = plane_ref.get("label", f"plane{plane_idx}")
     ref_match = plane_ref.get("ref_match")
@@ -648,7 +670,7 @@ def resolve_native_suite2p_labels_for_plane(
     func_labels: Any = None,
     ensure_uint_labels_func: Callable[[Any], np.ndarray] | None = None,
 ) -> tuple[np.ndarray | None, str | None]:
-    ensure = ensure_uint_labels_func if callable(ensure_uint_labels_func) else _ensure_uint_labels
+    ensure = ensure_uint_labels_func if callable(ensure_uint_labels_func) else _ensure_uint_labels_local()
     suite2p = plane_ref.get("suite2p")
     if isinstance(suite2p, dict) and suite2p.get("labels") is not None:
         return ensure(suite2p["labels"]), "plane_refs.suite2p.labels"
@@ -703,7 +725,7 @@ def export_suite2p_native_labels_stage(
             )
             log_lines.append(f"[26a] missing labels for {label}; skipping")
             continue
-        labels = _ensure_uint_labels(labels)
+        labels = _ensure_uint_labels_local()(labels)
         if labels.ndim == 3 and labels.shape[-1] in (3, 4):
             labels = labels[..., 0]
         if labels.ndim != 2:
@@ -730,7 +752,7 @@ def export_suite2p_native_labels_stage(
         ref_norm_status = "missing_ref_norm"
         ref_norm_shape = None
         if ref_norm_mem is not None:
-            ref_norm_arr = norm01(np.asarray(ref_norm_mem, dtype=np.float32))
+            ref_norm_arr = _norm01(np.asarray(ref_norm_mem, dtype=np.float32))
             tifffile.imwrite(out_ref_norm, (ref_norm_arr * 65535).astype(np.uint16))
             ref_norm_status = "exported_from_plane_refs"
             ref_norm_shape = tuple(ref_norm_arr.shape)
