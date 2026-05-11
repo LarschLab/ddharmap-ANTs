@@ -9,21 +9,21 @@
 1. **Setup and fish-scoped paths** (`[1]-[5]`)
    - Imports, fish context, run configuration.
    - Key vars: `FISH_ID`, `RUN_CONFIG`, `NAS_ROOT`, `FISH_DIR`, `OUTDIR`, `OUT_REG`, `OUT_QA`, `OUT_DERIVED`.
-2. **Spatial preparation** (`[13] [14a] [7] [9] [11] [15] [19] [19a] [21] [22d] [22e]`)
+2. **Spatial preparation** (`[13] [14a] [7] [9] [11] [15] [19] [19a] [21] [22d] [24a] [22e]`)
    - Orientation, voxel alignment, best-z/scale search, in-plane placement comparison, regional crop selection, QA overlays.
    - `[10]` resolves functional orientation and audits legacy full-stack `_flipX.tif` caches; it no longer saves full oriented functional movies by default.
    - `[12]` builds/reuses oriented 2D functional references from original motion-corrected stacks while preserving legacy reference filenames and `plane_refs` labels.
    - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy`, rebinds `ANAT_STACK_PATH` for downstream anatomy consumers, and is rerun-idempotent when the uint8 output already exists.
    - `[19a]` writes NCC-guided per-plane fixed anatomy-space squares for masked ANTs in-plane registration; `[20]` uses masked ANTs as the default in-plane backend and explicitly falls back to NCC when ANTs or its region JSON is unavailable.
-   - `[22e]` runs after Suite2p loading so the same regional review can include ROI and anatomy-label boundaries.
+   - `[24a]` runs before `[22e]` so the regional review can include anatomy-label boundaries; `[22e]` also runs after Suite2p loading so the same review can include ROI boundaries.
    - Key object: `plane_refs`.
-3. **Functional ROI extraction** (`[23a] [25]`)
-   - Suite2p load, ROI labels, `iscell` provenance, dF/F extraction.
+3. **Functional ROI extraction** (`[23a] [23b] [23c] [25]`)
+   - Suite2p load, ROI labels, `iscell` provenance, dF/F extraction, Suite2p orientation QC, and early stimulus-locked trace diagnostics.
    - Key object: `suite2p_by_ref_idx`.
 4. **Segmentation/geometry QA** (`[29] [33] [34a]`)
    - QC helpers only; not identity source.
    - Diameter and regional-review support cells `[30]` and `[34c]` are package-owned migration wrappers.
-   - Native segmentation stages `[24]` and `[24a]` are package-owned and should remain orchestration-thin in the notebook.
+   - Native segmentation stages `[24]` and `[24a]` are package-owned and should remain orchestration-thin in the notebook; `[24a]` is ordered earlier because `[22e]` consumes `ANAT_LABELS_PATH`.
 5. **HCR discovery/warp/HCR↔anatomy QC** (`[37] [39] [41] [42] [43] [44]`)
    - HCR mask discovery, warping, QC summaries.
    - Key object: `hcr_match_results`.

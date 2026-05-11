@@ -620,3 +620,17 @@
   - existing stray `*_uint8_uint8.tif` files are not deleted automatically.
 - Rerun implications:
   - rerun `[4] -> [14] -> [14a] -> [8]` to refresh path discovery and voxel reporting for affected fish.
+
+### 2026-05-10 - Suite2p stimulus-locked diagnostic after ROI loading
+
+- Slice goal:
+  - add an early post-Suite2p diagnostic that checks raw stimulus-locked responses before identity matching and supports multi-session functional acquisitions.
+- Passes completed in this session:
+  - added companion stimulus metadata validation against parsed experiment logs.
+  - added a package-owned `[23c]` Suite2p diagnostic with session-colored per-neuron trace panels and heatmaps.
+  - updated public exports, symbol docs, stage map, and focused stimulus/diagnostic tests.
+- What changed:
+  - fish with `trial_sequence.csv` or `planned_schedule.csv` now use those metadata files as the authority for presented stimulus names and fail fast on mismatches with the log parse.
+  - the new diagnostic preserves preprocessing-metadata plane-to-session mapping and uses raw stimulus names such as `WFCl` and `LAB_trajectory`.
+- Rerun implications:
+  - rerun `[23a] -> [23c]` to generate the new QA outputs; downstream identity stages are unchanged.

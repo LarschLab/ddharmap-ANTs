@@ -19,6 +19,7 @@ from codeants_2pf_hcr import (
     RegistrationSearchConfig,
     SmokeValidationError,
     Suite2pStageConfig,
+    Suite2pStimulusLockedDiagnosticConfig,
     VoxelStageConfig,
     _ensure_uint_labels,
     _regionprops_centroids_2d,
@@ -49,6 +50,7 @@ from codeants_2pf_hcr import (
     build_registration_helper_stage,
     build_response_bpi_tables,
     build_run_config_stage,
+    build_suite2p_stimulus_locked_diagnostic,
     check_notebook_contract,
     collect_cohort_53a_tables,
     cohort_cache_paths,
@@ -94,6 +96,8 @@ from codeants_2pf_hcr import (
     render_single_fish_50l_gene_auc_panel,
     render_single_fish_50l_global_auc_panel,
     render_single_fish_50l_responsive_identity_donut,
+    render_suite2p_stimulus_locked_heatmaps,
+    render_suite2p_stimulus_locked_trace_panels,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
     render_cohort_56h_status_donut_grid,
@@ -106,6 +110,7 @@ from codeants_2pf_hcr import (
     resolve_hcr_cellpose_model_path,
     resolve_native_suite2p_labels_for_plane,
     resolve_notebook_context_stage,
+    resolve_presented_stimulus_metadata,
     resolve_plane_transform,
     resample_image,
     resample_labels_nn,
@@ -143,6 +148,7 @@ from codeants_2pf_hcr import (
     run_single_fish_cell_56g_stage,
     run_single_fish_cell_56h_stage,
     run_single_fish_cell_57_stage,
+    run_suite2p_stimulus_locked_diagnostic_stage,
     organize,
     run_smoke_tier,
     scale_image,
@@ -183,6 +189,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(RegistrationSearchConfig)
     assert callable(SmokeValidationError)
     assert callable(Suite2pStageConfig)
+    assert callable(Suite2pStimulusLockedDiagnosticConfig)
     assert callable(VoxelStageConfig)
     assert callable(_ensure_uint_labels)
     assert callable(_regionprops_centroids_2d)
@@ -213,6 +220,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_registration_helper_stage)
     assert callable(build_response_bpi_tables)
     assert callable(build_run_config_stage)
+    assert callable(build_suite2p_stimulus_locked_diagnostic)
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
     assert callable(collect_cohort_53a_tables)
@@ -265,6 +273,8 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_single_fish_50l_gene_auc_panel)
     assert callable(render_single_fish_50l_global_auc_panel)
     assert callable(render_single_fish_50l_responsive_identity_donut)
+    assert callable(render_suite2p_stimulus_locked_heatmaps)
+    assert callable(render_suite2p_stimulus_locked_trace_panels)
     assert callable(render_cohort_56g_diagnostics)
     assert callable(render_cohort_56h_by_fish)
     assert callable(render_cohort_56h_status_donut_grid)
@@ -274,6 +284,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(resolve_hcr_cellpose_model_path)
     assert callable(resolve_native_suite2p_labels_for_plane)
     assert callable(resolve_notebook_context_stage)
+    assert callable(resolve_presented_stimulus_metadata)
     assert callable(resolve_voxel_context_stage)
     assert callable(resolve_cohort_context_stage)
     assert callable(run_hcr_cellpose_stage)
@@ -307,6 +318,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(run_single_fish_cell_56g_stage)
     assert callable(run_single_fish_cell_56h_stage)
     assert callable(run_single_fish_cell_57_stage)
+    assert callable(run_suite2p_stimulus_locked_diagnostic_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(scale_image)

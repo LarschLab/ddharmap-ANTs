@@ -138,6 +138,7 @@ from .stimulus import (
     classify_stim_type,
     combine_segments,
     compute_zscore_stats,
+    resolve_presented_stimulus_metadata,
     resolve_stimulus_context,
 )
 from .smoke import (
@@ -146,9 +147,12 @@ from .smoke import (
 )
 from .suite2p import (
     Suite2pStageConfig,
+    Suite2pStimulusLockedDiagnosticConfig,
+    build_suite2p_stimulus_locked_diagnostic,
     infer_frame_rate_from_detail,
     load_suite2p_stage,
     load_suite2p_dff_map,
+    run_suite2p_stimulus_locked_diagnostic_stage,
 )
 from .traces import (
     MotionAucPlotConfig,
@@ -218,6 +222,8 @@ from .plots.analysis import (
     render_single_fish_50l_responsive_identity_donut,
     render_single_fish_50l_bpi_panel,
     render_single_fish_50l_global_auc_panel,
+    render_suite2p_stimulus_locked_heatmaps,
+    render_suite2p_stimulus_locked_trace_panels,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
     render_cohort_56h_status_donut_grid,
@@ -258,6 +264,7 @@ __all__ = [
     "TraceExportConfig",
     "SmokeValidationError",
     "Suite2pStageConfig",
+    "Suite2pStimulusLockedDiagnosticConfig",
     "VoxelStageConfig",
     "_find_embedded_nrrd_header",
     "_infer_voxels_from_open_tiff",
@@ -292,6 +299,7 @@ __all__ = [
     "build_registration_helper_stage",
     "build_response_bpi_tables",
     "build_run_config_stage",
+    "build_suite2p_stimulus_locked_diagnostic",
     "prepare_single_fish_bpi_diagnostics_stage",
     "build_stim_tables",
     "check_notebook_contract",
@@ -355,6 +363,8 @@ __all__ = [
     "render_single_fish_50l_bpi_panel",
     "render_single_fish_50l_gene_auc_panel",
     "render_single_fish_50l_global_auc_panel",
+    "render_suite2p_stimulus_locked_heatmaps",
+    "render_suite2p_stimulus_locked_trace_panels",
     "render_cohort_56g_diagnostics",
     "render_cohort_56h_by_fish",
     "render_cohort_56h_status_donut_grid",
@@ -375,6 +385,7 @@ __all__ = [
     "resolve_func_polarity",
     "resolve_fish_context",
     "resolve_notebook_context_stage",
+    "resolve_presented_stimulus_metadata",
     "resolve_stimulus_context",
     "resolve_cohort_context_stage",
     "run_anatomy_cellpose_stage",
@@ -411,6 +422,7 @@ __all__ = [
     "run_single_fish_cell_56g_stage",
     "run_single_fish_cell_56h_stage",
     "run_single_fish_cell_57_stage",
+    "run_suite2p_stimulus_locked_diagnostic_stage",
     "run_smoke_tier",
     "scale_image",
     "save_cohort_outputs_to_disk",

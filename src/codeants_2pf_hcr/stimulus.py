@@ -122,6 +122,105 @@ def find_metadata_csv(fish_dir: str | Path, fish_id: str, session_label: str | i
     return _latest_file(hits)
 
 
+def _companion_path_from_log(log_path: str | Path, companion_kind: str) -> Path | None:
+    path = Path(log_path)
+    stem = path.stem
+    if "experiment_log" in stem:
+        candidate = path.with_name(stem.replace("experiment_log", companion_kind) + path.suffix)
+        if candidate.exists():
+            return candidate
+    prefix = re.sub(r"_?experiment_log$", "", stem)
+    hits = sorted(path.parent.glob(f"{prefix}*{companion_kind}*.csv"))
+    return hits[0] if hits else None
+
+
+def _read_stimulus_sequence_csv(path: str | Path) -> list[str]:
+    df = pd.read_csv(path)
+    if df.empty:
+        return []
+    renamed = {column: column.strip().lower() for column in df.columns}
+    df = df.rename(columns=renamed)
+    if "stimulus" in df.columns:
+        values = df["stimulus"]
+    elif "stimulus_name" in df.columns:
+        values = df["stimulus_name"]
+    elif "stimulus_key" in df.columns:
+        values = df["stimulus_key"]
+    else:
+        return []
+    out = values.astype(str).str.strip()
+    return [str(value) for value in out.tolist() if value and value.lower() not in {"nan", "none", "null"}]
+
+
+def _read_planned_schedule_stimuli(path: str | Path) -> list[str]:
+    df = pd.read_csv(path)
+    if df.empty:
+        return []
+    renamed = {column: column.strip().lower() for column in df.columns}
+    df = df.rename(columns=renamed)
+    if "kind" in df.columns:
+        df = df[df["kind"].astype(str).str.strip().str.lower().eq("stimulus")].copy()
+    for col in ("stimulus_name", "stimulus_key", "label"):
+        if col in df.columns:
+            values = df[col].astype(str).str.strip()
+            return [str(value) for value in values.tolist() if value and value.lower() not in {"nan", "none", "null"}]
+    return []
+
+
+def resolve_presented_stimulus_metadata(
+    *,
+    log_path: str | Path,
+    df_stim: pd.DataFrame,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """Resolve presented stimulus names from companion metadata and validate the log parse."""
+    log_path_p = Path(log_path)
+    log_sequence = df_stim["type"].astype(str).str.strip().tolist() if "type" in df_stim.columns else []
+    log_types = list(dict.fromkeys(log_sequence))
+    sources: list[dict[str, Any]] = []
+    metadata_sequence: list[str] = []
+    metadata_path: Path | None = None
+
+    trial_path = _companion_path_from_log(log_path_p, "trial_sequence")
+    if trial_path is not None:
+        seq = _read_stimulus_sequence_csv(trial_path)
+        sources.append({"kind": "trial_sequence", "path": str(trial_path), "exists": trial_path.exists(), "n_stimuli": len(seq)})
+        if seq:
+            metadata_sequence = seq
+            metadata_path = trial_path
+
+    schedule_path = _companion_path_from_log(log_path_p, "planned_schedule")
+    if schedule_path is not None:
+        seq = _read_planned_schedule_stimuli(schedule_path)
+        sources.append({"kind": "planned_schedule", "path": str(schedule_path), "exists": schedule_path.exists(), "n_stimuli": len(seq)})
+        if not metadata_sequence and seq:
+            metadata_sequence = seq
+            metadata_path = schedule_path
+
+    metadata_types = list(dict.fromkeys(metadata_sequence))
+    if metadata_sequence and log_sequence and metadata_sequence != log_sequence:
+        same_multiset = sorted(metadata_sequence) == sorted(log_sequence)
+        msg = (
+            "[stim] stimulus metadata does not match parsed experiment log "
+            f"({metadata_path} vs {log_path_p}); metadata_n={len(metadata_sequence)} log_n={len(log_sequence)}"
+        )
+        if strict and not same_multiset:
+            raise RuntimeError(msg)
+        if strict and same_multiset:
+            raise RuntimeError(msg + " (same names, different order)")
+
+    if not sources:
+        sources.append({"kind": "experiment_log", "path": str(log_path_p), "exists": log_path_p.exists(), "n_stimuli": len(log_sequence)})
+
+    return {
+        "stimulus_sequence": metadata_sequence or log_sequence,
+        "stimulus_types": metadata_types or log_types,
+        "stimulus_metadata_path": metadata_path,
+        "stimulus_metadata_sources": pd.DataFrame(sources),
+        "stimulus_types_source": "metadata" if metadata_sequence else "experiment_log",
+    }
+
+
 def discover_functional_sessions(fish_dir: str | Path, fish_id: str) -> list[dict[str, Any]]:
     preproc = Path(fish_dir) / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes"
     candidates = sorted(preproc.glob(f"*{fish_id}*preprocessing_metadata.json")) if preproc.exists() else []
@@ -583,16 +682,24 @@ def resolve_stimulus_context(
         measure_start_block=cfg.measure_start_block,
         measure_start_event=cfg.measure_start_event,
     )
+    stim_meta = resolve_presented_stimulus_metadata(log_path=log_path, df_stim=df_stim, strict=True)
     return {
         "log_path": log_path,
         "meta_path": meta_path,
         "frame_rate": fps,
         "df_evt": df_evt,
         "df_stim": df_stim,
+        "stimulus_sequence": stim_meta["stimulus_sequence"],
+        "stimulus_types": stim_meta["stimulus_types"],
+        "stimulus_metadata_path": stim_meta["stimulus_metadata_path"],
+        "stimulus_metadata_sources": stim_meta["stimulus_metadata_sources"],
+        "stimulus_types_source": stim_meta["stimulus_types_source"],
         "source_table": pd.DataFrame(
             [
                 {"key": "EXPERIMENT_LOG_CSV", "value": str(log_path), "exists": log_path.exists(), "rows": len(df_evt)},
                 {"key": "EXPERIMENT_META_CSV", "value": str(meta_path) if meta_path is not None else None, "exists": meta_path.exists() if meta_path is not None else None, "rows": None},
+                {"key": "STIMULUS_TYPES_SOURCE", "value": stim_meta["stimulus_types_source"], "exists": None, "rows": len(stim_meta["stimulus_types"])},
+                {"key": "STIMULUS_TYPES", "value": ", ".join(stim_meta["stimulus_types"]), "exists": None, "rows": len(stim_meta["stimulus_sequence"])},
                 {"key": "FRAME_RATE", "value": fps, "exists": None, "rows": None},
                 {"key": "STIM_TIME_SCALE", "value": cfg.stim_time_scale, "exists": None, "rows": None},
                 {"key": "MEASURE_START_BLOCK", "value": cfg.measure_start_block, "exists": None, "rows": None},
@@ -701,6 +808,7 @@ __all__ = [
     "normalize_session_label",
     "parse_float",
     "parse_unilateral_stim",
+    "resolve_presented_stimulus_metadata",
     "resolve_plane_stimulus_contexts",
     "resolve_stimulus_context",
 ]

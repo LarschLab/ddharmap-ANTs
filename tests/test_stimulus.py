@@ -19,6 +19,7 @@ from codeants_2pf_hcr.stimulus import (
     find_experiment_log,
     find_metadata_csv,
     parse_unilateral_stim,
+    resolve_presented_stimulus_metadata,
     resolve_plane_stimulus_contexts,
 )
 
@@ -47,6 +48,31 @@ class StimulusTests(unittest.TestCase):
         _, df_stim = build_stim_tables(df_evt, fps=10.0, onset_delay_sec=1.0, remove_interblock_gaps=True)
         self.assertEqual(len(df_stim), 1)
         self.assertEqual(df_stim.loc[0, "trial_id"], "B1_stim1_LLB")
+
+    def test_presented_stimulus_metadata_validates_companion_sequence(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_path = root / "2026_fish_experiment_log.csv"
+            trial_path = root / "2026_fish_trial_sequence.csv"
+            log_path.write_text(
+                "event,timestamp\n"
+                "B1_start,0\n"
+                "B1_stim0_WFCl,1\n"
+                "B1_poststim0_pause,2\n"
+                "B1_stim1_LAB_trajectory,3\n"
+                "B1_poststim1_pause,4\n"
+                "B1_end,5\n"
+            )
+            trial_path.write_text("stimulus\nWFCl\nLAB_trajectory\n")
+            df_evt = pd.read_csv(log_path).rename(columns={"timestamp": "time"})
+            _, df_stim = build_stim_tables(df_evt, fps=2.0, onset_delay_sec=0.0, remove_interblock_gaps=True)
+            meta = resolve_presented_stimulus_metadata(log_path=log_path, df_stim=df_stim)
+            self.assertEqual(meta["stimulus_types_source"], "metadata")
+            self.assertEqual(meta["stimulus_types"], ["WFCl", "LAB_trajectory"])
+
+            trial_path.write_text("stimulus\nWFCl\nRC_trajectory\n")
+            with self.assertRaises(RuntimeError):
+                resolve_presented_stimulus_metadata(log_path=log_path, df_stim=df_stim)
 
     def test_prestim_window_builders(self) -> None:
         df_evt = pd.DataFrame(

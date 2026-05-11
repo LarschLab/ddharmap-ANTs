@@ -13,6 +13,7 @@ import pandas as pd
 
 from .context import func_orientation_effective, func_orientation_mode
 from .spatial import apply_func_orientation
+from .stimulus import StimulusConfig, build_prestim_baseline_windows, compute_zscore_stats, resolve_plane_stimulus_contexts
 
 
 def _find_suite2p_file(plane_dir: str | Path, kind: str) -> Path | None:
@@ -85,6 +86,323 @@ class Suite2pStageConfig:
     dfof_baseline_pct: float = 10.0
     dfof_eps: float = 1e-6
     verbose: bool = True
+
+
+@dataclass(frozen=True)
+class Suite2pStimulusLockedDiagnosticConfig:
+    pre_sec: float = 20.0
+    post_sec: float = 50.0
+    stim_time_scale: float = 1.0
+    measure_start_block: int | str = 1
+    measure_start_event: str = "start"
+    remove_interblock_gaps: bool = True
+    onset_delay_sec: float = 0.0
+    window_edge_policy: str = "pad_nan"
+    min_valid_frac: float = 0.5
+    zscore_min_baseline_points: int = 20
+    zscore_min_baseline_std: float = 1e-6
+    suite2p_cells_only: bool = True
+    min_trials_per_stimulus: int = 1
+    line_alpha: float = 0.22
+    line_width: float = 0.8
+    heatmap_vmin: float = -2.0
+    heatmap_vmax: float = 5.0
+    save_figures: bool = True
+    show_figures: bool = True
+    figure_dpi: int = 300
+    verbose: bool = True
+
+
+def _extract_trace_window(
+    trace: np.ndarray,
+    idx0: int,
+    idx1: int,
+    *,
+    mode: str,
+    min_valid_frac: float,
+) -> np.ndarray | None:
+    arr = np.asarray(trace, dtype=np.float32)
+    win_len = int(idx1 - idx0)
+    if win_len <= 0:
+        return None
+    mode_clean = str(mode).strip().lower()
+    if mode_clean == "strict":
+        if idx0 < 0 or idx1 > arr.shape[0]:
+            return None
+        seg = arr[int(idx0) : int(idx1)]
+    elif mode_clean in {"pad_nan", "pad", "nan"}:
+        seg = np.full(win_len, np.nan, dtype=np.float32)
+        src0 = max(int(idx0), 0)
+        src1 = min(int(idx1), int(arr.shape[0]))
+        if src1 > src0:
+            dst0 = src0 - int(idx0)
+            seg[dst0 : dst0 + (src1 - src0)] = arr[src0:src1]
+    else:
+        raise ValueError(f"unsupported window extraction mode: {mode}")
+    n_valid = int(np.isfinite(seg).sum())
+    min_required = max(1, int(np.ceil(float(min_valid_frac) * float(win_len))))
+    return seg if n_valid >= min_required else None
+
+
+def _session_palette(session_labels: list[str]) -> dict[str, Any]:
+    import matplotlib.pyplot as plt
+
+    labels = list(dict.fromkeys([str(label) for label in session_labels]))
+    cmap = plt.get_cmap("tab10") if len(labels) <= 10 else plt.get_cmap("tab20")
+    return {label: cmap(idx % cmap.N) for idx, label in enumerate(labels)}
+
+
+def build_suite2p_stimulus_locked_diagnostic(
+    *,
+    fish_dir: str | Path,
+    fish_id: str,
+    suite2p_by_ref_idx: dict[int, dict[str, Any]],
+    experiment_log_csv: str | Path | None = None,
+    experiment_meta_csv: str | Path | None = None,
+    frame_rate: float | None = None,
+    config: Suite2pStimulusLockedDiagnosticConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or Suite2pStimulusLockedDiagnosticConfig()
+    if not suite2p_by_ref_idx:
+        raise RuntimeError("[23c] Suite2p data not loaded; run [23a] first.")
+    plane_indices = sorted(int(plane) for plane in suite2p_by_ref_idx.keys())
+    stim_cfg = StimulusConfig(
+        stim_time_scale=float(cfg.stim_time_scale),
+        measure_start_block=cfg.measure_start_block,
+        measure_start_event=cfg.measure_start_event,
+        remove_interblock_gaps=bool(cfg.remove_interblock_gaps),
+        onset_delay_sec=float(cfg.onset_delay_sec),
+    )
+    plane_contexts = resolve_plane_stimulus_contexts(
+        fish_dir=fish_dir,
+        fish_id=fish_id,
+        plane_indices=plane_indices,
+        experiment_log_csv=experiment_log_csv,
+        experiment_meta_csv=experiment_meta_csv,
+        frame_rate=frame_rate,
+        config=stim_cfg,
+    )
+
+    trace_rows: list[dict[str, Any]] = []
+    source_rows: list[dict[str, Any]] = []
+    all_stim_types: list[str] = []
+    session_labels_seen: list[str] = []
+    tvec_ref: np.ndarray | None = None
+    duration_by_stim: dict[str, list[float]] = {}
+
+    for plane_idx in plane_indices:
+        plane = suite2p_by_ref_idx.get(int(plane_idx), {})
+        dff = plane.get("dff")
+        if dff is None:
+            continue
+        dff_arr = np.asarray(dff, dtype=np.float32)
+        if dff_arr.ndim != 2 or dff_arr.size == 0:
+            continue
+        ctx = plane_contexts.get(int(plane_idx))
+        if ctx is None:
+            continue
+        fps_value = ctx.get("frame_rate")
+        if fps_value is None or float(fps_value) <= 0:
+            ops = plane.get("ops", {}) if isinstance(plane.get("ops", {}), dict) else {}
+            fps_value = ops.get("fs", None)
+        if fps_value is None or float(fps_value) <= 0:
+            raise RuntimeError(f"[23c] could not resolve frame rate for plane {plane_idx}")
+        fps = float(fps_value)
+        n_pre = int(round(float(cfg.pre_sec) * fps))
+        n_post = int(round(float(cfg.post_sec) * fps))
+        if n_pre <= 0 or n_post <= 0:
+            raise RuntimeError("[23c] pre/post diagnostic windows must be positive")
+        tvec = (np.arange(-n_pre, n_post, dtype=np.float32) / fps).astype(np.float32)
+        if tvec_ref is None:
+            tvec_ref = tvec
+        elif tvec_ref.shape != tvec.shape or not np.allclose(tvec_ref, tvec, atol=1e-6):
+            raise RuntimeError("[23c] inconsistent frame rates or diagnostic windows across sessions")
+
+        df_stim = ctx["df_stim"].copy()
+        if df_stim.empty:
+            continue
+        stim_types = [str(value) for value in (ctx.get("stimulus_types") or df_stim["type"].astype(str).unique().tolist())]
+        for stim_type in stim_types:
+            if stim_type not in all_stim_types:
+                all_stim_types.append(stim_type)
+
+        session_label = str(ctx.get("session_label") or "r1")
+        session_labels_seen.append(session_label)
+        baseline_windows = build_prestim_baseline_windows(
+            ctx["df_evt"],
+            fps,
+            float(cfg.onset_delay_sec),
+            tag="[23c]",
+        )
+        zstats = compute_zscore_stats(
+            dff_arr,
+            baseline_windows,
+            min_points=int(cfg.zscore_min_baseline_points),
+            sigma_eps=float(cfg.zscore_min_baseline_std),
+        )
+        keep = np.ones(dff_arr.shape[0], dtype=bool)
+        if bool(cfg.suite2p_cells_only):
+            iscell = plane.get("iscell", None)
+            if iscell is not None:
+                keep = np.asarray(iscell)[:, 0].astype(bool)
+            elif plane.get("iscell_keep") is not None:
+                keep = np.asarray(plane.get("iscell_keep"), dtype=bool)
+        valid_roi = keep & np.asarray(zstats["valid"], dtype=bool)
+        source_rows.append(
+            {
+                "plane_idx": int(plane_idx),
+                "session_label": session_label,
+                "fps": fps,
+                "log_path": str(ctx.get("log_path")),
+                "meta_path": str(ctx.get("meta_path")) if ctx.get("meta_path") is not None else None,
+                "stimulus_types_source": ctx.get("stimulus_types_source"),
+                "stimulus_types": ", ".join(stim_types),
+                "n_stimuli": int(len(df_stim)),
+                "n_rois": int(dff_arr.shape[0]),
+                "n_suite2p_cells": int(keep.sum()),
+                "n_zscore_valid": int(valid_roi.sum()),
+            }
+        )
+        if not valid_roi.any():
+            continue
+
+        z = (dff_arr - np.asarray(zstats["mu"])[:, np.newaxis]) / np.asarray(zstats["sigma"])[:, np.newaxis]
+        for stim_type in stim_types:
+            stim_sub = df_stim[df_stim["type"].astype(str) == str(stim_type)].copy()
+            if len(stim_sub) < int(cfg.min_trials_per_stimulus):
+                continue
+            durations = pd.to_numeric(stim_sub.get("duration", pd.Series(dtype=float)), errors="coerce").dropna().astype(float).tolist()
+            duration_by_stim.setdefault(str(stim_type), []).extend(durations)
+            trial_starts = pd.to_numeric(stim_sub["start"], errors="coerce").dropna().astype(float).tolist()
+            if not trial_starts:
+                continue
+            for roi_idx in np.where(valid_roi)[0]:
+                segs: list[np.ndarray] = []
+                trace = z[int(roi_idx)]
+                for start_s in trial_starts:
+                    onset_idx = int(round(float(start_s) * fps))
+                    seg = _extract_trace_window(
+                        trace,
+                        onset_idx - n_pre,
+                        onset_idx + n_post,
+                        mode=cfg.window_edge_policy,
+                        min_valid_frac=float(cfg.min_valid_frac),
+                    )
+                    if seg is not None:
+                        segs.append(seg)
+                if len(segs) < int(cfg.min_trials_per_stimulus):
+                    continue
+                stack = np.vstack(segs).astype(np.float32, copy=False)
+                mean_trace = np.nanmean(stack, axis=0).astype(np.float32, copy=False)
+                post_mask = tvec >= 0
+                trace_rows.append(
+                    {
+                        "fish_id": str(fish_id),
+                        "plane_idx": int(plane_idx),
+                        "func_label": int(roi_idx) + 1,
+                        "roi_idx": int(roi_idx),
+                        "session_label": session_label,
+                        "stim_type": str(stim_type),
+                        "n_trials": int(len(trial_starts)),
+                        "n_valid_trials": int(len(segs)),
+                        "mean_trace": mean_trace,
+                        "mean_z_pre": float(np.nanmean(mean_trace[~post_mask])) if np.any(~post_mask) else np.nan,
+                        "mean_z_post": float(np.nanmean(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
+                        "peak_z_post": float(np.nanmax(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
+                    }
+                )
+
+    trace_df = pd.DataFrame(trace_rows)
+    source_df = pd.DataFrame(source_rows)
+    if tvec_ref is None or trace_df.empty:
+        raise RuntimeError("[23c] no stimulus-locked Suite2p traces could be computed")
+    session_colors = _session_palette(session_labels_seen)
+    duration_summary = {
+        key: float(np.nanmedian(np.asarray(vals, dtype=float)))
+        for key, vals in duration_by_stim.items()
+        if len(vals) and np.isfinite(np.nanmedian(np.asarray(vals, dtype=float)))
+    }
+    return {
+        "trace_df": trace_df,
+        "source_df": source_df,
+        "tvec": tvec_ref,
+        "stim_order": all_stim_types,
+        "session_colors": session_colors,
+        "duration_by_stim": duration_summary,
+    }
+
+
+def run_suite2p_stimulus_locked_diagnostic_stage(
+    *,
+    fish_dir: str | Path,
+    fish_id: str,
+    suite2p_by_ref_idx: dict[int, dict[str, Any]],
+    out_qa: str | Path | None = None,
+    experiment_log_csv: str | Path | None = None,
+    experiment_meta_csv: str | Path | None = None,
+    frame_rate: float | None = None,
+    config: Suite2pStimulusLockedDiagnosticConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or Suite2pStimulusLockedDiagnosticConfig()
+    result = build_suite2p_stimulus_locked_diagnostic(
+        fish_dir=fish_dir,
+        fish_id=fish_id,
+        suite2p_by_ref_idx=suite2p_by_ref_idx,
+        experiment_log_csv=experiment_log_csv,
+        experiment_meta_csv=experiment_meta_csv,
+        frame_rate=frame_rate,
+        config=cfg,
+    )
+    from .plots.analysis import render_suite2p_stimulus_locked_heatmaps, render_suite2p_stimulus_locked_trace_panels
+
+    fig_traces = render_suite2p_stimulus_locked_trace_panels(
+        trace_df=result["trace_df"],
+        tvec=result["tvec"],
+        stim_order=result["stim_order"],
+        session_colors=result["session_colors"],
+        duration_by_stim=result["duration_by_stim"],
+        line_alpha=float(cfg.line_alpha),
+        line_width=float(cfg.line_width),
+    )
+    fig_heatmaps = render_suite2p_stimulus_locked_heatmaps(
+        trace_df=result["trace_df"],
+        tvec=result["tvec"],
+        stim_order=result["stim_order"],
+        session_colors=result["session_colors"],
+        duration_by_stim=result["duration_by_stim"],
+        vmin=float(cfg.heatmap_vmin),
+        vmax=float(cfg.heatmap_vmax),
+    )
+    result["fig_traces"] = fig_traces
+    result["fig_heatmaps"] = fig_heatmaps
+
+    out_paths: dict[str, str] = {}
+    if bool(cfg.save_figures):
+        out_dir = Path(out_qa) if out_qa is not None else Path(fish_dir) / "03_analysis" / "functional" / "qa"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        trace_png = out_dir / "suite2p_stimulus_locked_traces_23b.png"
+        heat_png = out_dir / "suite2p_stimulus_locked_heatmaps_23b.png"
+        fig_traces.savefig(trace_png, dpi=int(cfg.figure_dpi), bbox_inches="tight")
+        fig_traces.savefig(trace_png.with_suffix(".pdf"), bbox_inches="tight")
+        fig_heatmaps.savefig(heat_png, dpi=int(cfg.figure_dpi), bbox_inches="tight")
+        fig_heatmaps.savefig(heat_png.with_suffix(".pdf"), bbox_inches="tight")
+        summary_csv = out_dir / "suite2p_stimulus_locked_summary_23b.csv"
+        source_csv = out_dir / "suite2p_stimulus_locked_sources_23b.csv"
+        summary_out = result["trace_df"].drop(columns=["mean_trace"]).copy()
+        summary_out.to_csv(summary_csv, index=False)
+        result["source_df"].to_csv(source_csv, index=False)
+        out_paths = {
+            "trace_png": str(trace_png),
+            "trace_pdf": str(trace_png.with_suffix(".pdf")),
+            "heatmap_png": str(heat_png),
+            "heatmap_pdf": str(heat_png.with_suffix(".pdf")),
+            "summary_csv": str(summary_csv),
+            "source_csv": str(source_csv),
+        }
+        if cfg.verbose:
+            print(f"[23c] saved stimulus-locked Suite2p diagnostics to {out_dir}")
+    result["out_paths"] = out_paths
+    return result
 
 
 def _resolve_suite2p_plane_dir(detail_df: pd.DataFrame, plane_idx: int, suite2p_root: str | Path | None) -> Path | None:
@@ -336,7 +654,10 @@ def load_suite2p_dff_map(
 
 __all__ = [
     "Suite2pStageConfig",
+    "Suite2pStimulusLockedDiagnosticConfig",
+    "build_suite2p_stimulus_locked_diagnostic",
     "infer_frame_rate_from_detail",
     "load_suite2p_stage",
     "load_suite2p_dff_map",
+    "run_suite2p_stimulus_locked_diagnostic_stage",
 ]

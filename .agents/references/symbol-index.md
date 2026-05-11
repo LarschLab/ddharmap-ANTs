@@ -107,6 +107,7 @@ Generated manually for the current extracted package surface.
 - `load_events_df`: Normalize event/time columns from the experiment log.
 - `load_metadata_params`: Read metadata key-value pairs.
 - `parse_float`: Robust numeric parser for mixed metadata values.
+- `resolve_presented_stimulus_metadata`: Resolve companion stimulus metadata (`trial_sequence`/`planned_schedule`) and validate it against parsed experiment-log stimulus events.
 - `classify_stim_type`: Collapse notebook stimulus codes to bout/continuous/mixed.
 - `effective_motion_window`: Compute motion-response windows after onset delay.
 - `build_prestim_baseline_windows`: Build merged prestim baseline windows from `df_evt`.
@@ -128,9 +129,12 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.suite2p`
 
 - `Suite2pStageConfig`: Typed Suite2p load/orientation configuration for notebook cell `[23a]`.
+- `Suite2pStimulusLockedDiagnosticConfig`: Typed Suite2p stimulus-locked diagnostic configuration for notebook cell `[23c]`.
 - `infer_frame_rate_from_detail`: Resolve a consistent Suite2p frame rate from per-plane ops files.
+- `build_suite2p_stimulus_locked_diagnostic`: Compute per-neuron, per-stimulus average Suite2p traces with session-aware stimulus metadata.
 - `load_suite2p_stage`: Notebook-facing Suite2p stage loader for `[23a]` that returns legacy-shaped labels, plane maps, and source summary tables.
 - `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
+- `run_suite2p_stimulus_locked_diagnostic_stage`: Notebook-facing Suite2p stimulus-locked diagnostic stage for `[23c]`.
 
 ## `codeants_2pf_hcr.segmentation`
 

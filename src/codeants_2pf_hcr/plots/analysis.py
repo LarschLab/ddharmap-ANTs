@@ -38,6 +38,128 @@ STIM_PALETTE = {
     "LLB+RLB": "#94cae3",
 }
 
+
+def _suite2p_stim_grid(n_items: int) -> tuple[int, int]:
+    n = max(1, int(n_items))
+    ncols = min(4, max(1, int(np.ceil(np.sqrt(n)))))
+    nrows = int(np.ceil(n / ncols))
+    return nrows, ncols
+
+
+def render_suite2p_stimulus_locked_trace_panels(
+    *,
+    trace_df: pd.DataFrame,
+    tvec: np.ndarray,
+    stim_order: list[str],
+    session_colors: dict[str, Any],
+    duration_by_stim: dict[str, float] | None = None,
+    line_alpha: float = 0.22,
+    line_width: float = 0.8,
+) -> Any:
+    if not isinstance(trace_df, pd.DataFrame) or trace_df.empty:
+        raise RuntimeError("[23b] trace_df is empty")
+    tvec_arr = np.asarray(tvec, dtype=float)
+    stim_types = [stim for stim in stim_order if stim in set(trace_df["stim_type"].astype(str))]
+    if not stim_types:
+        stim_types = sorted(trace_df["stim_type"].astype(str).unique().tolist())
+    nrows, ncols = _suite2p_stim_grid(len(stim_types))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 2.8 * nrows + 0.7), sharex=True, sharey=True)
+    axes_arr = np.atleast_1d(axes).ravel()
+    durations = duration_by_stim or {}
+
+    for ax, stim_type in zip(axes_arr, stim_types):
+        sub = trace_df[trace_df["stim_type"].astype(str) == str(stim_type)].copy()
+        if stim_type in durations and np.isfinite(float(durations[stim_type])):
+            ax.axvspan(0.0, float(durations[stim_type]), color="#d0d0d0", alpha=0.25, zorder=0)
+        for row in sub.itertuples(index=False):
+            session = str(getattr(row, "session_label"))
+            color = session_colors.get(session, "#666666")
+            mean = np.asarray(getattr(row, "mean_trace"), dtype=float)
+            if mean.shape == tvec_arr.shape:
+                ax.plot(tvec_arr, mean, color=color, alpha=float(line_alpha), linewidth=float(line_width))
+        ax.axvline(0.0, color="black", linestyle="--", linewidth=0.8, alpha=0.75)
+        ax.axhline(0.0, color="black", linewidth=0.6, alpha=0.5)
+        ax.set_title(f"{stim_type} (neurons n={sub[['plane_idx', 'func_label']].drop_duplicates().shape[0]})", fontsize=10)
+        ax.set_xlabel("Time from stimulus start (s)")
+        ax.set_ylabel("z-scored dF/F")
+
+    for ax in axes_arr[len(stim_types) :]:
+        ax.axis("off")
+    handles = [Line2D([0], [0], color=color, linewidth=2.0, label=str(session)) for session, color in session_colors.items()]
+    if handles:
+        fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
+    fig.suptitle("Suite2p neurons show stimulus-locked structure across imaging sessions", y=0.995)
+    fig.tight_layout(rect=[0, 0.05, 1, 0.94])
+    return fig
+
+
+def render_suite2p_stimulus_locked_heatmaps(
+    *,
+    trace_df: pd.DataFrame,
+    tvec: np.ndarray,
+    stim_order: list[str],
+    session_colors: dict[str, Any],
+    duration_by_stim: dict[str, float] | None = None,
+    vmin: float = -2.0,
+    vmax: float = 5.0,
+) -> Any:
+    if not isinstance(trace_df, pd.DataFrame) or trace_df.empty:
+        raise RuntimeError("[23b] trace_df is empty")
+    tvec_arr = np.asarray(tvec, dtype=float)
+    stim_types = [stim for stim in stim_order if stim in set(trace_df["stim_type"].astype(str))]
+    if not stim_types:
+        stim_types = sorted(trace_df["stim_type"].astype(str).unique().tolist())
+    nrows, ncols = _suite2p_stim_grid(len(stim_types))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.0 * nrows + 0.8), sharex=True)
+    axes_arr = np.atleast_1d(axes).ravel()
+    durations = duration_by_stim or {}
+    image = None
+
+    for ax, stim_type in zip(axes_arr, stim_types):
+        sub = trace_df[trace_df["stim_type"].astype(str) == str(stim_type)].copy()
+        sub = sub.sort_values(["session_label", "plane_idx", "func_label"]).reset_index(drop=True)
+        traces = [np.asarray(value, dtype=float) for value in sub["mean_trace"].tolist()]
+        traces = [trace for trace in traces if trace.shape == tvec_arr.shape]
+        if not traces:
+            ax.text(0.5, 0.5, "No traces", transform=ax.transAxes, ha="center", va="center", fontsize=9)
+            ax.set_title(str(stim_type), fontsize=10)
+            continue
+        mat = np.vstack(traces)
+        image = ax.imshow(
+            mat,
+            aspect="auto",
+            interpolation="nearest",
+            cmap="viridis",
+            vmin=float(vmin),
+            vmax=float(vmax),
+            extent=[float(tvec_arr[0]), float(tvec_arr[-1]), mat.shape[0], 0],
+        )
+        if stim_type in durations and np.isfinite(float(durations[stim_type])):
+            ax.axvspan(0.0, float(durations[stim_type]), color="white", alpha=0.14, zorder=2)
+        ax.axvline(0.0, color="white", linestyle="--", linewidth=0.8, alpha=0.9)
+        for session, group in sub.groupby("session_label", sort=False):
+            idx = group.index.to_numpy(dtype=int)
+            if idx.size == 0:
+                continue
+            color = session_colors.get(str(session), "#666666")
+            ax.plot([float(tvec_arr[0]), float(tvec_arr[0])], [float(idx.min()), float(idx.max() + 1)], color=color, linewidth=4.0, solid_capstyle="butt")
+        ax.set_title(f"{stim_type} (neurons n={mat.shape[0]})", fontsize=10)
+        ax.set_xlabel("Time from stimulus start (s)")
+        ax.set_ylabel("Neuron")
+
+    for ax in axes_arr[len(stim_types) :]:
+        ax.axis("off")
+    if image is not None:
+        cbar = fig.colorbar(image, ax=axes_arr[: len(stim_types)].tolist(), shrink=0.75)
+        cbar.set_label("z-scored dF/F")
+    handles = [Patch(facecolor=color, edgecolor="none", label=str(session)) for session, color in session_colors.items()]
+    if handles:
+        fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
+    fig.suptitle("Stimulus-locked Suite2p response heatmaps preserve imaging-session identity", y=0.995)
+    fig.tight_layout(rect=[0, 0.06, 1, 0.93])
+    return fig
+
+
 SINGLE_FISH_50L_BPI_ORDER = [
     "bout-responsive",
     "continuous-responsive",
@@ -3737,6 +3859,8 @@ __all__ = [
     "compute_laterality",
     "compute_trial_auc",
     "plot_single_roi_57style",
+    "render_suite2p_stimulus_locked_heatmaps",
+    "render_suite2p_stimulus_locked_trace_panels",
     "render_single_fish_50l_bpi_panel",
     "render_single_fish_50l_composite",
     "render_single_fish_50l_gene_auc_panel",

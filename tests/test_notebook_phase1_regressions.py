@@ -423,6 +423,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
 
     def test_matching_cells_use_package_builders(self) -> None:
         cell_23a = _code_cell_by_tag("23a")
+        cell_23c = _code_cell_by_tag("23c")
         cell_50i = _code_cell_by_tag("50i")
         cell_50 = _code_cell_by_tag("50")
         cell_50ia = _code_cell_by_tag("50ia")
@@ -430,6 +431,9 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("load_suite2p_stage", cell_23a)
         self.assertNotIn("def _build_labels_from_stat(", cell_23a)
         self.assertNotIn("def _find_suite2p_file(", cell_23a)
+        self.assertIn("Suite2pStimulusLockedDiagnosticConfig", cell_23c)
+        self.assertIn("run_suite2p_stimulus_locked_diagnostic_stage", cell_23c)
+        self.assertNotIn("def ", cell_23c)
         self.assertIn("run_single_fish_cell_50i_stage", cell_50i)
         self.assertIn("from codeants_2pf_hcr import build_hcr_activity_tables, gene_from_mask", cell_50)
         self.assertIn("run_single_fish_cell_50ia_stage", cell_50ia)
@@ -615,6 +619,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
         self.assertIn("use_suite2p_labels=bool(INPLANE_METHOD_REVIEW_USE_SUITE2P_LABELS)", cell_22e)
         self.assertNotIn("def _render(", cell_22e)
         self.assertGreater(_code_cell_index_by_tag("22e"), _code_cell_index_by_tag("23a"))
+        self.assertGreater(_code_cell_index_by_tag("22e"), _code_cell_index_by_tag("24a"))
 
     def test_segmentation_cells_use_package_stage_wrappers(self) -> None:
         cell_24 = _code_cell_by_tag("24")
