@@ -107,7 +107,7 @@ class Suite2pStimulusLockedDiagnosticConfig:
     line_width: float = 0.8
     heatmap_vmin: float = 0.0
     heatmap_vmax: float = 5.0
-    stim_bar_alpha: float = 0.16
+    stim_bar_alpha: float = 0.28
     filter_trace_panels_response_active: bool = True
     save_figures: bool = True
     show_figures: bool = True
@@ -282,6 +282,7 @@ def build_suite2p_stimulus_locked_diagnostic(
     full_session_traces: list[np.ndarray] = []
     full_session_rows: list[dict[str, Any]] = []
     full_session_spans: list[dict[str, Any]] = []
+    full_session_block_starts: list[dict[str, Any]] = []
 
     for plane_idx in plane_indices:
         plane = suite2p_by_ref_idx.get(int(plane_idx), {})
@@ -384,6 +385,25 @@ def build_suite2p_stimulus_locked_diagnostic(
             )
         plane_row_end = len(full_session_traces)
         if plane_row_end > plane_row_start:
+            block_start_frames = timing_meta.get("block_start_frames", {})
+            if isinstance(block_start_frames, dict):
+                for block, frame in block_start_frames.items():
+                    try:
+                        frame_int = int(frame)
+                    except Exception:
+                        continue
+                    if frame_int < 0 or frame_int > int(dff_arr.shape[1]):
+                        continue
+                    full_session_block_starts.append(
+                        {
+                            "session_label": session_label,
+                            "plane_idx": int(plane_idx),
+                            "block": str(block),
+                            "frame": int(frame_int),
+                            "row_start": int(plane_row_start),
+                            "row_end": int(plane_row_end),
+                        }
+                    )
             for stim_row in df_stim.itertuples(index=False):
                 stim_type_value = str(getattr(stim_row, "type"))
                 start_s = pd.to_numeric(getattr(stim_row, "start", np.nan), errors="coerce")
@@ -463,6 +483,7 @@ def build_suite2p_stimulus_locked_diagnostic(
         raise RuntimeError("[23c] no stimulus-locked Suite2p traces could be computed")
     full_session_rows_df = pd.DataFrame(full_session_rows)
     full_session_spans_df = pd.DataFrame(full_session_spans)
+    full_session_block_starts_df = pd.DataFrame(full_session_block_starts)
     if full_session_traces:
         max_frames = max(int(trace.shape[0]) for trace in full_session_traces)
         full_session_matrix = np.full((len(full_session_traces), max_frames), np.nan, dtype=np.float32)
@@ -486,6 +507,7 @@ def build_suite2p_stimulus_locked_diagnostic(
         "full_session_heatmap_matrix": full_session_matrix,
         "full_session_heatmap_rows": full_session_rows_df,
         "full_session_stimulus_spans": full_session_spans_df,
+        "full_session_block_starts": full_session_block_starts_df,
     }
 
 
@@ -572,6 +594,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         matrix=result["full_session_heatmap_matrix"],
         row_df=result["full_session_heatmap_rows"],
         stimulus_spans=result["full_session_stimulus_spans"],
+        block_starts=result["full_session_block_starts"],
         session_colors=result["session_colors"],
         vmin=float(cfg.heatmap_vmin),
         vmax=float(cfg.heatmap_vmax),

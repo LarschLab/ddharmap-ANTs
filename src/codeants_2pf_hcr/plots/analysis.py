@@ -69,6 +69,16 @@ def _suite2p_stim_row_label(row_key: str) -> str:
     return row_key
 
 
+def _suite2p_stimulus_color_map(stim_types: list[str]) -> dict[str, Any]:
+    labels = list(dict.fromkeys([str(stim) for stim in stim_types]))
+    missing = [label for label in labels if label not in STIM_PALETTE]
+    fallback_cmap = plt.get_cmap("tab20")
+    fallback_colors = [fallback_cmap(idx % fallback_cmap.N) for idx in range(len(missing))]
+    colors = {label: STIM_PALETTE[label] for label in labels if label in STIM_PALETTE}
+    colors.update({label: color for label, color in zip(missing, fallback_colors)})
+    return colors
+
+
 def render_suite2p_stimulus_locked_trace_panels(
     *,
     trace_df: pd.DataFrame,
@@ -132,6 +142,7 @@ def render_suite2p_full_session_heatmap(
     matrix: np.ndarray,
     row_df: pd.DataFrame,
     stimulus_spans: pd.DataFrame,
+    block_starts: pd.DataFrame | None = None,
     session_colors: dict[str, Any],
     vmin: float = 0.0,
     vmax: float = 5.0,
@@ -142,6 +153,7 @@ def render_suite2p_full_session_heatmap(
         raise RuntimeError("[23c] full-session heatmap matrix is empty")
     rows = row_df.copy() if isinstance(row_df, pd.DataFrame) else pd.DataFrame()
     spans = stimulus_spans.copy() if isinstance(stimulus_spans, pd.DataFrame) else pd.DataFrame()
+    blocks = block_starts.copy() if isinstance(block_starts, pd.DataFrame) else pd.DataFrame()
     n_rows, n_frames = mat.shape
     fig_h = max(4.0, min(14.0, 2.6 + 0.018 * float(n_rows)))
     fig, ax = plt.subplots(figsize=(12.5, fig_h))
@@ -158,6 +170,8 @@ def render_suite2p_full_session_heatmap(
     )
 
     stim_labels_seen: set[str] = set()
+    stim_types_all = spans["stim_type"].dropna().astype(str).tolist() if "stim_type" in spans.columns else []
+    stim_colors = _suite2p_stimulus_color_map(stim_types_all)
     if not spans.empty:
         required = {"stim_type", "frame_start", "frame_end", "row_start", "row_end"}
         if required.issubset(spans.columns):
@@ -169,7 +183,7 @@ def render_suite2p_full_session_heatmap(
                 row_end = float(getattr(span, "row_end"))
                 if frame_end <= frame_start or row_end <= row_start:
                     continue
-                color = STIM_PALETTE.get(stim_type, "#7f7f7f")
+                color = stim_colors.get(stim_type, "#7f7f7f")
                 ax.add_patch(
                     Rectangle(
                         (frame_start, row_start),
@@ -182,6 +196,29 @@ def render_suite2p_full_session_heatmap(
                     )
                 )
                 stim_labels_seen.add(stim_type)
+
+    drew_block_start = False
+    if not blocks.empty:
+        required = {"frame", "row_start", "row_end"}
+        if required.issubset(blocks.columns):
+            for block in blocks.itertuples(index=False):
+                frame = float(getattr(block, "frame"))
+                row_start = float(getattr(block, "row_start"))
+                row_end = float(getattr(block, "row_end"))
+                if not np.isfinite(frame) or row_end <= row_start:
+                    continue
+                if frame < 0 or frame > n_frames:
+                    continue
+                ax.plot(
+                    [frame, frame],
+                    [row_start, row_end],
+                    color="black",
+                    linestyle="--",
+                    linewidth=0.9,
+                    alpha=0.85,
+                    zorder=3,
+                )
+                drew_block_start = True
 
     if not rows.empty and {"session_label", "plane_idx", "func_label"}.issubset(rows.columns):
         rows_for_lines = rows.reset_index(drop=True)
@@ -204,9 +241,11 @@ def render_suite2p_full_session_heatmap(
 
     session_handles = [Patch(facecolor=color, edgecolor="none", label=str(session)) for session, color in session_colors.items()]
     stim_handles = [
-        Patch(facecolor=STIM_PALETTE.get(stim, "#7f7f7f"), edgecolor="none", alpha=float(stim_alpha), label=str(stim))
+        Patch(facecolor=stim_colors.get(stim, "#7f7f7f"), edgecolor="none", alpha=float(stim_alpha), label=str(stim))
         for stim in sorted(stim_labels_seen)
     ]
+    if drew_block_start:
+        stim_handles.append(Line2D([0], [0], color="black", linestyle="--", linewidth=0.9, alpha=0.85, label="Block start"))
     if session_handles:
         session_legend = ax.legend(handles=session_handles, loc="upper right", frameon=False, title="Imaging session")
         ax.add_artist(session_legend)

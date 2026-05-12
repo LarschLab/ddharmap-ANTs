@@ -137,6 +137,11 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(spans.loc[spans["stim_type"] == "WFCl", "frame_end"].iloc[0], 10)
             self.assertEqual(spans.loc[spans["stim_type"] == "WFCl", "row_start"].iloc[0], 0)
             self.assertEqual(spans.loc[spans["stim_type"] == "WFCl", "row_end"].iloc[0], 1)
+            block_starts = result["full_session_block_starts"]
+            self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "frame"].tolist(), [0])
+            self.assertEqual(block_starts.loc[block_starts["session_label"] == "r2", "frame"].tolist(), [0])
+            self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "row_start"].iloc[0], 0)
+            self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "row_end"].iloc[0], 1)
 
     def test_two_column_stimulus_layout_groups_side_and_whole_field_stimuli(self) -> None:
         rows, slots = _suite2p_stim_panel_layout(["LLB", "RLB", "LLC", "RLC", "WFCl", "WFCo", "LAB_trajectory", "RAB_trajectory"])
@@ -218,13 +223,23 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
         )
         spans = pd.DataFrame(
             {
-                "stim_type": ["LLB"],
-                "session_label": ["r1"],
-                "plane_idx": [0],
-                "frame_start": [1],
-                "frame_end": [2],
-                "row_start": [0],
-                "row_end": [1],
+                "stim_type": ["LLB", "WFCl", "LAB_trajectory"],
+                "session_label": ["r1", "r1", "r2"],
+                "plane_idx": [0, 0, 1],
+                "frame_start": [1, 0, 2],
+                "frame_end": [2, 1, 3],
+                "row_start": [0, 0, 1],
+                "row_end": [1, 1, 2],
+            }
+        )
+        block_starts = pd.DataFrame(
+            {
+                "session_label": ["r1", "r2"],
+                "plane_idx": [0, 1],
+                "block": ["B1", "B2"],
+                "frame": [0, 2],
+                "row_start": [0, 1],
+                "row_end": [1, 2],
             }
         )
 
@@ -232,10 +247,11 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             matrix=matrix,
             row_df=row_df,
             stimulus_spans=spans,
+            block_starts=block_starts,
             session_colors={"r1": "#111111", "r2": "#222222"},
             vmin=0.0,
             vmax=5.0,
-            stim_alpha=0.2,
+            stim_alpha=Suite2pStimulusLockedDiagnosticConfig().stim_bar_alpha,
         )
         try:
             ax = fig.axes[0]
@@ -246,6 +262,12 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             high_rgb = np.asarray(cmap(1.0)[:3])
             self.assertGreater(float(low_rgb.sum()), float(high_rgb.sum()))
             self.assertGreaterEqual(len(ax.patches), 1)
+            patch_colors = [tuple(np.round(patch.get_facecolor(), 3)) for patch in ax.patches]
+            self.assertEqual(len(set(patch_colors)), 3)
+            self.assertAlmostEqual(ax.patches[0].get_alpha(), 0.28)
+            block_lines = [line for line in ax.lines if line.get_linestyle() == "--"]
+            self.assertEqual(len(block_lines), 2)
+            self.assertEqual([tuple(line.get_xdata()) for line in block_lines], [(0.0, 0.0), (2.0, 2.0)])
         finally:
             plt.close(fig)
 
