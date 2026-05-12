@@ -28,6 +28,25 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-05-12 - inferred 23c session split without preprocessing metadata
+
+- Slice goal:
+  - restore `[23c]` session 1 plotting for fish with explicit `r1`/`r2` stimulus logs but missing preprocessing metadata.
+- Passes completed in this session:
+  - added an equal contiguous split fallback to per-plane stimulus-context resolution.
+  - propagated session-mapping provenance into `[23c]` source tables.
+  - added focused resolver and Suite2p diagnostic regression tests.
+- What changed:
+  - when preprocessing metadata is absent and explicit session logs split evenly across requested planes, planes are assigned by sorted session order, e.g. `0-4 -> r1` and `5-9 -> r2` for ten planes.
+- What remains broken:
+  - none known from focused tests; saved `[23c]` figures/CSVs remain stale until rerun.
+- Remaining in-slice work:
+  - rerun `[23a] -> [23c]` for affected fish.
+- Next likely breakpoint:
+  - inspect `suite2p_stimulus_locked_sources_23b.csv` and confirm both `r1` and `r2` rows after rerun.
+- Rerun implications:
+  - rerun `[23c]` to regenerate `suite2p_stimulus_locked_traces_23b.*`, `suite2p_stimulus_locked_heatmaps_23b.*`, and source/summary CSVs.
+
 ### 2026-05-12 - planned-schedule 23c block timing fix
 
 - Slice goal:

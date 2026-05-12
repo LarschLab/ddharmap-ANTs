@@ -84,6 +84,19 @@ def _session_token_in_name(path: str | Path, fish_id: str | None = None) -> str:
     return "r1"
 
 
+def _explicit_session_token_in_name(path: str | Path, fish_id: str | None = None) -> str | None:
+    name = Path(path).name.lower()
+    fish = "" if fish_id is None else re.escape(str(fish_id).lower())
+    if fish:
+        match = re.search(rf"(?:^|[_-])f?{fish}_r(\d+)(?:[_-]|$)", name)
+        if match:
+            return f"r{int(match.group(1))}"
+    match = re.search(r"(?:^|[_-])r(\d+)(?:[_-]|$)", name)
+    if match:
+        return f"r{int(match.group(1))}"
+    return None
+
+
 def _filter_session_files(hits: list[Path], fish_id: str, session_label: str | int | None) -> list[Path]:
     session = normalize_session_label(session_label)
     if session is None:
@@ -120,6 +133,63 @@ def find_metadata_csv(fish_dir: str | Path, fish_id: str, session_label: str | i
     hits = [path for path in hits if "experiment_log" not in path.name.lower()]
     hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
     return _latest_file(hits)
+
+
+def _session_sort_key(session_label: str | int | None) -> tuple[int, str]:
+    label = normalize_session_label(session_label) or ""
+    match = re.fullmatch(r"r(\d+)", label)
+    if match:
+        return int(match.group(1)), label
+    return 10**9, label
+
+
+def _discover_explicit_stimulus_sessions(fish_dir: str | Path, fish_id: str) -> list[str]:
+    base = Path(fish_dir) / "01_raw" / "2p" / "metadata"
+    if not base.exists():
+        return []
+    patterns = [f"*{fish_id}*experiment_log*.csv", "*experiment_log*.csv"] if fish_id else ["*experiment_log*.csv"]
+    labels: set[str] = set()
+    for pattern in patterns:
+        for path in base.glob(pattern):
+            label = _explicit_session_token_in_name(path, fish_id)
+            if label is not None:
+                labels.add(label)
+    return sorted(labels, key=_session_sort_key)
+
+
+def _infer_equal_split_sessions(
+    *,
+    fish_dir: str | Path,
+    fish_id: str,
+    planes: list[int],
+) -> list[dict[str, Any]]:
+    session_labels = _discover_explicit_stimulus_sessions(fish_dir, fish_id)
+    if len(session_labels) <= 1:
+        return []
+    if not planes:
+        return []
+    if len(planes) % len(session_labels) != 0:
+        raise RuntimeError(
+            "[stim] multiple explicit imaging sessions found but preprocessing metadata is missing; "
+            f"cannot evenly split planes {planes} across sessions {session_labels}"
+        )
+    chunk_size = len(planes) // len(session_labels)
+    out: list[dict[str, Any]] = []
+    for idx, session_label in enumerate(session_labels):
+        session_planes = planes[idx * chunk_size : (idx + 1) * chunk_size]
+        if not session_planes:
+            continue
+        out.append(
+            {
+                "session_label": session_label,
+                "session_number": idx + 1,
+                "plane_offset": session_planes[0],
+                "output_planes": session_planes,
+                "preprocessing_metadata": None,
+                "session_mapping_source": "inferred_equal_split",
+            }
+        )
+    return out
 
 
 def _companion_path_from_log(log_path: str | Path, companion_kind: str) -> Path | None:
@@ -808,6 +878,8 @@ def resolve_plane_stimulus_contexts(
 
     sessions = discover_functional_sessions(fish_dir, fish_id)
     if not sessions:
+        sessions = _infer_equal_split_sessions(fish_dir=fish_dir, fish_id=fish_id, planes=planes)
+    if not sessions:
         ctx = resolve_stimulus_context(
             fish_dir=fish_dir,
             fish_id=fish_id,
@@ -815,6 +887,7 @@ def resolve_plane_stimulus_contexts(
             config=config,
         )
         ctx["session_label"] = _session_token_in_name(ctx["log_path"], fish_id)
+        ctx["session_mapping_source"] = "single_context"
         return {int(plane): ctx for plane in planes}
 
     out: dict[int, dict[str, Any]] = {}
@@ -840,6 +913,7 @@ def resolve_plane_stimulus_contexts(
         ctx["session_label"] = session_label
         ctx["session_planes"] = session_planes
         ctx["preprocessing_metadata"] = session.get("preprocessing_metadata")
+        ctx["session_mapping_source"] = session.get("session_mapping_source") or "preprocessing_metadata"
         for plane in target_planes:
             out[int(plane)] = ctx
 
@@ -852,6 +926,7 @@ def resolve_plane_stimulus_contexts(
             config=config,
         )
         fallback["session_label"] = _session_token_in_name(fallback["log_path"], fish_id)
+        fallback["session_mapping_source"] = "fallback_latest"
         for plane in missing:
             out[int(plane)] = fallback
     return out

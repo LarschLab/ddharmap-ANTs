@@ -143,6 +143,63 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "row_start"].iloc[0], 0)
             self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "row_end"].iloc[0], 1)
 
+    def test_diagnostic_infers_equal_split_sessions_when_preprocessing_metadata_is_missing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f03"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_r1_metadata.csv").write_text("parameter,value\nframerate,2.0\n")
+            (meta_dir / f"2026_f{fish_id}_r1_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B1_start,0\n"
+                "B1_prestim0_pause,0\n"
+                "B1_stim0_WFCl,2\n"
+                "B1_poststim0_pause,5\n"
+                "B1_end,6\n"
+            )
+            (meta_dir / f"2026_f{fish_id}_r1_trial_sequence.csv").write_text("stimulus\nWFCl\n")
+            (meta_dir / f"2026_f{fish_id}_r2_metadata.csv").write_text("parameter,value\nframerate,2.0\n")
+            (meta_dir / f"2026_f{fish_id}_r2_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B1_start,0\n"
+                "B1_prestim0_pause,0\n"
+                "B1_stim0_LAB_trajectory,2\n"
+                "B1_poststim0_pause,5\n"
+                "B1_end,6\n"
+            )
+            (meta_dir / f"2026_f{fish_id}_r2_trial_sequence.csv").write_text("stimulus\nLAB_trajectory\n")
+
+            dff0 = np.vstack(
+                [
+                    np.linspace(0.0, 1.0, 20, dtype=np.float32),
+                    np.linspace(1.0, 2.0, 20, dtype=np.float32),
+                ]
+            )
+            suite2p_by_ref_idx = {
+                0: {"dff": dff0, "iscell": np.asarray([[1, 0.9], [0, 0.1]], dtype=np.float32), "ops": {"fs": 2.0}},
+                1: {"dff": dff0 + 1.0, "iscell": np.asarray([[1, 0.9], [1, 0.8]], dtype=np.float32), "ops": {"fs": 2.0}},
+            }
+
+            result = build_suite2p_stimulus_locked_diagnostic(
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_by_ref_idx=suite2p_by_ref_idx,
+                config=Suite2pStimulusLockedDiagnosticConfig(
+                    pre_sec=1.0,
+                    post_sec=2.0,
+                    zscore_min_baseline_points=2,
+                    min_valid_frac=0.5,
+                    suite2p_cells_only=True,
+                ),
+            )
+
+            self.assertEqual(result["source_df"]["session_label"].tolist(), ["r1", "r2"])
+            self.assertEqual(set(result["source_df"]["session_mapping_source"]), {"inferred_equal_split"})
+            self.assertEqual(set(result["trace_df"]["session_label"]), {"r1", "r2"})
+            self.assertEqual(result["full_session_heatmap_rows"]["session_label"].tolist(), ["r1", "r2", "r2"])
+
     def test_diagnostic_uses_planned_schedule_rest_block_for_full_session_heatmap(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

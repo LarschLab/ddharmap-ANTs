@@ -403,6 +403,7 @@ def build_suite2p_stimulus_locked_diagnostic(
                 "meta_path": str(ctx.get("meta_path")) if ctx.get("meta_path") is not None else None,
                 "stimulus_types_source": ctx.get("stimulus_types_source"),
                 "stimulus_types": ", ".join(stim_types),
+                "session_mapping_source": ctx.get("session_mapping_source"),
                 "n_stimuli": int(len(df_stim)),
                 "stimulus_timing_mode": timing_meta.get("timing_mode"),
                 "stimulus_timing_source": timing_meta.get("timing_source"),

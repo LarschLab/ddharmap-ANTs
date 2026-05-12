@@ -183,6 +183,32 @@ class StimulusTests(unittest.TestCase):
             self.assertEqual(contexts[0]["df_stim"].loc[0, "type"], "LLB")
             self.assertEqual(contexts[5]["df_stim"].loc[0, "type"], "RLC")
 
+    def test_resolve_plane_stimulus_contexts_infers_equal_split_without_preprocessing_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f03"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_r1_metadata.csv").write_text("parameter,value\nframerate,2.0\n")
+            (meta_dir / f"2026_f{fish_id}_r1_experiment_log.csv").write_text(
+                "event,timestamp\nB1_start,0\nB1_stim1_LLB,1\nB1_poststim1_pause,3\nB1_end,4\n"
+            )
+            (meta_dir / f"2026_f{fish_id}_r2_metadata.csv").write_text("parameter,value\nframerate,4.0\n")
+            (meta_dir / f"2026_f{fish_id}_r2_experiment_log.csv").write_text(
+                "event,timestamp\nB1_start,0\nB1_stim1_RLC,2\nB1_poststim1_pause,5\nB1_end,6\n"
+            )
+
+            contexts = resolve_plane_stimulus_contexts(fish_dir=fish_dir, fish_id=fish_id, plane_indices=list(range(10)))
+
+            self.assertEqual({plane: contexts[plane]["session_label"] for plane in range(10)}, {**{plane: "r1" for plane in range(5)}, **{plane: "r2" for plane in range(5, 10)}})
+            self.assertEqual(contexts[0]["session_mapping_source"], "inferred_equal_split")
+            self.assertEqual(contexts[5]["session_mapping_source"], "inferred_equal_split")
+            self.assertEqual(contexts[0]["frame_rate"], 2.0)
+            self.assertEqual(contexts[5]["frame_rate"], 4.0)
+            self.assertEqual(contexts[0]["df_stim"].loc[0, "type"], "LLB")
+            self.assertEqual(contexts[5]["df_stim"].loc[0, "type"], "RLC")
+
 
 if __name__ == "__main__":
     unittest.main()
