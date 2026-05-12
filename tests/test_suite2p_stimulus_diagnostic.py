@@ -143,6 +143,84 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "row_start"].iloc[0], 0)
             self.assertEqual(block_starts.loc[block_starts["session_label"] == "r1", "row_end"].iloc[0], 1)
 
+    def test_diagnostic_uses_planned_schedule_rest_block_for_full_session_heatmap(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f03"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (meta_dir / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B0_start,0\n"
+                "B0_end,10\n"
+                "B0_interblock_pause,10\n"
+                "B1_start,10\n"
+                "B1_prestim0_pause,10\n"
+                "B1_stim0_WFCl,12\n"
+                "B1_poststim0_pause,14\n"
+                "B1_end,20\n"
+                "B1_interblock_pause,20\n"
+                "B2_start,20\n"
+                "B2_prestim1_pause,20\n"
+                "B2_stim1_RLC,22\n"
+                "B2_poststim1_pause,24\n"
+                "B2_end,30\n"
+            )
+            (meta_dir / f"2026_f{fish_id}_planned_schedule.csv").write_text(
+                "kind,label,start_sec,duration_sec,end_sec,trial_index,block_num,stimulus_name\n"
+                "trigger,B0_start,0,0,0,,0,\n"
+                "rest,Baseline rest,0,10,10,,0,\n"
+                "trigger,B0_end,10,0,10,,0,\n"
+                "trigger,B1_start,10,0,10,,1,\n"
+                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,WFCl\n"
+                "stimulus,WFCl,12,2,14,0,1,WFCl\n"
+                "poststim_pause,Trial 1 post-pause,14,2,16,0,1,WFCl\n"
+                "trigger,B1_end,20,0,20,,1,\n"
+                "trigger,B2_start,20,0,20,,2,\n"
+                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RLC\n"
+                "stimulus,RLC,22,2,24,1,2,RLC\n"
+                "poststim_pause,Trial 2 post-pause,24,2,26,1,2,RLC\n"
+                "trigger,B2_end,30,0,30,,2,\n"
+            )
+
+            dff = np.vstack(
+                [
+                    np.linspace(0.0, 1.0, 30, dtype=np.float32),
+                    np.linspace(1.0, 2.0, 30, dtype=np.float32),
+                ]
+            )
+            suite2p_by_ref_idx = {
+                0: {"dff": dff, "iscell": np.asarray([[1, 0.9], [1, 0.8]], dtype=np.float32), "ops": {"fs": 1.0}},
+            }
+
+            result = build_suite2p_stimulus_locked_diagnostic(
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_by_ref_idx=suite2p_by_ref_idx,
+                config=Suite2pStimulusLockedDiagnosticConfig(
+                    pre_sec=1.0,
+                    post_sec=2.0,
+                    zscore_min_baseline_points=1,
+                    min_valid_frac=0.5,
+                    suite2p_cells_only=True,
+                ),
+            )
+
+            source = result["source_df"].iloc[0]
+            self.assertEqual(source["stimulus_timing_source"], "planned_schedule")
+            self.assertEqual(source["n_blocks"], 3)
+            self.assertEqual(source["frames_per_block"], 10)
+            block_starts = result["full_session_block_starts"]
+            self.assertEqual(block_starts["block"].tolist(), ["B0", "B1", "B2"])
+            self.assertEqual(block_starts["frame"].tolist(), [0, 10, 20])
+            spans = result["full_session_stimulus_spans"]
+            self.assertEqual(spans["stim_type"].tolist(), ["WFCl", "RLC"])
+            self.assertEqual(spans["frame_start"].tolist(), [12, 22])
+            self.assertTrue((spans["frame_start"] >= 10).all())
+            self.assertFalse((spans["frame_start"] < 10).any())
+
     def test_two_column_stimulus_layout_groups_side_and_whole_field_stimuli(self) -> None:
         rows, slots = _suite2p_stim_panel_layout(["LLB", "RLB", "LLC", "RLC", "WFCl", "WFCo", "LAB_trajectory", "RAB_trajectory"])
 

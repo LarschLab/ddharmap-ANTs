@@ -28,6 +28,25 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-05-12 - planned-schedule 23c block timing fix
+
+- Slice goal:
+  - fix `[23c]` full-session heatmap block/stimulus placement so no-stimulus metadata blocks stay uncolored.
+- Passes completed in this session:
+  - added planned-schedule block/stimulus tables to stimulus metadata resolution.
+  - made `[23c]` frame-grid timing use all planned-schedule blocks when available, including rest/baseline blocks.
+  - added focused regression coverage for a B0 rest block followed by B1/B2 stimulus blocks.
+- What changed:
+  - `[23c]` heatmaps now keep scheduled rest blocks in the frame grid and draw stimulus spans only for `kind == "stimulus"` schedule rows.
+- What remains broken:
+  - none known from focused tests; live notebook rerun is still needed to refresh saved 23c figures.
+- Remaining in-slice work:
+  - none.
+- Next likely breakpoint:
+  - rerun `[23a] -> [23c]` for affected fish and inspect the refreshed heatmap block boundaries.
+- Rerun implications:
+  - rerun `[23c]` to regenerate `suite2p_stimulus_locked_heatmaps_23b.png/.pdf` and pre-identity response CSVs if downstream cells should consume the refreshed diagnostic.
+
 ### 2026-05-12 - early full-session 23c heatmap
 
 - Slice goal:

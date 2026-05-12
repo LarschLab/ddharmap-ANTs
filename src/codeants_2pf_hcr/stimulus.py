@@ -167,6 +167,64 @@ def _read_planned_schedule_stimuli(path: str | Path) -> list[str]:
     return []
 
 
+def _read_planned_schedule_tables(path: str | Path) -> dict[str, pd.DataFrame]:
+    df = pd.read_csv(path)
+    if df.empty:
+        return {"blocks": pd.DataFrame(), "stimuli": pd.DataFrame()}
+    renamed = {column: column.strip().lower() for column in df.columns}
+    df = df.rename(columns=renamed)
+    if "block_num" not in df.columns or "kind" not in df.columns:
+        return {"blocks": pd.DataFrame(), "stimuli": pd.DataFrame()}
+    df = df.copy()
+    df["kind"] = df["kind"].astype(str).str.strip().str.lower()
+    df["block_num"] = pd.to_numeric(df["block_num"], errors="coerce")
+    df = df[df["block_num"].notna()].copy()
+    if df.empty:
+        return {"blocks": pd.DataFrame(), "stimuli": pd.DataFrame()}
+    df["block"] = df["block_num"].astype(int).map(lambda value: f"B{int(value)}")
+    for col in ("start_sec", "end_sec", "duration_sec", "trial_index"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    blocks: list[dict[str, Any]] = []
+    for block, group in df.groupby("block", sort=False):
+        starts = pd.to_numeric(group.get("start_sec", pd.Series(dtype=float)), errors="coerce")
+        ends = pd.to_numeric(group.get("end_sec", pd.Series(dtype=float)), errors="coerce")
+        start = float(starts.min()) if starts.notna().any() else np.nan
+        end = float(ends.max()) if ends.notna().any() else np.nan
+        blocks.append({"block": str(block), "start": start, "end": end})
+    block_df = pd.DataFrame(blocks)
+    if not block_df.empty:
+        block_df = block_df.sort_values("block", key=lambda col: col.map(block_key)).reset_index(drop=True)
+
+    stim = df[df["kind"].eq("stimulus")].copy()
+    if stim.empty:
+        return {"blocks": block_df, "stimuli": pd.DataFrame()}
+    type_col = next((col for col in ("stimulus_name", "stimulus_key", "label") if col in stim.columns), None)
+    if type_col is None:
+        return {"blocks": block_df, "stimuli": pd.DataFrame()}
+    stim["type"] = stim[type_col].astype(str).str.strip()
+    stim = stim[stim["type"].ne("") & ~stim["type"].str.lower().isin({"nan", "none", "null"})].copy()
+    if stim.empty:
+        return {"blocks": block_df, "stimuli": pd.DataFrame()}
+    stim["stim_idx"] = pd.to_numeric(stim.get("trial_index", pd.Series(np.nan, index=stim.index)), errors="coerce")
+    if stim["stim_idx"].isna().any():
+        stim["stim_idx"] = stim.groupby("block").cumcount()
+    stim["start"] = pd.to_numeric(stim.get("start_sec", pd.Series(np.nan, index=stim.index)), errors="coerce")
+    stim["end"] = pd.to_numeric(stim.get("end_sec", pd.Series(np.nan, index=stim.index)), errors="coerce")
+    stim["duration"] = pd.to_numeric(stim.get("duration_sec", pd.Series(np.nan, index=stim.index)), errors="coerce")
+    missing_end = stim["end"].isna() & stim["start"].notna() & stim["duration"].notna()
+    stim.loc[missing_end, "end"] = stim.loc[missing_end, "start"] + stim.loc[missing_end, "duration"]
+    missing_duration = stim["duration"].isna() & stim["start"].notna() & stim["end"].notna()
+    stim.loc[missing_duration, "duration"] = stim.loc[missing_duration, "end"] - stim.loc[missing_duration, "start"]
+    stim_df = stim[["block", "stim_idx", "type", "start", "end", "duration"]].copy()
+    stim_df["stim_idx"] = stim_df["stim_idx"].astype(int)
+    side_mode = stim_df["type"].apply(lambda value: pd.Series(parse_unilateral_stim(value)))
+    side_mode.columns = ["stim_side", "stim_mode"]
+    stim_df = pd.concat([stim_df.reset_index(drop=True), side_mode.reset_index(drop=True)], axis=1)
+    return {"blocks": block_df, "stimuli": stim_df.reset_index(drop=True)}
+
+
 def resolve_presented_stimulus_metadata(
     *,
     log_path: str | Path,
@@ -180,6 +238,8 @@ def resolve_presented_stimulus_metadata(
     sources: list[dict[str, Any]] = []
     metadata_sequence: list[str] = []
     metadata_path: Path | None = None
+    planned_schedule_blocks = pd.DataFrame()
+    planned_schedule_stimuli = pd.DataFrame()
 
     trial_path = _companion_path_from_log(log_path_p, "trial_sequence")
     if trial_path is not None:
@@ -192,6 +252,9 @@ def resolve_presented_stimulus_metadata(
     schedule_path = _companion_path_from_log(log_path_p, "planned_schedule")
     if schedule_path is not None:
         seq = _read_planned_schedule_stimuli(schedule_path)
+        schedule_tables = _read_planned_schedule_tables(schedule_path)
+        planned_schedule_blocks = schedule_tables["blocks"]
+        planned_schedule_stimuli = schedule_tables["stimuli"]
         sources.append({"kind": "planned_schedule", "path": str(schedule_path), "exists": schedule_path.exists(), "n_stimuli": len(seq)})
         if not metadata_sequence and seq:
             metadata_sequence = seq
@@ -218,6 +281,8 @@ def resolve_presented_stimulus_metadata(
         "stimulus_metadata_path": metadata_path,
         "stimulus_metadata_sources": pd.DataFrame(sources),
         "stimulus_types_source": "metadata" if metadata_sequence else "experiment_log",
+        "planned_schedule_blocks": planned_schedule_blocks,
+        "planned_schedule_stimuli": planned_schedule_stimuli,
     }
 
 
@@ -672,10 +737,10 @@ def resolve_stimulus_context(
             "[stim] experiment log CSV is required for [55]. "
             "Set EXPERIMENT_LOG_CSV or place an experiment_log*.csv under 01_raw/2p/metadata."
         )
-    df_evt = load_events_df(log_path)
-    df_evt["time"] = df_evt["time"].astype(float) * float(cfg.stim_time_scale)
+    df_evt_full = load_events_df(log_path)
+    df_evt_full["time"] = df_evt_full["time"].astype(float) * float(cfg.stim_time_scale)
     df_evt, df_stim = build_stim_tables(
-        df_evt,
+        df_evt_full,
         fps=fps,
         onset_delay_sec=float(cfg.onset_delay_sec),
         remove_interblock_gaps=bool(cfg.remove_interblock_gaps),
@@ -687,6 +752,7 @@ def resolve_stimulus_context(
         "log_path": log_path,
         "meta_path": meta_path,
         "frame_rate": fps,
+        "df_evt_full": df_evt_full,
         "df_evt": df_evt,
         "df_stim": df_stim,
         "stimulus_sequence": stim_meta["stimulus_sequence"],
@@ -694,6 +760,8 @@ def resolve_stimulus_context(
         "stimulus_metadata_path": stim_meta["stimulus_metadata_path"],
         "stimulus_metadata_sources": stim_meta["stimulus_metadata_sources"],
         "stimulus_types_source": stim_meta["stimulus_types_source"],
+        "planned_schedule_blocks": stim_meta["planned_schedule_blocks"],
+        "planned_schedule_stimuli": stim_meta["planned_schedule_stimuli"],
         "source_table": pd.DataFrame(
             [
                 {"key": "EXPERIMENT_LOG_CSV", "value": str(log_path), "exists": log_path.exists(), "rows": len(df_evt)},

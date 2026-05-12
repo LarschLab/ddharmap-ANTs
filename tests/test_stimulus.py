@@ -74,6 +74,40 @@ class StimulusTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 resolve_presented_stimulus_metadata(log_path=log_path, df_stim=df_stim)
 
+    def test_presented_stimulus_metadata_exposes_planned_schedule_blocks(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            log_path = root / "2026_fish_experiment_log.csv"
+            schedule_path = root / "2026_fish_planned_schedule.csv"
+            log_path.write_text(
+                "event,timestamp\n"
+                "B0_start,0\n"
+                "B0_end,10\n"
+                "B1_start,10\n"
+                "B1_prestim0_pause,10\n"
+                "B1_stim0_WFCl,12\n"
+                "B1_poststim0_pause,14\n"
+                "B1_end,20\n"
+            )
+            schedule_path.write_text(
+                "kind,label,start_sec,duration_sec,end_sec,trial_index,block_num,stimulus_name\n"
+                "trigger,B0_start,0,0,0,,0,\n"
+                "rest,Baseline rest,0,10,10,,0,\n"
+                "trigger,B1_start,10,0,10,,1,\n"
+                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,WFCl\n"
+                "stimulus,WFCl,12,2,14,0,1,WFCl\n"
+                "poststim_pause,Trial 1 post-pause,14,2,16,0,1,WFCl\n"
+            )
+            df_evt = pd.read_csv(log_path).rename(columns={"timestamp": "time"})
+            _, df_stim = build_stim_tables(df_evt, fps=1.0, onset_delay_sec=0.0, remove_interblock_gaps=True)
+
+            meta = resolve_presented_stimulus_metadata(log_path=log_path, df_stim=df_stim)
+
+            self.assertEqual(meta["stimulus_sequence"], ["WFCl"])
+            self.assertEqual(meta["planned_schedule_blocks"]["block"].tolist(), ["B0", "B1"])
+            self.assertEqual(meta["planned_schedule_stimuli"]["block"].tolist(), ["B1"])
+            self.assertEqual(meta["planned_schedule_stimuli"]["start"].tolist(), [12])
+
     def test_prestim_window_builders(self) -> None:
         df_evt = pd.DataFrame(
             {

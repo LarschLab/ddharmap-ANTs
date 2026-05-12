@@ -175,18 +175,58 @@ def _logged_block_starts(df_evt: pd.DataFrame, blocks: list[str]) -> dict[str, f
     return out
 
 
+def _event_blocks(df_evt: pd.DataFrame) -> list[str]:
+    if df_evt.empty or "event" not in df_evt.columns:
+        return []
+    blocks: list[str] = []
+    for event in df_evt["event"].astype(str):
+        match = re.match(r"^(B\d+)_", event)
+        if match:
+            blocks.append(match.group(1))
+    return sorted(set(blocks), key=_block_key)
+
+
+def _schedule_block_starts(block_table: pd.DataFrame | None) -> tuple[list[str], dict[str, float]]:
+    if not isinstance(block_table, pd.DataFrame) or block_table.empty:
+        return [], {}
+    required = {"block", "start"}
+    if not required.issubset(block_table.columns):
+        return [], {}
+    work = block_table.copy()
+    work["block"] = work["block"].astype(str)
+    work["start"] = pd.to_numeric(work["start"], errors="coerce")
+    work = work[work["block"].ne("") & work["start"].notna()].copy()
+    if work.empty:
+        return [], {}
+    work = work.sort_values("block", key=lambda col: col.map(_block_key))
+    blocks = list(dict.fromkeys(work["block"].tolist()))
+    starts = {str(row.block): float(row.start) for row in work.itertuples(index=False)}
+    return blocks, starts
+
+
 def _remap_stimulus_tables_to_frame_grid(
     df_evt: pd.DataFrame,
     df_stim: pd.DataFrame,
     *,
     n_frames: int,
     fps: float,
+    block_table: pd.DataFrame | None = None,
     tag: str = "[23c]",
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     """Place parsed stimulus blocks on equal Suite2p frame-count boundaries."""
+    schedule_blocks, schedule_starts = _schedule_block_starts(block_table)
     if df_stim.empty or "block" not in df_stim.columns:
         return df_evt.copy(), df_stim.copy(), {"timing_mode": "frame_grid", "n_blocks": 0}
-    blocks = sorted({str(value) for value in df_stim["block"].dropna().astype(str)}, key=_block_key)
+    if schedule_blocks:
+        blocks = schedule_blocks
+        logged_starts = schedule_starts
+        timing_source = "planned_schedule"
+    else:
+        event_blocks = _event_blocks(df_evt)
+        stim_blocks = sorted({str(value) for value in df_stim["block"].dropna().astype(str)}, key=_block_key)
+        blocks = event_blocks or stim_blocks
+        logged_starts = _logged_block_starts(df_evt, blocks)
+        timing_source = "experiment_log"
     n_blocks = len(blocks)
     if n_blocks <= 0:
         return df_evt.copy(), df_stim.copy(), {"timing_mode": "frame_grid", "n_blocks": 0}
@@ -198,7 +238,6 @@ def _remap_stimulus_tables_to_frame_grid(
             "cannot place block starts on an equal frame grid."
         )
     frames_per_block = int(n_frames) // int(n_blocks)
-    logged_starts = _logged_block_starts(df_evt, blocks)
     missing = [block for block in blocks if block not in logged_starts or not np.isfinite(logged_starts[block])]
     if missing:
         raise RuntimeError(f"{tag} could not resolve logged start time for block(s): {', '.join(missing)}")
@@ -236,6 +275,7 @@ def _remap_stimulus_tables_to_frame_grid(
 
     return evt, stim, {
         "timing_mode": "frame_grid",
+        "timing_source": timing_source,
         "n_blocks": int(n_blocks),
         "frames_per_block": int(frames_per_block),
         "block_start_frames": block_start_frames,
@@ -312,11 +352,17 @@ def build_suite2p_stimulus_locked_diagnostic(
         elif tvec_ref.shape != tvec.shape or not np.allclose(tvec_ref, tvec, atol=1e-6):
             raise RuntimeError("[23c] inconsistent frame rates or diagnostic windows across sessions")
 
+        schedule_blocks = ctx.get("planned_schedule_blocks")
+        schedule_stimuli = ctx.get("planned_schedule_stimuli")
+        use_schedule_timing = isinstance(schedule_blocks, pd.DataFrame) and not schedule_blocks.empty
+        df_evt_source = ctx.get("df_evt_full", ctx["df_evt"]) if use_schedule_timing else ctx["df_evt"]
+        df_stim_source = schedule_stimuli if isinstance(schedule_stimuli, pd.DataFrame) and not schedule_stimuli.empty else ctx["df_stim"]
         df_evt, df_stim, timing_meta = _remap_stimulus_tables_to_frame_grid(
-            ctx["df_evt"].copy(),
-            ctx["df_stim"].copy(),
+            df_evt_source.copy(),
+            df_stim_source.copy(),
             n_frames=int(dff_arr.shape[1]),
             fps=fps,
+            block_table=schedule_blocks if use_schedule_timing else None,
             tag="[23c]",
         )
         if df_stim.empty:
@@ -359,6 +405,7 @@ def build_suite2p_stimulus_locked_diagnostic(
                 "stimulus_types": ", ".join(stim_types),
                 "n_stimuli": int(len(df_stim)),
                 "stimulus_timing_mode": timing_meta.get("timing_mode"),
+                "stimulus_timing_source": timing_meta.get("timing_source"),
                 "n_blocks": timing_meta.get("n_blocks"),
                 "frames_per_block": timing_meta.get("frames_per_block"),
                 "n_rois": int(dff_arr.shape[0]),
