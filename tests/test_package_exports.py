@@ -49,6 +49,7 @@ from codeants_2pf_hcr import (
     build_prestim_trial_windows,
     build_registration_helper_stage,
     build_response_bpi_tables,
+    build_suite2p_response_seed_table,
     build_run_config_stage,
     build_suite2p_stimulus_locked_diagnostic,
     check_notebook_contract,
@@ -96,6 +97,7 @@ from codeants_2pf_hcr import (
     render_single_fish_50l_gene_auc_panel,
     render_single_fish_50l_global_auc_panel,
     render_single_fish_50l_responsive_identity_donut,
+    render_suite2p_full_session_heatmap,
     render_suite2p_stimulus_locked_heatmaps,
     render_suite2p_stimulus_locked_trace_panels,
     render_cohort_56g_diagnostics,
@@ -219,6 +221,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_prestim_trial_windows)
     assert callable(build_registration_helper_stage)
     assert callable(build_response_bpi_tables)
+    assert callable(build_suite2p_response_seed_table)
     assert callable(build_run_config_stage)
     assert callable(build_suite2p_stimulus_locked_diagnostic)
     assert callable(check_notebook_contract)
@@ -273,6 +276,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_single_fish_50l_gene_auc_panel)
     assert callable(render_single_fish_50l_global_auc_panel)
     assert callable(render_single_fish_50l_responsive_identity_donut)
+    assert callable(render_suite2p_full_session_heatmap)
     assert callable(render_suite2p_stimulus_locked_heatmaps)
     assert callable(render_suite2p_stimulus_locked_trace_panels)
     assert callable(render_cohort_56g_diagnostics)

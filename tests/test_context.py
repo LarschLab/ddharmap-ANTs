@@ -317,6 +317,123 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(vox_by_path[str(flipped)]["Y"], 2.0)
             self.assertEqual(result["df_vox"].loc[0, "path"], str(src))
 
+    def test_resolve_voxel_context_stage_uses_metadata_for_anatomy_z(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            analysis_dir = root / "analysis"
+            out_reg = root / "reg"
+            outdir = root / "out"
+            metadata_dir = root / "metadata"
+            for path in (analysis_dir, out_reg, outdir, metadata_dir):
+                path.mkdir()
+            anat = root / "anat.tif"
+            tifffile.imwrite(anat, np.zeros((3, 2, 2), dtype=np.uint16))
+            (metadata_dir / "fish_metadata.csv").write_text("parameter,value\nstep_size_um_anatomy,2\n")
+
+            result = resolve_voxel_context_stage(
+                analysis_dir=analysis_dir,
+                outdir=outdir,
+                out_reg=out_reg,
+                data_mode="local",
+                func_stack_path=None,
+                func_raw_stack_path=None,
+                anat_stack_path=anat,
+                hcr_stack_paths=None,
+                hcr_stack_path=None,
+                vox_func_auto=None,
+                vox_func_manual=None,
+                vox_anat_manual=None,
+                vox_hcr_manual=None,
+                flipped_list=None,
+                metadata_dir=metadata_dir,
+            )
+
+            self.assertEqual(result["bindings"]["VOX_ANAT"]["Z"], 2.0)
+            self.assertTrue(any("step_size_um_anatomy" in line for line in result["log_lines"]))
+
+    def test_resolve_voxel_context_stage_rejects_conflicting_anatomy_z_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            analysis_dir = root / "analysis"
+            out_reg = root / "reg"
+            outdir = root / "out"
+            metadata_dir = root / "metadata"
+            for path in (analysis_dir, out_reg, outdir, metadata_dir):
+                path.mkdir()
+            anat = root / "anat.tif"
+            tifffile.imwrite(anat, np.zeros((3, 2, 2), dtype=np.uint16))
+            (metadata_dir / "fish_r1_metadata.csv").write_text("parameter,value\nstep_size_um_anatomy,2\n")
+            (metadata_dir / "fish_r2_metadata.csv").write_text("parameter,value\nstep_size_um_anatomy,3\n")
+
+            with self.assertRaisesRegex(RuntimeError, "Conflicting step_size_um_anatomy"):
+                resolve_voxel_context_stage(
+                    analysis_dir=analysis_dir,
+                    outdir=outdir,
+                    out_reg=out_reg,
+                    data_mode="local",
+                    func_stack_path=None,
+                    func_raw_stack_path=None,
+                    anat_stack_path=anat,
+                    hcr_stack_paths=None,
+                    hcr_stack_path=None,
+                    vox_func_auto=None,
+                    vox_func_manual=None,
+                    vox_anat_manual=None,
+                    vox_hcr_manual=None,
+                    flipped_list=None,
+                    metadata_dir=metadata_dir,
+                )
+
+    def test_resolve_voxel_context_stage_requires_metadata_or_manual_anatomy_z(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            analysis_dir = root / "analysis"
+            out_reg = root / "reg"
+            outdir = root / "out"
+            metadata_dir = root / "metadata"
+            for path in (analysis_dir, out_reg, outdir, metadata_dir):
+                path.mkdir()
+            anat = root / "anat.tif"
+            tifffile.imwrite(anat, np.zeros((3, 2, 2), dtype=np.uint16))
+
+            with self.assertRaisesRegex(RuntimeError, "step_size_um_anatomy"):
+                resolve_voxel_context_stage(
+                    analysis_dir=analysis_dir,
+                    outdir=outdir,
+                    out_reg=out_reg,
+                    data_mode="local",
+                    func_stack_path=None,
+                    func_raw_stack_path=None,
+                    anat_stack_path=anat,
+                    hcr_stack_paths=None,
+                    hcr_stack_path=None,
+                    vox_func_auto=None,
+                    vox_func_manual=None,
+                    vox_anat_manual=None,
+                    vox_hcr_manual=None,
+                    flipped_list=None,
+                    metadata_dir=metadata_dir,
+                )
+
+            result = resolve_voxel_context_stage(
+                analysis_dir=analysis_dir,
+                outdir=outdir,
+                out_reg=out_reg,
+                data_mode="local",
+                func_stack_path=None,
+                func_raw_stack_path=None,
+                anat_stack_path=anat,
+                hcr_stack_paths=None,
+                hcr_stack_path=None,
+                vox_func_auto=None,
+                vox_func_manual=None,
+                vox_anat_manual={"Z": 4.0},
+                vox_hcr_manual=None,
+                flipped_list=None,
+                metadata_dir=metadata_dir,
+            )
+            self.assertEqual(result["bindings"]["VOX_ANAT"]["Z"], 4.0)
+
     def test_package_import_preserves_preconfigured_matplotlib_backend(self) -> None:
         env = dict(os.environ)
         env["MPLBACKEND"] = "svg"

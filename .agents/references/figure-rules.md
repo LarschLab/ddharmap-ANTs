@@ -18,6 +18,9 @@
 - If using Suite2p provenance, label explicitly with `suite2p_is_cell` / `suite2p_activity_class`.
 - Trace-focused figures should usually filter `suite2p_is_cell == True` unless explicitly analyzing low-quality traces.
 - Do not derive `low activity` from ad hoc quantiles/medians when response calls are available.
+- `[23c]` trace panels filter to pre-identity `response_is_active == True` calls when available; `[23c]` full-experiment heatmaps keep all Suite2p-cell traces, including low-activity neurons.
+- `[23c]` trace stimulus panels use two columns: left-column stimuli (`L*` and `WFCl`) on the left, right-column stimuli (`R*` and `WFCo`) on the right, with rows keyed by stimulus type after the side prefix.
+- `[23c]` full-experiment heatmaps use frame on the X axis and a white-to-black scale where black is high activity, with transparent stimulus spans over the corresponding session/plane row block.
 
 ## HCR-centric figure exception
 

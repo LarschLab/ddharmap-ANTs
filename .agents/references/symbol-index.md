@@ -30,7 +30,7 @@ Generated manually for the current extracted package surface.
 - `build_fish_state_audit_df`: Build the audit dataframe used by cell `[4c]`.
 - `build_context_audit_stage`: Notebook-facing audit stage for `[4c]`.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
-- `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, and returns summary dataframe outputs.
+- `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
 - `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
@@ -123,16 +123,17 @@ Generated manually for the current extracted package surface.
 
 - `ActivityConfig`: Typed response/BPI scoring configuration for `[50ia]`.
 - `SingleFishBpiDiagnosticsConfig`: Typed BPI/activity diagnostics configuration for notebook cell `[56g]`.
+- `build_suite2p_response_seed_table`: Build a pre-identity Suite2p ROI table plus in-memory dF/F map for early response scoring in `[23c]`.
 - `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table.
 - `prepare_single_fish_bpi_diagnostics_stage`: Notebook-facing response-aware diagnostics prep stage for `[56g]` that resolves activity/BPI columns, backfills response metadata from the ROI master table, and publishes plotting-ready bindings.
 
 ## `codeants_2pf_hcr.suite2p`
 
 - `Suite2pStageConfig`: Typed Suite2p load/orientation configuration for notebook cell `[23a]`.
-- `Suite2pStimulusLockedDiagnosticConfig`: Typed Suite2p stimulus-locked diagnostic configuration for notebook cell `[23c]`.
+- `Suite2pStimulusLockedDiagnosticConfig`: Typed Suite2p stimulus/full-session diagnostic configuration for notebook cell `[23c]`.
 - `infer_frame_rate_from_detail`: Resolve a consistent Suite2p frame rate from per-plane ops files.
-- `build_suite2p_stimulus_locked_diagnostic`: Compute per-neuron, per-stimulus average Suite2p traces with session-aware stimulus metadata.
-- `load_suite2p_stage`: Notebook-facing Suite2p stage loader for `[23a]` that returns legacy-shaped labels, plane maps, and source summary tables.
+- `build_suite2p_stimulus_locked_diagnostic`: Compute per-neuron, per-stimulus average Suite2p traces with session-aware stimulus metadata and frame-grid block timing for `[23c]`.
+- `load_suite2p_stage`: Notebook-facing Suite2p stage loader for early `[23a]` that can run before functional reference preprocessing, returning legacy-shaped labels, plane maps, and source summary tables.
 - `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
 - `run_suite2p_stimulus_locked_diagnostic_stage`: Notebook-facing Suite2p stimulus-locked diagnostic stage for `[23c]`.
 
@@ -190,6 +191,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.plots.analysis`
 
+- `render_suite2p_full_session_heatmap`: Render the `[23c]` full-experiment Suite2p cell heatmap with frame X axis, white-to-black activity scale, and transparent stimulus spans.
 - `plot_single_roi_57style`: Render the single-ROI `[57]` style figure and optional AUC table.
 - `render_single_fish_50l_bpi_panel`: Render the single-fish `[50l]` top-left whole-population AUC-vs-BPI scatter from `[50ia]` response/BPI outputs.
 - `render_single_fish_50l_gene_auc_panel`: Render the single-fish `[50l]` marker-specific ipsi/contra AUC box/point/count-strip panels from the package-owned motion AUC point/count tables.

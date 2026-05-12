@@ -10,6 +10,7 @@ from codeants_2pf_hcr.activity import (
     ActivityConfig,
     SingleFishBpiDiagnosticsConfig,
     build_response_bpi_tables,
+    build_suite2p_response_seed_table,
     prepare_single_fish_bpi_diagnostics_stage,
 )
 
@@ -102,6 +103,89 @@ class ActivityTests(unittest.TestCase):
             self.assertGreater(scored.loc[1, "mean_bout_dff"], 20.0)
             self.assertIn("r1", set(result["df_stim"]["session_label"]))
             self.assertIn("r2", set(result["df_stim"]["session_label"]))
+
+    def test_build_response_bpi_tables_accepts_in_memory_suite2p_map(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f02"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (meta_dir / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B1_start,0\n"
+                "B1_prestim1_pause,0\n"
+                "B1_stim1_LLB,2\n"
+                "B1_poststim1_pause,4\n"
+                "B1_prestim2_pause,5\n"
+                "B1_stim2_RLC,7\n"
+                "B1_poststim2_pause,9\n"
+                "B1_end,10\n"
+            )
+            dff = np.ones((2, 12), dtype=np.float32)
+            dff[0, 2:4] = 3.0
+            dff[0, 7:9] = 4.0
+            suite2p_by_ref_idx = {
+                0: {
+                    "dff": dff,
+                    "iscell": np.asarray([[1, 0.9], [0, 0.1]], dtype=np.float32),
+                    "ops": {"fs": 1.0},
+                }
+            }
+            seed_df, dff_map = build_suite2p_response_seed_table(suite2p_by_ref_idx, fish_id=fish_id)
+
+            result = build_response_bpi_tables(
+                seed_df,
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_dff_map=dff_map,
+                config=ActivityConfig(
+                    min_trials_per_class=1,
+                    stim_onset_delay_sec=0.0,
+                    response_null_min_windows=1,
+                    response_null_bootstrap_n=5,
+                    dfof_baseline_pct=0.0,
+                    zscore_min_points=1,
+                ),
+            )
+
+            scored = result["scored_bpi_df"].sort_values("func_label").reset_index(drop=True)
+            self.assertEqual(len(scored), 2)
+            self.assertTrue(bool(scored.loc[0, "suite2p_is_cell"]) if "suite2p_is_cell" in scored.columns else True)
+            self.assertEqual(scored.loc[1, "bpi_status"], "low_quality_trace")
+
+    def test_build_response_bpi_tables_merges_precomputed_response_calls(self) -> None:
+        detail = pd.DataFrame(
+            {
+                "plane_idx": [0, 0],
+                "func_label": [1, 2],
+                "activity_class": ["Active neurons", "Active neurons"],
+                "is_active": [True, True],
+            }
+        )
+        precomputed = pd.DataFrame(
+            {
+                "plane_idx": [0, 0],
+                "func_label": [1, 2],
+                "response_is_active": [True, False],
+                "response_class": ["bout-responsive", "low activity"],
+                "response_summary_class": ["Responsive neurons", "Low activity"],
+                "bpi_category": ["bout-responsive", "low activity"],
+            }
+        )
+
+        result = build_response_bpi_tables(
+            detail,
+            fish_dir=Path("."),
+            fish_id="fishA",
+            precomputed_scored_bpi_df=precomputed,
+            config=ActivityConfig(),
+        )
+
+        out = result["detail_df"].sort_values("func_label").reset_index(drop=True)
+        self.assertEqual(list(out["response_is_active"].astype(bool)), [True, False])
+        self.assertEqual(result["stim_source"], "precomputed")
 
 def test_prepare_single_fish_bpi_diagnostics_stage_backfills_response_columns() -> None:
     with TemporaryDirectory() as tmpdir:

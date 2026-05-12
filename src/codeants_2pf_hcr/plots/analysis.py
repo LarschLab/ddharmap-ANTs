@@ -12,7 +12,7 @@ import pandas as pd
 from matplotlib.colors import to_rgb
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch
+from matplotlib.patches import Patch, Rectangle
 
 from .annotations import place_labels_no_overlap
 from ..single_fish_notebook_stages import (
@@ -39,11 +39,34 @@ STIM_PALETTE = {
 }
 
 
-def _suite2p_stim_grid(n_items: int) -> tuple[int, int]:
-    n = max(1, int(n_items))
-    ncols = min(4, max(1, int(np.ceil(np.sqrt(n)))))
-    nrows = int(np.ceil(n / ncols))
-    return nrows, ncols
+def _suite2p_stim_panel_layout(stim_types: list[str]) -> tuple[list[str], dict[str, tuple[int, int]]]:
+    rows: list[str] = []
+    slots: dict[str, tuple[int, int]] = {}
+    fallback_idx = 0
+    for stim in stim_types:
+        stim_str = str(stim)
+        upper = stim_str.upper()
+        if upper == "WFCL":
+            row_key, col_idx = "WF", 0
+        elif upper == "WFCO":
+            row_key, col_idx = "WF", 1
+        elif len(stim_str) > 1 and upper[0] in {"L", "R"}:
+            row_key = stim_str[1:]
+            col_idx = 0 if upper[0] == "L" else 1
+        else:
+            row_key = f"{fallback_idx:04d}:{stim_str}"
+            fallback_idx += 1
+            col_idx = 0
+        if row_key not in rows:
+            rows.append(row_key)
+        slots[stim_str] = (rows.index(row_key), col_idx)
+    return rows or ["stimulus"], slots
+
+
+def _suite2p_stim_row_label(row_key: str) -> str:
+    if re.match(r"^\d{4}:", row_key):
+        return row_key.split(":", 1)[1]
+    return row_key
 
 
 def render_suite2p_stimulus_locked_trace_panels(
@@ -62,12 +85,14 @@ def render_suite2p_stimulus_locked_trace_panels(
     stim_types = [stim for stim in stim_order if stim in set(trace_df["stim_type"].astype(str))]
     if not stim_types:
         stim_types = sorted(trace_df["stim_type"].astype(str).unique().tolist())
-    nrows, ncols = _suite2p_stim_grid(len(stim_types))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 2.8 * nrows + 0.7), sharex=True, sharey=True)
-    axes_arr = np.atleast_1d(axes).ravel()
+    row_keys, slots = _suite2p_stim_panel_layout(stim_types)
+    nrows, ncols = len(row_keys), 2
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 2.8 * nrows + 0.7), sharex=True, sharey=True, squeeze=False)
     durations = duration_by_stim or {}
 
-    for ax, stim_type in zip(axes_arr, stim_types):
+    for stim_type in stim_types:
+        row_idx, col_idx = slots[str(stim_type)]
+        ax = axes[row_idx, col_idx]
         sub = trace_df[trace_df["stim_type"].astype(str) == str(stim_type)].copy()
         if stim_type in durations and np.isfinite(float(durations[stim_type])):
             ax.axvspan(0.0, float(durations[stim_type]), color="#d0d0d0", alpha=0.25, zorder=0)
@@ -83,13 +108,111 @@ def render_suite2p_stimulus_locked_trace_panels(
         ax.set_xlabel("Time from stimulus start (s)")
         ax.set_ylabel("z-scored dF/F")
 
-    for ax in axes_arr[len(stim_types) :]:
-        ax.axis("off")
+    for row_idx, row_key in enumerate(row_keys):
+        left_has_data = axes[row_idx, 0].has_data()
+        right_has_data = axes[row_idx, 1].has_data()
+        label_ax = axes[row_idx, 0] if left_has_data or not right_has_data else axes[row_idx, 1]
+        label_ax.set_ylabel(f"{_suite2p_stim_row_label(row_key)}\nz-scored dF/F")
+        for col_idx in range(2):
+            ax = axes[row_idx, col_idx]
+            if not ax.has_data():
+                ax.axis("off")
+    axes[0, 0].set_title(axes[0, 0].get_title() or "Left", fontsize=10)
+    axes[0, 1].set_title(axes[0, 1].get_title() or "Right", fontsize=10)
     handles = [Line2D([0], [0], color=color, linewidth=2.0, label=str(session)) for session, color in session_colors.items()]
     if handles:
         fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
-    fig.suptitle("Suite2p neurons show stimulus-locked structure across imaging sessions", y=0.995)
+    fig.suptitle("Responsive Suite2p neurons show stimulus-locked structure across imaging sessions", y=0.995)
     fig.tight_layout(rect=[0, 0.05, 1, 0.94])
+    return fig
+
+
+def render_suite2p_full_session_heatmap(
+    *,
+    matrix: np.ndarray,
+    row_df: pd.DataFrame,
+    stimulus_spans: pd.DataFrame,
+    session_colors: dict[str, Any],
+    vmin: float = 0.0,
+    vmax: float = 5.0,
+    stim_alpha: float = 0.16,
+) -> Any:
+    mat = np.asarray(matrix, dtype=float)
+    if mat.ndim != 2 or mat.size == 0:
+        raise RuntimeError("[23c] full-session heatmap matrix is empty")
+    rows = row_df.copy() if isinstance(row_df, pd.DataFrame) else pd.DataFrame()
+    spans = stimulus_spans.copy() if isinstance(stimulus_spans, pd.DataFrame) else pd.DataFrame()
+    n_rows, n_frames = mat.shape
+    fig_h = max(4.0, min(14.0, 2.6 + 0.018 * float(n_rows)))
+    fig, ax = plt.subplots(figsize=(12.5, fig_h))
+    cmap = plt.get_cmap("gray_r").copy()
+    cmap.set_bad("white")
+    image = ax.imshow(
+        np.ma.masked_invalid(mat),
+        aspect="auto",
+        interpolation="nearest",
+        cmap=cmap,
+        vmin=float(vmin),
+        vmax=float(vmax),
+        extent=[0, int(n_frames), int(n_rows), 0],
+    )
+
+    stim_labels_seen: set[str] = set()
+    if not spans.empty:
+        required = {"stim_type", "frame_start", "frame_end", "row_start", "row_end"}
+        if required.issubset(spans.columns):
+            for span in spans.itertuples(index=False):
+                stim_type = str(getattr(span, "stim_type"))
+                frame_start = float(getattr(span, "frame_start"))
+                frame_end = float(getattr(span, "frame_end"))
+                row_start = float(getattr(span, "row_start"))
+                row_end = float(getattr(span, "row_end"))
+                if frame_end <= frame_start or row_end <= row_start:
+                    continue
+                color = STIM_PALETTE.get(stim_type, "#7f7f7f")
+                ax.add_patch(
+                    Rectangle(
+                        (frame_start, row_start),
+                        frame_end - frame_start,
+                        row_end - row_start,
+                        facecolor=color,
+                        edgecolor="none",
+                        alpha=float(stim_alpha),
+                        zorder=2,
+                    )
+                )
+                stim_labels_seen.add(stim_type)
+
+    if not rows.empty and {"session_label", "plane_idx", "func_label"}.issubset(rows.columns):
+        rows_for_lines = rows.reset_index(drop=True)
+        for session, group in rows_for_lines.groupby("session_label", sort=False):
+            idx = group.index.to_numpy(dtype=int)
+            if idx.size == 0:
+                continue
+            color = session_colors.get(str(session), "#666666")
+            ax.plot([0, 0], [float(idx.min()), float(idx.max() + 1)], color=color, linewidth=4.0, solid_capstyle="butt", zorder=3)
+            if idx.max() + 1 < n_rows:
+                ax.axhline(float(idx.max() + 1), color="#d0d0d0", linewidth=0.6, alpha=0.8, zorder=3)
+
+    ax.set_xlim(0, int(n_frames))
+    ax.set_ylim(int(n_rows), 0)
+    ax.set_title("Suite2p activity across the full experiment", fontsize=11)
+    ax.set_xlabel("Frame")
+    ax.set_ylabel("Suite2p cell")
+    cbar = fig.colorbar(image, ax=ax, shrink=0.82)
+    cbar.set_label("z-scored dF/F")
+
+    session_handles = [Patch(facecolor=color, edgecolor="none", label=str(session)) for session, color in session_colors.items()]
+    stim_handles = [
+        Patch(facecolor=STIM_PALETTE.get(stim, "#7f7f7f"), edgecolor="none", alpha=float(stim_alpha), label=str(stim))
+        for stim in sorted(stim_labels_seen)
+    ]
+    if session_handles:
+        session_legend = ax.legend(handles=session_handles, loc="upper right", frameon=False, title="Imaging session")
+        ax.add_artist(session_legend)
+    if stim_handles:
+        ax.legend(handles=stim_handles, loc="lower right", frameon=False, title="Stimulus", ncol=1, fontsize=8)
+    fig.tight_layout()
     return fig
 
 
@@ -109,13 +232,15 @@ def render_suite2p_stimulus_locked_heatmaps(
     stim_types = [stim for stim in stim_order if stim in set(trace_df["stim_type"].astype(str))]
     if not stim_types:
         stim_types = sorted(trace_df["stim_type"].astype(str).unique().tolist())
-    nrows, ncols = _suite2p_stim_grid(len(stim_types))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.0 * nrows + 0.8), sharex=True)
-    axes_arr = np.atleast_1d(axes).ravel()
+    row_keys, slots = _suite2p_stim_panel_layout(stim_types)
+    nrows, ncols = len(row_keys), 2
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.0 * nrows + 0.8), sharex=True, squeeze=False)
     durations = duration_by_stim or {}
     image = None
 
-    for ax, stim_type in zip(axes_arr, stim_types):
+    for stim_type in stim_types:
+        row_idx, col_idx = slots[str(stim_type)]
+        ax = axes[row_idx, col_idx]
         sub = trace_df[trace_df["stim_type"].astype(str) == str(stim_type)].copy()
         sub = sub.sort_values(["session_label", "plane_idx", "func_label"]).reset_index(drop=True)
         traces = [np.asarray(value, dtype=float) for value in sub["mean_trace"].tolist()]
@@ -147,10 +272,18 @@ def render_suite2p_stimulus_locked_heatmaps(
         ax.set_xlabel("Time from stimulus start (s)")
         ax.set_ylabel("Neuron")
 
-    for ax in axes_arr[len(stim_types) :]:
-        ax.axis("off")
+    axes_arr = axes.ravel()
+    for row_idx, row_key in enumerate(row_keys):
+        left_has_data = axes[row_idx, 0].has_data() or bool(axes[row_idx, 0].images)
+        right_has_data = axes[row_idx, 1].has_data() or bool(axes[row_idx, 1].images)
+        label_ax = axes[row_idx, 0] if left_has_data or not right_has_data else axes[row_idx, 1]
+        label_ax.set_ylabel(f"{_suite2p_stim_row_label(row_key)}\nNeuron")
+        for col_idx in range(2):
+            ax = axes[row_idx, col_idx]
+            if not ax.has_data() and not ax.images:
+                ax.axis("off")
     if image is not None:
-        cbar = fig.colorbar(image, ax=axes_arr[: len(stim_types)].tolist(), shrink=0.75)
+        cbar = fig.colorbar(image, ax=axes_arr.tolist(), shrink=0.75)
         cbar.set_label("z-scored dF/F")
     handles = [Patch(facecolor=color, edgecolor="none", label=str(session)) for session, color in session_colors.items()]
     if handles:
@@ -3859,6 +3992,7 @@ __all__ = [
     "compute_laterality",
     "compute_trial_auc",
     "plot_single_roi_57style",
+    "render_suite2p_full_session_heatmap",
     "render_suite2p_stimulus_locked_heatmaps",
     "render_suite2p_stimulus_locked_trace_panels",
     "render_single_fish_50l_bpi_panel",

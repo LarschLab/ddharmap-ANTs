@@ -2972,6 +2972,7 @@ MIGRATED_CELL_SOURCE_BY_TAG: dict[str, str] = {'30': '# [30]\n'
          "FUNC_ACTIVITY_BPI_SUMMARY_CSV = OUT_REG / 'functional_roi_activity_bpi_summary.csv'\n"
          "FUNC_ACTIVITY_BPI_DETAIL_CSV = OUT_REG / 'functional_roi_activity_identity.csv'\n"
          "FUNC_ACTIVITY_BPI_SUITE2P_ROOT = OUTDIR / 'suite2P'\n"
+         "FUNC_ACTIVITY_PREIDENTITY_CSV = OUT_QA / 'suite2p_response_bpi_cells_23c.csv'\n"
          '\n'
          'detail_csv = FUNC_ACTIVITY_BPI_DETAIL_CSV\n'
          'if not detail_csv.exists():\n'
@@ -2994,11 +2995,16 @@ MIGRATED_CELL_SOURCE_BY_TAG: dict[str, str] = {'30': '# [30]\n'
          '    else:\n'
          '        if FISH_DIR_LOCAL is None:\n'
          "            raise RuntimeError('[50ia] FISH_DIR is not available.')\n"
+         '        precomputed_scored_bpi_df = None\n'
+         '        if FUNC_ACTIVITY_PREIDENTITY_CSV.exists():\n'
+         '            precomputed_scored_bpi_df = pd.read_csv(FUNC_ACTIVITY_PREIDENTITY_CSV)\n'
+         "            print(f'[50ia] Reusing pre-identity response calls from {FUNC_ACTIVITY_PREIDENTITY_CSV}')\n"
          '        activity_result = build_response_bpi_tables(\n'
          '            detail_df,\n'
          '            fish_dir=FISH_DIR_LOCAL,\n'
          '            fish_id=str(FISH_ID_LOCAL),\n'
          '            suite2p_root=FUNC_ACTIVITY_BPI_SUITE2P_ROOT,\n'
+         '            precomputed_scored_bpi_df=precomputed_scored_bpi_df,\n'
          '            config=ActivityConfig(\n'
          '                active_class=ACTIVE_CLASS,\n'
          '                inactive_class=INACTIVE_CLASS,\n'
@@ -3043,7 +3049,11 @@ MIGRATED_CELL_SOURCE_BY_TAG: dict[str, str] = {'30': '# [30]\n'
          "        n_unavailable = int((detail_df['response_class'] == RESPONSE_UNAVAILABLE).sum())\n"
          "        n_low_quality = int((~pd.Series(detail_df.get('suite2p_is_cell', "
          'False)).fillna(False).astype(bool)).sum())\n'
-         "        print(f'[50ia] Response/BPI categories assigned for all segmented ROIs using {len(stim_events)} "
+         '        if precomputed_scored_bpi_df is not None:\n'
+         "            print(f'[50ia] Response/BPI categories merged for all segmented ROIs from pre-identity "
+         "Suite2p response calls ({FUNC_ACTIVITY_PREIDENTITY_CSV}).')\n"
+         '        else:\n'
+         "            print(f'[50ia] Response/BPI categories assigned for all segmented ROIs using {len(stim_events)} "
          "stimulus windows from {stim_source}.')\n"
          '        print(\n'
          "            f'[50ia] thresholds: mean AUC >= {FUNC_RESPONSE_MIN_AUC:.3f} dF/F·s and '\n"

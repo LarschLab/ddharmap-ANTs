@@ -969,6 +969,48 @@ def _cache_lookup(cache: dict[str, Any], path: Path | str | None = None, aliases
     return out
 
 
+def _read_anatomy_z_metadata(metadata_dir: Path | str | None) -> tuple[float | None, list[Path]]:
+    if metadata_dir is None:
+        return None, []
+    base = Path(metadata_dir)
+    if not base.exists():
+        return None, []
+    values: list[tuple[Path, float]] = []
+    for path in sorted(base.glob("*metadata*.csv")):
+        if "experiment_log" in path.name.lower():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        if df.empty:
+            continue
+        renamed = {column: column.strip().lower() for column in df.columns}
+        df = df.rename(columns=renamed)
+        if "parameter" not in df.columns or "value" not in df.columns:
+            continue
+        params = dict(zip(df["parameter"].astype(str).str.strip().str.lower(), df["value"]))
+        raw = params.get("step_size_um_anatomy")
+        if raw is None or pd.isna(raw):
+            continue
+        try:
+            value = float(str(raw).strip())
+        except Exception:
+            cleaned = re.sub(r"[^0-9eE+\-.]", "", str(raw))
+            if not cleaned:
+                continue
+            value = float(cleaned)
+        if np.isfinite(value) and value > 0:
+            values.append((path, float(value)))
+    if not values:
+        return None, []
+    unique = sorted({round(value, 9) for _, value in values})
+    if len(unique) > 1:
+        details = ", ".join(f"{path.name}={value:g}" for path, value in values)
+        raise RuntimeError(f"[Vox] Conflicting step_size_um_anatomy values in metadata: {details}")
+    return float(values[0][1]), [path for path, _ in values]
+
+
 def _path_from_data_root(path: Path | str | None, roots: list[Path | None]) -> str | None:
     if not path:
         return None
@@ -1190,6 +1232,7 @@ def resolve_voxel_context_stage(
     vox_anat_manual: dict[str, Any] | None,
     vox_hcr_manual: dict[str, Any] | None,
     flipped_list: list[Path | str] | None,
+    metadata_dir: Path | str | None = None,
     func_source_list: list[Path | str] | None = None,
     data_root: Path | str | None = None,
     local_root: Path | str | None = None,
@@ -1210,6 +1253,7 @@ def resolve_voxel_context_stage(
     func_stack_path_local = Path(func_stack_path) if func_stack_path else None
     func_raw_stack_path_local = Path(func_raw_stack_path) if func_raw_stack_path else None
     anat_stack_path_local = Path(anat_stack_path) if anat_stack_path else None
+    metadata_dir_local = Path(metadata_dir) if metadata_dir else None
     hcr_stack_paths_local = [Path(path) for path in (hcr_stack_paths or []) if path]
     hcr_stack_path_local = Path(hcr_stack_path) if hcr_stack_path else None
     if not hcr_stack_paths_local and hcr_stack_path_local is not None:
@@ -1295,6 +1339,19 @@ def resolve_voxel_context_stage(
             vox_anat = _merge_missing(_norm_vox(inferred), vox_anat)
         except Exception:
             pass
+    if anat_stack_path_local is not None:
+        anatomy_z, anatomy_z_paths = _read_anatomy_z_metadata(metadata_dir_local)
+        if anatomy_z is None:
+            has_manual_z = vox_anat_manual_local.get("Z") is not None
+            if not has_manual_z:
+                raise RuntimeError(
+                    "[Vox] Could not resolve anatomy Z from metadata field step_size_um_anatomy; "
+                    "set VOX_ANAT_MANUAL['Z'] or place a metadata CSV under 01_raw/2p/metadata."
+                )
+        else:
+            vox_anat["Z"] = float(anatomy_z)
+            joined_paths = ", ".join(str(path) for path in anatomy_z_paths)
+            log_lines.append(f"[Vox] Anatomy Z_um={float(anatomy_z):g} from step_size_um_anatomy in {joined_paths}")
 
     hcr_stack_paths_local = list(hcr_stack_paths_local)
     if not hcr_stack_paths_local and hcr_stack_path_local:

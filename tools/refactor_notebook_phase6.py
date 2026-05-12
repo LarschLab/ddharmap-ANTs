@@ -50,6 +50,7 @@ voxel_result = resolve_voxel_context_stage(
     anat_stack_path=globals().get('ANAT_STACK_PATH'),
     hcr_stack_paths=globals().get('HCR_STACK_PATHS'),
     hcr_stack_path=globals().get('HCR_STACK_PATH'),
+    metadata_dir=Path(FISH_DIR) / '01_raw' / '2p' / 'metadata',
     vox_func_auto=globals().get('VOX_FUNC_AUTO'),
     vox_func_manual=globals().get('VOX_FUNC_MANUAL'),
     vox_anat_manual=globals().get('VOX_ANAT_MANUAL'),

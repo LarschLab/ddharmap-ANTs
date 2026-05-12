@@ -76,6 +76,60 @@ def _as_bool_series(series_in: Any) -> pd.Series:
     return s.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
 
 
+def _suite2p_keep_mask(plane: dict[str, Any], n_rois: int) -> np.ndarray:
+    if plane.get("iscell") is not None:
+        arr = np.asarray(plane.get("iscell"))
+        if arr.ndim >= 2 and arr.shape[0] >= int(n_rois):
+            return arr[: int(n_rois), 0].astype(bool)
+    if plane.get("iscell_keep") is not None:
+        arr = np.asarray(plane.get("iscell_keep"), dtype=bool)
+        if arr.shape[0] >= int(n_rois):
+            return arr[: int(n_rois)].astype(bool)
+    return np.ones(int(n_rois), dtype=bool)
+
+
+def build_suite2p_response_seed_table(
+    suite2p_by_ref_idx: dict[int, dict[str, Any]],
+    *,
+    fish_id: str | None = None,
+    active_class: str = "Active neurons",
+    inactive_class: str = "Low-quality traces",
+) -> tuple[pd.DataFrame, dict[int, dict[str, Any]]]:
+    """Build a pre-identity ROI table and dF/F map from loaded Suite2p planes."""
+    rows: list[dict[str, Any]] = []
+    dff_map: dict[int, dict[str, Any]] = {}
+    for plane_idx in sorted(int(k) for k in suite2p_by_ref_idx.keys()):
+        plane = suite2p_by_ref_idx.get(int(plane_idx), {}) or {}
+        dff = plane.get("dff")
+        if dff is None:
+            continue
+        dff_arr = np.asarray(dff, dtype=np.float32)
+        if dff_arr.ndim != 2:
+            continue
+        n_rois = int(dff_arr.shape[0])
+        keep = _suite2p_keep_mask(plane, n_rois)
+        dff_map[int(plane_idx)] = {
+            "dff": dff_arr,
+            "plane_dir": plane.get("plane_dir"),
+            "ops": plane.get("ops", {}),
+        }
+        for roi_idx in range(n_rois):
+            is_cell = bool(keep[int(roi_idx)]) if int(roi_idx) < len(keep) else False
+            rows.append(
+                {
+                    "fish_id": fish_id,
+                    "plane": f"plane{int(plane_idx)}",
+                    "plane_idx": int(plane_idx),
+                    "func_label": int(roi_idx) + 1,
+                    "roi_idx": int(roi_idx),
+                    "func_source": str(plane.get("plane_dir")) if plane.get("plane_dir") is not None else None,
+                    "activity_class": active_class if is_cell else inactive_class,
+                    "is_active": is_cell,
+                }
+            )
+    return pd.DataFrame(rows), dff_map
+
+
 def _extract_window(trace: np.ndarray, idx0: int, idx1: int, *, mode: str, min_valid_frac: float) -> tuple[np.ndarray | None, int, int]:
     n_frames = int(trace.shape[0])
     win_len = int(idx1 - idx0)
@@ -98,6 +152,108 @@ def _extract_window(trace: np.ndarray, idx0: int, idx1: int, *, mode: str, min_v
     if n_valid < min_required:
         return None, n_valid, win_len
     return seg, n_valid, win_len
+
+
+def _merge_scored_response_table(
+    detail: pd.DataFrame,
+    scored_bpi_df: pd.DataFrame,
+    *,
+    cfg: ActivityConfig,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    response_summary_unavailable = "Response unavailable"
+    bpi_unavailable = cfg.response_unavailable
+    merge_cols = [
+        "plane_idx",
+        "func_label",
+        "n_bout_trials",
+        "n_cont_trials",
+        "n_bout_trials_z",
+        "n_cont_trials_z",
+        "mean_bout_dff",
+        "mean_cont_dff",
+        "mean_bout_zdff",
+        "mean_cont_zdff",
+        "mean_bout_auc_dff",
+        "mean_cont_auc_dff",
+        "bout_null_q99_auc",
+        "cont_null_q99_auc",
+        "bout_response_pass",
+        "cont_response_pass",
+        "response_is_active",
+        "response_class",
+        "response_summary_class",
+        "response_auc_threshold",
+        "response_null_quantile",
+        "response_null_bootstrap_n",
+        "denom",
+        "denom_z",
+        "bpi",
+        "bpi_z",
+        "activity_mag",
+        "bpi_status",
+        "bpi_data_available",
+        "bpi_category",
+        "bpi_zero_band",
+        "bpi_activity_threshold",
+    ]
+    available_cols = [col for col in merge_cols if col in scored_bpi_df.columns]
+    scored = scored_bpi_df[available_cols].copy()
+    scored["plane_idx"] = pd.to_numeric(scored["plane_idx"], errors="coerce").astype("Int64")
+    scored["func_label"] = pd.to_numeric(scored["func_label"], errors="coerce").astype("Int64")
+    scored = scored.dropna(subset=["plane_idx", "func_label"]).drop_duplicates(
+        subset=["plane_idx", "func_label"],
+        keep="last",
+    )
+    detail = detail.merge(scored, on=["plane_idx", "func_label"], how="left")
+    detail["response_is_active"] = _as_bool_series(detail.get("response_is_active", False)).astype(bool)
+    if "bout_response_pass" not in detail.columns:
+        detail["bout_response_pass"] = False
+    if "cont_response_pass" not in detail.columns:
+        detail["cont_response_pass"] = False
+    detail["bout_response_pass"] = _as_bool_series(detail.get("bout_response_pass", False)).astype(bool)
+    detail["cont_response_pass"] = _as_bool_series(detail.get("cont_response_pass", False)).astype(bool)
+    detail["response_class"] = detail["response_class"].fillna(cfg.response_unavailable)
+    detail["response_summary_class"] = detail["response_summary_class"].fillna(response_summary_unavailable)
+    detail["bpi_category"] = detail["bpi_category"].fillna(bpi_unavailable)
+    if "bpi_status" not in detail.columns:
+        detail["bpi_status"] = "response_unavailable"
+    detail["bpi_status"] = detail["bpi_status"].fillna("response_unavailable")
+    if "bpi_data_available" not in detail.columns:
+        detail["bpi_data_available"] = False
+    detail["bpi_data_available"] = _as_bool_series(detail.get("bpi_data_available", False)).astype(bool)
+    if "bpi_zero_band" not in detail.columns:
+        detail["bpi_zero_band"] = float(cfg.zero_band)
+    detail["bpi_zero_band"] = detail["bpi_zero_band"].fillna(float(cfg.zero_band))
+    if "bpi_activity_threshold" not in detail.columns:
+        detail["bpi_activity_threshold"] = float(cfg.response_min_auc)
+    detail["bpi_activity_threshold"] = detail["bpi_activity_threshold"].fillna(float(cfg.response_min_auc))
+    if "response_auc_threshold" not in detail.columns:
+        detail["response_auc_threshold"] = float(cfg.response_min_auc)
+    detail["response_auc_threshold"] = detail["response_auc_threshold"].fillna(float(cfg.response_min_auc))
+    if "response_null_quantile" not in detail.columns:
+        detail["response_null_quantile"] = float(cfg.response_null_q)
+    detail["response_null_quantile"] = detail["response_null_quantile"].fillna(float(cfg.response_null_q))
+    if "response_null_bootstrap_n" not in detail.columns:
+        detail["response_null_bootstrap_n"] = int(cfg.response_null_bootstrap_n)
+    detail["response_null_bootstrap_n"] = detail["response_null_bootstrap_n"].fillna(int(cfg.response_null_bootstrap_n))
+    summary_df = (
+        detail.groupby(["response_summary_class", "bpi_category"], as_index=False)
+        .size()
+        .rename(columns={"size": "n_rois"})
+    )
+    summary_df["n_response_total"] = summary_df.groupby("response_summary_class")["n_rois"].transform("sum")
+    summary_df["n_all_segmented"] = int(len(detail))
+    summary_df["pct_within_response_class"] = np.where(
+        summary_df["n_response_total"] > 0,
+        100.0 * summary_df["n_rois"] / summary_df["n_response_total"],
+        np.nan,
+    )
+    summary_df["pct_of_all_segmented"] = np.where(
+        summary_df["n_all_segmented"] > 0,
+        100.0 * summary_df["n_rois"] / summary_df["n_all_segmented"],
+        np.nan,
+    )
+    return detail, summary_df
 
 
 def _compute_bootstrap_null_quantiles(
@@ -223,6 +379,8 @@ def build_response_bpi_tables(
     fish_dir: str | Path,
     fish_id: str,
     suite2p_root: str | Path | None = None,
+    suite2p_dff_map: dict[int, dict[str, Any]] | None = None,
+    precomputed_scored_bpi_df: pd.DataFrame | None = None,
     config: ActivityConfig | None = None,
     experiment_log_csv: str | Path | None = None,
     experiment_meta_csv: str | Path | None = None,
@@ -269,12 +427,46 @@ def build_response_bpi_tables(
     detail["plane_idx"] = pd.to_numeric(detail["plane_idx"], errors="coerce").astype("Int64")
     detail["func_label"] = pd.to_numeric(detail["func_label"], errors="coerce").astype("Int64")
 
-    s2p_map = load_suite2p_dff_map(
-        detail,
-        suite2p_root=suite2p_root,
-        dfof_baseline_pct=float(cfg.dfof_baseline_pct),
-        dfof_eps=float(cfg.dfof_eps),
-    )
+    if precomputed_scored_bpi_df is not None and not precomputed_scored_bpi_df.empty:
+        required_precomputed = {"plane_idx", "func_label", "response_is_active", "response_class"}
+        missing_precomputed = sorted(required_precomputed - set(precomputed_scored_bpi_df.columns))
+        if missing_precomputed:
+            raise RuntimeError(f"precomputed response table missing columns: {missing_precomputed}")
+        detail_out, summary_df = _merge_scored_response_table(
+            detail,
+            precomputed_scored_bpi_df,
+            cfg=cfg,
+        )
+        return {
+            "detail_df": detail_out,
+            "scored_bpi_df": precomputed_scored_bpi_df.copy(),
+            "summary_df": summary_df,
+            "fps": float(frame_rate) if frame_rate is not None else float("nan"),
+            "df_evt": pd.DataFrame(),
+            "df_stim": pd.DataFrame(),
+            "stim_events": [],
+            "stim_source": "precomputed",
+            "baseline_windows": [],
+            "prestim_trial_windows": [],
+            "s2p_map": suite2p_dff_map or {},
+        }
+
+    if suite2p_dff_map is None:
+        s2p_map = load_suite2p_dff_map(
+            detail,
+            suite2p_root=suite2p_root,
+            dfof_baseline_pct=float(cfg.dfof_baseline_pct),
+            dfof_eps=float(cfg.dfof_eps),
+        )
+    else:
+        s2p_map = {
+            int(plane_idx): {
+                **(plane_data if isinstance(plane_data, dict) else {}),
+                "dff": np.asarray((plane_data or {}).get("dff"), dtype=np.float32),
+            }
+            for plane_idx, plane_data in suite2p_dff_map.items()
+            if isinstance(plane_data, dict) and plane_data.get("dff") is not None
+        }
     plane_indices = sorted(set(detail["plane_idx"].dropna().astype(int).tolist()))
     stim_cfg = StimulusConfig(
         stim_time_scale=float(cfg.stim_time_scale),
@@ -946,6 +1138,7 @@ __all__ = [
     "ActivityConfig",
     "SingleFishBpiDiagnosticsConfig",
     "build_response_bpi_tables",
+    "build_suite2p_response_seed_table",
     "prepare_single_fish_bpi_diagnostics_stage",
     "run_single_fish_cell_50ia_stage",
 ]

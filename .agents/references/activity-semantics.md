@@ -57,6 +57,7 @@ Primary fields:
 ## Threshold ownership
 
 - `[50ia]` owns the exported BPI/activity thresholds used to interpret downstream plots.
+- `[23c]` may compute pre-identity Suite2p response/BPI calls with the same threshold knobs so early diagnostics can filter trace panels before HCR geometry exists; those outputs are diagnostic until merged by `[50ia]`.
 - Downstream figures should reuse `bpi_zero_band` for near-zero BPI guide lines and `bpi_activity_threshold` for low-activity guide lines when those columns are present.
 - Do not hard-code duplicate threshold constants in downstream cohort or figure stages when the authoritative `[50ia]` columns are available.
 

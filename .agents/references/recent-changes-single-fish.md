@@ -28,6 +28,27 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-05-12 - early full-session 23c heatmap
+
+- Slice goal:
+  - make `[23c]` a first-pass fish response quality check immediately after Suite2p loading.
+- Passes completed in this session:
+  - replaced the `[23c]` heatmap output with a full-experiment Suite2p cell heatmap.
+  - moved notebook `[23a]` and `[23c]` before `[14]`, with `[23c]` directly after `[23a]`.
+  - allowed `[23a]` Suite2p loading to run before `plane_refs` exist by keying traces by discovered Suite2p plane index.
+  - updated focused tests and figure/stage docs.
+- What changed:
+  - `[23c]` heatmaps now use frame on the X axis, all valid Suite2p-cell rows, a white-to-black activity scale, and transparent stimulus spans.
+  - functional response QC can now run before anatomy/functional preprocessing cells.
+- What remains broken:
+  - none known from focused tests; live notebook rerun is still needed to refresh the saved 23c figures for a fish.
+- Remaining in-slice work:
+  - none.
+- Next likely breakpoint:
+  - stale saved `suite2p_stimulus_locked_heatmaps_23b.png/.pdf` files until `[23c]` is rerun.
+- Rerun implications:
+  - rerun `[23a] -> [23c]` before `[14]` to refresh the early fish response QC figure.
+
 ### 2026-05-09 - local root and multi-session plane metadata
 
 - Slice goal:
@@ -634,3 +655,18 @@
   - the new diagnostic preserves preprocessing-metadata plane-to-session mapping and uses raw stimulus names such as `WFCl` and `LAB_trajectory`.
 - Rerun implications:
   - rerun `[23a] -> [23c]` to generate the new QA outputs; downstream identity stages are unchanged.
+
+### 2026-05-11 - anatomy Z metadata and `[23c]` frame-grid block timing
+
+- Slice goal:
+  - fix two timing/geometry assumptions exposed by current single-fish runs.
+- Passes completed in this session:
+  - changed `[8]` voxel resolution so anatomy `Z_um` comes from `step_size_um_anatomy` in fish metadata, with fail-fast behavior for missing/conflicting metadata unless `VOX_ANAT_MANUAL['Z']` is set.
+  - changed `[23c]` Suite2p diagnostics to place blocks on equal Suite2p frame-count boundaries and preserve log-relative stimulus offsets within each block.
+  - added focused context and Suite2p diagnostic tests.
+- What changed:
+  - multi-page anatomy TIFFs no longer silently report `Z_um=1.0` when microscope metadata says otherwise.
+  - appended block padding in the Suite2p trace no longer accumulates block-onset drift in `[23c]`.
+- Rerun implications:
+  - rerun `[8]` before downstream spatial stages for corrected anatomy Z.
+  - rerun `[23a] -> [23c]` to regenerate the early Suite2p stimulus diagnostic.
