@@ -21,6 +21,8 @@ _PROFILE_FIGURE_TAGS = {
         "cohort-56h-donut-grid",
         "cohort-50l-donut-row",
         "cohort-50l-responsive-identity-donut-row",
+        "cohort-23c-traces",
+        "cohort-23c-heatmaps",
     },
 }
 _PROFILE_REQUIRED_CELL_OWNERS = {
@@ -245,7 +247,7 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
 
 def _profile_from_notebook_path(notebook_path: str | Path) -> str:
     path_name = Path(notebook_path).name
-    if path_name == "multi_fish_56h_56g.ipynb":
+    if path_name in {"multi_fish_56h_56g.ipynb", "cohort_suite2p_23c_overview.ipynb"}:
         return "cohort"
     return "single-fish"
 

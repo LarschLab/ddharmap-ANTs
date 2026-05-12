@@ -8,6 +8,7 @@ from codeants_2pf_hcr.notebook_contract import find_required_cell_contract_viola
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
 COHORT_NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "multi_fish_56h_56g.ipynb"
+COHORT_23C_NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "cohort_suite2p_23c_overview.ipynb"
 
 
 def _write_notebook(path: Path, cells: list[str]) -> None:
@@ -63,6 +64,15 @@ def test_cohort_notebook_contract_audit_returns_counts() -> None:
 
 def test_cohort_notebook_contract_has_zero_violations() -> None:
     result = check_notebook_contract(COHORT_NOTEBOOK_PATH)
+    assert result["n_top_level_defs"] == 0
+    assert result["n_figure_violations"] == 0
+    assert result["n_required_cell_violations"] == 0
+
+
+def test_cohort_23c_notebook_contract_has_zero_violations() -> None:
+    result = check_notebook_contract(COHORT_23C_NOTEBOOK_PATH)
+    assert result["notebook_path"].endswith("notebooks/cohort_suite2p_23c_overview.ipynb")
+    assert result["profile"] == "cohort"
     assert result["n_top_level_defs"] == 0
     assert result["n_figure_violations"] == 0
     assert result["n_required_cell_violations"] == 0

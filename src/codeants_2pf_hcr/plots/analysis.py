@@ -332,6 +332,118 @@ def render_suite2p_stimulus_locked_heatmaps(
     return fig
 
 
+def render_cohort_suite2p_23c_traces(
+    *,
+    trace_mean_df: pd.DataFrame,
+    tvec: np.ndarray,
+    stim_order: list[str],
+    fish_session_colors: dict[str, Any],
+    duration_by_stim: dict[str, float] | None = None,
+    outdir: str | Path | None = None,
+    basename: str = "cohort_23c_responsive_average_traces",
+    save: bool = True,
+    dpi: int = 300,
+) -> Any:
+    if not isinstance(trace_mean_df, pd.DataFrame) or trace_mean_df.empty:
+        raise RuntimeError("[cohort-23c] trace_mean_df is empty")
+    tvec_arr = np.asarray(tvec, dtype=float)
+    stim_types = [stim for stim in stim_order if stim in set(trace_mean_df["stim_type"].astype(str))]
+    if not stim_types:
+        stim_types = sorted(trace_mean_df["stim_type"].astype(str).unique().tolist())
+    row_keys, slots = _suite2p_stim_panel_layout(stim_types)
+    nrows, ncols = len(row_keys), 2
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.4 * ncols, 2.9 * nrows + 0.9), sharex=True, sharey=True, squeeze=False)
+    durations = duration_by_stim or {}
+
+    legend_keys: list[tuple[str, str]] = []
+    for stim_type in stim_types:
+        row_idx, col_idx = slots[str(stim_type)]
+        ax = axes[row_idx, col_idx]
+        sub = trace_mean_df[trace_mean_df["stim_type"].astype(str) == str(stim_type)].copy()
+        if stim_type in durations and np.isfinite(float(durations[stim_type])):
+            ax.axvspan(0.0, float(durations[stim_type]), color="#d0d0d0", alpha=0.22, zorder=0)
+        for row in sub.itertuples(index=False):
+            fish_id = str(getattr(row, "fish_id"))
+            session = str(getattr(row, "session_label"))
+            key = f"{fish_id}|{session}"
+            color = fish_session_colors.get(key, "#666666")
+            mean = np.asarray(getattr(row, "mean_trace"), dtype=float)
+            if mean.shape == tvec_arr.shape:
+                ax.plot(tvec_arr, mean, color=color, alpha=0.95, linewidth=1.35)
+                if (fish_id, session) not in legend_keys:
+                    legend_keys.append((fish_id, session))
+        n_rois = int(pd.to_numeric(sub.get("n_responsive_rois", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
+        ax.axvline(0.0, color="black", linestyle="--", linewidth=0.8, alpha=0.75)
+        ax.axhline(0.0, color="black", linewidth=0.6, alpha=0.5)
+        ax.set_title(f"{stim_type} (responsive ROI-sessions n={n_rois})", fontsize=10)
+        ax.set_xlabel("Time from stimulus start (s)")
+        ax.set_ylabel("mean z-scored dF/F")
+
+    for row_idx, row_key in enumerate(row_keys):
+        left_has_data = axes[row_idx, 0].has_data()
+        right_has_data = axes[row_idx, 1].has_data()
+        label_ax = axes[row_idx, 0] if left_has_data or not right_has_data else axes[row_idx, 1]
+        label_ax.set_ylabel(f"{_suite2p_stim_row_label(row_key)}\nmean z-scored dF/F")
+        for col_idx in range(2):
+            ax = axes[row_idx, col_idx]
+            if not ax.has_data():
+                ax.axis("off")
+
+    handles = [
+        Line2D([0], [0], color=fish_session_colors.get(f"{fish_id}|{session}", "#666666"), linewidth=2.2, label=f"{fish_id} {session}")
+        for fish_id, session in legend_keys
+    ]
+    if handles:
+        fig.legend(handles=handles, loc="lower center", ncol=min(5, len(handles)), frameon=False, title="Fish/session")
+    fig.suptitle("Responsive Suite2p neurons show cohort-level stimulus-locked structure", y=0.995)
+    fig.tight_layout(rect=[0, 0.07, 1, 0.94])
+    if save and outdir is not None:
+        out_path = Path(outdir)
+        out_path.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path / f"{basename}.png", dpi=int(dpi), bbox_inches="tight")
+        fig.savefig(out_path / f"{basename}.pdf", bbox_inches="tight")
+    return fig
+
+
+def render_cohort_suite2p_23c_full_session_heatmaps(
+    *,
+    heatmap_payloads: dict[str, dict[str, Any]],
+    outdir: str | Path | None = None,
+    vmin: float = 0.0,
+    vmax: float = 5.0,
+    stim_alpha: float = 0.28,
+    save: bool = True,
+    dpi: int = 300,
+) -> dict[str, Any]:
+    if not isinstance(heatmap_payloads, dict) or not heatmap_payloads:
+        raise RuntimeError("[cohort-23c] heatmap payload is empty")
+    figures: dict[str, Any] = {}
+    path_rows: list[dict[str, Any]] = []
+    out_path = Path(outdir) if outdir is not None else None
+    if save and out_path is not None:
+        out_path.mkdir(parents=True, exist_ok=True)
+    for fish_id, payload in heatmap_payloads.items():
+        fig = render_suite2p_full_session_heatmap(
+            matrix=payload["matrix"],
+            row_df=payload["row_df"],
+            stimulus_spans=payload["stimulus_spans"],
+            block_starts=payload.get("block_starts"),
+            session_colors=payload.get("session_colors", {}),
+            vmin=float(vmin),
+            vmax=float(vmax),
+            stim_alpha=float(stim_alpha),
+        )
+        fig.axes[0].set_title(f"{fish_id}: Suite2p activity across the full experiment", fontsize=11)
+        figures[str(fish_id)] = fig
+        if save and out_path is not None:
+            png = out_path / f"cohort_23c_full_session_heatmap_{fish_id}.png"
+            pdf = png.with_suffix(".pdf")
+            fig.savefig(png, dpi=int(dpi), bbox_inches="tight")
+            fig.savefig(pdf, bbox_inches="tight")
+            path_rows.append({"fish_id": str(fish_id), "heatmap_png": str(png), "heatmap_pdf": str(pdf)})
+    return {"figures": figures, "paths_df": pd.DataFrame(path_rows)}
+
+
 SINGLE_FISH_50L_BPI_ORDER = [
     "bout-responsive",
     "continuous-responsive",
@@ -4034,6 +4146,8 @@ __all__ = [
     "render_suite2p_full_session_heatmap",
     "render_suite2p_stimulus_locked_heatmaps",
     "render_suite2p_stimulus_locked_trace_panels",
+    "render_cohort_suite2p_23c_full_session_heatmaps",
+    "render_cohort_suite2p_23c_traces",
     "render_single_fish_50l_bpi_panel",
     "render_single_fish_50l_composite",
     "render_single_fish_50l_gene_auc_panel",

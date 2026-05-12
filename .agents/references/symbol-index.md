@@ -48,6 +48,17 @@ Generated manually for the current extracted package surface.
 - `save_cohort_outputs_to_disk`: Persist cohort summary tables, 53a cache tables, and trace cache payload.
 - `build_cohort_outputs_stage`: Notebook-facing owner stage for cohort fish discovery, metadata lookup, cache reuse/invalidation, aggregation, and legacy-shaped binding export.
 
+## `codeants_2pf_hcr.cohort_suite2p`
+
+- `CohortSuite2p23cConfig`: Typed build/cache knob container for `cohort_suite2p_23c_overview.ipynb`.
+- `parse_fish_ids_csv`: Parse comma-separated fish IDs while preserving order and dropping blanks/duplicates.
+- `resolve_cohort_suite2p_23c_fish_dir`: Resolve an owner-free fish folder under the configured cohort data root.
+- `aggregate_cohort_23c_trace_means`: Collapse `[23c]` per-ROI traces to one mean trace per fish/session/stimulus.
+- `build_fish_session_color_map`: Assign stable fish colors with session shade variants for cohort trace rendering.
+- `cohort_suite2p_23c_cache_paths`: Resolve cache/output filenames under `cohort_outputs/suite2p_23c_response_overview/`.
+- `load_cohort_suite2p_23c_outputs_from_disk`: Load cached cohort `[23c]` tables and trace/heatmap payloads.
+- `build_cohort_suite2p_23c_stage`: Notebook-facing owner stage for cohort `[23c]` fish discovery, Suite2p loading, response/BPI scoring, trace aggregation, heatmap payload retention, and cache writing.
+
 ## `codeants_2pf_hcr.spatial`
 
 - `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`; oriented references can be built from original motion-corrected stacks without saving full oriented movies.
@@ -203,6 +214,8 @@ Generated manually for the current extracted package surface.
 - `render_cohort_56h_status_donut_grid`: Render cohort fish×gene HCR-status donut grid and export summary counts table.
 - `render_cohort_50l_donut_row`: Render cohort [50l]-style fish-row donut figure and export long/wide counts tables.
 - `render_cohort_50l_responsive_identity_donut_row`: Render cohort responsive-only fish-row donut figure with BPI inner ring and exact HCR-derived identity outer ring (plus `unidentified`) and export long/wide counts tables.
+- `render_cohort_suite2p_23c_traces`: Render cohort `[23c]` responsive average traces with one line per fish/session/stimulus.
+- `render_cohort_suite2p_23c_full_session_heatmaps`: Render and save per-fish `[23c]` full-session Suite2p heatmaps from cached cohort payloads.
 - `render_single_fish_50l_responsive_identity_donut`: Render single-fish responsive-only donut with the same hybrid semantics as cohort responsive-identity donut and export long/wide counts tables.
 
 ## `codeants_2pf_hcr.single_fish_notebook_stages`
