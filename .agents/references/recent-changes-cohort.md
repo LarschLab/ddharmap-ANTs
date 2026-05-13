@@ -283,7 +283,7 @@
   - use new per-fish raw metadata orientation in `multiFish.ipynb` and related cohort consumers, while keeping legacy `matchingMetadata.csv` fallback for older fish.
   - ensure multifish anatomy Cellpose consumes the same oriented `750x750` uint8 anatomy stack contract as single-fish `[14a]`.
 - changed:
-  - made shared orientation resolution prefer `01_raw/2p/metadata/*metadata*.csv` `fish_orientation` over `matchingMetadata.csv`, normalize `top-right`/`bottom-left` to `north`/`south`, and fail fast on missing or conflicting values.
+  - made shared orientation resolution prefer `01_raw/2p/metadata/*metadata*.csv` `fish_orientation` over `matchingMetadata.csv`, normalize `bottom-left`/`top-right` to `north`/`south`, and fail fast on missing or conflicting values.
   - updated cohort `[23c]`, cohort build polarity lookup, and multifish anatomy segmentation to use the shared resolver.
   - changed multifish anatomy segmentation to preprocess anatomy through `[14a]` before Cellpose, so raw `512x512` anatomy TIFFs no longer bypass the canonical `750x750` uint8 stage.
 - validation:

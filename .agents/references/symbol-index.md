@@ -34,7 +34,7 @@ Generated manually for the current extracted package surface.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
 - `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
-- `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `top-right`/`bottom-left` to `north`/`south`, and fail on conflicts.
+- `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `bottom-left`/`top-right` to `north`/`south`, and fail on conflicts.
 - `read_matching_metadata_polarity`: Read the legacy fallback polarity from `matchingMetadata.csv`.
 - `resolve_func_polarity`: Resolve orientation with override support, preferring raw per-fish metadata and falling back to legacy matching metadata.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.

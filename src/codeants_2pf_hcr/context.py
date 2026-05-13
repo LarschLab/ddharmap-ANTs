@@ -347,12 +347,12 @@ def normalize_polarity_value(value: Any) -> str | None:
         "northward": "north",
         "s": "south",
         "southward": "south",
-        "top-right": "north",
-        "top_right": "north",
-        "topright": "north",
-        "bottom-left": "south",
-        "bottom_left": "south",
-        "bottomleft": "south",
+        "bottom-left": "north",
+        "bottom_left": "north",
+        "bottomleft": "north",
+        "top-right": "south",
+        "top_right": "south",
+        "topright": "south",
     }
     return aliases.get(text, text)
 

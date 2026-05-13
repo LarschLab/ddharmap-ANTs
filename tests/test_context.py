@@ -86,7 +86,7 @@ class ContextTests(unittest.TestCase):
             root = Path(tmpdir)
             fish_id = "L758_f02"
             (root / fish_id / "03_analysis").mkdir(parents=True)
-            self._write_raw_orientation_metadata(root, fish_id, "top-right")
+            self._write_raw_orientation_metadata(root, fish_id, "bottom-left")
             (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL758_f02,south\n", encoding="utf-8")
 
             polarity, source = resolve_func_polarity(
