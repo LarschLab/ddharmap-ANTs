@@ -6,7 +6,7 @@ from codeants_2pf_hcr.notebook_contract import find_required_cell_contract_viola
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
+NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "singleFish.ipynb"
 COHORT_NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "multi_fish_56h_56g.ipynb"
 COHORT_23C_NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "cohort_suite2p_23c_overview.ipynb"
 
@@ -32,7 +32,7 @@ def _write_notebook(path: Path, cells: list[str]) -> None:
 
 def test_notebook_contract_audit_returns_counts() -> None:
     result = check_notebook_contract(NOTEBOOK_PATH)
-    assert result["notebook_path"].endswith("notebooks/2PF_to_HCR.ipynb")
+    assert result["notebook_path"].endswith("notebooks/singleFish.ipynb")
     assert result["profile"] == "single-fish"
     assert isinstance(result["n_top_level_defs"], int)
     assert isinstance(result["n_figure_violations"], int)
@@ -79,7 +79,7 @@ def test_cohort_23c_notebook_contract_has_zero_violations() -> None:
 
 
 def test_required_cell_contract_detects_missing_single_fish_owner_imports_and_calls(tmp_path: Path) -> None:
-    notebook_path = tmp_path / "2PF_to_HCR.ipynb"
+    notebook_path = tmp_path / "singleFish.ipynb"
     _write_notebook(
         notebook_path,
         [
@@ -106,7 +106,7 @@ def test_required_cell_contract_detects_missing_single_fish_owner_imports_and_ca
 
 
 def test_required_cell_contract_accepts_package_owned_single_fish_cells(tmp_path: Path) -> None:
-    notebook_path = tmp_path / "2PF_to_HCR.ipynb"
+    notebook_path = tmp_path / "singleFish.ipynb"
     _write_notebook(
         notebook_path,
         [

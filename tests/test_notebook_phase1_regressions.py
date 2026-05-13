@@ -15,7 +15,7 @@ from codeants_2pf_hcr.notebook_contract import find_required_cell_contract_viola
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "2PF_to_HCR.ipynb"
+NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "singleFish.ipynb"
 COHORT_NOTEBOOK_PATH = REPO_ROOT / "notebooks" / "multi_fish_56h_56g.ipynb"
 GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase1.py"
 PHASE2_GENERATOR_PATH = REPO_ROOT / "tools" / "refactor_notebook_phase2.py"

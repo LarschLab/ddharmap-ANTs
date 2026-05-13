@@ -2,7 +2,7 @@
 // Batch apply BigWarp landmarks into 2P anatomical space
 //
 // This version is fish-aware and writes outputs using filenames
-// expected by notebooks/2PF_to_HCR.ipynb cache conventions.
+// expected by notebooks/singleFish.ipynb cache conventions.
 //
 // User inputs:
 //   - FISH_ID

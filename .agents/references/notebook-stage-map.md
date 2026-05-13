@@ -1,6 +1,6 @@
 # Notebook Stage Map
 
-**Purpose:** navigation map for `notebooks/2PF_to_HCR.ipynb`.
+**Purpose:** navigation map for `notebooks/singleFish.ipynb`.
 
 **Use this file when:** locating stage ownership, key cell tags, or expected stage outputs.
 

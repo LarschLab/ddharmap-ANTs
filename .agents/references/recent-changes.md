@@ -6,7 +6,7 @@
 
 ## Workflow log routing
 
-- Single-fish work (`notebooks/2PF_to_HCR.ipynb`, single-fish ownership modules):
+- Single-fish work (`notebooks/singleFish.ipynb`, single-fish ownership modules):
   - use `.agents/references/recent-changes-single-fish.md`
 - Cohort work (`notebooks/multi_fish_56h_56g.ipynb`, cohort ownership modules):
   - use `.agents/references/recent-changes-cohort.md`

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-NOTEBOOK_PATH = Path("notebooks/2PF_to_HCR.ipynb")
+NOTEBOOK_PATH = Path("notebooks/singleFish.ipynb")
 
 
 def _rewrite_56g(source: str) -> str:

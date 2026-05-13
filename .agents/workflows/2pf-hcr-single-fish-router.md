@@ -2,7 +2,7 @@
 
 **Purpose:** compact routing surface for single-fish workflow tasks.
 
-**Use this file when:** working on `notebooks/2PF_to_HCR.ipynb` or its owning package modules.
+**Use this file when:** working on `notebooks/singleFish.ipynb` or its owning package modules.
 
 ## Read order (single-fish)
 

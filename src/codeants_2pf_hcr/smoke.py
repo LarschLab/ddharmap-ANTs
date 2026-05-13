@@ -275,7 +275,7 @@ def run_smoke_tier(
     out_reg: str | Path,
     tier: str = "A",
     fish_id: str | None = None,
-    notebook_path: str | Path = "notebooks/2PF_to_HCR.ipynb",
+    notebook_path: str | Path = "notebooks/singleFish.ipynb",
 ) -> dict[str, Any]:
     tier_norm = str(tier).strip().upper()
     if tier_norm not in TIER_ORDER:

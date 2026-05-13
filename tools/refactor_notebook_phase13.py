@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-NOTEBOOK_PATH = Path("notebooks/2PF_to_HCR.ipynb")
+NOTEBOOK_PATH = Path("notebooks/singleFish.ipynb")
 
 
 CELL_34A = """# [34a]

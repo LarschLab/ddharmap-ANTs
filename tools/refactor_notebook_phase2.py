@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 
-NB_PATH = Path("notebooks/2PF_to_HCR.ipynb")
+NB_PATH = Path("notebooks/singleFish.ipynb")
 
 
 CELL_50IA = """# [50ia]

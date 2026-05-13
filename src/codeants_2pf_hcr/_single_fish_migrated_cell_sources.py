@@ -1,6 +1,6 @@
 """Embedded source for package-owned single-fish migration wrappers.
 
-Generated from ``notebooks/2PF_to_HCR.ipynb`` during the contract-clean
+Generated from ``notebooks/singleFish.ipynb`` during the contract-clean
 notebook refactor. These strings preserve legacy stage behavior while the
 notebook cells are thinned to public package calls.
 """

@@ -2,7 +2,7 @@
 
 **Purpose:** rolling handoff log for meaningful single-fish work, remaining breakpoints, and rerun implications.
 
-**Use this file when:** work targets `notebooks/2PF_to_HCR.ipynb` or single-fish ownership modules.
+**Use this file when:** work targets `notebooks/singleFish.ipynb` or single-fish ownership modules.
 
 ## Update template
 
@@ -27,6 +27,24 @@
 
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
+
+### 2026-05-13 - single-fish notebook rename
+
+- Slice goal:
+  - rename the single-fish notebook entrypoint from `notebooks/2PF_to_HCR.ipynb` to `notebooks/singleFish.ipynb`.
+- Passes completed in this session:
+  - moved the notebook file.
+  - updated routing docs, current state docs, smoke defaults, tests, maintenance wrappers, and BigWarp cache comments that point at the notebook path.
+- What changed:
+  - current single-fish workflow references should use `notebooks/singleFish.ipynb`.
+- What remains broken:
+  - none known from focused tests.
+- Remaining in-slice work:
+  - none.
+- Next likely breakpoint:
+  - none.
+- Rerun implications:
+  - no notebook rerun required for the path-only rename.
 
 ### 2026-05-12 - inferred 23c session split without preprocessing metadata
 
