@@ -11,7 +11,14 @@ import pandas as pd
 import tifffile
 
 from .cohort_suite2p import parse_fish_ids_csv
-from .context import default_local_root, default_nas_root, prepare_notebook_paths, resolve_fish_context
+from .context import (
+    OrientationResolutionError,
+    default_local_root,
+    default_nas_root,
+    prepare_notebook_paths,
+    preprocess_anatomy_uint8_stage,
+    resolve_fish_context,
+)
 from .segmentation import AnatomyCellposeConfig, run_anatomy_cellpose_stage
 
 
@@ -127,6 +134,15 @@ def run_multifish_anatomy_segmentation_stage(config: MultiFishAnatomySegmentatio
             if anat_source in (None, "", False):
                 rows.append(_segmentation_row(fish_id=str(fish_id), fish_dir=fish_dir, status="skip", notes="anatomy source missing"))
                 continue
+            anat_preproc = preprocess_anatomy_uint8_stage(
+                anat_stack_path=anat_source,
+                anat_stack_path_orig=anat_source,
+                preproc_dir=ctx.preproc_dir,
+                polarity=path_bindings.get("POLARITY"),
+                polarity_source=path_bindings.get("POLARITY_SOURCE"),
+            )
+            anat_source = anat_preproc.get("anat_stack_path")
+            log_lines.extend(f"[multiFish-anatomy] {fish_id}: {line}" for line in anat_preproc.get("log_lines", []))
             result = run_anatomy_cellpose_stage(
                 anat_seg_source_path=anat_source,
                 analysis_dir=ctx.analysis_dir,
@@ -158,6 +174,8 @@ def run_multifish_anatomy_segmentation_stage(config: MultiFishAnatomySegmentatio
                 )
             )
             log_lines.extend(f"[multiFish-anatomy] {fish_id}: {line}" for line in result.get("log_lines", []))
+        except OrientationResolutionError:
+            raise
         except Exception as exc:
             if not cfg.continue_on_error:
                 raise

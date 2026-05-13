@@ -63,7 +63,7 @@
 - `[cohort-50l-responsive-identity-donut-row]` renderer now lays out fish in a 2-row stagger (`top, bottom, top, bottom`) across columns, leaving unused grid slots blank to reduce outer-label collisions without changing counts/output contracts.
 - `[cohort-50l-responsive-identity-donut-row]` notebook cell exposes manual sizing knobs (`COHORT_50L_RESPONSIVE_IDENTITY_DONUT_SCALE`, `COHORT_50L_RESPONSIVE_IDENTITY_VIEW_SCALE`) passed to renderer (`donut_scale`, `view_limit_scale`); ring widths/radii scale proportionally from `donut_scale`.
 - `multiFish.ipynb` is package-builder driven for Suite2p `[23c]` via `codeants_2pf_hcr.build_cohort_suite2p_23c_stage`.
-- `[multifish-anatomy-segmentation]` runs/reuses single-fish anatomy Cellpose `[24a]` for each configured fish via `codeants_2pf_hcr.run_multifish_anatomy_segmentation_stage`.
+- `[multifish-anatomy-segmentation]` resolves fish orientation from raw `01_raw/2p/metadata/*metadata*.csv` when available, falls back to legacy `matchingMetadata.csv` only for older fish, fails fast on missing/ambiguous orientation, and runs/reuses single-fish anatomy Cellpose `[24a]` on the `[14a]`-style preprocessed anatomy uint8 stack for each configured fish via `codeants_2pf_hcr.run_multifish_anatomy_segmentation_stage`.
 - `[cohort-23c-traces]` renders package-owned cohort average traces via `plots.analysis.render_cohort_suite2p_23c_traces`.
 - `[cohort-23c-heatmaps]` renders per-fish full-session heatmaps via `plots.analysis.render_cohort_suite2p_23c_full_session_heatmaps`.
 - Late cells are thin wrappers: explicit knobs, one context/cache load (`resolve_cohort_context_stage` / `load_cohort_analysis_state`), one renderer call, optional save/display.

@@ -386,7 +386,11 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
         if not suite2p_root.exists():
             summary_rows.extend(_source_summary_rows(fish_id=fish_id, source_df=pd.DataFrame(), trace_df=pd.DataFrame(), response_error=None, status="skip", notes="suite2P dir missing"))
             continue
-        polarity, polarity_source = resolve_func_polarity(fish_id, env["MATCHING_METADATA_CSV"])
+        polarity, polarity_source = resolve_func_polarity(
+            fish_id,
+            env["MATCHING_METADATA_CSV"],
+            fish_dir=fish_dir,
+        )
         try:
             s2p_state = load_suite2p_stage(
                 plane_refs=[],

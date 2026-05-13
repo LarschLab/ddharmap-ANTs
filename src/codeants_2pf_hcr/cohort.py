@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 from skimage.measure import regionprops_table
 
-from .context import default_local_root
+from .context import default_local_root, resolve_func_polarity
 from .spatial import apply_func_orientation
 
 
@@ -327,28 +327,6 @@ def _fish_paths(data_root: str | Path, owner: str, fish_id: str, data_mode: str 
         "midline_json": out_reg / "midline_params_func_ref.json",
         "metadata_dir": fish_dir / "01_raw" / "2p" / "metadata",
     }
-
-
-def _load_matching_metadata(path: str | Path) -> pd.DataFrame | None:
-    target = Path(path)
-    if not target.exists():
-        return None
-    try:
-        return pd.read_csv(target)
-    except Exception:
-        return None
-
-
-def _get_polarity(fish_id: str, md_df: pd.DataFrame | None) -> str | None:
-    if md_df is None or md_df.empty or "fish_id" not in md_df.columns:
-        return None
-    row = md_df.loc[md_df["fish_id"].astype(str) == str(fish_id)]
-    if row.empty:
-        return None
-    pol = str(row.iloc[0].get("polarity", "")).strip().lower()
-    if pol in {"north", "south"}:
-        return pol
-    return None
 
 
 def _block_key(code: str) -> int:
@@ -1068,7 +1046,6 @@ def build_cohort_outputs_stage(config: CohortBuildConfig | None = None) -> dict[
     cfg = config or CohortBuildConfig()
     env = _resolve_environment(cfg)
     plot_order = list(env["PLOT_ORDER"])
-    md_cache = _load_matching_metadata(env["MATCHING_METADATA_CSV"])
     cached_build_skipped = False
     cohort_outdir = env["COHORT_OUTDIR"]
 
@@ -1223,7 +1200,11 @@ def build_cohort_outputs_stage(config: CohortBuildConfig | None = None) -> dict[
             if cfg.verbose:
                 print(f"[cohort] {fish_id}: experiment log missing -> skip")
             continue
-        polarity = _get_polarity(fish_id, md_cache)
+        polarity, _ = resolve_func_polarity(
+            fish_id,
+            env["MATCHING_METADATA_CSV"],
+            fish_dir=fish_dir,
+        )
         try:
             df_evt = _load_events_df(log_csv, time_scale=env["STIM_TIME_SCALE"])
             df_evt, df_stim, _ = _build_stim_table(

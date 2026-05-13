@@ -19,6 +19,7 @@ Generated manually for the current extracted package surface.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
 - `VoxelStageConfig`: Typed voxel-resolution stage configuration for notebook cell `[8]`.
 - `FunctionalOrientationStageConfig`: Typed functional orientation/audit configuration for notebook cell `[10]`; full oriented movie stack saves are opt-in.
+- `OrientationResolutionError`: Fail-fast error for missing or ambiguous fish orientation metadata.
 - `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.
 - `resolve_notebook_context_stage`: Notebook-facing setup stage for `[4]` that returns context, legacy bindings, and discovered paths.
 - `notebook_bindings_from_context`: Rebind package-resolved context back to legacy notebook variable names.
@@ -33,6 +34,9 @@ Generated manually for the current extracted package surface.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
 - `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
+- `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `top-right`/`bottom-left` to `north`/`south`, and fail on conflicts.
+- `read_matching_metadata_polarity`: Read the legacy fallback polarity from `matchingMetadata.csv`.
+- `resolve_func_polarity`: Resolve orientation with override support, preferring raw per-fish metadata and falling back to legacy matching metadata.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
 - `orient_functional_stacks_stage`: Notebook-facing functional orientation stage for `[10]` that audits legacy full-stack caches and only writes oriented movie stacks when explicitly requested.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
@@ -63,7 +67,7 @@ Generated manually for the current extracted package surface.
 
 - `MultiFishAnatomySegmentationConfig`: Typed per-fish anatomy segmentation knob container for `multiFish.ipynb`.
 - `multifish_anatomy_segmentation_cache_paths`: Resolve MultiFish anatomy segmentation summary outputs under `cohort_outputs/multiFish/`.
-- `run_multifish_anatomy_segmentation_stage`: Notebook-facing owner stage that runs/reuses single-fish anatomy Cellpose `[24a]` per configured fish and writes a cohort-level segmentation summary.
+- `run_multifish_anatomy_segmentation_stage`: Notebook-facing owner stage that resolves per-fish orientation from raw metadata with legacy fallback, preprocesses anatomy through the single-fish `[14a]` uint8/orientation/`750x750` contract, then runs/reuses anatomy Cellpose `[24a]` per configured fish and writes a cohort-level segmentation summary.
 
 ## `codeants_2pf_hcr.spatial`
 

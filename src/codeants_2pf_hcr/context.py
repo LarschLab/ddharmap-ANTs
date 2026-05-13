@@ -151,6 +151,10 @@ class AnatomyUint8PreprocessingConfig:
     cache_version: int = 2
 
 
+class OrientationResolutionError(RuntimeError):
+    """Raised when fish orientation cannot be resolved unambiguously."""
+
+
 def default_nas_root() -> Path:
     if os.name == "nt":
         return Path(r"\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch\default\D2c\07_Data")
@@ -338,7 +342,18 @@ def normalize_polarity_value(value: Any) -> str | None:
     text = "" if value is None else str(value).strip().lower()
     if text in ("", "none", "nan", "null"):
         return None
-    aliases = {"n": "north", "northward": "north", "s": "south", "southward": "south"}
+    aliases = {
+        "n": "north",
+        "northward": "north",
+        "s": "south",
+        "southward": "south",
+        "top-right": "north",
+        "top_right": "north",
+        "topright": "north",
+        "bottom-left": "south",
+        "bottom_left": "south",
+        "bottomleft": "south",
+    }
     return aliases.get(text, text)
 
 
@@ -364,10 +379,73 @@ def read_matching_metadata_polarity(fish_id: str, metadata_csv: Path | str) -> t
     return polarity, f"{path.name}:{polarity_col}"
 
 
-def resolve_func_polarity(fish_id: str, metadata_csv: Path | str, polarity_override: Any = None) -> tuple[str | None, str]:
+def _metadata_param_value(frame: pd.DataFrame, parameter_name: str) -> Any:
+    if frame.empty:
+        return None
+    colmap = {str(column).strip().lower(): column for column in frame.columns}
+    param_col = next((colmap[key] for key in ("parameter", "param", "key", "name") if key in colmap), None)
+    value_col = next((colmap[key] for key in ("value", "val") if key in colmap), None)
+    if param_col is None or value_col is None:
+        return None
+    rows = frame.loc[frame[param_col].astype(str).str.strip().str.lower() == str(parameter_name).strip().lower()]
+    if rows.empty:
+        return None
+    return rows.iloc[0].get(value_col, None)
+
+
+def read_raw_metadata_polarity(fish_dir: Path | str) -> tuple[str | None, str]:
+    metadata_dir = Path(fish_dir) / "01_raw" / "2p" / "metadata"
+    if not metadata_dir.exists():
+        return None, "missing raw metadata dir"
+    hits = sorted(metadata_dir.glob("*metadata*.csv"))
+    if not hits:
+        return None, "missing raw metadata csv"
+    resolved: list[tuple[str, str]] = []
+    invalid: list[str] = []
+    for path in hits:
+        try:
+            frame = pd.read_csv(path)
+        except Exception as exc:
+            invalid.append(f"{path.name}:read failed ({exc})")
+            continue
+        raw_value = _metadata_param_value(frame, "fish_orientation")
+        if raw_value is None:
+            continue
+        polarity = normalize_polarity_value(raw_value)
+        if polarity not in {"north", "south"}:
+            invalid.append(f"{path.name}:fish_orientation={raw_value}")
+            continue
+        resolved.append((polarity, path.name))
+    if invalid:
+        details = "; ".join(invalid)
+        raise OrientationResolutionError(
+            f"Invalid fish_orientation metadata for {Path(fish_dir).name}: {details}"
+        )
+    if not resolved:
+        return None, "missing fish_orientation in raw metadata"
+    unique_polarities = {polarity for polarity, _ in resolved}
+    if len(unique_polarities) > 1:
+        details = ", ".join(f"{name}={polarity}" for polarity, name in resolved)
+        raise OrientationResolutionError(
+            f"Conflicting fish_orientation metadata for {Path(fish_dir).name}: {details}"
+        )
+    return resolved[0][0], resolved[0][1] + ":fish_orientation"
+
+
+def resolve_func_polarity(
+    fish_id: str,
+    metadata_csv: Path | str,
+    polarity_override: Any = None,
+    *,
+    fish_dir: Path | str | None = None,
+) -> tuple[str | None, str]:
     override = normalize_polarity_value(polarity_override)
     if override in ("north", "south"):
         return override, "override"
+    if fish_dir not in (None, "", False):
+        raw_polarity, raw_source = read_raw_metadata_polarity(fish_dir)
+        if raw_polarity in {"north", "south"}:
+            return raw_polarity, raw_source
     return read_matching_metadata_polarity(fish_id, metadata_csv)
 
 
@@ -730,8 +808,18 @@ def infer_anatomy_stack_path(fish_dir: Path | str, fish_id: str | None = None) -
     return None
 
 
-def prepare_notebook_paths(ctx: FishContext, polarity_override: Any = None) -> dict[str, Any]:
-    polarity, polarity_source = resolve_func_polarity(ctx.fish_id, ctx.matching_metadata_csv, polarity_override=polarity_override)
+def prepare_notebook_paths(ctx: FishContext, polarity_override: Any = None, *, require_polarity: bool = True) -> dict[str, Any]:
+    polarity, polarity_source = resolve_func_polarity(
+        ctx.fish_id,
+        ctx.matching_metadata_csv,
+        polarity_override=polarity_override,
+        fish_dir=ctx.fish_dir,
+    )
+    if require_polarity and polarity not in {"north", "south"}:
+        raise OrientationResolutionError(
+            f"Could not resolve fish orientation for {ctx.fish_id} "
+            f"(raw metadata + legacy fallback tried; source={polarity_source})."
+        )
     func_raw_stack_path = first_match(ctx.fish_dir, ["01_raw/2p/functional/*.tif", "01_raw/2p/functional/*.tiff"])
     func_nonflipped_list = first_match(ctx.fish_dir, ["02_reg/00_preprocessing/2p_functional/02_motionCorrected/*mcorrected*.tif"], all_hits=True) or []
     anat_stack_path = infer_anatomy_stack_path(ctx.fish_dir, ctx.fish_id)
@@ -2341,6 +2429,7 @@ def build_fish_state_audit_df(
 
 
 __all__ = [
+    "OrientationResolutionError",
     "AnatomyNormalizationStageConfig",
     "AnatomyUint8PreprocessingConfig",
     "ContextStageConfig",
@@ -2377,6 +2466,7 @@ __all__ = [
     "owner_root",
     "prepare_notebook_paths",
     "preprocess_anatomy_uint8_stage",
+    "read_raw_metadata_polarity",
     "read_matching_metadata_polarity",
     "require_fish_state",
     "reset_fish_state",

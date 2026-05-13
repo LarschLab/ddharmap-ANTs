@@ -11,6 +11,7 @@ import tifffile
 from codeants_2pf_hcr.context import (
     ContextStageConfig,
     FunctionalOrientationStageConfig,
+    OrientationResolutionError,
     build_registration_helper_stage,
     default_cellpose_model_root,
     build_fish_state_audit_df,
@@ -20,6 +21,7 @@ from codeants_2pf_hcr.context import (
     normalize_run_config,
     prepare_notebook_paths,
     resolve_fish_context,
+    resolve_func_polarity,
     resolve_notebook_context_stage,
     resolve_voxel_context_stage,
     orient_functional_stacks_stage,
@@ -27,6 +29,14 @@ from codeants_2pf_hcr.context import (
 
 
 class ContextTests(unittest.TestCase):
+    @staticmethod
+    def _write_raw_orientation_metadata(root: Path, fish_id: str, orientation: str, *, suffix: str = "") -> Path:
+        metadata_dir = root / fish_id / "01_raw" / "2p" / "metadata"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+        path = metadata_dir / f"{fish_id}{suffix}_metadata.csv"
+        path.write_text(f"parameter,value\nfish_orientation,{orientation}\n", encoding="utf-8")
+        return path
+
     def test_normalize_run_config_forces_expected_flags(self) -> None:
         cfg = normalize_run_config({"HIGH_CONF_ONLY": True, "RECOMPUTE_WARP": False})
         self.assertTrue(cfg["HIGH_CONF_ONLY"])
@@ -69,6 +79,71 @@ class ContextTests(unittest.TestCase):
                 paths["FUNC_LABELS_PATH"],
                 fish_dir / "03_analysis" / "functional" / "segmentation" / f"{fish_id}_functional_labels.tif",
             )
+            self.assertEqual(paths["POLARITY"], "south")
+
+    def test_resolve_func_polarity_prefers_raw_metadata_over_matching_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f02"
+            (root / fish_id / "03_analysis").mkdir(parents=True)
+            self._write_raw_orientation_metadata(root, fish_id, "top-right")
+            (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL758_f02,south\n", encoding="utf-8")
+
+            polarity, source = resolve_func_polarity(
+                fish_id,
+                root / "matchingMetadata.csv",
+                fish_dir=root / fish_id,
+            )
+
+            self.assertEqual(polarity, "north")
+            self.assertEqual(source, f"{fish_id}_metadata.csv:fish_orientation")
+
+    def test_resolve_func_polarity_falls_back_to_matching_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f03"
+            (root / fish_id / "03_analysis").mkdir(parents=True)
+            (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL758_f03,north\n", encoding="utf-8")
+
+            polarity, source = resolve_func_polarity(
+                fish_id,
+                root / "matchingMetadata.csv",
+                fish_dir=root / fish_id,
+            )
+
+            self.assertEqual(polarity, "north")
+            self.assertEqual(source, "matchingMetadata.csv:polarity")
+
+    def test_resolve_func_polarity_raises_on_conflicting_raw_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f07"
+            (root / fish_id / "03_analysis").mkdir(parents=True)
+            self._write_raw_orientation_metadata(root, fish_id, "top-right", suffix="_r1")
+            self._write_raw_orientation_metadata(root, fish_id, "bottom-left", suffix="_r2")
+            (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL758_f07,south\n", encoding="utf-8")
+
+            with self.assertRaises(OrientationResolutionError):
+                resolve_func_polarity(
+                    fish_id,
+                    root / "matchingMetadata.csv",
+                    fish_dir=root / fish_id,
+                )
+
+    def test_resolve_notebook_context_stage_raises_when_orientation_missing(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L765_f01"
+            (root / fish_id / "03_analysis").mkdir(parents=True)
+
+            with self.assertRaises(OrientationResolutionError):
+                resolve_notebook_context_stage(
+                    ContextStageConfig(
+                        fish_id=fish_id,
+                        data_mode="local",
+                        local_root_override=root,
+                    )
+                )
 
     def test_infer_anatomy_stack_path_prefers_raw_source_over_derived_uint8(self) -> None:
         with TemporaryDirectory() as tmpdir:
