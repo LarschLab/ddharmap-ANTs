@@ -21,7 +21,7 @@
 - `[23c]` trace panels filter to pre-identity `response_is_active == True` calls when available; `[23c]` full-experiment heatmaps keep all Suite2p-cell traces, including low-activity neurons.
 - `[23c]` trace stimulus panels use two columns: left-column stimuli (`L*` and `WFCl`) on the left, right-column stimuli (`R*` and `WFCo`) on the right, with rows keyed by stimulus type after the side prefix.
 - `[23c]` full-experiment heatmaps use frame on the X axis and a white-to-black scale where black is high activity, with transparent stimulus spans over the corresponding session/plane row block; `planned_schedule.csv` rest blocks must remain span-free.
-- `cohort_suite2p_23c_overview.ipynb` inherits `[23c]`: average traces use response-active Suite2p rows when response scoring is available, while full-session heatmaps retain all valid Suite2p-cell traces.
+- `multiFish.ipynb` inherits `[23c]`: average traces use response-active Suite2p rows when response scoring is available, while full-session heatmaps retain all valid Suite2p-cell traces.
 
 ## HCR-centric figure exception
 

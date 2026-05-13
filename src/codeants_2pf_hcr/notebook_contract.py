@@ -247,7 +247,7 @@ _PROFILE_REQUIRED_CELL_OWNERS = {
 
 def _profile_from_notebook_path(notebook_path: str | Path) -> str:
     path_name = Path(notebook_path).name
-    if path_name in {"multi_fish_56h_56g.ipynb", "cohort_suite2p_23c_overview.ipynb"}:
+    if path_name in {"multi_fish_56h_56g.ipynb", "multiFish.ipynb"}:
         return "cohort"
     return "single-fish"
 

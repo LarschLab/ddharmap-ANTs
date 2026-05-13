@@ -50,7 +50,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.cohort_suite2p`
 
-- `CohortSuite2p23cConfig`: Typed build/cache knob container for `cohort_suite2p_23c_overview.ipynb`.
+- `CohortSuite2p23cConfig`: Typed build/cache knob container for `multiFish.ipynb` Suite2p `[23c]`.
 - `parse_fish_ids_csv`: Parse comma-separated fish IDs while preserving order and dropping blanks/duplicates.
 - `resolve_cohort_suite2p_23c_fish_dir`: Resolve an owner-free fish folder under the configured cohort data root.
 - `aggregate_cohort_23c_trace_means`: Collapse `[23c]` per-ROI traces to one mean trace per fish/session/stimulus.
@@ -58,6 +58,12 @@ Generated manually for the current extracted package surface.
 - `cohort_suite2p_23c_cache_paths`: Resolve cache/output filenames under `cohort_outputs/suite2p_23c_response_overview/`.
 - `load_cohort_suite2p_23c_outputs_from_disk`: Load cached cohort `[23c]` tables and trace/heatmap payloads.
 - `build_cohort_suite2p_23c_stage`: Notebook-facing owner stage for cohort `[23c]` fish discovery, Suite2p loading, response/BPI scoring, trace aggregation, heatmap payload retention, and cache writing.
+
+## `codeants_2pf_hcr.multifish`
+
+- `MultiFishAnatomySegmentationConfig`: Typed per-fish anatomy segmentation knob container for `multiFish.ipynb`.
+- `multifish_anatomy_segmentation_cache_paths`: Resolve MultiFish anatomy segmentation summary outputs under `cohort_outputs/multiFish/`.
+- `run_multifish_anatomy_segmentation_stage`: Notebook-facing owner stage that runs/reuses single-fish anatomy Cellpose `[24a]` per configured fish and writes a cohort-level segmentation summary.
 
 ## `codeants_2pf_hcr.spatial`
 

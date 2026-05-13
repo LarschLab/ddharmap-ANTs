@@ -1,6 +1,6 @@
 # Cohort Notebook Stage Map
 
-**Purpose:** navigation map for cohort notebooks: `notebooks/multi_fish_56h_56g.ipynb` and `notebooks/cohort_suite2p_23c_overview.ipynb`.
+**Purpose:** navigation map for cohort notebooks: `notebooks/multi_fish_56h_56g.ipynb` and `notebooks/multiFish.ipynb`.
 
 **Use this file when:** locating cohort stage ownership, cache/output boundaries, and notebook-vs-package responsibilities.
 
@@ -19,6 +19,7 @@
 - `[cohort-23c-build]`
 - `[cohort-23c-traces]`
 - `[cohort-23c-heatmaps]`
+- `[multifish-anatomy-segmentation]`
 
 ## Cohort-owned outputs
 
@@ -26,6 +27,8 @@
   - `cohort_outputs/multi_fish_56h_56g/`
 - Suite2p `[23c]` response-overview output root:
   - `cohort_outputs/suite2p_23c_response_overview/`
+- MultiFish output root:
+  - `cohort_outputs/multiFish/`
 - Build/cache stage writes cohort-level CSV/PKL artifacts under that directory.
 - Downstream cohort figure stages read those artifacts; they should not redefine cohort cache semantics.
 - `[53a-cohort]` thresholds cache now also includes representative HCR↔anatomy XY cohort summaries:
@@ -59,7 +62,8 @@
 - `[cohort-50l-responsive-identity-donut-row]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_50l_responsive_identity_donut_row`.
 - `[cohort-50l-responsive-identity-donut-row]` renderer now lays out fish in a 2-row stagger (`top, bottom, top, bottom`) across columns, leaving unused grid slots blank to reduce outer-label collisions without changing counts/output contracts.
 - `[cohort-50l-responsive-identity-donut-row]` notebook cell exposes manual sizing knobs (`COHORT_50L_RESPONSIVE_IDENTITY_DONUT_SCALE`, `COHORT_50L_RESPONSIVE_IDENTITY_VIEW_SCALE`) passed to renderer (`donut_scale`, `view_limit_scale`); ring widths/radii scale proportionally from `donut_scale`.
-- `cohort_suite2p_23c_overview.ipynb` is package-builder driven via `codeants_2pf_hcr.build_cohort_suite2p_23c_stage`.
+- `multiFish.ipynb` is package-builder driven for Suite2p `[23c]` via `codeants_2pf_hcr.build_cohort_suite2p_23c_stage`.
+- `[multifish-anatomy-segmentation]` runs/reuses single-fish anatomy Cellpose `[24a]` for each configured fish via `codeants_2pf_hcr.run_multifish_anatomy_segmentation_stage`.
 - `[cohort-23c-traces]` renders package-owned cohort average traces via `plots.analysis.render_cohort_suite2p_23c_traces`.
 - `[cohort-23c-heatmaps]` renders per-fish full-session heatmaps via `plots.analysis.render_cohort_suite2p_23c_full_session_heatmaps`.
 - Late cells are thin wrappers: explicit knobs, one context/cache load (`resolve_cohort_context_stage` / `load_cohort_analysis_state`), one renderer call, optional save/display.

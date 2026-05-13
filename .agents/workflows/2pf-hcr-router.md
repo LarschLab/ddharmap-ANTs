@@ -2,7 +2,7 @@
 
 **Purpose:** thin top-level dispatcher for workflow-profile routing.
 
-**Use this file when:** starting tasks on `notebooks/singleFish.ipynb`, `notebooks/multi_fish_56h_56g.ipynb`, or related package/tools code.
+**Use this file when:** starting tasks on `notebooks/singleFish.ipynb`, `notebooks/multi_fish_56h_56g.ipynb`, `notebooks/multiFish.ipynb`, or related package/tools code.
 
 ## Read this first
 
@@ -16,7 +16,7 @@
 | If your task primarily targets... | Open this router |
 | --- | --- |
 | `notebooks/singleFish.ipynb` and single-fish stage ownership | `.agents/workflows/2pf-hcr-single-fish-router.md` |
-| `notebooks/multi_fish_56h_56g.ipynb` and cohort aggregation/rendering ownership | `.agents/workflows/2pf-hcr-cohort-router.md` |
+| `notebooks/multi_fish_56h_56g.ipynb`, `notebooks/multiFish.ipynb`, and cohort/multi-fish aggregation or orchestration ownership | `.agents/workflows/2pf-hcr-cohort-router.md` |
 
 ## Cross-workflow invariants (always)
 

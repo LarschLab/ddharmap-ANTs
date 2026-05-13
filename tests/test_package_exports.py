@@ -14,6 +14,7 @@ from codeants_2pf_hcr import (
     HcrActivityExportConfig,
     HcrCellposeConfig,
     InPlaneRegistrationComparisonConfig,
+    MultiFishAnatomySegmentationConfig,
     SingleFishBpiDiagnosticsConfig,
     NotebookContractViolation,
     RegistrationSearchConfig,
@@ -78,6 +79,7 @@ from codeants_2pf_hcr import (
     ncc_xy,
     norm01,
     normalize_anatomy_stack_stage,
+    multifish_anatomy_segmentation_cache_paths,
     preprocess_anatomy_uint8_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
@@ -123,6 +125,7 @@ from codeants_2pf_hcr import (
     run_in_plane_registration_comparison_stage,
     run_ncc_placement_stage,
     run_registration_search_stage,
+    run_multifish_anatomy_segmentation_stage,
     run_single_fish_cell_22c_stage,
     run_single_fish_cell_30_stage,
     run_single_fish_cell_34c_stage,
@@ -186,6 +189,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(HcrActivityExportConfig)
     assert callable(HcrCellposeConfig)
     assert callable(InPlaneRegistrationComparisonConfig)
+    assert callable(MultiFishAnatomySegmentationConfig)
     assert callable(SingleFishBpiDiagnosticsConfig)
     assert callable(NotebookContractViolation)
     assert callable(RegistrationSearchConfig)
@@ -252,6 +256,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(ncc_xy)
     assert callable(nearest_neighbor_match)
     assert callable(normalize_anatomy_stack_stage)
+    assert callable(multifish_anatomy_segmentation_cache_paths)
     assert callable(preprocess_anatomy_uint8_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
@@ -295,6 +300,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(run_in_plane_registration_comparison_stage)
     assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
+    assert callable(run_multifish_anatomy_segmentation_stage)
     assert callable(run_single_fish_cell_22c_stage)
     assert callable(run_single_fish_cell_30_stage)
     assert callable(run_single_fish_cell_34c_stage)

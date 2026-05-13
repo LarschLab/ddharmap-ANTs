@@ -2,7 +2,7 @@
 
 **Purpose:** compact routing surface for cohort workflow tasks.
 
-**Use this file when:** working on `notebooks/multi_fish_56h_56g.ipynb` or cohort ownership in package modules.
+**Use this file when:** working on `notebooks/multi_fish_56h_56g.ipynb`, `notebooks/multiFish.ipynb`, or cohort/multi-fish ownership in package modules.
 
 ## Read order (cohort)
 
