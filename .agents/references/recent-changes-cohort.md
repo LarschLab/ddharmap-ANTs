@@ -288,3 +288,30 @@
   - changed multifish anatomy segmentation to preprocess anatomy through `[14a]` before Cellpose, so raw `512x512` anatomy TIFFs no longer bypass the canonical `750x750` uint8 stage.
 - validation:
   - `PYTHONPATH=src pytest tests/test_context.py tests/test_multifish.py tests/test_early_stage_extraction.py tests/test_cohort_suite2p_23c.py -q`
+
+### 2026-05-14 - multiFish uses local dataDrive root by default
+
+- intent:
+  - stop `multiFish.ipynb` from resolving anatomy/Suite2p cohort paths through the inaccessible macOS `/Volumes/jlarsch` NAS mount.
+  - make local-root discovery reusable across terminal-launched repo checkouts.
+- changed:
+  - switched `notebooks/multiFish.ipynb` `[cfg]` `CohortSuite2p23cConfig` and `MultiFishAnatomySegmentationConfig` to `data_mode="local"`.
+  - added `/Volumes/dataDrive/dataProcessing/2p_processing` to shared local-root discovery in `src/codeants_2pf_hcr/runtime.py`.
+  - added persistent shell exports in user zsh/bash startup files for `CODEANTS_2PF_HCR_LOCAL_ROOT` plus compatibility aliases.
+- validation:
+  - `PYTHONPATH=src pytest -q tests/test_runtime.py`
+  - fresh `zsh -lc` and `bash -lc` shells report `/Volumes/dataDrive/dataProcessing/2p_processing` for all local-root env aliases.
+- rerun implications:
+  - restart or source the shell before launching notebooks from a terminal, then rerun `multiFish.ipynb` `[cfg]` and downstream cohort stages.
+
+### 2026-05-14 - raw orientation ignores macOS sidecar CSVs
+
+- intent:
+  - prevent AppleDouble `._*metadata*.csv` sidecars in raw metadata folders from failing multifish anatomy orientation resolution before the real metadata CSV is read.
+- changed:
+  - `read_raw_metadata_polarity` now ignores hidden metadata CSV candidates, preserving fail-fast behavior for invalid visible metadata files.
+  - documented that multifish anatomy segmentation reads raw orientation from non-hidden metadata CSVs.
+- validation:
+  - `conda run -n cellMatching env PYTHONPATH=src python -m unittest tests.test_context.ContextTests.test_resolve_func_polarity_ignores_hidden_raw_metadata_sidecars tests.test_context.ContextTests.test_resolve_func_polarity_prefers_raw_metadata_over_matching_metadata tests.test_context.ContextTests.test_resolve_func_polarity_raises_on_conflicting_raw_metadata`
+- rerun implications:
+  - rerun `multiFish.ipynb` `[multifish-anatomy-segmentation]` for affected fish such as `L758_f07`.

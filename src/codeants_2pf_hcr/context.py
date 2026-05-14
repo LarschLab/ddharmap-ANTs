@@ -397,7 +397,11 @@ def read_raw_metadata_polarity(fish_dir: Path | str) -> tuple[str | None, str]:
     metadata_dir = Path(fish_dir) / "01_raw" / "2p" / "metadata"
     if not metadata_dir.exists():
         return None, "missing raw metadata dir"
-    hits = sorted(metadata_dir.glob("*metadata*.csv"))
+    hits = sorted(
+        path
+        for path in metadata_dir.glob("*metadata*.csv")
+        if not path.name.startswith(".")
+    )
     if not hits:
         return None, "missing raw metadata csv"
     resolved: list[tuple[str, str]] = []

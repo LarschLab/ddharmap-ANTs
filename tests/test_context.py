@@ -98,6 +98,24 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(polarity, "north")
             self.assertEqual(source, f"{fish_id}_metadata.csv:fish_orientation")
 
+    def test_resolve_func_polarity_ignores_hidden_raw_metadata_sidecars(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f07"
+            (root / fish_id / "03_analysis").mkdir(parents=True)
+            metadata_path = self._write_raw_orientation_metadata(root, fish_id, "top-right")
+            metadata_path.with_name(f"._{metadata_path.name}").write_bytes(b"\x00\x05\x16\x07\xb0")
+            (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL758_f07,north\n", encoding="utf-8")
+
+            polarity, source = resolve_func_polarity(
+                fish_id,
+                root / "matchingMetadata.csv",
+                fish_dir=root / fish_id,
+            )
+
+            self.assertEqual(polarity, "south")
+            self.assertEqual(source, f"{fish_id}_metadata.csv:fish_orientation")
+
     def test_resolve_func_polarity_falls_back_to_matching_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

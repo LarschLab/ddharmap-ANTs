@@ -5,9 +5,11 @@ src/codeants_2pf_hcr/_hcr_warp_stage_cells.py
 src/codeants_2pf_hcr/_single_fish_migrated_cell_sources.py
 src/codeants_2pf_hcr/activity.py
 src/codeants_2pf_hcr/cohort.py
+src/codeants_2pf_hcr/cohort_suite2p.py
 src/codeants_2pf_hcr/context.py
 src/codeants_2pf_hcr/hcr_warp.py
 src/codeants_2pf_hcr/matching.py
+src/codeants_2pf_hcr/multifish.py
 src/codeants_2pf_hcr/notebook_contract.py
 src/codeants_2pf_hcr/organize.py
 src/codeants_2pf_hcr/runtime.py
@@ -29,10 +31,12 @@ src/codeants_2pf_hcr/plots/annotations.py
 src/codeants_2pf_hcr/plots/qa.py
 tests/test_activity.py
 tests/test_agent_docs.py
+tests/test_cohort_suite2p_23c.py
 tests/test_context.py
 tests/test_early_stage_extraction.py
 tests/test_lazy_imports.py
 tests/test_matching.py
+tests/test_multifish.py
 tests/test_notebook_contract.py
 tests/test_notebook_phase1_regressions.py
 tests/test_organize.py

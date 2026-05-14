@@ -37,6 +37,7 @@ def candidate_local_roots() -> list[Path]:
         add(os.environ.get(key))
 
     home = Path.home()
+    add("/Volumes/dataDrive/dataProcessing/2p_processing")
     if os.name == "nt":
         add(home / "dataProcessing" / "2p_processing")
         add(home / "dataProcessing" / "2p_HCR" / "analysis" / "midThesis")
