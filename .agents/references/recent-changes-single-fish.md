@@ -28,6 +28,26 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-02 - external confocal registration uses current rbest/rn names
+
+- Slice goal:
+  - make the external ANTs and BigWarp helpers compatible with same-fish confocal preprocessing outputs that use `rbest` and `rN` labels instead of legacy `round1`/`roundN` filenames.
+- Passes completed in this session:
+  - updated `ants_toRef.sh` role/path resolution for `confocal_rbest`, `rbest`, `confocal_rN`, and `rn`.
+  - updated `applyTransform.py` discovery/output naming for `rbest` references and `rN -> rbest` aligned HCR channels, with legacy filename fallback.
+  - updated HCR Cellpose/BigWarp discovery to include current `*_rbest_channel*` and `*_rN_channel*` stack names.
+- What changed:
+  - current preprocessing outputs such as `<fish>_rbest_channel1_GCaMP.nrrd` and `<fish>_r2_channel2_gene.nrrd` are first-class inputs for downstream registration staging.
+  - aligned rn-to-best channel outputs now use `_in_rbest` rather than `_in_r<best_round>` for the current convention.
+- What remains broken:
+  - tracked `__pycache__` files in the worktree are unrelated generated artifacts and should not be staged with source changes.
+- Remaining in-slice work:
+  - none for filename compatibility.
+- Next likely breakpoint:
+  - live registration manifests should use explicit roles such as `confocal_rbest` and `confocal_r2` when selecting a specific rn round.
+- Rerun implications:
+  - rerun the external ANTs job and downstream transform-application stages only for fish whose registration outputs need regeneration under the current names.
+
 ### 2026-05-13 - single-fish notebook rename
 
 - Slice goal:

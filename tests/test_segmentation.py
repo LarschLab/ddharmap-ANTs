@@ -24,14 +24,15 @@ class SegmentationTests(unittest.TestCase):
             root = Path(tmpdir)
             rbest = root / "rbest"
             rbest.mkdir()
-            keep = rbest / "fish_round1_channel2_gene.nrrd"
-            skip_channel1 = rbest / "fish_round1_channel1_GCaMP.nrrd"
-            skip_fullbrain = rbest / "fish_fullbrain_round2_channel2_gene.nrrd"
-            skip_masks = rbest / "fish_round3_channel2_gene_cp_masks.tif"
-            for path in (keep, skip_channel1, skip_fullbrain, skip_masks):
+            keep = rbest / "fish_rbest_channel2_gene.nrrd"
+            keep_legacy = rbest / "fish_round1_channel2_gene.nrrd"
+            skip_channel1 = rbest / "fish_rbest_channel1_GCaMP.nrrd"
+            skip_fullbrain = rbest / "fish_fullbrain_r2_channel2_gene.nrrd"
+            skip_masks = rbest / "fish_r3_channel2_gene_cp_masks.tif"
+            for path in (keep, keep_legacy, skip_channel1, skip_fullbrain, skip_masks):
                 path.write_bytes(b"")
             paths = collect_hcr_intensity_stack_paths(preproc_dir=root)
-            self.assertEqual(paths, [keep])
+            self.assertEqual(paths, [keep, keep_legacy])
 
     def test_deduplicate_hcr_intensity_targets_prefers_nrrd(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -201,9 +202,9 @@ class SegmentationTests(unittest.TestCase):
             preproc_rbest = preproc_dir / "rbest"
             preproc_rbest.mkdir(parents=True)
             out_masks.mkdir(parents=True)
-            input_path = preproc_rbest / "fish_round1_channel2_gene.nrrd"
+            input_path = preproc_rbest / "fish_rbest_channel2_gene.nrrd"
             input_path.write_bytes(b"")
-            (out_masks / "fish_round1_channel2_gene_cp_masks.tif").write_bytes(b"ready")
+            (out_masks / "fish_rbest_channel2_gene_cp_masks.tif").write_bytes(b"ready")
             result = run_hcr_cellpose_stage(
                 fish_dir=fish_dir,
                 preproc_dir=preproc_dir,

@@ -133,6 +133,12 @@ def get_round_dir(preproc_dir, round_num, best_round):
     """
     return preproc_dir / ("rbest" if round_num == best_round else "rn")
 
+def round_label(round_num, best_round):
+    """
+    Return the current same-fish confocal round label for filenames.
+    """
+    return "rbest" if round_num == best_round else f"r{round_num}"
+
 def find_hcr_channels(preproc_dir, fish_id, round_num, best_round):
     """
     Finds all non-GCaMP HCR channel .nrrd files for a given fish and round in the new layout.
@@ -140,7 +146,11 @@ def find_hcr_channels(preproc_dir, fish_id, round_num, best_round):
     round_dir = get_round_dir(preproc_dir, round_num, best_round)
     if not round_dir.exists():
         return []
-    return [f for f in round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd") if "GCaMP" not in f.name]
+    label = round_label(round_num, best_round)
+    matches = list(round_dir.glob(f"{fish_id}_{label}_channel*.nrrd"))
+    if not matches:
+        matches = list(round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd"))
+    return [f for f in matches if "GCaMP" not in f.name]
 
 def find_best_to_2p_transforms(reg_dir, fish_id, best_round):
     """
@@ -150,8 +160,12 @@ def find_best_to_2p_transforms(reg_dir, fish_id, best_round):
     tm_dir = reg_dir / stg / "transMatrices"
     if not tm_dir.exists():
         return None, None, stg
-    affine = list(tm_dir.glob(f"{fish_id}_round{best_round}_GCaMP_to_2p_0GenericAffine.mat"))
-    warp = list(tm_dir.glob(f"{fish_id}_round{best_round}_GCaMP_to_2p_1Warp.nii.gz"))
+    label = round_label(best_round, best_round)
+    affine = list(tm_dir.glob(f"{fish_id}_{label}_GCaMP_to_2p_0GenericAffine.mat"))
+    warp = list(tm_dir.glob(f"{fish_id}_{label}_GCaMP_to_2p_1Warp.nii.gz"))
+    if not (affine and warp):
+        affine = list(tm_dir.glob(f"{fish_id}_round{best_round}_GCaMP_to_2p_0GenericAffine.mat"))
+        warp = list(tm_dir.glob(f"{fish_id}_round{best_round}_GCaMP_to_2p_1Warp.nii.gz"))
     if affine and warp:
         return affine[0], warp[0], stg
     return None, None, stg
@@ -164,8 +178,13 @@ def find_round_to_best_transforms(reg_dir, fish_id, round_num, best_round):
     tm_dir = reg_dir / stg / "transMatrices"
     if not tm_dir.exists():
         return None, None, stg
-    affine = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_r{best_round}_0GenericAffine.mat"))
-    warp = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_r{best_round}_1Warp.nii.gz"))
+    moving_label = round_label(round_num, best_round)
+    fixed_label = round_label(best_round, best_round)
+    affine = list(tm_dir.glob(f"{fish_id}_{moving_label}_GCaMP_to_{fixed_label}_0GenericAffine.mat"))
+    warp = list(tm_dir.glob(f"{fish_id}_{moving_label}_GCaMP_to_{fixed_label}_1Warp.nii.gz"))
+    if not (affine and warp):
+        affine = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_r{best_round}_0GenericAffine.mat"))
+        warp = list(tm_dir.glob(f"{fish_id}_round{round_num}_GCaMP_to_r{best_round}_1Warp.nii.gz"))
     if affine and warp:
         return affine[0], warp[0], stg
     return None, None, stg
@@ -182,11 +201,15 @@ def find_best_round_reference(preproc_dir, fish_id, best_round):
     Best-round GCaMP reference used for rn->best transforms.
     """
     round_dir = get_round_dir(preproc_dir, best_round, best_round)
+    label = round_label(best_round, best_round)
     candidates = [
+        round_dir / f"{fish_id}_{label}_channel1_GCaMP.nrrd",
+        round_dir / f"{fish_id}_{label}_GCaMP.nrrd",
         round_dir / f"{fish_id}_round{best_round}_channel1_GCaMP.nrrd",
         round_dir / f"{fish_id}_round{best_round}_GCaMP.nrrd",
     ]
-    chan_glob = list(round_dir.glob(f"{fish_id}_round{best_round}_channel*_GCaMP*.nrrd"))
+    chan_glob = list(round_dir.glob(f"{fish_id}_{label}_channel*_GCaMP*.nrrd"))
+    chan_glob.extend(round_dir.glob(f"{fish_id}_round{best_round}_channel*_GCaMP*.nrrd"))
     candidates.extend(chan_glob)
     for cand in candidates:
         if cand.exists():
@@ -212,7 +235,11 @@ def list_round_channels(preproc_dir, fish_id, round_num, best_round):
     if not round_dir.exists():
         return []
     channels = []
-    for f in round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd"):
+    label = round_label(round_num, best_round)
+    files = list(round_dir.glob(f"{fish_id}_{label}_channel*.nrrd"))
+    if not files:
+        files = list(round_dir.glob(f"{fish_id}_round{round_num}_channel*.nrrd"))
+    for f in files:
         if "GCaMP" in f.name:
             continue
         m = re.search(r"_channel(\d+)_", f.name)
@@ -241,13 +268,19 @@ def list_round_channels(preproc_dir, fish_id, round_num, best_round):
         deduped.append(entry)
     return deduped
 
-def find_output_for_channel(aligned_dir, fish_id, round_num, ch_num, suffix):
+def find_output_for_channel(aligned_dir, fish_id, round_num, best_round, ch_num, suffix):
     """
     Find an aligned output for a specific channel/round/suffix (e.g., suffix='2p' or 'r2').
     Returns (Path or None, gene, mtime).
     """
-    pattern = f"{fish_id}_round{round_num}_channel{ch_num}_*_in_{suffix}.nrrd"
-    matches = list(aligned_dir.glob(pattern))
+    label = round_label(round_num, best_round)
+    patterns = [
+        f"{fish_id}_{label}_channel{ch_num}_*_in_{suffix}.nrrd",
+        f"{fish_id}_round{round_num}_channel{ch_num}_*_in_{suffix}.nrrd",
+    ]
+    matches = []
+    for pattern in patterns:
+        matches.extend(aligned_dir.glob(pattern))
     if not matches:
         return None, "", None
     out_file = max(matches, key=lambda f: f.stat().st_mtime)
@@ -365,11 +398,11 @@ def main():
                         "transformlist": [str(warp_rb), str(affine_rb)],
                         "reference": best_ref_round,
                         "out_dir": aligned_dir_rb,
-                        "out_name": f"{hcr_file.stem}_in_r{best_round}.nrrd",
+                        "out_name": f"{hcr_file.stem}_in_rbest.nrrd",
                         "fish_id": fish_id,
                         "round": round_num,
-                        "colname": f"r{round_num}->r{best_round}",
-                        "target_suffix": f"r{best_round}"
+                        "colname": f"r{round_num}->rbest",
+                        "target_suffix": "rbest"
                     })
 
                 if best_affine and best_warp and best_ref_2p:
@@ -567,7 +600,7 @@ def main():
                         col_status = f"{round_label}_best_ch{ch['channel']}_status"
                         ensure_col(col_id)
                         ensure_col(col_status)
-                        out_file, gene_out, mtime = find_output_for_channel(aligned_dir, fish_id, round_num, ch["channel"], suffix=f"r{best_round}")
+                        out_file, gene_out, mtime = find_output_for_channel(aligned_dir, fish_id, round_num, best_round, ch["channel"], suffix="rbest")
                         if out_file:
                             row[col_id] = gene_out or ch["gene"]
                             row[col_status] = 'TRUE'
@@ -590,7 +623,7 @@ def main():
                     col_status = f"{round_label}_2p_ch{ch['channel']}_status"
                     ensure_col(col_id)
                     ensure_col(col_status)
-                    out_file, gene_out, mtime = find_output_for_channel(aligned_dir_2p, fish_id, round_num, ch["channel"], suffix="2p")
+                    out_file, gene_out, mtime = find_output_for_channel(aligned_dir_2p, fish_id, round_num, best_round, ch["channel"], suffix="2p")
                     if out_file:
                         row[col_id] = gene_out or ch["gene"]
                         row[col_status] = 'TRUE'
