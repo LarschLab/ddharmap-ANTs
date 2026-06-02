@@ -2,6 +2,7 @@ from pathlib import Path
 
 import json
 import numpy as np
+import pytest
 import tifffile
 
 from codeants_2pf_hcr import (
@@ -61,6 +62,53 @@ def test_preprocess_anatomy_uint8_stage_offsets_signed_stack_and_rebinds_path(tm
     assert result["bindings"]["ANAT_STACK_PATH_ORIG"] == raw_path
     assert result["bindings"]["ANAT_STACK_PATH_16BIT"] == raw_path
     assert result["artifacts"]["negative_offset"] == 10
+
+
+def test_preprocess_anatomy_uint8_stage_writes_canonical_registration_nrrd(tmp_path: Path) -> None:
+    nrrd = pytest.importorskip("nrrd")
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "L765_f02_anatomy_00001.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[0, 10], [20, 30]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        anat_stack_path_orig=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=None,
+        ),
+    )
+
+    nrrd_path = preproc_dir / "2p_anatomy" / "L765_f02_anatomy_2P_GCaMP.nrrd"
+    assert result["bindings"]["ANAT_REG_NRRD_PATH"] == nrrd_path
+    assert result["artifacts"]["registration_nrrd_path"] == nrrd_path
+    assert nrrd_path.exists()
+    data, _header = nrrd.read(str(nrrd_path))
+    assert data.shape == (2, 2, 1)
+    np.testing.assert_array_equal(np.transpose(data, (2, 1, 0)), tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"]))
+
+
+def test_preprocess_anatomy_uint8_stage_backfills_registration_nrrd_for_cached_uint8(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    out_path = preproc_dir / "2p_anatomy" / "L765_f02_anatomy_00001_uint8.tif"
+    out_path.parent.mkdir(parents=True)
+    tifffile.imwrite(out_path, np.array([[[10, 20], [30, 40]]], dtype=np.uint8))
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=out_path,
+        anat_stack_path_orig=out_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(target_xy_shape=None),
+    )
+
+    nrrd_path = preproc_dir / "2p_anatomy" / "L765_f02_anatomy_2P_GCaMP.nrrd"
+    assert result["bindings"]["ANAT_8BIT_STACK_PATH"] == out_path
+    assert result["bindings"]["ANAT_REG_NRRD_PATH"] == nrrd_path
+    assert nrrd_path.exists()
 
 
 def test_preprocess_anatomy_uint8_stage_handles_constant_signed_stack(tmp_path: Path) -> None:

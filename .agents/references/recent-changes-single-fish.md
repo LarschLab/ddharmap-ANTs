@@ -746,3 +746,18 @@
 - Rerun implications:
   - rerun `[8]` before downstream spatial stages for corrected anatomy Z.
   - rerun `[23a] -> [23c]` to regenerate the early Suite2p stimulus diagnostic.
+
+### 2026-06-02 - `[14a]` writes canonical same-fish registration NRRD
+
+- Slice goal:
+  - make 2P anatomy preprocessing emit the same-fish registration contract `02_reg/00_preprocessing/2p_anatomy/<fish_id>_anatomy_2P_GCaMP.nrrd` instead of requiring registration fixed-path overrides to `*_anatomy_00001_uint8.tif`.
+- Passes completed in this session:
+  - extended `preprocess_anatomy_uint8_stage` to write/backfill a canonical registration-ready NRRD sibling while preserving the existing uint8 TIFF and `ANAT_STACK_PATH` binding for notebook consumers.
+  - added focused regression coverage for legacy `*_anatomy_00001.tif` sources and cached `*_anatomy_00001_uint8.tif` backfill.
+  - updated stage map, current-state, and symbol-index docs for the public output-contract change.
+- What changed:
+  - `[14a]` now exposes `ANAT_REG_NRRD_PATH` and creates `<fish_id>_anatomy_2P_GCaMP.nrrd` in the 2P anatomy preprocessing folder.
+- What remains broken:
+  - no live notebook rerun was done in this session.
+- Rerun implications:
+  - rerunning `[14a]` is enough to backfill the canonical NRRD for fish with existing uint8 anatomy preprocessing output.

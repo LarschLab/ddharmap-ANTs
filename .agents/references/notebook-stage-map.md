@@ -21,7 +21,7 @@
    - `[8]` resolves anatomy Z from fish metadata `step_size_um_anatomy`; TIFF page-count Z is not authoritative for the anatomy stack.
    - `[10]` resolves functional orientation and audits legacy full-stack `_flipX.tif` caches; it no longer saves full oriented functional movies by default.
    - `[12]` builds/reuses oriented 2D functional references from original motion-corrected stacks while preserving legacy reference filenames and `plane_refs` labels.
-   - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy`, rebinds `ANAT_STACK_PATH` for downstream anatomy consumers, and is rerun-idempotent when the uint8 output already exists.
+   - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected, functional-orientation-matched 8-bit anatomy TIFF with Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy`, writes the canonical registration-ready NRRD sibling `<fish_id>_anatomy_2P_GCaMP.nrrd`, rebinds `ANAT_STACK_PATH` for downstream anatomy consumers, and is rerun-idempotent when the uint8 output already exists.
    - `[19a]` writes NCC-guided per-plane fixed anatomy-space squares for masked ANTs in-plane registration; `[20]` uses masked ANTs as the default in-plane backend and explicitly falls back to NCC when ANTs or its region JSON is unavailable.
    - `[24a]` runs before `[22e]` so the regional review can include anatomy-label boundaries; `[22e]` also runs after Suite2p loading so the same review can include ROI boundaries.
    - Key object: `plane_refs`.

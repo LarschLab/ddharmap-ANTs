@@ -148,6 +148,7 @@ class AnatomyUint8PreprocessingConfig:
     use_source_path_orig: bool = True
     apply_func_orientation: bool = True
     target_xy_shape: tuple[int, int] | None = (750, 750)
+    write_registration_nrrd: bool = True
     cache_version: int = 2
 
 
@@ -644,6 +645,19 @@ def _anatomy_uint8_source_stem(path: Path | str) -> str:
     return stem[:-6] if stem.endswith("_uint8") else stem
 
 
+def _canonical_anatomy_registration_nrrd_path(uint8_path: Path | str) -> Path:
+    path = Path(uint8_path)
+    stem = path.stem
+    fish_match = _FISH_TOKEN_RE.search(stem)
+    if fish_match is not None:
+        fish_token = fish_match.group(0)
+    elif "_anatomy_" in stem:
+        fish_token = stem.split("_anatomy_", 1)[0]
+    else:
+        fish_token = _anatomy_uint8_source_stem(path)
+    return path.with_name(f"{fish_token}_anatomy_2P_GCaMP.nrrd")
+
+
 def _collect_anatomy_stack_candidates(
     directory: Path,
     patterns: tuple[str, ...],
@@ -1087,6 +1101,42 @@ def _load_anatomy_volume_for_uint8(path: Path) -> tuple[np.ndarray, str, bool]:
         data, reordered = _maybe_reorder_anatomy_stack(data)
         return np.asarray(data), reader, reordered
     return np.asarray(tifffile.imread(path)), "tifffile", False
+
+
+def _write_registration_nrrd_from_zyx_uint8(arr: np.ndarray, out_path: Path) -> str:
+    data = np.asarray(arr)
+    if data.dtype != np.uint8:
+        data = data.astype(np.uint8, copy=False)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import nrrd
+    except Exception:  # pragma: no cover
+        nrrd = None
+
+    if nrrd is not None:
+        if data.ndim == 3:
+            write_data = np.transpose(data, (2, 1, 0))
+            labels = ["x", "y", "z"]
+        elif data.ndim == 2:
+            write_data = np.transpose(data, (1, 0))
+            labels = ["x", "y"]
+        else:
+            write_data = data
+            labels = [f"axis{i}" for i in range(data.ndim)]
+        header = {
+            "encoding": "gzip",
+            "kinds": ["domain"] * int(write_data.ndim),
+            "labels": labels,
+        }
+        nrrd.write(str(out_path), write_data, header=header)
+        return "nrrd"
+
+    try:
+        import SimpleITK as sitk
+    except Exception as exc:  # pragma: no cover
+        raise ImportError("Writing registration .nrrd requires pynrrd or SimpleITK") from exc
+    sitk.WriteImage(sitk.GetImageFromArray(data), str(out_path))
+    return "SimpleITK"
 
 
 def _signed_stack_to_uint8(arr: np.ndarray) -> tuple[np.ndarray, dict[str, int | float]]:
@@ -1594,6 +1644,7 @@ def preprocess_anatomy_uint8_stage(
         out_path = Path(output_path)
         out_dir = out_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
+    registration_nrrd_path = _canonical_anatomy_registration_nrrd_path(out_path)
 
     source_path = requested_source_path
     passthrough_uint8_input = False
@@ -1662,6 +1713,11 @@ def preprocess_anatomy_uint8_stage(
                 use_cached = False
     if use_cached:
         log_lines.append(f"[INFO] Using existing 8-bit anatomy preprocessing output: {out_path}")
+        nrrd_writer = None
+        if cfg.write_registration_nrrd and (force_recompute or not registration_nrrd_path.exists()):
+            cached_uint8 = np.asarray(tifffile.imread(out_path), dtype=np.uint8)
+            nrrd_writer = _write_registration_nrrd_from_zyx_uint8(cached_uint8, registration_nrrd_path)
+            log_lines.append(f"[INFO] Saved registration-ready anatomy NRRD: {registration_nrrd_path}")
         stats: dict[str, Any] = {
             "output_shape": shape,
             "output_dtype": dtype_name,
@@ -1670,6 +1726,8 @@ def preprocess_anatomy_uint8_stage(
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": target_xy_shape,
+            "registration_nrrd_path": registration_nrrd_path,
+            "registration_nrrd_writer": nrrd_writer,
         }
     else:
         vol, reader, reordered_to_zxy = _load_anatomy_volume_for_uint8(source_path)
@@ -1706,10 +1764,14 @@ def preprocess_anatomy_uint8_stage(
             anat_u8,
             **imwrite_kwargs,
         )
+        nrrd_writer = None
+        if cfg.write_registration_nrrd:
+            nrrd_writer = _write_registration_nrrd_from_zyx_uint8(anat_u8, registration_nrrd_path)
         write_meta = {
             "cache_version": int(cfg.cache_version),
             "source_path": str(source_path),
             "output_path": str(out_path),
+            "registration_nrrd_path": str(registration_nrrd_path) if cfg.write_registration_nrrd else None,
             "apply_func_orientation": apply_orientation,
             "orientation_mode": orient_mode,
             "polarity": polarity_norm,
@@ -1731,6 +1793,8 @@ def preprocess_anatomy_uint8_stage(
             f"[{range_stats['output_min']}, {range_stats['output_max']}]"
         )
         log_lines.append(f"[INFO] Saved 8-bit anatomy preprocessing output: {out_path}")
+        if cfg.write_registration_nrrd:
+            log_lines.append(f"[INFO] Saved registration-ready anatomy NRRD: {registration_nrrd_path}")
         stats = {
             **range_stats,
             "output_shape": tuple(int(v) for v in anat_u8.shape),
@@ -1745,6 +1809,8 @@ def preprocess_anatomy_uint8_stage(
             "target_xy_shape": target_xy_shape,
             "resized_xy": resized_xy,
             "metadata_path": meta_path,
+            "registration_nrrd_path": registration_nrrd_path,
+            "registration_nrrd_writer": nrrd_writer,
         }
 
     return {
@@ -1753,6 +1819,7 @@ def preprocess_anatomy_uint8_stage(
             "ANAT_STACK_PATH_ORIG": original_anat_path,
             "ANAT_STACK_PATH_16BIT": current_anat_path,
             "ANAT_8BIT_STACK_PATH": out_path,
+            "ANAT_REG_NRRD_PATH": registration_nrrd_path if cfg.write_registration_nrrd else None,
             "ANAT_STACK_PATH": out_path,
         },
         "log_lines": log_lines,
