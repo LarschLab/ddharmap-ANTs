@@ -121,7 +121,7 @@ def test_preprocess_anatomy_uint8_stage_writes_tiff_spatial_nrrd_header(tmp_path
         header["space directions"],
         np.array([[5.0, 0.0, 0.0], [0.0, 2.5, 0.0], [0.0, 0.0, 3.0]]),
     )
-    assert list(header["space units"]) == ["um", "um", "um"]
+    assert list(header["space units"]) == ["microns", "microns", "microns"]
     assert header["source_path"] == str(raw_path)
     assert header["source_shape"] == "1x2x4"
 

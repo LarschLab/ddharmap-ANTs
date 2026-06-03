@@ -1186,7 +1186,7 @@ def _registration_nrrd_header(
         return header
 
     header["space dimension"] = 3
-    header["space units"] = ["um", "um", "um"]
+    header["space units"] = ["microns", "microns", "microns"]
     source_header = _read_nrrd_header(source_path) if source_path is not None else {}
     for key in ("space", "space origin", "space measurement frame"):
         if key in source_header:
