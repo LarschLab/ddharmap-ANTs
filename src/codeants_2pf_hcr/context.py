@@ -15,7 +15,7 @@ import pandas as pd
 from skimage import transform
 import tifffile
 
-from .spatial import _infer_voxels_nrrd, apply_func_orientation, corrcoef_img, load_or_cache_voxels
+from .spatial import _infer_voxels_nrrd, _res_to_um_per_px, apply_func_orientation, corrcoef_img, load_or_cache_voxels
 from .runtime import default_local_root as runtime_default_local_root
 
 
@@ -1103,7 +1103,131 @@ def _load_anatomy_volume_for_uint8(path: Path) -> tuple[np.ndarray, str, bool]:
     return np.asarray(tifffile.imread(path)), "tifffile", False
 
 
-def _write_registration_nrrd_from_zyx_uint8(arr: np.ndarray, out_path: Path) -> str:
+def _read_nrrd_header(path: Path) -> dict[str, Any]:
+    if path.suffix.lower() != ".nrrd":
+        return {}
+    try:
+        import nrrd
+    except Exception:  # pragma: no cover
+        return {}
+    try:
+        _, header = nrrd.read(str(path))
+    except Exception:
+        return {}
+    return dict(header)
+
+
+def _infer_anatomy_metadata_dir(source_path: Path) -> Path | None:
+    source = Path(source_path)
+    for parent in source.parents:
+        if parent.name == "2p":
+            candidate = parent / "metadata"
+            if candidate.exists():
+                return candidate
+        if parent.name in {"01_raw", "02_reg", "03_analysis"}:
+            fish_dir = parent.parent
+            candidate = fish_dir / "01_raw" / "2p" / "metadata"
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _nrrd_space_directions_from_spacing(x_um: float | None, y_um: float | None, z_um: float | None) -> np.ndarray | None:
+    if not all(value is not None and np.isfinite(float(value)) and float(value) > 0 for value in (x_um, y_um, z_um)):
+        return None
+    return np.asarray(
+        [
+            [float(x_um), 0.0, 0.0],
+            [0.0, float(y_um), 0.0],
+            [0.0, 0.0, float(z_um)],
+        ],
+        dtype=float,
+    )
+
+
+def _scale_space_directions_xy(
+    space_dirs: Any,
+    *,
+    source_xy_shape: tuple[int, int] | None,
+    output_xy_shape: tuple[int, int] | None,
+) -> Any:
+    if source_xy_shape is None or output_xy_shape is None:
+        return space_dirs
+    try:
+        dirs = np.asarray(space_dirs, dtype=float)
+    except Exception:
+        return space_dirs
+    if dirs.shape != (3, 3) or source_xy_shape[0] <= 0 or source_xy_shape[1] <= 0:
+        return space_dirs
+    if output_xy_shape[0] <= 0 or output_xy_shape[1] <= 0:
+        return space_dirs
+    scaled = dirs.copy()
+    scaled[0, :] *= float(source_xy_shape[1]) / float(output_xy_shape[1])
+    scaled[1, :] *= float(source_xy_shape[0]) / float(output_xy_shape[0])
+    return scaled
+
+
+def _registration_nrrd_header(
+    *,
+    write_ndim: int,
+    labels: list[str],
+    source_path: Path | None,
+    source_shape: tuple[int, ...] | None,
+    output_shape: tuple[int, ...],
+    source_xy_shape: tuple[int, int] | None,
+    output_xy_shape: tuple[int, int] | None,
+) -> dict[str, Any]:
+    header: dict[str, Any] = {
+        "encoding": "gzip",
+        "kinds": ["domain"] * int(write_ndim),
+        "labels": labels,
+    }
+    if write_ndim != 3:
+        return header
+
+    header["space dimension"] = 3
+    header["space units"] = ["um", "um", "um"]
+    source_header = _read_nrrd_header(source_path) if source_path is not None else {}
+    for key in ("space", "space origin", "space measurement frame"):
+        if key in source_header:
+            header[key] = source_header[key]
+    if "space units" in source_header:
+        header["space units"] = source_header["space units"]
+
+    source_dirs = source_header.get("space directions")
+    if source_dirs is not None:
+        header["space directions"] = _scale_space_directions_xy(
+            source_dirs,
+            source_xy_shape=source_xy_shape,
+            output_xy_shape=output_xy_shape,
+        )
+    elif source_path is not None and source_path.suffix.lower() in {".tif", ".tiff"} and source_xy_shape and output_xy_shape:
+        x_um, y_um = _scaled_tiff_spacing_um(source_path, source_xy_shape, output_xy_shape)
+        z_um, _paths = _read_anatomy_z_metadata(_infer_anatomy_metadata_dir(source_path))
+        directions = _nrrd_space_directions_from_spacing(x_um, y_um, z_um)
+        if directions is not None:
+            header["space directions"] = directions
+
+    if source_path is not None:
+        header["source_path"] = str(source_path)
+        header["source_name"] = source_path.name
+    if source_shape is not None:
+        header["source_shape"] = "x".join(str(int(v)) for v in source_shape)
+    header["source_axes"] = "ZYX"
+    header["array_axes"] = "XYZ"
+    header["output_shape_zyx"] = "x".join(str(int(v)) for v in output_shape)
+    return header
+
+
+def _write_registration_nrrd_from_zyx_uint8(
+    arr: np.ndarray,
+    out_path: Path,
+    *,
+    source_path: Path | None = None,
+    source_shape: tuple[int, ...] | None = None,
+    source_xy_shape: tuple[int, int] | None = None,
+    output_xy_shape: tuple[int, int] | None = None,
+) -> str:
     data = np.asarray(arr)
     if data.dtype != np.uint8:
         data = data.astype(np.uint8, copy=False)
@@ -1123,11 +1247,15 @@ def _write_registration_nrrd_from_zyx_uint8(arr: np.ndarray, out_path: Path) -> 
         else:
             write_data = data
             labels = [f"axis{i}" for i in range(data.ndim)]
-        header = {
-            "encoding": "gzip",
-            "kinds": ["domain"] * int(write_data.ndim),
-            "labels": labels,
-        }
+        header = _registration_nrrd_header(
+            write_ndim=int(write_data.ndim),
+            labels=labels,
+            source_path=source_path,
+            source_shape=source_shape,
+            output_shape=tuple(int(v) for v in data.shape),
+            source_xy_shape=source_xy_shape,
+            output_xy_shape=output_xy_shape,
+        )
         nrrd.write(str(out_path), write_data, header=header)
         return "nrrd"
 
@@ -1245,6 +1373,24 @@ def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, st
             )
     except Exception:
         return None, None, None
+
+
+def _scaled_tiff_spacing_um(
+    source_path: Path,
+    source_xy_shape: tuple[int, int],
+    output_xy_shape: tuple[int, int],
+) -> tuple[float | None, float | None]:
+    x_res, y_res, unit_name = _read_tiff_xy_resolution(source_path)
+    x_um, y_um = _res_to_um_per_px((x_res, y_res), unit_name)
+    if x_um is None or y_um is None:
+        return None, None
+    if source_xy_shape[0] <= 0 or source_xy_shape[1] <= 0:
+        return None, None
+    if output_xy_shape[0] <= 0 or output_xy_shape[1] <= 0:
+        return None, None
+    scaled_x_um = float(x_um) * (float(source_xy_shape[1]) / float(output_xy_shape[1]))
+    scaled_y_um = float(y_um) * (float(source_xy_shape[0]) / float(output_xy_shape[0]))
+    return scaled_x_um, scaled_y_um
 
 
 def _scaled_tiff_resolution(
@@ -1716,7 +1862,28 @@ def preprocess_anatomy_uint8_stage(
         nrrd_writer = None
         if cfg.write_registration_nrrd and (force_recompute or not registration_nrrd_path.exists()):
             cached_uint8 = np.asarray(tifffile.imread(out_path), dtype=np.uint8)
-            nrrd_writer = _write_registration_nrrd_from_zyx_uint8(cached_uint8, registration_nrrd_path)
+            cache_meta = _read_json_dict(meta_path)
+            cache_source_shape = cache_meta.get("source_shape")
+            source_shape_for_nrrd = (
+                tuple(int(v) for v in cache_source_shape)
+                if isinstance(cache_source_shape, list | tuple) and cache_source_shape
+                else None
+            )
+            cache_source_xy_shape = cache_meta.get("source_xy_shape")
+            source_xy_for_nrrd = (
+                tuple(int(v) for v in cache_source_xy_shape)
+                if isinstance(cache_source_xy_shape, list | tuple) and len(cache_source_xy_shape) == 2
+                else None
+            )
+            output_xy_for_nrrd = tuple(int(v) for v in cached_uint8.shape[-2:]) if cached_uint8.ndim >= 2 else None
+            nrrd_writer = _write_registration_nrrd_from_zyx_uint8(
+                cached_uint8,
+                registration_nrrd_path,
+                source_path=source_path if source_path.exists() else None,
+                source_shape=source_shape_for_nrrd,
+                source_xy_shape=source_xy_for_nrrd,
+                output_xy_shape=output_xy_for_nrrd,
+            )
             log_lines.append(f"[INFO] Saved registration-ready anatomy NRRD: {registration_nrrd_path}")
         stats: dict[str, Any] = {
             "output_shape": shape,
@@ -1766,7 +1933,14 @@ def preprocess_anatomy_uint8_stage(
         )
         nrrd_writer = None
         if cfg.write_registration_nrrd:
-            nrrd_writer = _write_registration_nrrd_from_zyx_uint8(anat_u8, registration_nrrd_path)
+            nrrd_writer = _write_registration_nrrd_from_zyx_uint8(
+                anat_u8,
+                registration_nrrd_path,
+                source_path=source_path,
+                source_shape=anatomy_shape,
+                source_xy_shape=source_xy_shape,
+                output_xy_shape=output_xy_shape,
+            )
         write_meta = {
             "cache_version": int(cfg.cache_version),
             "source_path": str(source_path),
@@ -1777,6 +1951,7 @@ def preprocess_anatomy_uint8_stage(
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": list(target_xy_shape) if target_xy_shape is not None else None,
+            "source_shape": list(anatomy_shape),
             "source_xy_shape": list(source_xy_shape) if source_xy_shape is not None else None,
             "output_shape": [int(v) for v in anat_u8.shape],
             "resolution": list(resolution) if resolution is not None else None,

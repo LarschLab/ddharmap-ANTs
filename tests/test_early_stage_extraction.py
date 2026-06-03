@@ -92,6 +92,77 @@ def test_preprocess_anatomy_uint8_stage_writes_canonical_registration_nrrd(tmp_p
     np.testing.assert_array_equal(np.transpose(data, (2, 1, 0)), tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"]))
 
 
+def test_preprocess_anatomy_uint8_stage_writes_tiff_spatial_nrrd_header(tmp_path: Path) -> None:
+    nrrd = pytest.importorskip("nrrd")
+    fish_dir = tmp_path / "L765_f02"
+    preproc_dir = fish_dir / "02_reg" / "00_preprocessing"
+    raw_path = fish_dir / "01_raw" / "2p" / "anatomy" / "L765_f02_anatomy_00001.tif"
+    metadata_dir = fish_dir / "01_raw" / "2p" / "metadata"
+    raw_path.parent.mkdir(parents=True)
+    metadata_dir.mkdir(parents=True)
+    metadata_dir.joinpath("fish_metadata.csv").write_text("parameter,value\nstep_size_um_anatomy,3\n")
+    stack = np.array([[[0, 10, 20, 30], [40, 50, 60, 70]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack, resolution=(1000.0, 2000.0), resolutionunit="CENTIMETER")
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        anat_stack_path_orig=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=(4, 8),
+        ),
+    )
+
+    data, header = nrrd.read(str(result["bindings"]["ANAT_REG_NRRD_PATH"]))
+    assert data.shape == (8, 4, 1)
+    np.testing.assert_allclose(
+        header["space directions"],
+        np.array([[5.0, 0.0, 0.0], [0.0, 2.5, 0.0], [0.0, 0.0, 3.0]]),
+    )
+    assert list(header["space units"]) == ["um", "um", "um"]
+    assert header["source_path"] == str(raw_path)
+    assert header["source_shape"] == "1x2x4"
+
+
+def test_preprocess_anatomy_uint8_stage_preserves_source_nrrd_geometry(tmp_path: Path) -> None:
+    nrrd = pytest.importorskip("nrrd")
+    preproc_dir = tmp_path / "preproc"
+    source_path = preproc_dir / "2p_anatomy" / "L765_f02_anatomy_source.nrrd"
+    source_path.parent.mkdir(parents=True)
+    source_xyz = np.arange(8, dtype=np.int16).reshape(4, 2, 1)
+    nrrd.write(
+        str(source_path),
+        source_xyz,
+        header={
+            "space dimension": 3,
+            "space directions": np.array([[10.0, 0.0, 0.0], [0.0, 5.0, 0.0], [0.0, 0.0, 3.0]]),
+            "space units": ["um", "um", "um"],
+            "space origin": np.array([1.0, 2.0, 3.0]),
+        },
+    )
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=source_path,
+        anat_stack_path_orig=source_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            target_xy_shape=(4, 8),
+        ),
+    )
+
+    _data, header = nrrd.read(str(result["bindings"]["ANAT_REG_NRRD_PATH"]))
+    np.testing.assert_allclose(
+        header["space directions"],
+        np.array([[5.0, 0.0, 0.0], [0.0, 2.5, 0.0], [0.0, 0.0, 3.0]]),
+    )
+    np.testing.assert_allclose(header["space origin"], np.array([1.0, 2.0, 3.0]))
+    assert header["source_path"] == str(source_path)
+
+
 def test_preprocess_anatomy_uint8_stage_backfills_registration_nrrd_for_cached_uint8(tmp_path: Path) -> None:
     preproc_dir = tmp_path / "preproc"
     out_path = preproc_dir / "2p_anatomy" / "L765_f02_anatomy_00001_uint8.tif"
