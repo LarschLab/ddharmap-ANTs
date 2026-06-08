@@ -11,6 +11,7 @@
 - `[cohort-build]`
 - `[53a-cohort]`
 - `[56h-cohort]`
+- `[56h-cohort-poster]`
 - `[56g-cohort]`
 - `[cohort-auc]`
 - `[cohort-56h-donut-grid]`
@@ -54,6 +55,7 @@
 
 - `[53a-cohort]` is package-renderer driven via `codeants_2pf_hcr.plots.qa.render_cohort_53a_summary`.
 - `[56h-cohort]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56h_by_fish`.
+- `[56h-cohort-poster]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56h_fish_average_poster_traces`; it renders each requested gene as its own row, uses poster-specific condition-block order (`contra_LB`, `ipsi_LB`, `contra_LC`, `ipsi_LC`), shows SEM across fish, and writes exact `gene x condition` `n_fish` counts.
 - `[56g-cohort]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56g_diagnostics`.
 - `[cohort-auc]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_motion_auc`.
 - `[cohort-56h-donut-grid]` is package-renderer driven via `codeants_2pf_hcr.plots.analysis.render_cohort_56h_status_donut_grid`.

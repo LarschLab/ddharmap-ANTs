@@ -2203,6 +2203,182 @@ def render_cohort_56h_by_fish(
     return {"fig": fig, "out_path": save_path, "fish_order": fish_order, "genes": genes}
 
 
+def render_cohort_56h_fish_average_poster_traces(
+    *,
+    results_by_fish: dict[str, Any],
+    tvec: np.ndarray,
+    mode_durations: dict[str, Any],
+    cohort_fish_summary_df: pd.DataFrame | None,
+    gene_order: list[str],
+    gene_colors: dict[str, str],
+    plot_order: list[str],
+    plot_titles: dict[str, str],
+    min_segments: int = 3,
+    min_cells: int = 1,
+    y_limits: tuple[float, float] = (-5.0, 6.0),
+    out_path: str | Path | None = None,
+    summary_csv: str | Path | None = None,
+) -> dict[str, Any]:
+    if not isinstance(results_by_fish, dict):
+        raise RuntimeError("cohort fish-level trace payload missing; run [cohort-build] first.")
+    tvec_arr = np.asarray(tvec, dtype=float)
+    if tvec_arr.size == 0:
+        raise RuntimeError("cohort_tvec missing; run [cohort-build] first.")
+
+    fish_order = sorted(str(fish_id) for fish_id in results_by_fish.keys())
+    if not fish_order:
+        raise RuntimeError("No fish-level trace summaries available.")
+
+    genes_present: set[str] = set()
+    for fish_panel in results_by_fish.values():
+        if not isinstance(fish_panel, dict):
+            continue
+        for panel in plot_order:
+            genes_present.update(str(gene) for gene in ((fish_panel.get(panel, {}) or {}).keys()))
+    genes = [str(g) for g in gene_order if str(g) in genes_present]
+    if not genes:
+        raise RuntimeError("No genes available for cohort [56h] poster plot.")
+
+    block_gap = 3.0
+    x_min = -10.0
+    x_max = 30.0
+    mask = (tvec_arr >= x_min) & (tvec_arr <= x_max)
+    if int(np.count_nonzero(mask)) < 2:
+        raise RuntimeError("Invalid cohort [56h] poster trace range.")
+    plot_tvec = tvec_arr[mask]
+    block_span = float(plot_tvec[-1] - plot_tvec[0])
+    offsets = {panel: (idx * (block_span + block_gap)) - float(plot_tvec[0]) for idx, panel in enumerate(plot_order)}
+    centers = {panel: float(0.5 * (plot_tvec[0] + plot_tvec[-1]) + offsets[panel]) for panel in plot_order}
+    xlim = (min(float(plot_tvec[0] + offsets[p]) for p in plot_order), max(float(plot_tvec[-1] + offsets[p]) for p in plot_order))
+
+    summary_rows: list[dict[str, Any]] = []
+    traces_by_panel_gene: dict[tuple[str, str], dict[str, Any]] = {}
+    for panel in plot_order:
+        for gene in genes:
+            fish_means = []
+            fish_ids = []
+            n_cells_total = 0
+            n_segments_total = 0
+            for fish_id in fish_order:
+                fish_res = (((results_by_fish.get(fish_id, {}) or {}).get(panel, {}) or {}).get(gene, None))
+                if fish_res is None:
+                    continue
+                n_segments = int(fish_res.get("n_segments", 0))
+                n_cells = int(fish_res.get("n_cells", 0))
+                if n_segments < int(min_segments) or n_cells < int(min_cells):
+                    continue
+                mean = np.asarray(fish_res.get("mean", []), dtype=float)
+                if mean.size != tvec_arr.size:
+                    continue
+                fish_means.append(mean)
+                fish_ids.append(str(fish_id))
+                n_cells_total += n_cells
+                n_segments_total += n_segments
+            if fish_means:
+                arr = np.vstack(fish_means).astype(float, copy=False)
+                mean = np.nanmean(arr, axis=0)
+                finite_n = np.sum(np.isfinite(arr), axis=0)
+                if arr.shape[0] > 1:
+                    sem = np.nanstd(arr, axis=0, ddof=1) / np.sqrt(np.maximum(finite_n, 1))
+                    sem = np.where(finite_n > 1, sem, np.nan)
+                else:
+                    sem = np.zeros(arr.shape[1], dtype=float)
+                traces_by_panel_gene[(panel, gene)] = {
+                    "mean": mean,
+                    "sem": sem,
+                    "n_fish": int(len(fish_ids)),
+                    "fish_ids": fish_ids,
+                }
+                summary_rows.append(
+                    {
+                        "panel": panel,
+                        "panel_title": plot_titles.get(panel, panel),
+                        "gene": gene,
+                        "n_fish": int(len(fish_ids)),
+                        "fish_ids": ",".join(fish_ids),
+                        "n_cells_total": int(n_cells_total),
+                        "n_segments_total": int(n_segments_total),
+                    }
+                )
+
+    summary_df = pd.DataFrame(summary_rows)
+    if summary_df.empty:
+        raise RuntimeError("No fish-averaged traces passed the [56h] poster plot thresholds.")
+
+    fig_height = max(2.0, 1.35 * len(genes))
+    fig, axes = plt.subplots(len(genes), 1, figsize=(16.5, fig_height), sharex=True, squeeze=False)
+    axes_arr = axes[:, 0]
+
+    for ax in axes_arr:
+        for panel in plot_order:
+            x_block = plot_tvec + offsets[panel]
+            ax.axvspan(float(x_block[0]), float(x_block[-1]), color="#efefef", alpha=0.12, zorder=0)
+            mode = "LB" if panel.endswith("LB") else "LC"
+            dur_vals = np.asarray(mode_durations.get(mode, []), dtype=float) if isinstance(mode_durations, dict) else np.asarray([], dtype=float)
+            if dur_vals.size:
+                d = float(np.nanmedian(dur_vals))
+                if np.isfinite(d) and d > 0:
+                    ax.axvspan(offsets[panel] + max(0.0, x_min), offsets[panel] + min(d, x_max), color="#cccccc", alpha=0.18, zorder=0)
+            ax.axvline(offsets[panel], color="k", linestyle="--", linewidth=0.85, alpha=0.7)
+        ax.axhline(0.0, color="k", linewidth=0.8, alpha=0.6)
+        ax.set_xlim(*xlim)
+        ax.set_ylim(float(y_limits[0]), float(y_limits[1]))
+        ax.set_yticks([float(y_limits[0]), 0.0, float(y_limits[1])])
+
+    for ax, gene in zip(axes_arr, genes, strict=False):
+        color = gene_colors.get(gene, "#777777")
+        for panel in plot_order:
+            trace = traces_by_panel_gene.get((panel, gene))
+            if trace is None:
+                continue
+            mean = np.asarray(trace["mean"], dtype=float)
+            sem = np.asarray(trace["sem"], dtype=float)
+            x_block = plot_tvec + offsets[panel]
+            y = mean[mask]
+            y_sem = sem[mask]
+            ax.fill_between(x_block, y - y_sem, y + y_sem, color=color, alpha=0.14, linewidth=0.0)
+            ax.plot(x_block, y, color=color, linewidth=2.2, alpha=0.96)
+        ax.text(
+            -0.055,
+            0.5,
+            gene,
+            transform=ax.transAxes,
+            ha="right",
+            va="center",
+            color="black",
+            fontsize=11,
+            fontstyle="italic",
+        )
+
+    for ax in axes_arr[:-1]:
+        ax.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+    axes_arr[-1].set_xticks([centers[p] for p in plot_order], [plot_titles.get(p, p) for p in plot_order])
+    axes_arr[-1].set_xlabel("Time (s), condition blocks aligned to stimulus onset")
+    fig.supylabel("z-scored dF/F", x=0.01)
+    n_fish_ok = int(cohort_fish_summary_df.get("ok", pd.Series(dtype=bool)).sum()) if isinstance(cohort_fish_summary_df, pd.DataFrame) else len(fish_order)
+    fig.suptitle(f"Cohort fish-averaged stimulus responses (mean +/- SEM across fish; fish n={n_fish_ok})")
+    fig.tight_layout(rect=[0.02, 0, 1, 0.96])
+
+    save_path = Path(out_path) if out_path is not None else None
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    summary_path = Path(summary_csv) if summary_csv is not None else (save_path.with_name(f"{save_path.stem}_n_fish.csv") if save_path is not None else None)
+    if summary_path is not None:
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_df.to_csv(summary_path, index=False)
+
+    return {
+        "fig": fig,
+        "out_path": save_path,
+        "summary_csv": summary_path,
+        "summary_df": summary_df,
+        "fish_order": fish_order,
+        "genes": genes,
+        "plot_order": list(plot_order),
+    }
+
+
 def render_cohort_56g_diagnostics(
     *,
     df: pd.DataFrame,
@@ -4038,6 +4214,289 @@ def render_cohort_50l_responsive_identity_donut_row(
     }
 
 
+def render_single_fish_50l_population_response_donut_poster(
+    *,
+    detail_csv: str | Path,
+    outdir: str | Path,
+    fish_id: str | None = None,
+    run_config: dict[str, Any] | None = None,
+    save: bool = True,
+) -> dict[str, Any]:
+    """Render a standalone poster-scaled [50l] population response donut."""
+    run_config_d = dict(run_config or {})
+    detail_csv_p = Path(detail_csv)
+    outdir_p = Path(outdir)
+    if not detail_csv_p.exists():
+        raise RuntimeError(f"[single-fish-50l-poster-donut] Missing master ROI table: {detail_csv_p}")
+
+    detail_df = pd.read_csv(detail_csv_p)
+    if fish_id is not None and "fish_id" in detail_df.columns:
+        detail_df = detail_df[detail_df["fish_id"].astype(str) == str(fish_id)].copy()
+    if detail_df.empty:
+        raise RuntimeError("[single-fish-50l-poster-donut] Master ROI table is empty.")
+    required_cols = {"response_summary_class", "bpi_category"}
+    missing_cols = sorted(required_cols - set(detail_df.columns))
+    if missing_cols:
+        raise RuntimeError(f"[single-fish-50l-poster-donut] Master ROI table missing columns {missing_cols}; rerun [50ia].")
+
+    response_active = "Responsive neurons"
+    response_low = "Low activity"
+    response_unavailable = "Response unavailable"
+    bpi_unavailable = "response unavailable"
+    response_order = [response_active, response_low, response_unavailable]
+    response_display = {
+        response_active: "Responsive",
+        response_low: "Low activity",
+        response_unavailable: "Unavailable",
+    }
+    response_colors = {
+        response_active: "#1b9e77",
+        response_low: "#8d8d8d",
+        response_unavailable: "#d9d9d9",
+    }
+    bpi_order = SINGLE_FISH_50L_BPI_ORDER + [bpi_unavailable]
+    bpi_short = {
+        "bout-responsive": "bout-responsive",
+        "continuous-responsive": "cont.-responsive",
+        "both-responsive": "both-responsive",
+        "weak-response": "weak-response",
+        "low activity": "low activity",
+        bpi_unavailable: "response unavailable",
+    }
+
+    detail_df = detail_df.copy()
+    detail_df["response_summary_class"] = detail_df["response_summary_class"].astype(str)
+    detail_df["bpi_category"] = detail_df["bpi_category"].fillna(bpi_unavailable).astype(str).str.strip().str.lower()
+    detail_df.loc[~detail_df["bpi_category"].isin(bpi_order), "bpi_category"] = bpi_unavailable
+
+    inner_counts = (
+        detail_df.groupby("response_summary_class", as_index=False)
+        .size()
+        .rename(columns={"size": "n_rois"})
+    )
+    inner_counts["response_order"] = inner_counts["response_summary_class"].map({k: i for i, k in enumerate(response_order)}).fillna(10**6)
+    inner_counts = inner_counts.sort_values("response_order").reset_index(drop=True)
+
+    outer_counts = (
+        detail_df.groupby("bpi_category", as_index=False)
+        .size()
+        .rename(columns={"size": "n_rois"})
+    )
+    outer_counts["bpi_order"] = outer_counts["bpi_category"].map({k: i for i, k in enumerate(bpi_order)}).fillna(10**6)
+    outer_counts = outer_counts.sort_values("bpi_order").reset_index(drop=True)
+    outer_counts = outer_counts[pd.to_numeric(outer_counts["n_rois"], errors="coerce").fillna(0) > 0].copy()
+    if outer_counts.empty:
+        raise RuntimeError("[single-fish-50l-poster-donut] No outer-ring counts are available.")
+
+    fig_width = float(run_config_d.get("POSTER_50L_DONUT_FIG_WIDTH_IN", 8.5))
+    fig_height = float(run_config_d.get("POSTER_50L_DONUT_FIG_HEIGHT_IN", 8.5))
+    dpi = int(run_config_d.get("POSTER_50L_DONUT_DPI", 300))
+    title_fs = float(run_config_d.get("POSTER_50L_DONUT_TITLE_FONTSIZE", 20.0))
+    center_fs = float(run_config_d.get("POSTER_50L_DONUT_CENTER_FONTSIZE", 22.0))
+    inner_fs = float(run_config_d.get("POSTER_50L_DONUT_INNER_FONTSIZE", 10.0))
+    indicator_fs = float(run_config_d.get("POSTER_50L_DONUT_INDICATOR_FONTSIZE", 13.0))
+    outer_radius = float(run_config_d.get("POSTER_50L_DONUT_OUTER_RADIUS", 1.0))
+    outer_width = float(run_config_d.get("POSTER_50L_DONUT_OUTER_WIDTH", 0.12))
+    ring_gap = float(run_config_d.get("POSTER_50L_DONUT_RING_GAP", 0.035))
+    inner_width = float(run_config_d.get("POSTER_50L_DONUT_INNER_WIDTH", 0.31))
+    inner_outer_radius = outer_radius - outer_width - ring_gap
+    centre_radius = inner_outer_radius - inner_width
+    if centre_radius <= 0:
+        raise RuntimeError("[single-fish-50l-poster-donut] Ring geometry leaves no donut center.")
+
+    indicator_radius = float(run_config_d.get("POSTER_50L_DONUT_INDICATOR_RADIUS", 1.12))
+    indicator_x = float(run_config_d.get("POSTER_50L_DONUT_INDICATOR_X", 1.48))
+    indicator_y_min = float(run_config_d.get("POSTER_50L_DONUT_INDICATOR_YMIN", -1.12))
+    indicator_y_max = float(run_config_d.get("POSTER_50L_DONUT_INDICATOR_YMAX", 1.12))
+    indicator_min_gap = float(run_config_d.get("POSTER_50L_DONUT_INDICATOR_MIN_GAP", 0.22))
+
+    def _resolve_indicator_positions(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        resolved: list[dict[str, Any]] = []
+        for side in (-1.0, 1.0):
+            side_items = [dict(item) for item in items if float(item["side"]) == side]
+            if not side_items:
+                continue
+            side_items.sort(key=lambda item: (float(item["target_y"]), float(item["theta"])))
+            n_items = len(side_items)
+            span_needed = indicator_min_gap * max(0, n_items - 1)
+            if n_items > 1 and span_needed > (indicator_y_max - indicator_y_min):
+                y_vals = np.linspace(indicator_y_min, indicator_y_max, n_items, dtype=float)
+            else:
+                y_vals = np.array([float(np.clip(item["target_y"], indicator_y_min, indicator_y_max)) for item in side_items], dtype=float)
+                for idx in range(1, n_items):
+                    y_vals[idx] = max(y_vals[idx], y_vals[idx - 1] + indicator_min_gap)
+                if n_items and y_vals[-1] > indicator_y_max:
+                    y_vals -= y_vals[-1] - indicator_y_max
+                if n_items and y_vals[0] < indicator_y_min:
+                    y_vals += indicator_y_min - y_vals[0]
+                for idx in range(n_items - 2, -1, -1):
+                    y_vals[idx] = min(y_vals[idx], y_vals[idx + 1] - indicator_min_gap)
+            for item, y_val in zip(side_items, y_vals.tolist(), strict=False):
+                item["resolved_y"] = float(y_val)
+                resolved.append(item)
+        return sorted(resolved, key=lambda item: int(item["idx"]))
+
+    def _indicator_line_color(color: Any) -> Any:
+        try:
+            r, g, b = to_rgb(color)
+        except Exception:
+            return color
+        luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        return "#9a9a9a" if luminance > 0.78 else color
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=dpi, subplot_kw={"aspect": "equal"})
+    outer_wedges, _ = ax.pie(
+        outer_counts["n_rois"].astype(float).tolist(),
+        radius=outer_radius,
+        labels=None,
+        colors=[SINGLE_FISH_50L_BPI_COLORS.get(label, "#cccccc") for label in outer_counts["bpi_category"].astype(str)],
+        startangle=90,
+        counterclock=False,
+        wedgeprops={"width": outer_width, "edgecolor": "white", "linewidth": 1.2},
+    )
+    inner_wedges, _ = ax.pie(
+        inner_counts["n_rois"].astype(float).tolist(),
+        radius=inner_outer_radius,
+        labels=None,
+        colors=[response_colors.get(label, "#cccccc") for label in inner_counts["response_summary_class"].astype(str)],
+        startangle=90,
+        counterclock=False,
+        wedgeprops={"width": inner_width, "edgecolor": "white", "linewidth": 1.2},
+    )
+
+    inner_mid_radius = inner_outer_radius - inner_width / 2.0
+    total_inner = float(inner_counts["n_rois"].sum())
+    for wedge, label, val in zip(
+        inner_wedges,
+        inner_counts["response_summary_class"].astype(str).tolist(),
+        inner_counts["n_rois"].astype(float).tolist(),
+        strict=False,
+    ):
+        pct = 100.0 * float(val) / total_inner if total_inner > 0 else 0.0
+        if pct < 5.0:
+            continue
+        theta, x_pos, y_pos = _wedge_midpoint(wedge, inner_mid_radius)
+        display_label = response_display.get(label, label)
+        ax.text(
+            x_pos,
+            y_pos,
+            f"{display_label}\n{int(round(val))}",
+            ha="center",
+            va="center",
+            rotation=_tangent_rotation(theta),
+            rotation_mode="anchor",
+            fontsize=inner_fs,
+            color="black" if label == response_active else _contrast_text_color(response_colors.get(label, "#cccccc")),
+            zorder=7,
+            linespacing=0.88,
+        )
+
+    indicator_items: list[dict[str, Any]] = []
+    for idx, (wedge, label, val) in enumerate(
+        zip(outer_wedges, outer_counts["bpi_category"].astype(str).tolist(), outer_counts["n_rois"].astype(float).tolist(), strict=False)
+    ):
+        if label in {"low activity", bpi_unavailable}:
+            continue
+        theta, anchor_x, anchor_y = _wedge_midpoint(wedge, outer_radius + 0.01)
+        _, _, target_y = _wedge_midpoint(wedge, indicator_radius)
+        side = 1.0 if np.cos(theta) >= 0 else -1.0
+        indicator_items.append(
+            {
+                "idx": int(idx),
+                "theta": float(theta),
+                "label": f"{bpi_short.get(label, label)} n={int(round(val))}",
+                "category": str(label),
+                "anchor_x": float(anchor_x),
+                "anchor_y": float(anchor_y),
+                "target_y": float(target_y),
+                "side": float(side),
+            }
+        )
+    resolved_indicators = _resolve_indicator_positions(indicator_items)
+    for item in resolved_indicators:
+        side = float(item["side"])
+        x_elbow = side * (indicator_radius + 0.08)
+        x_text = side * indicator_x
+        y_text = float(item["resolved_y"])
+        color = _indicator_line_color(SINGLE_FISH_50L_BPI_COLORS.get(str(item["category"]), "#777777"))
+        ax.plot(
+            [float(item["anchor_x"]), x_elbow, x_text - side * 0.04],
+            [float(item["anchor_y"]), y_text, y_text],
+            color=color,
+            linewidth=1.8,
+            solid_capstyle="round",
+            zorder=4,
+        )
+        ax.text(
+            x_text,
+            y_text,
+            str(item["label"]),
+            ha="left" if side > 0 else "right",
+            va="center",
+            fontsize=indicator_fs,
+            color="black",
+            bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.82, "boxstyle": "round,pad=0.12"},
+            zorder=5,
+        )
+
+    ax.add_artist(plt.Circle((0, 0), centre_radius, fc="white", ec="white", zorder=3))
+    ax.text(0, 0, f"n = {int(len(detail_df))}", ha="center", va="center", fontsize=center_fs, fontweight="bold", zorder=6)
+    title = str(run_config_d.get("POSTER_50L_DONUT_TITLE", "Population response classes"))
+    ax.set_title(title, fontsize=title_fs, pad=20)
+    view_x = float(run_config_d.get("POSTER_50L_DONUT_VIEW_X", 1.78))
+    view_y = float(run_config_d.get("POSTER_50L_DONUT_VIEW_Y", 1.35))
+    ax.set_xlim(-view_x, view_x)
+    ax.set_ylim(-view_y, view_y)
+    ax.set_axis_off()
+    fig.tight_layout(pad=0.6)
+
+    gaps: list[float] = []
+    overlap_pairs = 0
+    for side in (-1.0, 1.0):
+        y_vals = sorted(float(item["resolved_y"]) for item in resolved_indicators if float(item["side"]) == side)
+        if len(y_vals) < 2:
+            continue
+        side_gaps = np.diff(np.asarray(y_vals, dtype=float))
+        gaps.extend(side_gaps.tolist())
+        overlap_pairs += int(np.sum(side_gaps < indicator_min_gap - 1e-9))
+    qa_df = pd.DataFrame(
+        [
+            {
+                "n_total": int(len(detail_df)),
+                "n_indicators": int(len(resolved_indicators)),
+                "indicator_min_gap": float(np.min(gaps)) if gaps else np.nan,
+                "indicator_overlap_pairs": int(overlap_pairs),
+            }
+        ]
+    )
+    counts_df = pd.concat(
+        [
+            inner_counts.assign(ring="inner").rename(columns={"response_summary_class": "category"})[["ring", "category", "n_rois"]],
+            outer_counts.assign(ring="outer").rename(columns={"bpi_category": "category"})[["ring", "category", "n_rois"]],
+        ],
+        ignore_index=True,
+    )
+
+    out_path = outdir_p / "poster_50l_population_response_donut.png"
+    pdf_path = out_path.with_suffix(".pdf")
+    counts_csv = outdir_p / "poster_50l_population_response_donut_counts.csv"
+    if save:
+        outdir_p.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+        fig.savefig(pdf_path, bbox_inches="tight")
+        counts_df.to_csv(counts_csv, index=False)
+    if int(qa_df["indicator_overlap_pairs"].iloc[0]) > 0:
+        raise RuntimeError("[single-fish-50l-poster-donut] Perimeter indicator layout still contains vertical overlaps.")
+    return {
+        "fig": fig,
+        "out_path": out_path,
+        "pdf_path": pdf_path,
+        "counts_csv": counts_csv,
+        "counts_df": counts_df,
+        "qa_df": qa_df,
+    }
+
+
 def _infer_single_fish_local_spec(*, fish_id: str, out_reg: Path) -> tuple[Path, str]:
     fish_id_s = str(fish_id)
     out_reg_resolved = out_reg.resolve()
@@ -4152,6 +4611,7 @@ __all__ = [
     "render_single_fish_50l_composite",
     "render_single_fish_50l_gene_auc_panel",
     "render_single_fish_50l_global_auc_panel",
+    "render_single_fish_50l_population_response_donut_poster",
     "run_single_fish_cell_50e_stage",
     "run_single_fish_cell_56_stage",
     "run_single_fish_cell_56d_stage",
@@ -4159,6 +4619,7 @@ __all__ = [
     "run_single_fish_cell_56h_stage",
     "run_single_fish_cell_57_stage",
     "render_cohort_56h_by_fish",
+    "render_cohort_56h_fish_average_poster_traces",
     "render_cohort_56g_diagnostics",
     "render_cohort_motion_auc",
     "render_cohort_56h_status_donut_grid",

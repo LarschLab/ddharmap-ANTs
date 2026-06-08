@@ -818,6 +818,313 @@ for _tag, _replacements in _MIDLINE_ACTIVITY_SUBSET_DISPLAY_REPLACEMENTS.items()
     _CELL_SOURCE_BY_TAG[_tag] = _source
 
 
+_SST12_EVENT_TRACE_56H_REPLACEMENTS = [
+    (
+        """FIG_56H_PER_GENE_TRACE_RGBA = None
+try:
+    FISH_PLOTS_DIR_56H = Path(FISH_DIR) / '04_plots'
+""",
+        """FIG_56H_PER_GENE_TRACE_RGBA = None
+FIG_56H_SST12_EVENT_TRACE = None
+FIG_56H_SST12_EVENT_TRACE_PATH = None
+FIG_56H_SST12_EVENT_TRACE_RGBA = None
+SST12_CONTRA_LC_EVENT_TRACE_TARGET_56H = None
+try:
+    FISH_PLOTS_DIR_56H = Path(FISH_DIR) / '04_plots'
+""",
+    ),
+    (
+        """                                        'is_low_activity': bool(row.get('is_low_activity', False)),
+                                    },
+                                )
+                                cacc['segs'].append(seg)
+""",
+        """                                        'is_low_activity': bool(row.get('is_low_activity', False)),
+                                        'response_class': row.get('response_class', None),
+                                        'response_summary_class': row.get('response_summary_class', None),
+                                        'response_is_active': row.get('response_is_active', None),
+                                    },
+                                )
+                                cacc['segs'].append(seg)
+""",
+    ),
+    (
+        """                                    'is_low_activity': bool(cacc.get('is_low_activity', False)),
+                                }
+                                panel_gene_cells[roi_key] = entry
+""",
+        """                                    'is_low_activity': bool(cacc.get('is_low_activity', False)),
+                                    'response_class': cacc.get('response_class', None),
+                                    'response_summary_class': cacc.get('response_summary_class', None),
+                                    'response_is_active': cacc.get('response_is_active', None),
+                                    'segments': arr.copy(),
+                                }
+                                panel_gene_cells[roi_key] = entry
+""",
+    ),
+    (
+        """    if out_dir is not None:
+        out_path = out_dir / 'per_gene_stimulus_trace_with_hcr_status_56h.png'
+        fig_pg.savefig(out_path, dpi=FIG_SAVE_DPI, bbox_inches='tight')
+        fig_pg.savefig(out_path.with_suffix('.pdf'), bbox_inches='tight')
+        FIG_56H_PER_GENE_TRACE_PATH = str(out_path)
+        print(f"[56h] Saved merged per-gene trace + HCR status figure to {out_path}")
+
+    plt.show()
+""",
+        """    if out_dir is not None:
+        out_path = out_dir / 'per_gene_stimulus_trace_with_hcr_status_56h.png'
+        fig_pg.savefig(out_path, dpi=FIG_SAVE_DPI, bbox_inches='tight')
+        fig_pg.savefig(out_path.with_suffix('.pdf'), bbox_inches='tight')
+        FIG_56H_PER_GENE_TRACE_PATH = str(out_path)
+        print(f"[56h] Saved merged per-gene trace + HCR status figure to {out_path}")
+
+    _sst12_gene_56h = 'sst1.2'
+    _sst12_panel_56h = 'contra_LC'
+    _sst12_roi_map_56h = (results_per_cell.get(_sst12_panel_56h, {}) or {}).get(_sst12_gene_56h, {})
+    if not _sst12_roi_map_56h:
+        print('[56h] No sst1.2 contra-continuous per-cell traces available for all-events diagnostic.')
+    else:
+        _sst12_mode_56h = 'LC'
+        _sst12_dur_vals_56h = mode_durations.get(_sst12_mode_56h, [])
+        _sst12_stim_dur_56h = np.nan
+        if isinstance(_sst12_dur_vals_56h, (list, tuple, np.ndarray)) and len(_sst12_dur_vals_56h) > 0:
+            _sst12_stim_dur_56h = float(np.nanmedian(np.asarray(_sst12_dur_vals_56h, dtype=float)))
+        _sst12_score_mask_56h = tvec >= 0
+        if np.isfinite(_sst12_stim_dur_56h) and _sst12_stim_dur_56h > 0:
+            _sst12_score_mask_56h = (tvec >= 0) & (tvec <= _sst12_stim_dur_56h)
+        if int(np.count_nonzero(_sst12_score_mask_56h)) < 1:
+            _sst12_score_mask_56h = tvec >= 0
+
+        _sst12_candidates_56h = []
+        for _roi_key_56h, _cell_res_56h in _sst12_roi_map_56h.items():
+            _mean_56h = np.asarray(_cell_res_56h.get('mean', []), dtype=float)
+            _segments_56h = np.asarray(_cell_res_56h.get('segments', []), dtype=float)
+            if _mean_56h.size != tvec.size or _segments_56h.ndim != 2 or _segments_56h.shape[1] != tvec.size:
+                continue
+            _score_56h = float(np.nanmean(_mean_56h[_sst12_score_mask_56h]))
+            if not np.isfinite(_score_56h):
+                _score_56h = float(np.nanmax(_mean_56h[_sst12_score_mask_56h]))
+            if np.isfinite(_score_56h):
+                _sst12_candidates_56h.append((_score_56h, _roi_key_56h, _cell_res_56h))
+
+        if not _sst12_candidates_56h:
+            print('[56h] No finite sst1.2 contra-continuous event segments available for all-events diagnostic.')
+        else:
+            _sst12_score_56h, _sst12_roi_key_56h, _sst12_cell_res_56h = max(_sst12_candidates_56h, key=lambda item: item[0])
+            _sst12_segments_56h = np.asarray(_sst12_cell_res_56h.get('segments', []), dtype=float)
+            _sst12_mean_56h = np.asarray(_sst12_cell_res_56h.get('mean', []), dtype=float)
+            _sst12_plot_segments_56h = _sst12_segments_56h[:, plot_mask]
+            _sst12_plot_mean_56h = _sst12_mean_56h[plot_mask]
+
+            fig_sst12, ax_sst12 = plt.subplots(figsize=(FIG_WIDTH_DEFAULT_IN * 0.78, 3.4))
+            for _idx_56h, _seg_56h in enumerate(_sst12_plot_segments_56h):
+                _label_56h = 'individual events' if _idx_56h == 0 else None
+                ax_sst12.plot(plot_tvec, _seg_56h, color='#8c8c8c', linewidth=0.9, alpha=0.42, label=_label_56h)
+            ax_sst12.plot(
+                plot_tvec,
+                _sst12_plot_mean_56h,
+                color=GENE_COLORS.get(_sst12_gene_56h, '#d61ad2'),
+                linewidth=2.4,
+                alpha=0.96,
+                label='event mean',
+            )
+            if np.isfinite(_sst12_stim_dur_56h) and _sst12_stim_dur_56h > 0:
+                _stim_start_local_56h = max(0.0, segment_xmin)
+                _stim_end_local_56h = min(float(_sst12_stim_dur_56h), segment_xmax)
+                if _stim_end_local_56h > _stim_start_local_56h:
+                    ax_sst12.axvspan(
+                        _stim_start_local_56h,
+                        _stim_end_local_56h,
+                        color=_condition_bg_color_56h(_sst12_panel_56h),
+                        alpha=PER_GENE_TRACE_STIM_BG_ALPHA,
+                        zorder=0,
+                    )
+            if segment_xmin <= 0.0 <= segment_xmax:
+                ax_sst12.axvline(0.0, color='k', linestyle='--', linewidth=0.9, alpha=0.75)
+            ax_sst12.axhline(0.0, color='k', linewidth=0.8, alpha=0.55)
+            ax_sst12.set_xlim(segment_xmin, segment_xmax)
+            ax_sst12.set_ylim(PER_GENE_TRACE_YMIN, PER_GENE_TRACE_YMAX)
+            ax_sst12.set_xlabel('Time from stimulus onset (s)')
+            ax_sst12.set_ylabel('z-scored dF/F')
+            _sst12_response_label_56h = str(_sst12_cell_res_56h.get('response_class') or 'response class unavailable')
+            ax_sst12.set_title(
+                f"{FISH_ID} sst1.2 contra continuous all events | "
+                f"plane={int(_sst12_cell_res_56h.get('plane'))}, func_label={int(_sst12_cell_res_56h.get('func_label'))}, "
+                f"events={int(_sst12_segments_56h.shape[0])}, {_sst12_response_label_56h}"
+            )
+            ax_sst12.legend(loc='upper right', frameon=False, fontsize=8)
+            fig_sst12.tight_layout()
+
+            FIG_56H_SST12_EVENT_TRACE = fig_sst12
+            SST12_CONTRA_LC_EVENT_TRACE_TARGET_56H = {
+                'fish_id': str(FISH_ID),
+                'gene': _sst12_gene_56h,
+                'panel': _sst12_panel_56h,
+                'plane': int(_sst12_cell_res_56h.get('plane')),
+                'roi_idx': int(_sst12_cell_res_56h.get('roi_idx')),
+                'func_label': int(_sst12_cell_res_56h.get('func_label')),
+                'anat_label': _sst12_cell_res_56h.get('anat_label'),
+                'n_events': int(_sst12_segments_56h.shape[0]),
+                'selection_score_mean_z_during_continuous': float(_sst12_score_56h),
+                'response_class': _sst12_cell_res_56h.get('response_class'),
+                'response_summary_class': _sst12_cell_res_56h.get('response_summary_class'),
+                'is_low_activity': bool(_sst12_cell_res_56h.get('is_low_activity', False)),
+            }
+            try:
+                fig_sst12.canvas.draw()
+                FIG_56H_SST12_EVENT_TRACE_RGBA = np.asarray(fig_sst12.canvas.buffer_rgba()).copy()
+            except Exception:
+                FIG_56H_SST12_EVENT_TRACE_RGBA = None
+
+            if out_dir is not None:
+                out_path_sst12 = out_dir / 'sst12_contra_continuous_event_traces_56h.png'
+                fig_sst12.savefig(out_path_sst12, dpi=FIG_SAVE_DPI, bbox_inches='tight')
+                fig_sst12.savefig(out_path_sst12.with_suffix('.pdf'), bbox_inches='tight')
+                FIG_56H_SST12_EVENT_TRACE_PATH = str(out_path_sst12)
+                print(f"[56h] Saved sst1.2 contra-continuous all-events diagnostic to {out_path_sst12}")
+
+            plt.show()
+
+    plt.show()
+""",
+    ),
+]
+
+_source = _CELL_SOURCE_BY_TAG.get("56h", "")
+for _old, _new in _SST12_EVENT_TRACE_56H_REPLACEMENTS:
+    if _old not in _source:
+        raise RuntimeError("Could not patch [56h] sst1.2 all-events diagnostic source.")
+    _source = _source.replace(_old, _new)
+_CELL_SOURCE_BY_TAG["56h"] = _source
+
+
+_POSTER_TRACE_56H_REPLACEMENTS = [
+    (
+        """FIG_56H_SST12_EVENT_TRACE = None
+FIG_56H_SST12_EVENT_TRACE_PATH = None
+FIG_56H_SST12_EVENT_TRACE_RGBA = None
+SST12_CONTRA_LC_EVENT_TRACE_TARGET_56H = None
+try:
+""",
+        """FIG_56H_SST12_EVENT_TRACE = None
+FIG_56H_SST12_EVENT_TRACE_PATH = None
+FIG_56H_SST12_EVENT_TRACE_RGBA = None
+SST12_CONTRA_LC_EVENT_TRACE_TARGET_56H = None
+FIG_56H_POSTER_TRACE = None
+FIG_56H_POSTER_TRACE_PATH = None
+FIG_56H_POSTER_TRACE_RGBA = None
+try:
+""",
+    ),
+    (
+        """    _sst12_gene_56h = 'sst1.2'
+    _sst12_panel_56h = 'contra_LC'
+""",
+        """    _poster_gene_order_56h = ['sst1.1', 'sst1.2', 'cfos', 'pth2', 'npy', 'tac3b']
+    _poster_gene_colors_56h = {
+        'sst1.1': '#d62728',
+        'sst1.2': '#2ca02c',
+        'cfos': '#08306b',
+        'pth2': '#00bcd4',
+        'npy': '#d61ad2',
+        'tac3b': '#ffd400',
+    }
+    _poster_genes_56h = [
+        _gene_56h
+        for _gene_56h in _poster_gene_order_56h
+        if any((results.get(_panel_56h, {}) or {}).get(_gene_56h, None) is not None for _panel_56h in PLOT_ORDER)
+    ]
+    if not _poster_genes_56h:
+        print('[56h] No requested poster genes available for one-row average-trace figure.')
+    else:
+        fig_poster, ax_poster = plt.subplots(figsize=(FIG_WIDTH_DEFAULT_IN, 3.2))
+        _poster_block_seen_labels_56h = set()
+        for _panel_56h in PLOT_ORDER:
+            _x_block_56h = plot_tvec + block_offsets[_panel_56h]
+            _bg_color_56h = _condition_bg_color_56h(_panel_56h)
+            ax_poster.axvspan(
+                block_starts[_panel_56h],
+                block_ends[_panel_56h],
+                color=_bg_color_56h,
+                alpha=PER_GENE_TRACE_BLOCK_BG_ALPHA,
+                zorder=0,
+            )
+            _mode_56h = 'LB' if _panel_56h.endswith('LB') else 'LC'
+            _dur_vals_56h = mode_durations.get(_mode_56h, [])
+            if isinstance(_dur_vals_56h, (list, tuple, np.ndarray)) and len(_dur_vals_56h) > 0:
+                _stim_dur_56h = float(np.nanmedian(np.asarray(_dur_vals_56h, dtype=float)))
+                if np.isfinite(_stim_dur_56h) and _stim_dur_56h > 0:
+                    _stim_start_local_56h = max(0.0, segment_xmin)
+                    _stim_end_local_56h = min(float(_stim_dur_56h), segment_xmax)
+                    if _stim_end_local_56h > _stim_start_local_56h:
+                        ax_poster.axvspan(
+                            block_offsets[_panel_56h] + _stim_start_local_56h,
+                            block_offsets[_panel_56h] + _stim_end_local_56h,
+                            color=_bg_color_56h,
+                            alpha=PER_GENE_TRACE_STIM_BG_ALPHA,
+                            zorder=0,
+                        )
+            if segment_xmin <= 0.0 <= segment_xmax:
+                ax_poster.axvline(onset_positions[_panel_56h], color='k', linestyle='--', linewidth=0.85, alpha=0.65)
+            for _gene_56h in _poster_genes_56h:
+                _gene_res_56h = (results.get(_panel_56h, {}) or {}).get(_gene_56h, None)
+                if _gene_res_56h is None:
+                    continue
+                _gene_mean_56h = np.asarray(_gene_res_56h.get('mean', []), dtype=float)
+                if _gene_mean_56h.size != tvec.size:
+                    continue
+                _label_56h = _gene_56h if _gene_56h not in _poster_block_seen_labels_56h else None
+                ax_poster.plot(
+                    _x_block_56h,
+                    _gene_mean_56h[plot_mask],
+                    color=_poster_gene_colors_56h.get(_gene_56h, '#666666'),
+                    linewidth=2.0,
+                    alpha=0.96,
+                    label=_label_56h,
+                )
+                _poster_block_seen_labels_56h.add(_gene_56h)
+
+        ax_poster.axhline(0.0, color='k', linewidth=0.8, alpha=0.55)
+        ax_poster.set_xlim(*merged_xlim)
+        ax_poster.set_ylim(PER_GENE_TRACE_YMIN, PER_GENE_TRACE_YMAX)
+        ax_poster.set_xticks(merged_xticks)
+        ax_poster.set_xticklabels(merged_xticklabels)
+        ax_poster.set_ylabel('z-scored dF/F')
+        ax_poster.set_title('Stimulus-averaged responses by neuronal type')
+        ax_poster.legend(loc='upper right', ncol=3, frameon=False, fontsize=8)
+        fig_poster.tight_layout()
+
+        FIG_56H_POSTER_TRACE = fig_poster
+        try:
+            fig_poster.canvas.draw()
+            FIG_56H_POSTER_TRACE_RGBA = np.asarray(fig_poster.canvas.buffer_rgba()).copy()
+        except Exception:
+            FIG_56H_POSTER_TRACE_RGBA = None
+
+        if out_dir is not None:
+            out_path_poster = out_dir / 'poster_single_row_average_traces_56h.png'
+            fig_poster.savefig(out_path_poster, dpi=FIG_SAVE_DPI, bbox_inches='tight')
+            fig_poster.savefig(out_path_poster.with_suffix('.pdf'), bbox_inches='tight')
+            FIG_56H_POSTER_TRACE_PATH = str(out_path_poster)
+            print(f"[56h] Saved poster one-row average-trace figure to {out_path_poster}")
+
+        plt.show()
+
+    _sst12_gene_56h = 'sst1.2'
+    _sst12_panel_56h = 'contra_LC'
+""",
+    ),
+]
+
+_source = _CELL_SOURCE_BY_TAG.get("56h", "")
+for _old, _new in _POSTER_TRACE_56H_REPLACEMENTS:
+    if _old not in _source:
+        raise RuntimeError("Could not patch [56h] poster average-trace source.")
+    _source = _source.replace(_old, _new)
+_CELL_SOURCE_BY_TAG["56h"] = _source
+
+
 def _validate_22c_midline_commit_source() -> None:
     source = _CELL_SOURCE_BY_TAG.get("22c", "")
     required_snippets = (

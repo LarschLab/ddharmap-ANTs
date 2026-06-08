@@ -1,5 +1,5 @@
 owner,fish_id,fish_dir,ok,n_pairs_in,n_pairs_used,n_pairs_with_side,n_trial_rows,n_trace_segments,fps,notes
-Matilde,L395_f11,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L395_f11,True,25,25,25,600,400,2.0,ok
-Matilde,L396_f01,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f01,True,4,4,4,96,64,2.0,ok
-Matilde,L396_f03,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f03,True,25,25,25,600,400,2.0,ok
-Matilde,L396_f04,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f04,True,15,15,15,360,240,2.0,ok
+Matilde,L395_f11,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L395_f11,True,38,38,38,912,848,2.0,ok
+Matilde,L396_f01,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f01,True,23,23,23,552,368,2.0,ok
+Matilde,L396_f03,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f03,True,58,57,57,1368,1072,2.0,ok
+Matilde,L396_f04,/Volumes/jlarsch/default/D2c/07_Data/Matilde/Microscopy/L396_f04,True,33,33,28,672,592,2.0,ok

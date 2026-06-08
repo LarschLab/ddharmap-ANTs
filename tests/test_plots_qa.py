@@ -251,6 +251,33 @@ class PlotsQaTests(unittest.TestCase):
             self.assertEqual(len(result["saved_paths"]), 1)
             self.assertTrue(Path(result["saved_paths"][0]).exists())
 
+    def test_inplane_method_comparison_infers_reversed_anatomy_label_z_mode(self) -> None:
+        anat = np.zeros((3, 20, 20), dtype=np.float32)
+        anat[2, 6:14, 6:14] = 1.0
+        anat_labels = np.zeros((3, 20, 20), dtype=np.uint32)
+        anat_labels[0, 6:14, 6:14] = 4
+        anat_labels[2, 0:8, 0:8] = 9
+        plane_ref = {
+            "label": "plane0",
+            "best_z": 2,
+            "inplane_registration": {
+                "ncc_xy": {"display_warped": np.ones((20, 20), dtype=np.float32), "post_ncc": 0.7},
+                "ants_rigid_affine": {"display_warped": np.ones((20, 20), dtype=np.float32), "post_ncc": 0.8},
+            },
+        }
+
+        result = show_inplane_registration_method_comparison_stage(
+            plane_refs=[plane_ref],
+            anat=anat,
+            anat_labels_all=anat_labels,
+            render_display=False,
+            save_outputs=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(plane_ref["anat_label_z_mode"], "reverse")
+        self.assertTrue(any("inferred anatomy-label Z mode: reverse" in line for line in result["log_lines"]))
+
     def test_inplane_method_comparison_falls_back_when_method_or_square_missing(self) -> None:
         anat = np.zeros((1, 8, 8), dtype=np.float32)
         plane_refs = [

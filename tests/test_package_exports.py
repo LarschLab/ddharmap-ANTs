@@ -104,6 +104,7 @@ from codeants_2pf_hcr import (
     render_suite2p_stimulus_locked_trace_panels,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
+    render_cohort_56h_fish_average_poster_traces,
     render_cohort_56h_status_donut_grid,
     render_cohort_motion_auc,
     hungarian_match,
@@ -286,6 +287,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_suite2p_stimulus_locked_trace_panels)
     assert callable(render_cohort_56g_diagnostics)
     assert callable(render_cohort_56h_by_fish)
+    assert callable(render_cohort_56h_fish_average_poster_traces)
     assert callable(render_cohort_56h_status_donut_grid)
     assert callable(render_cohort_motion_auc)
     assert callable(resolve_conf_func_csv_analysis)

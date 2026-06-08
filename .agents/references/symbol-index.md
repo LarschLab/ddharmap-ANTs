@@ -94,6 +94,7 @@ Generated manually for the current extracted package surface.
 - `FunctionalRoiIdentityConfig`: Typed per-ROI identity export configuration for notebook cell `[50i]`.
 - `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
 - `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
+- `resolve_anatomy_label_z`: Map an anatomy-intensity `best_z` to the corresponding anatomy-label stack page, including reversed label stacks.
 - `resample_labels_nn`: Apply nearest-neighbor label resampling for functional-to-anatomy plane warps and shape harmonization.
 - `resample_image`: Apply intensity-image resampling for functional-to-anatomy plane warps, including ANTs transform dictionaries.
 - `transform_points_between_spaces`: Transform 2D points between functional/moving and anatomy/fixed spaces for skimage and ANTs in-plane transform objects.
@@ -214,7 +215,9 @@ Generated manually for the current extracted package surface.
 - `render_single_fish_50l_gene_auc_panel`: Render the single-fish `[50l]` marker-specific ipsi/contra AUC box/point/count-strip panels from the package-owned motion AUC point/count tables.
 - `render_single_fish_50l_global_auc_panel`: Render the single-fish `[50l]` all-neurons ipsi/contra AUC panels as paired bout↔continuous ROI points with class-colored directional highlights, neutral non-directional classes, directional class-mean summaries, and unchanged count strips.
 - `render_single_fish_50l_composite`: Render notebook stage `[50l]` as one package-owned composite, including stale `[56i]` AUC cache rebuilding, BPI panel, response/BPI donut, AUC panels, legacy figure globals, and `compound_50j_56i_unified.png/.pdf`.
+- `render_single_fish_50l_population_response_donut_poster`: Render a standalone poster-scale `[50l]` population response donut with original response-status inner classes and collision-aware perimeter indicators.
 - `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
+- `render_cohort_56h_fish_average_poster_traces`: Render a gene-row cohort [56h]-style poster trace figure with equal-weight fish-averaged gene traces and SEM across fish.
 - `render_cohort_56g_diagnostics`: Render cohort [56g] activity/BPI diagnostic 2x2 panel from `cohort_bpi_cells_df`.
 - `render_cohort_motion_auc`: Render cohort [cohort-auc] motion-window AUC figure; supports cached aggregate CSV reuse or per-fish aggregation fallback, optional global-median-label suppression, and mode-colored median labels.
 - `render_cohort_56h_status_donut_grid`: Render cohort fish×gene HCR-status donut grid and export summary counts table.

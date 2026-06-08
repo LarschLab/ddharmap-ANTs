@@ -21,6 +21,8 @@
 - Downstream HCR-centric consumers are expected to require response-aware columns and fail fast if missing.
 - Multi-session single-fish functional preprocessing can map later output planes to later imaging sessions; response/BPI and `[56i]` AUC consumers should use per-plane stimulus contexts rather than assuming one latest metadata/log CSV applies to all planes. If preprocessing metadata is missing but explicit session logs exist, stimulus-context resolution can infer an equal contiguous split across sessions and records that provenance.
 - `[50l]` is now package-rendered by `plots.analysis.render_single_fish_50l_composite`; its notebook cell should remain a thin wrapper around canonical `[50ia]` and `[56i]` tables.
+- `[56h]` includes an auto-selected `sst1.2` contra-continuous all-events trace diagnostic for sanity-checking a suspicious mean response; it is diagnostic only and does not change response semantics.
+- `[56h]` includes a poster-only one-row average-trace figure with fixed gene colors; it is not an authoritative table or response-definition output.
 - `[57a-responsive-identity-donut]` is a downstream hybrid figure only; it does not redefine upstream geometry/response semantics from `[50i]`/`[50ia]`.
 - `[4c]` path audits may report stage-owned path keys as `pending` before their writer stage initializes them; treat `warn` as path drift/mismatch and `fail` as stale or missing canonical state.
 - Notebook-visible QA image stages should not rely on an import-time `Agg` backend override; package renderers are expected to display figures explicitly in notebook contexts while remaining save-safe in headless runs.

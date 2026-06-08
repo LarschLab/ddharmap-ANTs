@@ -96,6 +96,66 @@ except Exception:
     FIG_56H_COHORT_RGBA = None
 plt.show()
 """,
+    "56h-cohort-poster": """# [56h-cohort-poster] Fish-averaged single-row poster traces
+from codeants_2pf_hcr.plots.analysis import render_cohort_56h_fish_average_poster_traces
+from codeants_2pf_hcr import count_trace_genes, load_cohort_analysis_state
+
+POSTER_56H_GENE_COLORS = {
+    "sst1.1": "#d62728",
+    "sst1.2": "#008000",
+    "cfos": "#003f8c",
+    "pth2": "#00bcd4",
+    "npy": "#d61ad2",
+    "tac3b": "#ffd400",
+}
+POSTER_56H_GENE_ORDER = ["sst1.1", "sst1.2", "cfos", "pth2", "npy", "tac3b"]
+
+state_bindings = {}
+if not all(k in globals() for k in [
+    "cohort_results_stim_ipsi_contra_by_fish",
+    "cohort_tvec",
+]):
+    state_bindings = load_cohort_analysis_state(
+        COHORT_BUILD_CONFIG,
+        outdir=COHORT_OUTDIR,
+        load_tables=True,
+        load_trace_cache=True,
+        load_cohort_53a_tables=False,
+        verbose=True,
+    )["bindings"]
+
+results_by_fish = state_bindings.get("cohort_results_stim_ipsi_contra_by_fish", globals().get("cohort_results_stim_ipsi_contra_by_fish", {}))
+tvec = state_bindings.get("cohort_tvec", globals().get("cohort_tvec", np.asarray([], dtype=np.float32)))
+mode_durations = state_bindings.get("cohort_mode_durations", globals().get("cohort_mode_durations", {}))
+cohort_fish_summary_local = state_bindings.get("cohort_fish_summary_df", globals().get("cohort_fish_summary_df", pd.DataFrame()))
+
+if not isinstance(results_by_fish, dict) or (count_trace_genes(results_by_fish, PLOT_ORDER, nested=True) == 0):
+    raise RuntimeError("cohort_results_stim_ipsi_contra_by_fish missing or stale; rerun [cohort-build] with FORCE_COHORT_BUILD=True.")
+
+render_56h_poster = render_cohort_56h_fish_average_poster_traces(
+    results_by_fish=results_by_fish,
+    tvec=tvec,
+    mode_durations=mode_durations,
+    cohort_fish_summary_df=cohort_fish_summary_local,
+    gene_order=POSTER_56H_GENE_ORDER,
+    gene_colors=POSTER_56H_GENE_COLORS,
+    plot_order=PLOT_ORDER,
+    plot_titles=PLOT_TITLES,
+    min_segments=MIN_SEGMENTS,
+    min_cells=MIN_CELLS,
+    y_limits=(-5.0, 10.0),
+    out_path=COHORT_OUTDIR / "cohort_56h_fish_average_poster_traces.png",
+)
+COHORT_56H_POSTER_N_FISH_DF = render_56h_poster["summary_df"].copy()
+FIG_56H_POSTER_LAST = render_56h_poster["fig"]
+try:
+    FIG_56H_POSTER_LAST.canvas.draw()
+    FIG_56H_POSTER_RGBA = np.asarray(FIG_56H_POSTER_LAST.canvas.buffer_rgba()).copy()
+except Exception:
+    FIG_56H_POSTER_RGBA = None
+display(COHORT_56H_POSTER_N_FISH_DF)
+plt.show()
+""",
     "56g-cohort": """# [56g-cohort] Cohort BPI/activity diagnostics (2x2)
 from codeants_2pf_hcr.plots.analysis import render_cohort_56g_diagnostics
 from codeants_2pf_hcr import load_cohort_analysis_state

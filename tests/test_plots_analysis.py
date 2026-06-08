@@ -10,6 +10,7 @@ import pandas as pd
 
 from codeants_2pf_hcr.plots.analysis import (
     _single_fish_50l_auc_cache_stale_reasons,
+    render_cohort_56h_fish_average_poster_traces,
     render_cohort_56h_status_donut_grid,
     render_cohort_50l_responsive_identity_donut_row,
     render_cohort_motion_auc,
@@ -1278,6 +1279,100 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertEqual(inner_total, int(row["n_total_hq_masks"]))
             self.assertEqual(outer_total, int(row["n_total_hq_masks"]))
             self.assertTrue(Path(out["out_path"]).exists())
+
+    def test_render_cohort_56h_fish_average_poster_traces_uses_equal_fish_weight_and_sem(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            tvec = np.linspace(-10.0, 30.0, 5)
+            plot_order = ["contra_LB", "ipsi_LB", "contra_LC", "ipsi_LC"]
+            gene_order = ["sst1.1", "sst1.2"]
+            results_by_fish = {
+                "fish_a": {
+                    "contra_LB": {
+                        "sst1.1": {"mean": np.array([0, 1, 2, 3, 4], dtype=float), "n_segments": 100, "n_cells": 10},
+                        "sst1.2": {"mean": np.array([1, 1, 1, 1, 1], dtype=float), "n_segments": 8, "n_cells": 2},
+                        "cort": {"mean": np.array([9, 9, 9, 9, 9], dtype=float), "n_segments": 8, "n_cells": 2},
+                    },
+                    "contra_LC": {
+                        "sst1.1": {"mean": np.array([2, 2, 2, 2, 2], dtype=float), "n_segments": 7, "n_cells": 2},
+                    },
+                    "ipsi_LB": {
+                        "sst1.1": {"mean": np.array([4, 4, 4, 4, 4], dtype=float), "n_segments": 7, "n_cells": 2},
+                    },
+                    "ipsi_LC": {
+                        "sst1.1": {"mean": np.array([5, 5, 5, 5, 5], dtype=float), "n_segments": 7, "n_cells": 2},
+                    },
+                },
+                "fish_b": {
+                    "contra_LB": {
+                        "sst1.1": {"mean": np.array([10, 11, 12, 13, 14], dtype=float), "n_segments": 3, "n_cells": 1},
+                        "sst1.2": {"mean": np.array([3, 3, 3, 3, 3], dtype=float), "n_segments": 8, "n_cells": 2},
+                    },
+                    "contra_LC": {
+                        "sst1.1": {"mean": np.array([6, 6, 6, 6, 6], dtype=float), "n_segments": 7, "n_cells": 2},
+                    },
+                    "ipsi_LB": {
+                        "sst1.1": {"mean": np.array([8, 8, 8, 8, 8], dtype=float), "n_segments": 7, "n_cells": 2},
+                    },
+                    "ipsi_LC": {
+                        "sst1.1": {"mean": np.array([9, 9, 9, 9, 9], dtype=float), "n_segments": 7, "n_cells": 2},
+                    },
+                },
+            }
+
+            out = render_cohort_56h_fish_average_poster_traces(
+                results_by_fish=results_by_fish,
+                tvec=tvec,
+                mode_durations={"LB": [10.0], "LC": [20.0]},
+                cohort_fish_summary_df=pd.DataFrame({"ok": [True, True]}),
+                gene_order=gene_order,
+                gene_colors={"sst1.1": "#ff0000", "sst1.2": "#008000"},
+                plot_order=plot_order,
+                plot_titles={
+                    "contra_LB": "Contra bout",
+                    "ipsi_LB": "Ipsi bout",
+                    "contra_LC": "Contra continuous",
+                    "ipsi_LC": "Ipsi continuous",
+                },
+                min_segments=3,
+                min_cells=1,
+                y_limits=(-5.0, 6.0),
+                out_path=root / "poster.png",
+            )
+
+            summary = out["summary_df"]
+            self.assertEqual(out["genes"], gene_order)
+            sst11_lb = summary[(summary["panel"] == "contra_LB") & (summary["gene"] == "sst1.1")].iloc[0]
+            self.assertEqual(int(sst11_lb["n_fish"]), 2)
+            self.assertEqual(int(sst11_lb["n_cells_total"]), 11)
+            self.assertEqual(int(sst11_lb["n_segments_total"]), 103)
+            self.assertTrue(Path(out["out_path"]).exists())
+            self.assertTrue(Path(out["summary_csv"]).exists())
+            axes = out["fig"].axes
+            self.assertEqual(len(axes), 2)
+            for ax, gene in zip(axes, gene_order, strict=False):
+                self.assertIsNone(ax.get_legend())
+                self.assertEqual(tuple(ax.get_ylim()), (-5.0, 6.0))
+                self.assertEqual(list(ax.get_yticks()), [-5.0, 0.0, 6.0])
+                gene_labels = [text for text in ax.texts if text.get_text() == gene]
+                self.assertEqual(len(gene_labels), 1)
+                self.assertEqual(gene_labels[0].get_color(), "black")
+                self.assertEqual(gene_labels[0].get_fontstyle(), "italic")
+            self.assertFalse(axes[0].get_xticklabels())
+            self.assertEqual(
+                [tick.get_text() for tick in axes[-1].get_xticklabels()],
+                ["Contra bout", "Ipsi bout", "Contra continuous", "Ipsi continuous"],
+            )
+            first_gene_lines = [
+                line
+                for line in axes[0].lines
+                if line.get_color() == "#ff0000" and len(line.get_ydata()) == tvec.size
+            ]
+            self.assertEqual(len(first_gene_lines), 4)
+            first_gene_line = first_gene_lines[0]
+            np.testing.assert_allclose(first_gene_line.get_ydata(), np.array([5, 6, 7, 8, 9], dtype=float))
+            self.assertEqual(first_gene_line.get_color(), "#ff0000")
+            plt.close(out["fig"])
 
     def test_render_cohort_56h_status_donut_grid_missing_summary_fails_fast(self) -> None:
         with TemporaryDirectory() as tmpdir:

@@ -946,7 +946,7 @@ def _resolve_environment(cfg: CohortBuildConfig) -> dict[str, Any]:
     data_mode = str(cfg.data_mode).strip().lower()
     data_mode = "local" if data_mode == "local" else "nas"
     nas_root = _default_nas_root()
-    local_root = _default_local_root()
+    local_root = _default_local_root() if data_mode == "local" else None
     data_root = local_root if data_mode == "local" else nas_root
     matching_metadata_csv = (
         Path(cfg.matching_metadata_csv_override)

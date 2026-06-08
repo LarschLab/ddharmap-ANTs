@@ -16,6 +16,7 @@ _PROFILE_FIGURE_TAGS = {
     "cohort": {
         "53a-cohort",
         "56h-cohort",
+        "56h-cohort-poster",
         "56g-cohort",
         "cohort-auc",
         "cohort-56h-donut-grid",
