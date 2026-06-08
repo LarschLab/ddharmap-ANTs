@@ -2304,6 +2304,7 @@ def render_cohort_56h_fish_average_poster_traces(
     summary_df = pd.DataFrame(summary_rows)
     if summary_df.empty:
         raise RuntimeError("No fish-averaged traces passed the [56h] poster plot thresholds.")
+    y_min, y_max = float(y_limits[0]), float(y_limits[1])
 
     fig_height = max(2.0, 1.35 * len(genes))
     fig, axes = plt.subplots(len(genes), 1, figsize=(16.5, fig_height), sharex=True, squeeze=False)
@@ -2322,8 +2323,9 @@ def render_cohort_56h_fish_average_poster_traces(
             ax.axvline(offsets[panel], color="k", linestyle="--", linewidth=0.85, alpha=0.7)
         ax.axhline(0.0, color="k", linewidth=0.8, alpha=0.6)
         ax.set_xlim(*xlim)
-        ax.set_ylim(float(y_limits[0]), float(y_limits[1]))
-        ax.set_yticks([float(y_limits[0]), 0.0, float(y_limits[1])])
+        ax.set_ylim(y_min, y_max)
+        ax.set_yticks([y_min, 0.0, y_max])
+        ax.set_autoscaley_on(False)
 
     for ax, gene in zip(axes_arr, genes, strict=False):
         color = gene_colors.get(gene, "#777777")
@@ -2358,6 +2360,13 @@ def render_cohort_56h_fish_average_poster_traces(
     n_fish_ok = int(cohort_fish_summary_df.get("ok", pd.Series(dtype=bool)).sum()) if isinstance(cohort_fish_summary_df, pd.DataFrame) else len(fish_order)
     fig.suptitle(f"Cohort fish-averaged stimulus responses (mean +/- SEM across fish; fish n={n_fish_ok})")
     fig.tight_layout(rect=[0.02, 0, 1, 0.96])
+    for ax in axes_arr:
+        ax.set_ylim(y_min, y_max)
+        ax.set_yticks([y_min, 0.0, y_max])
+        ax.set_autoscaley_on(False)
+        actual_y_limits = tuple(float(v) for v in ax.get_ylim())
+        if not np.allclose(actual_y_limits, (y_min, y_max), rtol=0.0, atol=1e-9):
+            raise RuntimeError(f"Cohort [56h] poster y-limits drifted to {actual_y_limits}; expected {(y_min, y_max)}.")
 
     save_path = Path(out_path) if out_path is not None else None
     if save_path is not None:
