@@ -147,9 +147,10 @@ class AnatomyUint8PreprocessingConfig:
     force_recompute_anat_uint8: bool = False
     use_source_path_orig: bool = True
     apply_func_orientation: bool = True
+    flip_z_for_registration: bool = True
     target_xy_shape: tuple[int, int] | None = (750, 750)
     write_registration_nrrd: bool = True
-    cache_version: int = 2
+    cache_version: int = 3
 
 
 def default_nas_root() -> Path:
@@ -419,20 +420,54 @@ def _scanimage_to_pair(value: Any) -> tuple[float, float] | None:
     return None
 
 
+def _scanimage_artist_json(raw: Any) -> str | None:
+    if isinstance(raw, bytes):
+        raw = raw.decode(errors="replace")
+    if raw is None:
+        return None
+    text = str(raw).replace("\x00", "")
+    marker = text.find("Artist")
+    search_from = marker if marker >= 0 else 0
+    start = text.find("{", search_from)
+    if start < 0:
+        start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return None
+
+
 def scanimage_um_per_px_from_artist(tiff_path: Path | str) -> tuple[dict[str, float] | None, str]:
     with tifffile.TiffFile(tiff_path) as tif:
         artist_tag = tif.pages[0].tags.get("Artist")
-        if artist_tag is None:
-            return None, "missing Artist tag"
-        raw = artist_tag.value
-    if isinstance(raw, bytes):
-        raw = raw.decode(errors="replace")
-    raw = raw.replace("\x00", "")
-    match = re.search(r"{.*}", raw, re.S)
-    if match:
-        raw = match.group(0)
+        raw = artist_tag.value if artist_tag is not None else None
+        if raw is None and isinstance(tif.imagej_metadata, dict):
+            raw = tif.imagej_metadata.get("Info")
+    raw_json = _scanimage_artist_json(raw)
+    if raw_json is None:
+        return None, "missing Artist JSON"
     try:
-        data = json.loads(raw)
+        data = json.loads(raw_json)
     except Exception:
         return None, "invalid Artist JSON"
     fov_um = _scanimage_to_pair(_scanimage_find_first(data, "imagingFovUm"))
@@ -1178,7 +1213,7 @@ def _registration_nrrd_header(
     output_xy_shape: tuple[int, int] | None,
 ) -> dict[str, Any]:
     header: dict[str, Any] = {
-        "encoding": "gzip",
+        "encoding": "raw",
         "kinds": ["domain"] * int(write_ndim),
         "labels": labels,
     }
@@ -1348,6 +1383,11 @@ def _resize_uint8_xy(arr: np.ndarray, target_xy_shape: tuple[int, int] | None) -
 def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, str | None]:
     if path.suffix.lower() not in {".tif", ".tiff"}:
         return None, None, None
+    def _imagej_info_value(info: Any, key: str) -> str | None:
+        if not info:
+            return None
+        match = re.search(rf"(?im)^\s*{re.escape(key)}\s*=\s*(.+?)\s*$", str(info))
+        return match.group(1).strip() if match else None
     try:
         with tifffile.TiffFile(path) as tf:
             page0 = tf.pages[0]
@@ -1366,6 +1406,18 @@ def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, st
                 x_res = x_res[0] / x_res[1] if x_res[1] else None
             if isinstance(y_res, tuple) and len(y_res) == 2:
                 y_res = y_res[0] / y_res[1] if y_res[1] else None
+            if unit_name is None or str(unit_name).upper() in {"NONE", "RESUNIT.NONE", "1"}:
+                imagej_info = tf.imagej_metadata.get("Info") if isinstance(tf.imagej_metadata, dict) else None
+                info_unit = _imagej_info_value(imagej_info, "ResolutionUnit")
+                info_x_res = _imagej_info_value(imagej_info, "XResolution")
+                info_y_res = _imagej_info_value(imagej_info, "YResolution")
+                if info_unit and info_x_res and info_y_res:
+                    try:
+                        x_res = float(info_x_res)
+                        y_res = float(info_y_res)
+                        unit_name = str(info_unit)
+                    except Exception:
+                        pass
             return (
                 float(x_res) if x_res is not None else None,
                 float(y_res) if y_res is not None else None,
@@ -1809,6 +1861,7 @@ def preprocess_anatomy_uint8_stage(
             passthrough_uint8_input = True
 
     apply_orientation = bool(cfg.apply_func_orientation)
+    flip_z_for_registration = bool(cfg.flip_z_for_registration)
     target_xy_shape = _normalize_target_xy_shape(cfg.target_xy_shape)
     orient_mode = func_orientation_mode(polarity) if apply_orientation else "none"
     polarity_norm = normalize_polarity_value(polarity)
@@ -1849,6 +1902,7 @@ def preprocess_anatomy_uint8_stage(
                 or (
                     int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
                     and bool(cache_meta.get("apply_func_orientation", False)) == apply_orientation
+                    and bool(cache_meta.get("flip_z_for_registration", False)) == flip_z_for_registration
                     and str(cache_meta.get("orientation_mode", "")) == str(orient_mode)
                     and normalize_polarity_value(cache_meta.get("polarity")) == polarity_norm
                     and cache_target_tuple == target_xy_shape
@@ -1890,6 +1944,7 @@ def preprocess_anatomy_uint8_stage(
             "output_dtype": dtype_name,
             "used_cached_uint8": True,
             "orientation_mode": orient_mode,
+            "flip_z_for_registration": flip_z_for_registration,
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": target_xy_shape,
@@ -1911,6 +1966,9 @@ def preprocess_anatomy_uint8_stage(
                 f"[INFO] Applied anatomy orientation mode={orient_mode} "
                 f"polarity={polarity_norm} source={polarity_source}"
             )
+        if flip_z_for_registration and anat_u8.ndim >= 3:
+            anat_u8 = np.flip(anat_u8, axis=0).copy()
+            log_lines.append("[INFO] Flipped anatomy Z axis to match bottom-to-top confocal registration convention.")
         anat_u8, resized_xy = _resize_uint8_xy(anat_u8, target_xy_shape)
         output_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
         if resized_xy and source_xy_shape is not None and output_xy_shape is not None:
@@ -1947,6 +2005,7 @@ def preprocess_anatomy_uint8_stage(
             "output_path": str(out_path),
             "registration_nrrd_path": str(registration_nrrd_path) if cfg.write_registration_nrrd else None,
             "apply_func_orientation": apply_orientation,
+            "flip_z_for_registration": flip_z_for_registration,
             "orientation_mode": orient_mode,
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
@@ -1979,6 +2038,7 @@ def preprocess_anatomy_uint8_stage(
             "used_cached_uint8": False,
             "apply_func_orientation": apply_orientation,
             "orientation_mode": orient_mode,
+            "flip_z_for_registration": flip_z_for_registration,
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": target_xy_shape,

@@ -13,7 +13,7 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.context`
 
 - `AnatomyNormalizationStageConfig`: Typed anatomy-conversion knob container for notebook cell `[14]`.
-- `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including orientation, cache-version, target Y/X shape, and registration-NRRD write controls.
+- `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including functional XY orientation, anatomy Z flip for same-fish registration, cache-version, target Y/X shape, and registration-NRRD write controls.
 - `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
@@ -32,7 +32,7 @@ Generated manually for the current extracted package surface.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
-- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, writes/backfills the canonical registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd`, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional XY orientation, flips anatomy Z to match bottom-to-top confocal registration convention, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, writes/backfills the canonical uncompressed registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd`, and rebinds `ANAT_STACK_PATH`.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
 - `orient_functional_stacks_stage`: Notebook-facing functional orientation stage for `[10]` that audits legacy full-stack caches and only writes oriented movie stacks when explicitly requested.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.

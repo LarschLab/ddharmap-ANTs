@@ -761,3 +761,17 @@
   - no live notebook rerun was done in this session.
 - Rerun implications:
   - rerunning `[14a]` is enough to backfill the canonical NRRD for fish with existing uint8 anatomy preprocessing output.
+
+### 2026-06-10 - `[14a]` flips anatomy Z for same-fish registration
+
+- Slice goal:
+  - make preprocessed 2P anatomy stacks match the bottom-to-top confocal Z acquisition convention used by downstream same-fish registration.
+- Passes completed in this session:
+  - added a default anatomy Z flip to `preprocess_anatomy_uint8_stage` after functional XY orientation and before registration NRRD writing.
+  - bumped the anatomy uint8 cache version and persisted `flip_z_for_registration` in cache metadata/artifacts so old non-flipped caches rebuild.
+  - changed registration NRRD writing to uncompressed `raw` encoding and added ImageJ `Info` resolution fallback for anatomy TIFFs whose TIFF `ResolutionUnit` tag is `NONE`.
+  - added focused regression coverage for the two-plane Z reversal, raw NRRD encoding, and ImageJ `Info` spacing fallback.
+- What changed:
+  - `[14a]` now emits uncompressed registration-ready anatomy outputs with Z reversed relative to the top-to-bottom 2P anatomy acquisition.
+- Rerun implications:
+  - rerun `[14a]` and downstream same-fish registration stages for fish whose anatomy NRRDs were generated before this change.

@@ -2305,6 +2305,9 @@ def render_cohort_56h_fish_average_poster_traces(
     if summary_df.empty:
         raise RuntimeError("No fish-averaged traces passed the [56h] poster plot thresholds.")
     y_min, y_max = float(y_limits[0]), float(y_limits[1])
+    y_major_ticks = np.array([y_min, 0.0, y_max], dtype=float)
+    y_minor_ticks = np.arange(np.ceil(y_min), np.floor(y_max) + 1.0, 1.0, dtype=float)
+    y_minor_ticks = y_minor_ticks[~np.isin(y_minor_ticks, y_major_ticks)]
 
     fig_height = max(2.0, 1.35 * len(genes))
     fig, axes = plt.subplots(len(genes), 1, figsize=(16.5, fig_height), sharex=True, squeeze=False)
@@ -2324,7 +2327,8 @@ def render_cohort_56h_fish_average_poster_traces(
         ax.axhline(0.0, color="k", linewidth=0.8, alpha=0.6)
         ax.set_xlim(*xlim)
         ax.set_ylim(y_min, y_max)
-        ax.set_yticks([y_min, 0.0, y_max])
+        ax.set_yticks(y_major_ticks)
+        ax.set_yticks(y_minor_ticks, minor=True)
         ax.set_autoscaley_on(False)
 
     for ax, gene in zip(axes_arr, genes, strict=False):
@@ -2362,7 +2366,8 @@ def render_cohort_56h_fish_average_poster_traces(
     fig.tight_layout(rect=[0.02, 0, 1, 0.96])
     for ax in axes_arr:
         ax.set_ylim(y_min, y_max)
-        ax.set_yticks([y_min, 0.0, y_max])
+        ax.set_yticks(y_major_ticks)
+        ax.set_yticks(y_minor_ticks, minor=True)
         ax.set_autoscaley_on(False)
         actual_y_limits = tuple(float(v) for v in ax.get_ylim())
         if not np.allclose(actual_y_limits, (y_min, y_max), rtol=0.0, atol=1e-9):

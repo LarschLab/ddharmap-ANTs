@@ -1354,6 +1354,7 @@ class PlotsAnalysisTests(unittest.TestCase):
                 self.assertIsNone(ax.get_legend())
                 self.assertEqual(tuple(ax.get_ylim()), (-5.0, 6.0))
                 self.assertEqual(list(ax.get_yticks()), [-5.0, 0.0, 6.0])
+                self.assertEqual(list(ax.get_yticks(minor=True)), [-4.0, -3.0, -2.0, -1.0, 1.0, 2.0, 3.0, 4.0, 5.0])
                 gene_labels = [text for text in ax.texts if text.get_text() == gene]
                 self.assertEqual(len(gene_labels), 1)
                 self.assertEqual(gene_labels[0].get_color(), "black")
