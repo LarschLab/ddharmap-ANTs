@@ -110,6 +110,28 @@ def _latest_file(hits: list[Path]) -> Path | None:
     return sorted(set(hits), key=lambda path: (path.stat().st_mtime, path.name))[-1]
 
 
+def _visible_csv_hits(hits: list[Path]) -> list[Path]:
+    return [path for path in hits if path.name.endswith(".csv") and not path.name.startswith(".")]
+
+
+def _session_companion_log_from_metadata(hits: list[Path], fish_id: str, session_label: str | int | None) -> Path | None:
+    metadata_hits = [path for path in hits if "metadata" in path.name.lower() and "experiment_log" not in path.name.lower()]
+    metadata_hits = _filter_session_files(sorted(set(metadata_hits)), fish_id, session_label)
+    metadata_path = _latest_file(metadata_hits)
+    if metadata_path is None:
+        return None
+    stem = metadata_path.stem
+    prefixes = [
+        re.sub(r"_r\d+_metadata$", "", stem),
+        re.sub(r"_metadata$", "", stem),
+    ]
+    for prefix in dict.fromkeys(prefixes):
+        candidate = metadata_path.with_name(f"{prefix}_experiment_log{metadata_path.suffix}")
+        if candidate.exists() and not candidate.name.startswith("."):
+            return candidate
+    return None
+
+
 def find_experiment_log(fish_dir: str | Path, fish_id: str, session_label: str | int | None = None) -> Path | None:
     base = Path(fish_dir) / "01_raw" / "2p" / "metadata"
     if not base.exists():
@@ -118,8 +140,18 @@ def find_experiment_log(fish_dir: str | Path, fish_id: str, session_label: str |
     hits: list[Path] = []
     for pattern in patterns:
         hits.extend(sorted(base.glob(pattern)))
+    hits = _visible_csv_hits(hits)
     hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
-    return _latest_file(hits)
+    latest = _latest_file(hits)
+    if latest is not None:
+        return latest
+    if session_label is None:
+        return None
+    metadata_patterns = [f"*{fish_id}*metadata*.csv", "*metadata*.csv"] if fish_id else ["*metadata*.csv"]
+    metadata_hits: list[Path] = []
+    for pattern in metadata_patterns:
+        metadata_hits.extend(sorted(base.glob(pattern)))
+    return _session_companion_log_from_metadata(_visible_csv_hits(metadata_hits), fish_id, session_label)
 
 
 def find_metadata_csv(fish_dir: str | Path, fish_id: str, session_label: str | int | None = None) -> Path | None:
@@ -130,6 +162,7 @@ def find_metadata_csv(fish_dir: str | Path, fish_id: str, session_label: str | i
     hits: list[Path] = []
     for pattern in patterns:
         hits.extend(sorted(base.glob(pattern)))
+    hits = _visible_csv_hits(hits)
     hits = [path for path in hits if "experiment_log" not in path.name.lower()]
     hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
     return _latest_file(hits)
@@ -151,6 +184,8 @@ def _discover_explicit_stimulus_sessions(fish_dir: str | Path, fish_id: str) -> 
     labels: set[str] = set()
     for pattern in patterns:
         for path in base.glob(pattern):
+            if path.name.startswith("."):
+                continue
             label = _explicit_session_token_in_name(path, fish_id)
             if label is not None:
                 labels.add(label)

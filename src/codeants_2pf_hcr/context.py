@@ -146,9 +146,9 @@ class AnatomyNormalizationStageConfig:
 class AnatomyUint8PreprocessingConfig:
     force_recompute_anat_uint8: bool = False
     use_source_path_orig: bool = True
-    apply_func_orientation: bool = True
+    apply_func_orientation: bool = False
     target_xy_shape: tuple[int, int] | None = (750, 750)
-    cache_version: int = 2
+    cache_version: int = 3
 
 
 class OrientationResolutionError(RuntimeError):

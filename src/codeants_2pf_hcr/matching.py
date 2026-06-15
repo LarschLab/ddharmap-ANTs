@@ -1430,6 +1430,88 @@ def summarize_functional_anatomy_geometry_metrics(
     return pd.DataFrame(rows)
 
 
+def annotate_session_anat_label_duplicates(
+    master_df: pd.DataFrame,
+    *,
+    fish_col: str = "fish_id",
+    session_col: str = "session_label",
+    anat_col: str = "selected_anat_label",
+    match_col: str = "has_unique_anat_match",
+    overlap_col: str = "selected_overlap_px",
+    dist_col: str = "selected_dist_um",
+    plane_col: str = "plane_idx",
+    func_col: str = "func_label",
+) -> pd.DataFrame:
+    """Flag same-anatomy-label ROI duplicates within fish/session after geometry matching."""
+    if master_df is None or master_df.empty:
+        out = pd.DataFrame() if master_df is None else master_df.copy()
+        out["dedup_group_key"] = pd.Series(dtype=object)
+        out["dedup_rank_within_session_anat"] = pd.Series(dtype="Int64")
+        out["is_multiplane_duplicate_roi"] = pd.Series(dtype=bool)
+        out["is_retained_after_multiplane_dedup"] = pd.Series(dtype=bool)
+        out["dedup_outcome"] = pd.Series(dtype=object)
+        return out
+
+    out = master_df.copy()
+    if fish_col not in out.columns:
+        out[fish_col] = pd.NA
+    if session_col not in out.columns:
+        out[session_col] = "unknown"
+    if anat_col not in out.columns:
+        out[anat_col] = pd.NA
+    if match_col in out.columns:
+        matched = _as_bool_array(out[match_col])
+    else:
+        matched = pd.to_numeric(out[anat_col], errors="coerce").notna().to_numpy(dtype=bool)
+
+    anat_key = pd.to_numeric(out[anat_col], errors="coerce").astype("Int64")
+    fish_key = out[fish_col].astype("string").fillna("unknown")
+    session_key = out[session_col].astype("string").fillna("unknown")
+    eligible = pd.Series(matched, index=out.index) & anat_key.notna()
+
+    out["dedup_group_key"] = pd.NA
+    out.loc[eligible, "dedup_group_key"] = (
+        fish_key[eligible].astype(str)
+        + "|"
+        + session_key[eligible].astype(str)
+        + "|anat:"
+        + anat_key[eligible].astype(str)
+    )
+    out["dedup_rank_within_session_anat"] = pd.Series(pd.NA, index=out.index, dtype="Int64")
+    out["is_multiplane_duplicate_roi"] = False
+    out["is_retained_after_multiplane_dedup"] = True
+    out["dedup_outcome"] = "not eligible"
+    out.loc[eligible, "dedup_outcome"] = "retained unique"
+
+    if not bool(eligible.any()):
+        return out
+
+    work = pd.DataFrame(index=out.index[eligible])
+    work["_group"] = out.loc[eligible, "dedup_group_key"].astype(str)
+    work["_overlap"] = pd.to_numeric(out.loc[eligible, overlap_col], errors="coerce") if overlap_col in out.columns else np.nan
+    work["_dist"] = pd.to_numeric(out.loc[eligible, dist_col], errors="coerce") if dist_col in out.columns else np.nan
+    work["_plane"] = pd.to_numeric(out.loc[eligible, plane_col], errors="coerce") if plane_col in out.columns else np.nan
+    work["_func"] = pd.to_numeric(out.loc[eligible, func_col], errors="coerce") if func_col in out.columns else np.nan
+    work["_overlap_sort"] = work["_overlap"].fillna(-np.inf)
+    work["_dist_sort"] = work["_dist"].fillna(np.inf)
+    work["_plane_sort"] = work["_plane"].fillna(np.inf)
+    work["_func_sort"] = work["_func"].fillna(np.inf)
+    work = work.sort_values(
+        ["_group", "_overlap_sort", "_dist_sort", "_plane_sort", "_func_sort"],
+        ascending=[True, False, True, True, True],
+    )
+    ranks = work.groupby("_group", sort=False).cumcount() + 1
+    counts = work.groupby("_group")["_group"].transform("size")
+    out.loc[work.index, "dedup_rank_within_session_anat"] = pd.Series(ranks.to_numpy(), index=work.index, dtype="Int64")
+    duplicate_member = counts.to_numpy() > 1
+    out.loc[work.index, "is_multiplane_duplicate_roi"] = duplicate_member
+    retained = ranks.to_numpy() == 1
+    out.loc[work.index, "is_retained_after_multiplane_dedup"] = retained
+    out.loc[work.index[duplicate_member & retained], "dedup_outcome"] = "retained best geometry"
+    out.loc[work.index[duplicate_member & ~retained], "dedup_outcome"] = "duplicate anatomy label within session"
+    return out
+
+
 def _decorate_hcr_candidates(
     candidate_df: pd.DataFrame,
     *,
@@ -1802,6 +1884,7 @@ __all__ = [
     "build_functional_roi_master_df",
     "build_hcr_activity_tables",
     "build_plane_centroid_matches",
+    "annotate_session_anat_label_duplicates",
     "compute_centroids",
     "compute_label_overlap",
     "gene_from_mask",

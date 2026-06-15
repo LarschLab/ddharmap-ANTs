@@ -13,7 +13,7 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.context`
 
 - `AnatomyNormalizationStageConfig`: Typed anatomy-conversion knob container for notebook cell `[14]`.
-- `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including orientation, cache-version, and target Y/X shape controls.
+- `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including optional orientation, cache-version, and target Y/X shape controls.
 - `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
@@ -33,7 +33,7 @@ Generated manually for the current extracted package surface.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
-- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional orientation, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that preserves anatomy XY by default, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, and rebinds `ANAT_STACK_PATH`.
 - `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `bottom-left`/`top-right` to `north`/`south`, and fail on conflicts.
 - `read_matching_metadata_polarity`: Read the legacy fallback polarity from `matchingMetadata.csv`.
 - `resolve_func_polarity`: Resolve orientation with override support, preferring raw per-fish metadata and falling back to legacy matching metadata.
@@ -66,8 +66,11 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.multifish`
 
 - `MultiFishAnatomySegmentationConfig`: Typed per-fish anatomy segmentation knob container for `multiFish.ipynb`.
+- `MultiFishFunctionalAnatomyMatchConfig`: Typed multi-fish functional-anatomy ROI identity aggregation and session-aware duplicate-flagging knob container for `multiFish.ipynb`.
 - `multifish_anatomy_segmentation_cache_paths`: Resolve MultiFish anatomy segmentation summary outputs under `cohort_outputs/multiFish/`.
-- `run_multifish_anatomy_segmentation_stage`: Notebook-facing owner stage that resolves per-fish orientation from raw metadata with legacy fallback, preprocesses anatomy through the single-fish `[14a]` uint8/orientation/`750x750` contract, then runs/reuses anatomy Cellpose `[24a]` per configured fish and writes a cohort-level segmentation summary.
+- `multifish_functional_anatomy_match_cache_paths`: Resolve MultiFish functional-anatomy ROI identity, summary, and duplicate-summary outputs under `cohort_outputs/multiFish/`.
+- `run_multifish_anatomy_segmentation_stage`: Notebook-facing owner stage that resolves per-fish orientation from raw metadata with legacy fallback, preprocesses anatomy through the single-fish `[14a]` uint8/anatomy-XY/`750x750` contract, then runs/reuses anatomy Cellpose `[24a]` per configured fish and writes a cohort-level segmentation summary.
+- `run_multifish_functional_anatomy_match_stage`: Notebook-facing owner stage that aggregates per-fish `functional_roi_activity_identity.csv`, maps global planes to imaging sessions from preprocessing metadata, flags same-anatomy-label ROI duplicates within fish/session, and writes multiFish ROI identity plus duplicate summary CSVs.
 
 ## `codeants_2pf_hcr.spatial`
 
@@ -115,6 +118,7 @@ Generated manually for the current extracted package surface.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
 - `build_hcr_mask_fate_df`: Reconstruct per-confocal-label match fate rows from `[44]` `hcr_match_results` for downstream rejected-mask QA consumers such as `[50f]` and `[50g]`.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
+- `annotate_session_anat_label_duplicates`: Mark same-anatomy-label functional ROI duplicates within each fish/session while retaining all ROI rows and ranking by geometry.
 - `build_hcr_activity_tables`: Build HCR-centric functional candidate/status tables for `[50]`.
 - `MatchingConfig`: Typed matching-stage knob container.
 

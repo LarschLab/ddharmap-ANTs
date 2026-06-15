@@ -86,7 +86,7 @@ def test_preprocess_anatomy_uint8_stage_handles_constant_signed_stack(tmp_path: 
     assert result["artifacts"]["negative_offset"] == 4
 
 
-def test_preprocess_anatomy_uint8_stage_applies_functional_orientation(tmp_path: Path) -> None:
+def test_preprocess_anatomy_uint8_stage_preserves_anatomy_xy_by_default(tmp_path: Path) -> None:
     preproc_dir = tmp_path / "preproc"
     raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
     raw_path.parent.mkdir(parents=True)
@@ -105,8 +105,35 @@ def test_preprocess_anatomy_uint8_stage_applies_functional_orientation(tmp_path:
     )
 
     out = tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"])
+    assert out.tolist() == [[[0, 85], [170, 255]]]
+    assert result["artifacts"]["orientation_mode"] == "none"
+    assert result["artifacts"]["apply_func_orientation"] is False
+    assert result["artifacts"]["polarity"] == "north"
+
+
+def test_preprocess_anatomy_uint8_stage_can_apply_functional_orientation_when_requested(tmp_path: Path) -> None:
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"
+    raw_path.parent.mkdir(parents=True)
+    stack = np.array([[[1, 2], [3, 4]]], dtype=np.int16)
+    tifffile.imwrite(raw_path, stack)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        preproc_dir=preproc_dir,
+        polarity="north",
+        polarity_source="test",
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=True,
+            target_xy_shape=None,
+        ),
+    )
+
+    out = tifffile.imread(result["bindings"]["ANAT_8BIT_STACK_PATH"])
     assert out.tolist() == [[[170, 255], [0, 85]]]
     assert result["artifacts"]["orientation_mode"] == "rot180+flipX"
+    assert result["artifacts"]["apply_func_orientation"] is True
     assert result["artifacts"]["polarity"] == "north"
 
 

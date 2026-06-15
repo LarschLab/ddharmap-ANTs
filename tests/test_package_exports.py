@@ -15,6 +15,7 @@ from codeants_2pf_hcr import (
     HcrCellposeConfig,
     InPlaneRegistrationComparisonConfig,
     MultiFishAnatomySegmentationConfig,
+    MultiFishFunctionalAnatomyMatchConfig,
     SingleFishBpiDiagnosticsConfig,
     NotebookContractViolation,
     RegistrationSearchConfig,
@@ -32,6 +33,7 @@ from codeants_2pf_hcr import (
     _to_um,
     apply_square_region_mask,
     apply_func_orientation,
+    annotate_session_anat_label_duplicates,
     best_z_by_ncc,
     build_context_audit_stage,
     build_cohort_outputs_stage,
@@ -80,6 +82,7 @@ from codeants_2pf_hcr import (
     norm01,
     normalize_anatomy_stack_stage,
     multifish_anatomy_segmentation_cache_paths,
+    multifish_functional_anatomy_match_cache_paths,
     preprocess_anatomy_uint8_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
@@ -126,6 +129,7 @@ from codeants_2pf_hcr import (
     run_ncc_placement_stage,
     run_registration_search_stage,
     run_multifish_anatomy_segmentation_stage,
+    run_multifish_functional_anatomy_match_stage,
     run_single_fish_cell_22c_stage,
     run_single_fish_cell_30_stage,
     run_single_fish_cell_34c_stage,
@@ -190,6 +194,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(HcrCellposeConfig)
     assert callable(InPlaneRegistrationComparisonConfig)
     assert callable(MultiFishAnatomySegmentationConfig)
+    assert callable(MultiFishFunctionalAnatomyMatchConfig)
     assert callable(SingleFishBpiDiagnosticsConfig)
     assert callable(NotebookContractViolation)
     assert callable(RegistrationSearchConfig)
@@ -207,6 +212,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(_to_um)
     assert callable(apply_square_region_mask)
     assert callable(apply_func_orientation)
+    assert callable(annotate_session_anat_label_duplicates)
     assert callable(best_z_by_ncc)
     assert callable(build_context_audit_stage)
     assert callable(build_cohort_outputs_stage)
@@ -257,6 +263,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(nearest_neighbor_match)
     assert callable(normalize_anatomy_stack_stage)
     assert callable(multifish_anatomy_segmentation_cache_paths)
+    assert callable(multifish_functional_anatomy_match_cache_paths)
     assert callable(preprocess_anatomy_uint8_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
@@ -301,6 +308,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
     assert callable(run_multifish_anatomy_segmentation_stage)
+    assert callable(run_multifish_functional_anatomy_match_stage)
     assert callable(run_single_fish_cell_22c_stage)
     assert callable(run_single_fish_cell_30_stage)
     assert callable(run_single_fish_cell_34c_stage)

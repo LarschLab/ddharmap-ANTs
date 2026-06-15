@@ -315,3 +315,30 @@
   - `conda run -n cellMatching env PYTHONPATH=src python -m unittest tests.test_context.ContextTests.test_resolve_func_polarity_ignores_hidden_raw_metadata_sidecars tests.test_context.ContextTests.test_resolve_func_polarity_prefers_raw_metadata_over_matching_metadata tests.test_context.ContextTests.test_resolve_func_polarity_raises_on_conflicting_raw_metadata`
 - rerun implications:
   - rerun `multiFish.ipynb` `[multifish-anatomy-segmentation]` for affected fish such as `L758_f07`.
+
+### 2026-05-26 - multiFish 23c stimulus lookup skips hidden sidecars
+
+- intent:
+  - allow `multiFish.ipynb` `[cohort-23c-build]` to reuse processed Suite2p outputs when raw metadata folders contain macOS `._*.csv` sidecars or timestamp-matched r2 logs without `_r2` in the log filename.
+- changed:
+  - `stimulus.find_experiment_log` and `find_metadata_csv` now ignore hidden CSV sidecars.
+  - session-specific experiment-log lookup can fall back from an `_r2_metadata.csv` file to the timestamp-matched non-`_r2` `experiment_log.csv`.
+  - copied the missing `L765_f04` r2 metadata/log/schedule CSV bundle from NAS to local dataDrive.
+- validation:
+  - `PYTHONPATH=src pytest -q tests/test_stimulus.py -k 'session_log_lookup or preprocessing_session_planes'`
+  - `PYTHONPATH=src python - <<'PY' ... build_cohort_suite2p_23c_stage(force_build=True) ... PY` now includes all configured fish except `L765_f03`.
+- remaining:
+  - `L765_f03` still has no local or NAS Suite2p plane outputs under `03_analysis/functional/suite2P`; run/copy `[23a]` Suite2p outputs before it can enter `[cohort-23c-build]`.
+
+### 2026-05-26 - multiFish session-aware functional-anatomy duplicate flags
+
+- intent:
+  - aggregate per-fish single-fish ROI identity tables in `multiFish.ipynb` and flag likely duplicate functional ROI representations across planes without merging across imaging sessions.
+- changed:
+  - added `run_multifish_functional_anatomy_match_stage` and `MultiFishFunctionalAnatomyMatchConfig`.
+  - added `annotate_session_anat_label_duplicates`, which groups matched ROIs by `fish_id`, metadata-derived `session_label`, and `selected_anat_label`, ranks by geometry, and keeps all ROI rows with `is_retained_after_multiplane_dedup` flags.
+  - added `multiFish.ipynb` `[multifish-functional-anatomy-match]` to write `multifish_functional_roi_activity_identity.csv`, summary CSV, and duplicate-summary CSV under `cohort_outputs/multiFish/`.
+- validation:
+  - `PYTHONPATH=src pytest -q tests/test_multifish.py tests/test_package_exports.py tests/test_agent_docs.py`
+- rerun implications:
+  - rerun each fish through single-fish `[50i]`/`[50ia]` first when `functional_roi_activity_identity.csv` is missing, then rerun `multiFish.ipynb` `[cfg]` and `[multifish-functional-anatomy-match]`.

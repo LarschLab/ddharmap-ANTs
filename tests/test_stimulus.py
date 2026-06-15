@@ -183,6 +183,36 @@ class StimulusTests(unittest.TestCase):
             self.assertEqual(contexts[0]["df_stim"].loc[0, "type"], "LLB")
             self.assertEqual(contexts[5]["df_stim"].loc[0, "type"], "RLC")
 
+    def test_session_log_lookup_ignores_hidden_csv_sidecars(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L758_f07"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"._2026_f{fish_id}_r2_metadata.csv").write_bytes(b"\x00\x05\x16\x07bad sidecar")
+            (meta_dir / f"2026_f{fish_id}_r2_metadata.csv").write_text("parameter,value\nframerate,4.0\n")
+            (meta_dir / f"2026_f{fish_id}_r2_experiment_log.csv").write_text(
+                "event,timestamp\nB1_start,0\nB1_stim1_RLC,2\nB1_poststim1_pause,5\nB1_end,6\n"
+            )
+
+            self.assertEqual(find_metadata_csv(fish_dir, fish_id, session_label="r2").name, f"2026_f{fish_id}_r2_metadata.csv")
+            self.assertEqual(find_experiment_log(fish_dir, fish_id, session_label="r2").name, f"2026_f{fish_id}_r2_experiment_log.csv")
+
+    def test_session_log_lookup_uses_timestamp_companion_for_r2_metadata(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            fish_id = "L765_f06"
+            fish_dir = root / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_r2_metadata.csv").write_text("parameter,value\nframerate,4.0\n")
+            (meta_dir / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\nB1_start,0\nB1_stim1_RLC,2\nB1_poststim1_pause,5\nB1_end,6\n"
+            )
+
+            self.assertEqual(find_experiment_log(fish_dir, fish_id, session_label="r2").name, f"2026_f{fish_id}_experiment_log.csv")
+
     def test_resolve_plane_stimulus_contexts_infers_equal_split_without_preprocessing_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

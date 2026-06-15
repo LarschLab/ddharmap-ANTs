@@ -28,6 +28,27 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-15 - preserve anatomy XY in `[14a]` uint8 preprocessing
+
+- Slice goal:
+  - fix the in-plane anatomy handedness entering `[19a]` for `L395_f11`.
+- Passes completed in this session:
+  - changed `AnatomyUint8PreprocessingConfig` so `[14a]` preserves anatomy XY by default and only applies the functional orientation transform when explicitly requested.
+  - bumped the anatomy uint8 cache version so existing functional-flipped `*_uint8.tif` sidecars are rebuilt.
+  - updated focused tests and reference docs for the corrected `[14a]` cache contract.
+- What changed:
+  - `[14a]` still performs signed-to-uint8 conversion and default `750x750` Y/X sizing, but it no longer applies the functional flip to anatomy unless configured.
+- What remains broken:
+  - existing generated outputs for affected fish must be rerun; this code change does not rewrite prior registration products.
+- Remaining in-slice work:
+  - none in package code.
+- Next likely breakpoint:
+  - visual QA in `[22e]` after rerunning spatial stages.
+- Rerun implications:
+  - minimum rerun: `[14a] -> [8] -> [16] -> [19a] -> [20]`; rerun `[22e]` afterward to visually compare NCC and ANTs placements.
+- Evidence:
+  - saved functional refs matched `flipX` of the motion-corrected functional source, but their NCC scores were highest against the raw anatomy NRRD, not the `[14a]` `raw_flipX` cache.
+
 ### 2026-05-13 - single-fish notebook rename
 
 - Slice goal:
