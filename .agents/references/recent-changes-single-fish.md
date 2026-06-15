@@ -28,6 +28,23 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-15 - staged single-fish pipeline roadmap
+
+- Slice goal:
+  - record the planned migration from notebook-led single-fish processing to a staged package/CLI pipeline while preserving `notebooks/singleFish.ipynb` as an internal control.
+- Passes completed in this session:
+  - added `.agents/references/single-fish-pipeline-roadmap.md`.
+- What changed:
+  - the roadmap now defines the target pipeline shape, stage contracts, manifests/state tracking, staged output recreation, contract tests, read-only QA reports, parallel old/new validation, and promotion criteria.
+- What remains broken:
+  - roadmap only; no pipeline implementation or validation changes were made.
+- Remaining in-slice work:
+  - choose representative control fish and freeze baseline notebook output bundles.
+- Next likely breakpoint:
+  - start Phase 0 from `.agents/references/single-fish-pipeline-roadmap.md`.
+- Rerun implications:
+  - none.
+
 ### 2026-06-15 - preserve anatomy XY in `[14a]` uint8 preprocessing
 
 - Slice goal:
