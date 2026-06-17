@@ -61,6 +61,7 @@
 - Single-fish `[50l]` composite output: `compound_50j_56i_unified.png/.pdf`, package-rendered by `plots.analysis.render_single_fish_50l_composite` from `[50ia]` response/BPI outputs plus `[56i]` motion-AUC point/count tables.
 - Single-fish responsive hybrid donut outputs: `single_fish_50l_responsive_identity_donut.png/.pdf`, plus long/wide counts CSVs (`[57a-responsive-identity-donut]`).
 - Single-fish anatomy-label co-expression outputs: `single_fish_hcr_anatomy_coexpression_summary.png/.pdf` plus summary/combo-count CSVs (`[57b-anatomy-coexpression-summary]`).
+- Staged pipeline mirrors selected late outputs under `03_analysis/functional/pipeline_outputs/`: `assign-hcr-identity/registration/` stages the ROI identity master/lookup plus current HCR-centric `[50]` table family and regenerates `[50e]` `hcr_activity_status_summary.csv`, `assign-hcr-identity/recompute-audit/` records non-promoted disk-recomputed HCR `[50]` candidate outputs for migration QA, `score-activity-bpi/registration/` owns staged ROI/BPI scoring outputs layered on staged identity when available, `export-canonical-tables/registration/` promotes staged canonical table copies, and `make-figures/04_plots/` renders package-owned final donut/coexpression figures from the staged canonical bundle when available.
 
 ## Concept ownership
 
