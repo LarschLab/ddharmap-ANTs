@@ -28,6 +28,31 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-17 - ANTs transformlist spacing parity for HCR `[50]` audit
+
+- Slice goal:
+  - remove a coordinate-metadata error from the non-promoted HCR `[50]` transform replay audit while continuing to chase exact internal-control parity.
+- Passes completed in this session:
+  - retested persisted `derived/*_func_mask_in_2p.tif` and `raw/*_func_mask_in_2p.tif` label masks through the current response-aware candidate finalization; both remain worse than the selected affine replay (`derived` matched `105/148` candidate keys, `raw` matched `0/148`).
+  - confirmed the selected `[20]` `ants_rigid_affine` replay had been reconstructed with unit XY spacing even though the notebook wrote ANTs transforms with anatomy XY spacing from `voxel_sizes.json`.
+  - added `ants_xy_spacing` to `_plane_refs_from_tforms_csv` and wired `_write_stage_hcr_recompute_audit` to pass the anatomy voxel spacing into reconstructed ANTs transformlist plane refs.
+  - added a focused pipeline test asserting reconstructed ANTs refs preserve the supplied fixed/moving spacing.
+- What changed:
+  - The `selected_inplane_registration_comparison_ants_transformlist` diagnostic variant now uses `fixed_spacing=(0.5964024861653645, 0.5964024861653645)` and `moving_spacing=(0.5964024861653645, 0.5964024861653645)` on `L395_f11`, matching the physical spacing used by notebook `[20]`.
+  - After rerunning `assign-hcr-identity`, the selected main replay remains `tforms_by_plane_csv_selected_inplane_best_z_single_plane_dx-1_dy+1_p4`.
+  - The corrected ANTs transformlist diagnostic remains worse than the affine replay on `L395_f11`: `hcr_func_candidates=157`, `conf_to_func_pairs_raw=266`, `conf_to_func_pairs=40`, candidate-key overlap `40/148`, row-delta total `21`.
+  - Focused validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py::test_plane_refs_from_tforms_prefers_selected_ants_transformlist`; broader validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_matching.py` (`47 passed`).
+  - `PYTHONPATH=src python tools/single_fish_pipeline.py assign-hcr-identity --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict` passed.
+- What remains broken:
+  - The non-promoted recomputed `[50]` family still does not exactly match internal control: the best replay is still one raw row short, table schemas differ, and candidate keys remain `126/148` matched with `22` missing and `22` extra.
+  - Correct physical spacing makes the ANTs diagnostic valid but does not make selected ANTs transformlists the notebook-equivalent `[50]` source for this control fish.
+- Remaining in-slice work:
+  - recover or persist the exact legacy notebook `plane_refs` state used when `[50]` produced `hcr_func_candidates.csv`, or identify which historical affine/warped-label artifact generated the current internal-control table.
+- Next likely breakpoint:
+  - inspect historical/stale affine state rather than persisted `*_func_mask_in_2p.tif` masks or selected ANTs transformlists; the current best evidence still points to an affine replay/coordinate-frame mismatch concentrated in planes `3` and `4`.
+- Rerun implications:
+  - after the next HCR audit change, rerun `assign-hcr-identity`; if any promoted output source changes, then rerun `export-canonical-tables` and strict `compare-staged --stage-name export-canonical-tables`.
+
 ### 2026-06-16 - voxel-scale and affine-offset probe for HCR `[50]` audit
 
 - Slice goal:
