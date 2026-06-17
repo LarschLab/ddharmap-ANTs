@@ -28,6 +28,21 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-17 - ex vivo 2P anatomy bridge preprocessing scaffold
+
+- Slice goal:
+  - add local codeANTs-owned preprocessing for ex vivo 2P anatomy stacks so L758_f02/L765_f04 bridge-registration trials can test `functional -> in vivo 2P anatomy <- ex vivo 2P anatomy <- rbest <- rn` without relying on an external app as source of truth.
+- Passes completed in this session:
+  - added/exported `ExVivoAnatomyPreprocessingConfig` + `preprocess_ex_vivo_anatomy_stage` for raw ex vivo stacks from `01_raw/2p/anatomy`, with signed-stack uint8 conversion, mirrored-2P X flip, registration-convention Z flip, default `750x750` Y/X resizing, and isolated NRRD/JSON outputs under `02_reg/00_preprocessing/2p_anatomy/ex_vivo/`.
+  - added/exported `ManualAnatomyOrientationConfig` + `apply_manual_anatomy_orientation_stage` for brainAtlas-style preview-angle rotation/crop plus explicit rot90 and axis flips, with manual-oriented NRRD/JSON provenance.
+  - added focused regression coverage for ex vivo X/Z flips, isolated output paths, package exports, and manual-orientation provenance.
+- What changed:
+  - ex vivo bridge preprocessing is now local package behavior and does not rebind canonical in vivo `ANAT_STACK_PATH`; image outputs are intentionally NRRD-only to avoid TIFF/NRRD duplication.
+- What remains broken:
+  - no live L758_f02/L765_f04 ex vivo stack preprocessing or downstream rbest->ex vivo / ex vivo->in vivo registration run was done in this session.
+- Rerun implications:
+  - run the new ex vivo preprocessing helpers for target fish before staging rbest->ex vivo and ex vivo->in vivo registration trials; rerunning canonical `[14a]` is not required unless in vivo anatomy preprocessing itself changes.
+
 ### 2026-06-02 - external confocal registration uses current rbest/rn names
 
 - Slice goal:
@@ -775,3 +790,20 @@
   - `[14a]` now emits uncompressed registration-ready anatomy outputs with Z reversed relative to the top-to-bottom 2P anatomy acquisition.
 - Rerun implications:
   - rerun `[14a]` and downstream same-fish registration stages for fish whose anatomy NRRDs were generated before this change.
+
+### 2026-06-17 - in vivo and ex vivo anatomy preprocessing are NRRD-only
+
+- Slice goal:
+  - reduce generated anatomy artifact bloat before testing the ex vivo bridge registration path.
+- Passes completed in this session:
+  - changed `preprocess_anatomy_uint8_stage` so canonical in vivo `[14a]` output is the 8-bit registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd` plus `.nrrd.json` metadata, with legacy `ANAT_8BIT_STACK_PATH` and `ANAT_STACK_PATH` bindings both pointing to the NRRD.
+  - kept forced reruns able to trace from an existing canonical NRRD back to the raw source through metadata.
+  - kept legacy `*_uint8.tif` inputs readable only as a migration/backfill path; new `[14a]` runs do not create duplicate TIFF image outputs.
+  - ex vivo preprocessing/manual-orientation outputs remain isolated NRRD/JSON outputs under `2p_anatomy/ex_vivo/`.
+  - added `tools/ex_vivo_manual_orientation_gui.py`, a codeANTs wrapper that reuses the brainAtlas rotation-preview convention for ex vivo NRRDs, temporarily saves review state while the GUI is open, applies the reviewed parameters through `apply_manual_anatomy_orientation_stage`, removes the temporary review JSON after successful apply, and writes max-Z before/after QC PNGs without side-projection axis ambiguity.
+  - added/updated focused regression tests for NRRD-only in vivo and ex vivo outputs.
+- What changed:
+  - generated in vivo anatomy preprocessing TIFFs are no longer part of the public `[14a]` output contract.
+- Rerun implications:
+  - rerunning `[14a]` updates metadata sidecars and should not recreate `*_uint8.tif`; existing duplicate TIFF artifacts can be removed once the canonical NRRD for a fish is verified readable.
+  - for ex vivo bridge work, launch `tools/ex_vivo_manual_orientation_gui.py` on fish folders, review rotations interactively, and apply centered `750x750` crops unless a different registration target is intentional.

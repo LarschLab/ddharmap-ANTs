@@ -4,6 +4,7 @@ from codeants_2pf_hcr import (
     AnatomyUint8PreprocessingConfig,
     ContextStageConfig,
     CohortBuildConfig,
+    ExVivoAnatomyPreprocessingConfig,
     FinalFishAuditConfig,
     FunctionalAnatomyDebugConfig,
     FunctionalPlacementConfig,
@@ -14,6 +15,7 @@ from codeants_2pf_hcr import (
     HcrActivityExportConfig,
     HcrCellposeConfig,
     InPlaneRegistrationComparisonConfig,
+    ManualAnatomyOrientationConfig,
     MultiFishAnatomySegmentationConfig,
     SingleFishBpiDiagnosticsConfig,
     NotebookContractViolation,
@@ -32,6 +34,7 @@ from codeants_2pf_hcr import (
     _to_um,
     apply_square_region_mask,
     apply_func_orientation,
+    apply_manual_anatomy_orientation_stage,
     best_z_by_ncc,
     build_context_audit_stage,
     build_cohort_outputs_stage,
@@ -81,6 +84,7 @@ from codeants_2pf_hcr import (
     normalize_anatomy_stack_stage,
     multifish_anatomy_segmentation_cache_paths,
     preprocess_anatomy_uint8_stage,
+    preprocess_ex_vivo_anatomy_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
     annotate_midline_side,
@@ -180,6 +184,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(AnatomyUint8PreprocessingConfig)
     assert callable(ContextStageConfig)
     assert callable(CohortBuildConfig)
+    assert callable(ExVivoAnatomyPreprocessingConfig)
     assert callable(FinalFishAuditConfig)
     assert callable(FunctionalAnatomyDebugConfig)
     assert callable(FunctionalPlacementConfig)
@@ -190,6 +195,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(HcrActivityExportConfig)
     assert callable(HcrCellposeConfig)
     assert callable(InPlaneRegistrationComparisonConfig)
+    assert callable(ManualAnatomyOrientationConfig)
     assert callable(MultiFishAnatomySegmentationConfig)
     assert callable(SingleFishBpiDiagnosticsConfig)
     assert callable(NotebookContractViolation)
@@ -208,6 +214,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(_to_um)
     assert callable(apply_square_region_mask)
     assert callable(apply_func_orientation)
+    assert callable(apply_manual_anatomy_orientation_stage)
     assert callable(best_z_by_ncc)
     assert callable(build_context_audit_stage)
     assert callable(build_cohort_outputs_stage)
@@ -259,6 +266,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(normalize_anatomy_stack_stage)
     assert callable(multifish_anatomy_segmentation_cache_paths)
     assert callable(preprocess_anatomy_uint8_stage)
+    assert callable(preprocess_ex_vivo_anatomy_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
     assert callable(MotionAucPlotConfig)

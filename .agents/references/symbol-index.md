@@ -15,8 +15,10 @@ Generated manually for the current extracted package surface.
 - `AnatomyNormalizationStageConfig`: Typed anatomy-conversion knob container for notebook cell `[14]`.
 - `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including functional XY orientation, anatomy Z flip for same-fish registration, cache-version, target Y/X shape, and registration-NRRD write controls.
 - `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
+- `ExVivoAnatomyPreprocessingConfig`: Typed ex vivo 2P anatomy preprocessing knob container for the experimental ex vivo bridge path, including mirrored-2P X flip, registration-convention Z flip, target Y/X shape, cache-version, and registration-NRRD write controls.
 - `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
 - `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
+- `ManualAnatomyOrientationConfig`: Typed manual anatomy-orientation knob container for applying brainAtlas-style preview-angle rotation/crop plus explicit rot90 and axis flips to an already preprocessed anatomy stack.
 - `VoxelStageConfig`: Typed voxel-resolution stage configuration for notebook cell `[8]`.
 - `FunctionalOrientationStageConfig`: Typed functional orientation/audit configuration for notebook cell `[10]`; full oriented movie stack saves are opt-in.
 - `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.
@@ -32,7 +34,9 @@ Generated manually for the current extracted package surface.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
-- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional XY orientation, flips anatomy Z to match bottom-to-top confocal registration convention, resizes anatomy Y/X to `750x750`, saves an idempotent 8-bit TIFF under `02_reg/00_preprocessing/2p_anatomy`, writes/backfills the canonical uncompressed registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd`, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that applies functional XY orientation, flips anatomy Z to match bottom-to-top confocal registration convention, resizes anatomy Y/X to `750x750`, saves the canonical uncompressed 8-bit registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd` plus `.nrrd.json` metadata under `02_reg/00_preprocessing/2p_anatomy`, avoids duplicate TIFF image outputs, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_ex_vivo_anatomy_stage`: Experimental same-fish bridge preprocessing stage for raw ex vivo 2P anatomy stacks from `01_raw/2p/anatomy`; writes isolated pre-manual-rotation NRRD plus JSON provenance under `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` without rebinding canonical in vivo `ANAT_STACK_PATH` or creating duplicate TIFF image outputs.
+- `apply_manual_anatomy_orientation_stage`: Experimental helper that applies brainAtlas-style preview-angle XY rotation, optional square crop, rot90, and explicit axis flips to a preprocessed anatomy stack, then writes manual-oriented NRRD plus JSON provenance for ex vivo registration trials.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
 - `orient_functional_stacks_stage`: Notebook-facing functional orientation stage for `[10]` that audits legacy full-stack caches and only writes oriented movie stacks when explicitly requested.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
