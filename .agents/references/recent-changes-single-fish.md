@@ -28,6 +28,26 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-25 - restore default 2P anatomy XY mirroring in `[14a]`
+
+- Slice goal:
+  - correct the integration-branch merge resolution so all 2P-acquired anatomy preprocessing mirrors/orients XY by default before registration.
+- Passes completed in this session:
+  - changed `AnatomyUint8PreprocessingConfig.apply_func_orientation` back to `True` by default.
+  - updated `[14a]` tests to assert default mirrored/oriented output and keep an explicit opt-out test for diagnostic/backfill use.
+  - updated current-state, notebook-stage-map, cohort-stage-map, and symbol-index docs to remove the live “preserve anatomy XY by default” contract.
+- What changed:
+  - canonical in vivo `[14a]` now writes NRRD outputs with default metadata-driven 2P XY mirroring/orientation plus registration-convention Z flip.
+  - This entry supersedes the 2026-06-15 “preserve anatomy XY” behavior note for live code; that historical note describes a rejected intermediate state.
+- What remains broken:
+  - existing generated anatomy NRRDs made with the wrong `apply_func_orientation=False` merge default need rerun.
+- Remaining in-slice work:
+  - none in package code.
+- Next likely breakpoint:
+  - visual QA after rerunning `[14a] -> [8] -> [16] -> [19a] -> [20] -> [22e]` on affected fish.
+- Rerun implications:
+  - rerun `[14a]` for any fish processed from the incorrect integration-branch default before downstream spatial registration checks.
+
 ### 2026-06-17 - ANTs transformlist spacing parity for HCR `[50]` audit
 
 - Slice goal:
