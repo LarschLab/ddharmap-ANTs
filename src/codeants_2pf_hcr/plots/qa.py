@@ -35,6 +35,7 @@ from ..matching import (
     _regionprops_centroids_2d,
     build_plane_centroid_matches,
     resample_labels_nn,
+    resolve_anatomy_label_z,
     resolve_plane_transform,
 )
 from ..matching import compute_centroids
@@ -996,6 +997,61 @@ def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]
     return out
 
 
+def _label_boundary_edge_score(anat_img: np.ndarray, label_img: np.ndarray) -> float | None:
+    labels = _ensure_uint_labels(label_img)
+    boundaries = segmentation.find_boundaries(labels, mode="outer")
+    if int(np.count_nonzero(boundaries)) < 20:
+        return None
+    img = norm01(np.asarray(anat_img, dtype=np.float32))
+    gy, gx = np.gradient(img)
+    edge = np.hypot(gx, gy)
+    return float(np.mean(edge[boundaries]) - np.mean(edge))
+
+
+def _infer_anatomy_label_z_mode(
+    *,
+    anat_arr: np.ndarray,
+    anat_labels_arr: np.ndarray | None,
+    plane_refs: list[dict[str, Any]],
+    square_spec: dict[str, Any] | None,
+) -> tuple[str, dict[str, float]]:
+    if anat_labels_arr is None or anat_labels_arr.ndim != 3 or anat_arr.ndim != 3:
+        return "direct", {}
+    modes = ("direct", "reverse")
+    scores_by_mode: dict[str, list[float]] = {mode: [] for mode in modes}
+    z_size = int(anat_labels_arr.shape[0])
+    for plane_idx, plane_ref in enumerate(plane_refs):
+        if plane_ref is None:
+            continue
+        try:
+            best_z = int(plane_ref.get("best_z", plane_idx))
+        except Exception:
+            continue
+        if best_z < 0 or best_z >= int(anat_arr.shape[0]):
+            continue
+        anat_img = np.asarray(anat_arr[best_z], dtype=np.float32)
+        crop_bounds = _square_bounds_from_spec(square_spec, anat_img.shape) if square_spec is not None else None
+        if crop_bounds is not None:
+            x0, y0, x1, y1 = crop_bounds
+            anat_eval = anat_img[y0:y1, x0:x1]
+        else:
+            x0, y0, x1, y1 = 0, 0, anat_img.shape[1], anat_img.shape[0]
+            anat_eval = anat_img
+        for mode in modes:
+            label_z = resolve_anatomy_label_z({"best_z": best_z, "anat_label_z_mode": mode}, z_size, best_z=best_z)
+            if label_z < 0 or label_z >= z_size:
+                continue
+            score = _label_boundary_edge_score(anat_eval, anat_labels_arr[label_z, y0:y1, x0:x1])
+            if score is not None and np.isfinite(score):
+                scores_by_mode[mode].append(float(score))
+    summary = {mode: float(np.nanmean(vals)) for mode, vals in scores_by_mode.items() if vals}
+    if not summary:
+        return "direct", {}
+    direct = summary.get("direct", float("-inf"))
+    reverse = summary.get("reverse", float("-inf"))
+    return ("reverse" if reverse > direct else "direct"), summary
+
+
 def _method_transform_for_label_warp(method: str, result: dict[str, Any]) -> Any | None:
     tform = result.get("transform")
     if tform is not None:
@@ -1052,6 +1108,7 @@ def show_inplane_registration_method_comparison_stage(
     out_reg: str | Path | None = None,
     methods: tuple[str, str] = ("ncc_xy", "ants_rigid_affine"),
     method_titles: dict[str, str] | None = None,
+    anat_label_z_mode: str = "auto",
     square_json_name: str = "regional_match_qa_square.json",
     legacy_square_json_name: str = "regional_shift_square.json",
     crop_pad_px: int = 24,
@@ -1110,6 +1167,23 @@ def show_inplane_registration_method_comparison_stage(
         out_dir = Path(out_qa) / "inplane_registration_method_comparison"
         out_dir.mkdir(parents=True, exist_ok=True)
 
+    requested_label_z_mode = str(anat_label_z_mode or "auto").strip().lower()
+    if requested_label_z_mode in {"auto", "infer", "inferred"}:
+        resolved_label_z_mode, z_mode_scores = _infer_anatomy_label_z_mode(
+            anat_arr=anat_arr,
+            anat_labels_arr=anat_labels_arr,
+            plane_refs=plane_refs,
+            square_spec=square_spec,
+        )
+        if z_mode_scores:
+            score_txt = ", ".join(f"{key}={val:.4f}" for key, val in sorted(z_mode_scores.items()))
+            log_lines.append(f"[22e] inferred anatomy-label Z mode: {resolved_label_z_mode} ({score_txt})")
+        else:
+            log_lines.append(f"[22e] anatomy-label Z mode auto fell back to {resolved_label_z_mode}")
+    else:
+        resolved_label_z_mode = requested_label_z_mode
+        log_lines.append(f"[22e] anatomy-label Z mode: {resolved_label_z_mode}")
+
     saved_paths: list[str] = []
     rendered = 0
     for plane_idx, plane_ref in enumerate(plane_refs):
@@ -1146,9 +1220,15 @@ def show_inplane_registration_method_comparison_stage(
             log_lines.append(f"[22e] {label}: functional ROI labels unavailable; row 2 will omit ROI boundaries.")
 
         anat_label_img = None
+        anat_label_z = None
         if anat_labels_arr is not None:
             if anat_labels_arr.ndim == 3 and 0 <= best_z < int(anat_labels_arr.shape[0]):
-                anat_label_img = _ensure_uint_labels(anat_labels_arr[best_z])
+                plane_ref["anat_label_z_mode"] = resolved_label_z_mode
+                anat_label_z = resolve_anatomy_label_z(plane_ref, int(anat_labels_arr.shape[0]), best_z=best_z)
+                if 0 <= anat_label_z < int(anat_labels_arr.shape[0]):
+                    anat_label_img = _ensure_uint_labels(anat_labels_arr[anat_label_z])
+                else:
+                    log_lines.append(f"[22e] {label}: anatomy label z out of bounds ({anat_label_z})")
             elif anat_labels_arr.ndim == 2:
                 anat_label_img = _ensure_uint_labels(anat_labels_arr)
             else:
@@ -1224,7 +1304,8 @@ def show_inplane_registration_method_comparison_stage(
             ax_bound.axis("off")
 
         crop_label = "regional crop" if crop_bounds is not None else "full FOV"
-        fig.suptitle(f"{label}: NCC and ANTs in-plane placement review ({crop_label}, z={best_z})", y=1.02)
+        z_title = f"z={best_z}" if anat_label_z is None or anat_label_z == best_z else f"z={best_z}, label_z={anat_label_z}"
+        fig.suptitle(f"{label}: NCC and ANTs in-plane placement review ({crop_label}, {z_title})", y=1.02)
         if out_dir is not None:
             safe_label = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in label)
             out_path = out_dir / f"inplane_method_comparison_plane{int(plane_idx)}_{safe_label}.png"
@@ -1349,8 +1430,13 @@ def show_regional_match_review_stage(
             if best_z < 0 or best_z >= int(anat_labels_arr.shape[0]):
                 log_lines.append(f"[34c] skip {label}: best_z out of bounds ({best_z})")
                 continue
-            anat_slice = _ensure_uint_labels(anat_labels_arr[best_z])
+            anat_label_z = resolve_anatomy_label_z(plane_ref, int(anat_labels_arr.shape[0]), best_z=best_z)
+            if anat_label_z < 0 or anat_label_z >= int(anat_labels_arr.shape[0]):
+                log_lines.append(f"[34c] skip {label}: anatomy label z out of bounds ({anat_label_z})")
+                continue
+            anat_slice = _ensure_uint_labels(anat_labels_arr[anat_label_z])
         else:
+            anat_label_z = best_z
             anat_slice = _ensure_uint_labels(anat_labels_arr)
 
         try:
@@ -1430,6 +1516,7 @@ def show_regional_match_review_stage(
                 "plane_idx": int(plane_idx),
                 "plane_label": label,
                 "best_z": int(best_z),
+                "anat_label_z": int(anat_label_z),
                 "func_label_src": str(func_label_src),
                 "background_src": bg_src,
                 "transform_applied": tform is not None,
@@ -1610,7 +1697,11 @@ def show_centroid_match_qa_stage(
             if best_z < 0 or best_z >= int(anat_labels_arr.shape[0]):
                 log_lines.append(f"[3.1a] best_z out of range for plane {plane_label}: {best_z}")
                 return None
-            anat_slice = anat_labels_arr[best_z]
+            anat_label_z = resolve_anatomy_label_z(plane_ref, int(anat_labels_arr.shape[0]), best_z=best_z)
+            if anat_label_z < 0 or anat_label_z >= int(anat_labels_arr.shape[0]):
+                log_lines.append(f"[3.1a] anatomy label z out of range for plane {plane_label}: {anat_label_z}")
+                return None
+            anat_slice = anat_labels_arr[anat_label_z]
         else:
             anat_slice = anat_labels_arr
 
@@ -1659,7 +1750,11 @@ def show_centroid_match_qa_stage(
         except Exception:
             bg = None
         if anat_labels_arr.ndim == 3 and 0 <= best_z < int(anat_labels_arr.shape[0]):
-            anat_slice = anat_labels_arr[best_z]
+            anat_label_z = resolve_anatomy_label_z(plane_ref, int(anat_labels_arr.shape[0]), best_z=best_z)
+            if 0 <= anat_label_z < int(anat_labels_arr.shape[0]):
+                anat_slice = anat_labels_arr[anat_label_z]
+            else:
+                anat_slice = np.zeros((1, 1), dtype=np.uint32)
         else:
             anat_slice = anat_labels_arr if anat_labels_arr.ndim == 2 else np.zeros((1, 1), dtype=np.uint32)
         all_anat_points_cache[p_idx] = _regionprops_centroids_2d(anat_slice)

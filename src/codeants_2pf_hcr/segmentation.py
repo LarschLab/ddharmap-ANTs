@@ -99,6 +99,12 @@ def collect_hcr_intensity_stack_paths(
             base = Path(preproc_dir)
             for directory in (base / "rbest", base / "rn"):
                 if directory.exists():
+                    intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.nrrd")))
+                    intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.tif")))
+                    intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.tiff")))
+                    intensity_paths.extend(sorted(directory.glob("*_r[0-9]*_channel*.nrrd")))
+                    intensity_paths.extend(sorted(directory.glob("*_r[0-9]*_channel*.tif")))
+                    intensity_paths.extend(sorted(directory.glob("*_r[0-9]*_channel*.tiff")))
                     intensity_paths.extend(sorted(directory.glob("*round*_channel*.nrrd")))
                     intensity_paths.extend(sorted(directory.glob("*round*_channel*.tif")))
                     intensity_paths.extend(sorted(directory.glob("*round*_channel*.tiff")))

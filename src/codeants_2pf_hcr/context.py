@@ -12,10 +12,11 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from scipy import ndimage
 from skimage import transform
 import tifffile
 
-from .spatial import _infer_voxels_nrrd, apply_func_orientation, corrcoef_img, load_or_cache_voxels
+from .spatial import _infer_voxels_nrrd, _res_to_um_per_px, apply_func_orientation, corrcoef_img, load_or_cache_voxels
 from .runtime import default_local_root as runtime_default_local_root
 
 
@@ -147,8 +148,36 @@ class AnatomyUint8PreprocessingConfig:
     force_recompute_anat_uint8: bool = False
     use_source_path_orig: bool = True
     apply_func_orientation: bool = False
+    flip_z_for_registration: bool = True
     target_xy_shape: tuple[int, int] | None = (750, 750)
+    write_registration_nrrd: bool = True
     cache_version: int = 3
+
+
+@dataclass(frozen=True)
+class ExVivoAnatomyPreprocessingConfig:
+    force_recompute: bool = False
+    flip_x: bool = True
+    flip_z_for_registration: bool = True
+    target_xy_shape: tuple[int, int] | None = (750, 750)
+    write_registration_nrrd: bool = True
+    cache_version: int = 1
+
+
+@dataclass(frozen=True)
+class ManualAnatomyOrientationConfig:
+    force_recompute: bool = False
+    rotation_degrees: float = 0.0
+    crop_center_yx: tuple[int, int] | None = None
+    crop_size_px: int | None = None
+    interpolation: str = "linear"
+    expand_canvas: bool = True
+    rot90_k: int = 0
+    flip_x: bool = False
+    flip_y: bool = False
+    flip_z: bool = False
+    write_registration_nrrd: bool = True
+    cache_version: int = 1
 
 
 class OrientationResolutionError(RuntimeError):
@@ -500,20 +529,54 @@ def _scanimage_to_pair(value: Any) -> tuple[float, float] | None:
     return None
 
 
+def _scanimage_artist_json(raw: Any) -> str | None:
+    if isinstance(raw, bytes):
+        raw = raw.decode(errors="replace")
+    if raw is None:
+        return None
+    text = str(raw).replace("\x00", "")
+    marker = text.find("Artist")
+    search_from = marker if marker >= 0 else 0
+    start = text.find("{", search_from)
+    if start < 0:
+        start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return None
+
+
 def scanimage_um_per_px_from_artist(tiff_path: Path | str) -> tuple[dict[str, float] | None, str]:
     with tifffile.TiffFile(tiff_path) as tif:
         artist_tag = tif.pages[0].tags.get("Artist")
-        if artist_tag is None:
-            return None, "missing Artist tag"
-        raw = artist_tag.value
-    if isinstance(raw, bytes):
-        raw = raw.decode(errors="replace")
-    raw = raw.replace("\x00", "")
-    match = re.search(r"{.*}", raw, re.S)
-    if match:
-        raw = match.group(0)
+        raw = artist_tag.value if artist_tag is not None else None
+        if raw is None and isinstance(tif.imagej_metadata, dict):
+            raw = tif.imagej_metadata.get("Info")
+    raw_json = _scanimage_artist_json(raw)
+    if raw_json is None:
+        return None, "missing Artist JSON"
     try:
-        data = json.loads(raw)
+        data = json.loads(raw_json)
     except Exception:
         return None, "invalid Artist JSON"
     fov_um = _scanimage_to_pair(_scanimage_find_first(data, "imagingFovUm"))
@@ -724,6 +787,19 @@ def _is_uint8_anatomy_preprocess_path(path: Path | str) -> bool:
 def _anatomy_uint8_source_stem(path: Path | str) -> str:
     stem = Path(path).stem
     return stem[:-6] if stem.endswith("_uint8") else stem
+
+
+def _canonical_anatomy_registration_nrrd_path(uint8_path: Path | str) -> Path:
+    path = Path(uint8_path)
+    stem = path.stem
+    fish_match = _FISH_TOKEN_RE.search(stem)
+    if fish_match is not None:
+        fish_token = fish_match.group(0)
+    elif "_anatomy_" in stem:
+        fish_token = stem.split("_anatomy_", 1)[0]
+    else:
+        fish_token = _anatomy_uint8_source_stem(path)
+    return path.with_name(f"{fish_token}_anatomy_2P_GCaMP.nrrd")
 
 
 def _collect_anatomy_stack_candidates(
@@ -1181,6 +1257,170 @@ def _load_anatomy_volume_for_uint8(path: Path) -> tuple[np.ndarray, str, bool]:
     return np.asarray(tifffile.imread(path)), "tifffile", False
 
 
+def _read_nrrd_header(path: Path) -> dict[str, Any]:
+    if path.suffix.lower() != ".nrrd":
+        return {}
+    try:
+        import nrrd
+    except Exception:  # pragma: no cover
+        return {}
+    try:
+        _, header = nrrd.read(str(path))
+    except Exception:
+        return {}
+    return dict(header)
+
+
+def _infer_anatomy_metadata_dir(source_path: Path) -> Path | None:
+    source = Path(source_path)
+    for parent in source.parents:
+        if parent.name == "2p":
+            candidate = parent / "metadata"
+            if candidate.exists():
+                return candidate
+        if parent.name in {"01_raw", "02_reg", "03_analysis"}:
+            fish_dir = parent.parent
+            candidate = fish_dir / "01_raw" / "2p" / "metadata"
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _nrrd_space_directions_from_spacing(x_um: float | None, y_um: float | None, z_um: float | None) -> np.ndarray | None:
+    if not all(value is not None and np.isfinite(float(value)) and float(value) > 0 for value in (x_um, y_um, z_um)):
+        return None
+    return np.asarray(
+        [
+            [float(x_um), 0.0, 0.0],
+            [0.0, float(y_um), 0.0],
+            [0.0, 0.0, float(z_um)],
+        ],
+        dtype=float,
+    )
+
+
+def _scale_space_directions_xy(
+    space_dirs: Any,
+    *,
+    source_xy_shape: tuple[int, int] | None,
+    output_xy_shape: tuple[int, int] | None,
+) -> Any:
+    if source_xy_shape is None or output_xy_shape is None:
+        return space_dirs
+    try:
+        dirs = np.asarray(space_dirs, dtype=float)
+    except Exception:
+        return space_dirs
+    if dirs.shape != (3, 3) or source_xy_shape[0] <= 0 or source_xy_shape[1] <= 0:
+        return space_dirs
+    if output_xy_shape[0] <= 0 or output_xy_shape[1] <= 0:
+        return space_dirs
+    scaled = dirs.copy()
+    scaled[0, :] *= float(source_xy_shape[1]) / float(output_xy_shape[1])
+    scaled[1, :] *= float(source_xy_shape[0]) / float(output_xy_shape[0])
+    return scaled
+
+
+def _registration_nrrd_header(
+    *,
+    write_ndim: int,
+    labels: list[str],
+    source_path: Path | None,
+    source_shape: tuple[int, ...] | None,
+    output_shape: tuple[int, ...],
+    source_xy_shape: tuple[int, int] | None,
+    output_xy_shape: tuple[int, int] | None,
+) -> dict[str, Any]:
+    header: dict[str, Any] = {
+        "encoding": "raw",
+        "kinds": ["domain"] * int(write_ndim),
+        "labels": labels,
+    }
+    if write_ndim != 3:
+        return header
+
+    header["space dimension"] = 3
+    header["space units"] = ["microns", "microns", "microns"]
+    source_header = _read_nrrd_header(source_path) if source_path is not None else {}
+    for key in ("space", "space origin", "space measurement frame"):
+        if key in source_header:
+            header[key] = source_header[key]
+    if "space units" in source_header:
+        header["space units"] = source_header["space units"]
+
+    source_dirs = source_header.get("space directions")
+    if source_dirs is not None:
+        header["space directions"] = _scale_space_directions_xy(
+            source_dirs,
+            source_xy_shape=source_xy_shape,
+            output_xy_shape=output_xy_shape,
+        )
+    elif source_path is not None and source_path.suffix.lower() in {".tif", ".tiff"} and source_xy_shape and output_xy_shape:
+        x_um, y_um = _scaled_tiff_spacing_um(source_path, source_xy_shape, output_xy_shape)
+        z_um, _paths = _read_anatomy_z_metadata(_infer_anatomy_metadata_dir(source_path))
+        directions = _nrrd_space_directions_from_spacing(x_um, y_um, z_um)
+        if directions is not None:
+            header["space directions"] = directions
+
+    if source_path is not None:
+        header["source_path"] = str(source_path)
+        header["source_name"] = source_path.name
+    if source_shape is not None:
+        header["source_shape"] = "x".join(str(int(v)) for v in source_shape)
+    header["source_axes"] = "ZYX"
+    header["array_axes"] = "XYZ"
+    header["output_shape_zyx"] = "x".join(str(int(v)) for v in output_shape)
+    return header
+
+
+def _write_registration_nrrd_from_zyx_uint8(
+    arr: np.ndarray,
+    out_path: Path,
+    *,
+    source_path: Path | None = None,
+    source_shape: tuple[int, ...] | None = None,
+    source_xy_shape: tuple[int, int] | None = None,
+    output_xy_shape: tuple[int, int] | None = None,
+) -> str:
+    data = np.asarray(arr)
+    if data.dtype != np.uint8:
+        data = data.astype(np.uint8, copy=False)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import nrrd
+    except Exception:  # pragma: no cover
+        nrrd = None
+
+    if nrrd is not None:
+        if data.ndim == 3:
+            write_data = np.transpose(data, (2, 1, 0))
+            labels = ["x", "y", "z"]
+        elif data.ndim == 2:
+            write_data = np.transpose(data, (1, 0))
+            labels = ["x", "y"]
+        else:
+            write_data = data
+            labels = [f"axis{i}" for i in range(data.ndim)]
+        header = _registration_nrrd_header(
+            write_ndim=int(write_data.ndim),
+            labels=labels,
+            source_path=source_path,
+            source_shape=source_shape,
+            output_shape=tuple(int(v) for v in data.shape),
+            source_xy_shape=source_xy_shape,
+            output_xy_shape=output_xy_shape,
+        )
+        nrrd.write(str(out_path), write_data, header=header)
+        return "nrrd"
+
+    try:
+        import SimpleITK as sitk
+    except Exception as exc:  # pragma: no cover
+        raise ImportError("Writing registration .nrrd requires pynrrd or SimpleITK") from exc
+    sitk.WriteImage(sitk.GetImageFromArray(data), str(out_path))
+    return "SimpleITK"
+
+
 def _signed_stack_to_uint8(arr: np.ndarray) -> tuple[np.ndarray, dict[str, int | float]]:
     data = np.asarray(arr)
     if data.size == 0:
@@ -1259,9 +1499,108 @@ def _resize_uint8_xy(arr: np.ndarray, target_xy_shape: tuple[int, int] | None) -
     return resized.reshape((*leading_shape, target[0], target[1])), True
 
 
+_ANATOMY_ROTATION_INTERPOLATION_ORDER = {
+    "nearest": 0,
+    "linear": 1,
+    "cubic": 3,
+}
+
+
+def _tuple_int_from_sequence(value: Any, *, length: int | None = None) -> tuple[int, ...] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    if length is not None and len(value) != length:
+        return None
+    try:
+        return tuple(int(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _preview_angle_to_export_angle(angle_degrees: float) -> float:
+    return -float(angle_degrees)
+
+
+def _rotate_uint8_stack_zyx(
+    stack: np.ndarray,
+    angle_degrees: float,
+    *,
+    interpolation: str,
+    expand_canvas: bool,
+) -> np.ndarray:
+    if stack.ndim != 3:
+        raise ValueError(f"Expected ZYX anatomy stack for rotation, got shape {stack.shape}.")
+    if interpolation not in _ANATOMY_ROTATION_INTERPOLATION_ORDER:
+        choices = ", ".join(sorted(_ANATOMY_ROTATION_INTERPOLATION_ORDER))
+        raise ValueError(f"Unsupported interpolation: {interpolation}. Expected one of: {choices}")
+    data = np.asarray(stack, dtype=np.uint8)
+    if np.isclose(float(angle_degrees), 0.0, atol=1e-9):
+        return data.copy()
+    order = _ANATOMY_ROTATION_INTERPOLATION_ORDER[interpolation]
+    rotated = ndimage.rotate(
+        data,
+        angle=float(angle_degrees),
+        axes=(-2, -1),
+        reshape=bool(expand_canvas),
+        order=order,
+        mode="constant",
+        cval=0,
+        prefilter=order > 1,
+    )
+    return np.clip(np.rint(rotated), 0, 255).astype(np.uint8)
+
+
+def _crop_square_zyx(
+    stack: np.ndarray,
+    center_yx: tuple[int, int] | None,
+    size_px: int | None,
+) -> np.ndarray:
+    data = np.asarray(stack)
+    if size_px is None:
+        return data
+    if data.ndim != 3:
+        raise ValueError(f"Expected ZYX anatomy stack for crop, got shape {data.shape}.")
+    size = int(size_px)
+    if size < 1:
+        raise ValueError(f"crop_size_px must be at least 1, got {size}.")
+    if center_yx is None:
+        center_y = data.shape[1] // 2
+        center_x = data.shape[2] // 2
+    else:
+        center_y, center_x = int(center_yx[0]), int(center_yx[1])
+
+    start_y = center_y - size // 2
+    start_x = center_x - size // 2
+    end_y = start_y + size
+    end_x = start_x + size
+
+    source_start_y = max(0, start_y)
+    source_start_x = max(0, start_x)
+    source_end_y = min(data.shape[1], end_y)
+    source_end_x = min(data.shape[2], end_x)
+
+    cropped = np.zeros((data.shape[0], size, size), dtype=data.dtype)
+    if source_start_y >= source_end_y or source_start_x >= source_end_x:
+        return cropped
+
+    target_start_y = source_start_y - start_y
+    target_start_x = source_start_x - start_x
+    target_end_y = target_start_y + (source_end_y - source_start_y)
+    target_end_x = target_start_x + (source_end_x - source_start_x)
+    cropped[:, target_start_y:target_end_y, target_start_x:target_end_x] = data[
+        :, source_start_y:source_end_y, source_start_x:source_end_x
+    ]
+    return cropped
+
+
 def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, str | None]:
     if path.suffix.lower() not in {".tif", ".tiff"}:
         return None, None, None
+    def _imagej_info_value(info: Any, key: str) -> str | None:
+        if not info:
+            return None
+        match = re.search(rf"(?im)^\s*{re.escape(key)}\s*=\s*(.+?)\s*$", str(info))
+        return match.group(1).strip() if match else None
     try:
         with tifffile.TiffFile(path) as tf:
             page0 = tf.pages[0]
@@ -1280,6 +1619,18 @@ def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, st
                 x_res = x_res[0] / x_res[1] if x_res[1] else None
             if isinstance(y_res, tuple) and len(y_res) == 2:
                 y_res = y_res[0] / y_res[1] if y_res[1] else None
+            if unit_name is None or str(unit_name).upper() in {"NONE", "RESUNIT.NONE", "1"}:
+                imagej_info = tf.imagej_metadata.get("Info") if isinstance(tf.imagej_metadata, dict) else None
+                info_unit = _imagej_info_value(imagej_info, "ResolutionUnit")
+                info_x_res = _imagej_info_value(imagej_info, "XResolution")
+                info_y_res = _imagej_info_value(imagej_info, "YResolution")
+                if info_unit and info_x_res and info_y_res:
+                    try:
+                        x_res = float(info_x_res)
+                        y_res = float(info_y_res)
+                        unit_name = str(info_unit)
+                    except Exception:
+                        pass
             return (
                 float(x_res) if x_res is not None else None,
                 float(y_res) if y_res is not None else None,
@@ -1287,6 +1638,24 @@ def _read_tiff_xy_resolution(path: Path) -> tuple[float | None, float | None, st
             )
     except Exception:
         return None, None, None
+
+
+def _scaled_tiff_spacing_um(
+    source_path: Path,
+    source_xy_shape: tuple[int, int],
+    output_xy_shape: tuple[int, int],
+) -> tuple[float | None, float | None]:
+    x_res, y_res, unit_name = _read_tiff_xy_resolution(source_path)
+    x_um, y_um = _res_to_um_per_px((x_res, y_res), unit_name)
+    if x_um is None or y_um is None:
+        return None, None
+    if source_xy_shape[0] <= 0 or source_xy_shape[1] <= 0:
+        return None, None
+    if output_xy_shape[0] <= 0 or output_xy_shape[1] <= 0:
+        return None, None
+    scaled_x_um = float(x_um) * (float(source_xy_shape[1]) / float(output_xy_shape[1]))
+    scaled_y_um = float(y_um) * (float(source_xy_shape[0]) / float(output_xy_shape[0]))
+    return scaled_x_um, scaled_y_um
 
 
 def _scaled_tiff_resolution(
@@ -1306,6 +1675,369 @@ def _scaled_tiff_resolution(
 
 def _anatomy_uint8_cache_metadata_path(out_path: Path) -> Path:
     return out_path.with_name(out_path.name + ".json")
+
+
+def _ex_vivo_anatomy_output_paths(
+    *,
+    preproc_dir: Path | str,
+    fish_id: str,
+    output_path: Path | str | None = None,
+) -> tuple[Path, Path]:
+    if output_path is None:
+        out_nrrd = Path(preproc_dir) / "2p_anatomy" / "ex_vivo" / f"{fish_id}_exvivo_anatomy_2P_GCaMP_uint8.nrrd"
+    else:
+        out_nrrd = Path(output_path)
+        if out_nrrd.suffix.lower() != ".nrrd":
+            out_nrrd = out_nrrd.with_suffix(".nrrd")
+    out_meta = _anatomy_uint8_cache_metadata_path(out_nrrd)
+    return out_nrrd, out_meta
+
+
+def _manual_anatomy_output_paths(
+    *,
+    input_path: Path | str,
+    output_path: Path | str | None = None,
+) -> tuple[Path, Path]:
+    if output_path is None:
+        source = Path(input_path)
+        out_nrrd = source.with_name(f"{source.stem}_manual_oriented.nrrd")
+    else:
+        out_nrrd = Path(output_path)
+        if out_nrrd.suffix.lower() != ".nrrd":
+            out_nrrd = out_nrrd.with_suffix(".nrrd")
+    out_meta = _anatomy_uint8_cache_metadata_path(out_nrrd)
+    return out_nrrd, out_meta
+
+
+def _manual_registration_source_path(parent_meta: dict[str, Any], fallback_source_path: Path) -> Path:
+    registration_path = parent_meta.get("registration_nrrd_path")
+    if isinstance(registration_path, str) and registration_path:
+        candidate = Path(registration_path)
+        if candidate.exists():
+            return candidate
+    return fallback_source_path
+
+
+def _read_uint8_zyx_image(path: Path) -> tuple[np.ndarray, str]:
+    target = Path(path)
+    if target.suffix.lower() == ".nrrd":
+        try:
+            import nrrd
+        except Exception:  # pragma: no cover
+            nrrd = None
+        if nrrd is not None:
+            data, _header = nrrd.read(str(target), index_order="C")
+            return np.asarray(data), "nrrd"
+        try:
+            import SimpleITK as sitk
+        except Exception as exc:  # pragma: no cover
+            raise ImportError("Reading .nrrd requires pynrrd or SimpleITK") from exc
+        return np.asarray(sitk.GetArrayFromImage(sitk.ReadImage(str(target)))), "SimpleITK"
+    return np.asarray(tifffile.imread(target)), "tifffile"
+
+
+def _write_uint8_anatomy_nrrd(
+    *,
+    data_zyx: np.ndarray,
+    out_nrrd: Path,
+    source_path: Path | None,
+    source_shape: tuple[int, ...] | None,
+    source_xy_shape: tuple[int, int] | None,
+    output_xy_shape: tuple[int, int] | None,
+    write_registration_nrrd: bool,
+) -> str | None:
+    arr = np.asarray(data_zyx, dtype=np.uint8)
+    if not write_registration_nrrd:
+        return None
+    return _write_registration_nrrd_from_zyx_uint8(
+        arr,
+        out_nrrd,
+        source_path=source_path,
+        source_shape=source_shape,
+        source_xy_shape=source_xy_shape,
+        output_xy_shape=output_xy_shape,
+    )
+
+
+def preprocess_ex_vivo_anatomy_stage(
+    *,
+    fish_id: str,
+    ex_vivo_stack_path: Path | str | None,
+    preproc_dir: Path | str | None,
+    output_path: Path | str | None = None,
+    config: ExVivoAnatomyPreprocessingConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or ExVivoAnatomyPreprocessingConfig()
+    if not fish_id:
+        raise ValueError("fish_id is required for ex vivo anatomy preprocessing")
+    if ex_vivo_stack_path is None:
+        raise ValueError("ex_vivo_stack_path is required for ex vivo anatomy preprocessing")
+    if preproc_dir is None and output_path is None:
+        raise ValueError("preproc_dir or output_path is required for ex vivo anatomy preprocessing")
+
+    source_path = Path(ex_vivo_stack_path)
+    if not source_path.exists():
+        raise FileNotFoundError(f"Ex vivo anatomy source not found: {source_path}")
+    preproc_dir_local = Path(preproc_dir) if preproc_dir is not None else source_path.parent
+    out_nrrd, meta_path = _ex_vivo_anatomy_output_paths(
+        preproc_dir=preproc_dir_local,
+        fish_id=str(fish_id),
+        output_path=output_path,
+    )
+
+    target_xy_shape = _normalize_target_xy_shape(cfg.target_xy_shape)
+    log_lines: list[str] = []
+    use_cached = bool(out_nrrd.exists() and not bool(cfg.force_recompute))
+    if use_cached:
+        arr, reader = _read_uint8_zyx_image(out_nrrd)
+        shape = tuple(int(v) for v in arr.shape)
+        dtype_name = str(arr.dtype)
+        cache_meta = _read_json_dict(meta_path)
+        cache_target = cache_meta.get("target_xy_shape")
+        cache_target_tuple = _tuple_int_from_sequence(cache_target, length=2)
+        cache_ok = (
+            dtype_name == "uint8"
+            and int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
+            and bool(cache_meta.get("flip_x", False)) == bool(cfg.flip_x)
+            and bool(cache_meta.get("flip_z_for_registration", False)) == bool(cfg.flip_z_for_registration)
+            and cache_target_tuple == target_xy_shape
+        )
+        if target_xy_shape is not None and tuple(shape[-2:]) != target_xy_shape:
+            cache_ok = False
+        if cache_ok:
+            log_lines.append(f"[ex-vivo] Using existing preprocessed ex vivo anatomy NRRD: {out_nrrd}")
+            return {
+                "bindings": {
+                    "EX_VIVO_ANAT_SOURCE_PATH": source_path,
+                    "EX_VIVO_ANAT_PRE_ROTATION_NRRD": out_nrrd,
+                    "EX_VIVO_ANAT_PRE_ROTATION_METADATA": meta_path,
+                },
+                "artifacts": {
+                    "source_path": source_path,
+                    "ex_vivo_uint8_path": out_nrrd,
+                    "registration_nrrd_path": out_nrrd,
+                    "metadata_path": meta_path,
+                    "output_shape": shape,
+                    "output_dtype": dtype_name,
+                    "used_cached_uint8": True,
+                    "registration_nrrd_writer": reader,
+                },
+                "log_lines": log_lines,
+            }
+        log_lines.append("[ex-vivo] Existing output cache is stale; rebuilding.")
+
+    vol, reader, reordered_to_zxy = _load_anatomy_volume_for_uint8(source_path)
+    source_shape = tuple(int(v) for v in vol.shape)
+    log_lines.append(f"[ex-vivo] Source: {source_path}")
+    log_lines.append(f"[ex-vivo] Source shape={source_shape} dtype={vol.dtype}")
+    if reordered_to_zxy:
+        log_lines.append(f"[ex-vivo] Reordered source to (Z, X, Y): {source_shape}")
+    anat_u8, range_stats = _signed_stack_to_uint8(vol)
+    source_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
+    if cfg.flip_x:
+        anat_u8 = np.flip(anat_u8, axis=-1).copy()
+        log_lines.append("[ex-vivo] Flipped X axis for mirrored 2P output.")
+    if cfg.flip_z_for_registration and anat_u8.ndim >= 3:
+        anat_u8 = np.flip(anat_u8, axis=0).copy()
+        log_lines.append("[ex-vivo] Flipped Z axis to match bottom-to-top confocal registration convention.")
+    anat_u8, resized_xy = _resize_uint8_xy(anat_u8, target_xy_shape)
+    output_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
+    if resized_xy and source_xy_shape is not None and output_xy_shape is not None:
+        log_lines.append(f"[ex-vivo] Resized Y/X from {source_xy_shape} to {output_xy_shape}")
+    nrrd_writer = _write_uint8_anatomy_nrrd(
+        data_zyx=anat_u8,
+        out_nrrd=out_nrrd,
+        source_path=source_path,
+        source_shape=source_shape,
+        source_xy_shape=source_xy_shape,
+        output_xy_shape=output_xy_shape,
+        write_registration_nrrd=bool(cfg.write_registration_nrrd),
+    )
+    write_meta = {
+        "cache_version": int(cfg.cache_version),
+        "stage": "preprocess_ex_vivo_anatomy_stage",
+        "fish_id": str(fish_id),
+        "source_path": str(source_path),
+        "output_path": str(out_nrrd),
+        "registration_nrrd_path": str(out_nrrd) if cfg.write_registration_nrrd else None,
+        "source_reader": reader,
+        "reordered_to_zxy": bool(reordered_to_zxy),
+        "source_shape": list(source_shape),
+        "source_xy_shape": list(source_xy_shape) if source_xy_shape is not None else None,
+        "output_shape": [int(v) for v in anat_u8.shape],
+        "target_xy_shape": list(target_xy_shape) if target_xy_shape is not None else None,
+        "flip_x": bool(cfg.flip_x),
+        "flip_z_for_registration": bool(cfg.flip_z_for_registration),
+        **range_stats,
+    }
+    meta_path.write_text(json.dumps(write_meta, indent=2, sort_keys=True))
+    if cfg.write_registration_nrrd:
+        log_lines.append(f"[ex-vivo] Saved pre-manual-rotation NRRD: {out_nrrd}")
+    return {
+        "bindings": {
+            "EX_VIVO_ANAT_SOURCE_PATH": source_path,
+            "EX_VIVO_ANAT_PRE_ROTATION_NRRD": out_nrrd if cfg.write_registration_nrrd else None,
+            "EX_VIVO_ANAT_PRE_ROTATION_METADATA": meta_path,
+        },
+        "artifacts": {
+            "source_path": source_path,
+            "ex_vivo_uint8_path": out_nrrd if cfg.write_registration_nrrd else None,
+            "registration_nrrd_path": out_nrrd if cfg.write_registration_nrrd else None,
+            "metadata_path": meta_path,
+            "output_shape": tuple(int(v) for v in anat_u8.shape),
+            "output_dtype": str(anat_u8.dtype),
+            "source_reader": reader,
+            "reordered_to_zxy": reordered_to_zxy,
+            "used_cached_uint8": False,
+            "registration_nrrd_writer": nrrd_writer,
+            **range_stats,
+        },
+        "log_lines": log_lines,
+    }
+
+
+def apply_manual_anatomy_orientation_stage(
+    *,
+    input_path: Path | str | None,
+    output_path: Path | str | None = None,
+    source_metadata_path: Path | str | None = None,
+    config: ManualAnatomyOrientationConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or ManualAnatomyOrientationConfig()
+    if input_path is None:
+        raise ValueError("input_path is required for manual anatomy orientation")
+    source_path = Path(input_path)
+    if not source_path.exists():
+        raise FileNotFoundError(f"Manual-orientation input not found: {source_path}")
+    out_nrrd, meta_path = _manual_anatomy_output_paths(input_path=source_path, output_path=output_path)
+    log_lines: list[str] = []
+    rot90_k = int(cfg.rot90_k) % 4
+    crop_center_yx = _tuple_int_from_sequence(cfg.crop_center_yx, length=2)
+    crop_center_yx_2 = (int(crop_center_yx[0]), int(crop_center_yx[1])) if crop_center_yx is not None else None
+    crop_size_px = int(cfg.crop_size_px) if cfg.crop_size_px is not None else None
+    rotation_degrees = float(cfg.rotation_degrees)
+    applied_rotation_degrees = _preview_angle_to_export_angle(rotation_degrees)
+    operation_meta = {
+        "rotation_degrees": rotation_degrees,
+        "applied_rotation_degrees": applied_rotation_degrees,
+        "interpolation": str(cfg.interpolation),
+        "expand_canvas": bool(cfg.expand_canvas),
+        "crop_center_yx": list(crop_center_yx_2) if crop_center_yx_2 is not None else None,
+        "crop_size_px": crop_size_px,
+        "rot90_k": rot90_k,
+        "flip_x": bool(cfg.flip_x),
+        "flip_y": bool(cfg.flip_y),
+        "flip_z": bool(cfg.flip_z),
+    }
+    use_cached = bool(out_nrrd.exists() and not bool(cfg.force_recompute))
+    if use_cached:
+        cache_meta = _read_json_dict(meta_path)
+        cache_ops = cache_meta.get("manual_orientation")
+        if (
+            int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
+            and cache_ops == operation_meta
+            and str(cache_meta.get("source_path", "")) == str(source_path)
+        ):
+            arr, reader = _read_uint8_zyx_image(out_nrrd)
+            shape = tuple(int(v) for v in arr.shape)
+            dtype_name = str(arr.dtype)
+            log_lines.append(f"[manual-orient] Using existing manually oriented anatomy NRRD: {out_nrrd}")
+            return {
+                "bindings": {
+                    "MANUAL_ORIENTED_ANAT_NRRD": out_nrrd,
+                    "MANUAL_ORIENTED_ANAT_METADATA": meta_path,
+                },
+                "artifacts": {
+                    "source_path": source_path,
+                    "manual_oriented_nrrd": out_nrrd,
+                    "registration_nrrd_path": out_nrrd,
+                    "metadata_path": meta_path,
+                    "output_shape": shape,
+                    "output_dtype": dtype_name,
+                    "used_cached_uint8": True,
+                    "registration_nrrd_writer": reader,
+                    "manual_orientation": operation_meta,
+                },
+                "log_lines": log_lines,
+            }
+        log_lines.append("[manual-orient] Existing output cache is stale; rebuilding.")
+
+    arr, _reader = _read_uint8_zyx_image(source_path)
+    if arr.dtype != np.uint8:
+        arr, _stats = _signed_stack_to_uint8(arr)
+    source_shape = tuple(int(v) for v in arr.shape)
+    oriented = np.asarray(arr, dtype=np.uint8)
+    oriented = _rotate_uint8_stack_zyx(
+        oriented,
+        applied_rotation_degrees,
+        interpolation=str(cfg.interpolation),
+        expand_canvas=bool(cfg.expand_canvas),
+    )
+    if not np.isclose(applied_rotation_degrees, 0.0, atol=1e-9):
+        log_lines.append(
+            f"[manual-orient] Applied brainAtlas-style XY rotation: preview={rotation_degrees:g} deg, export={applied_rotation_degrees:g} deg."
+        )
+    if crop_size_px is not None:
+        oriented = _crop_square_zyx(oriented, crop_center_yx_2, crop_size_px)
+        center_label = crop_center_yx_2 if crop_center_yx_2 is not None else "center"
+        log_lines.append(f"[manual-orient] Applied square crop size={crop_size_px} center_yx={center_label}.")
+    if rot90_k:
+        oriented = np.rot90(oriented, k=rot90_k, axes=(-2, -1)).copy()
+        log_lines.append(f"[manual-orient] Applied rot90 k={rot90_k} in Y/X plane.")
+    if cfg.flip_x:
+        oriented = np.flip(oriented, axis=-1).copy()
+        log_lines.append("[manual-orient] Applied manual X flip.")
+    if cfg.flip_y:
+        oriented = np.flip(oriented, axis=-2).copy()
+        log_lines.append("[manual-orient] Applied manual Y flip.")
+    if cfg.flip_z and oriented.ndim >= 3:
+        oriented = np.flip(oriented, axis=0).copy()
+        log_lines.append("[manual-orient] Applied manual Z flip.")
+
+    parent_meta = _read_json_dict(source_metadata_path) if source_metadata_path is not None else _read_json_dict(_anatomy_uint8_cache_metadata_path(source_path))
+    output_xy_shape = tuple(int(v) for v in oriented.shape[-2:]) if oriented.ndim >= 2 else None
+    nrrd_writer = _write_uint8_anatomy_nrrd(
+        data_zyx=oriented,
+        out_nrrd=out_nrrd,
+        source_path=_manual_registration_source_path(parent_meta, source_path),
+        source_shape=source_shape,
+        source_xy_shape=output_xy_shape,
+        output_xy_shape=output_xy_shape,
+        write_registration_nrrd=bool(cfg.write_registration_nrrd),
+    )
+    write_meta = {
+        "cache_version": int(cfg.cache_version),
+        "stage": "apply_manual_anatomy_orientation_stage",
+        "source_path": str(source_path),
+        "source_metadata_path": str(source_metadata_path) if source_metadata_path is not None else None,
+        "output_path": str(out_nrrd),
+        "registration_nrrd_path": str(out_nrrd) if cfg.write_registration_nrrd else None,
+        "source_shape": list(source_shape),
+        "output_shape": [int(v) for v in oriented.shape],
+        "manual_orientation": operation_meta,
+        "parent_metadata": parent_meta,
+    }
+    meta_path.write_text(json.dumps(write_meta, indent=2, sort_keys=True))
+    if cfg.write_registration_nrrd:
+        log_lines.append(f"[manual-orient] Saved manually oriented NRRD: {out_nrrd}")
+    return {
+        "bindings": {
+            "MANUAL_ORIENTED_ANAT_NRRD": out_nrrd if cfg.write_registration_nrrd else None,
+            "MANUAL_ORIENTED_ANAT_METADATA": meta_path,
+        },
+        "artifacts": {
+            "source_path": source_path,
+            "manual_oriented_nrrd": out_nrrd if cfg.write_registration_nrrd else None,
+            "registration_nrrd_path": out_nrrd if cfg.write_registration_nrrd else None,
+            "metadata_path": meta_path,
+            "output_shape": tuple(int(v) for v in oriented.shape),
+            "output_dtype": str(oriented.dtype),
+            "used_cached_uint8": False,
+            "registration_nrrd_writer": nrrd_writer,
+            "manual_orientation": operation_meta,
+        },
+        "log_lines": log_lines,
+    }
 
 
 def resolve_voxel_context_stage(
@@ -1681,17 +2413,24 @@ def preprocess_anatomy_uint8_stage(
 
     if output_path is None:
         out_dir = Path(preproc_dir) / "2p_anatomy"
-        out_path = derived_input_path if derived_input_path is not None else out_dir / f"{_anatomy_uint8_source_stem(requested_source_path)}_uint8.tif"
+        output_seed_path = (
+            derived_input_path
+            if derived_input_path is not None
+            else out_dir / f"{_anatomy_uint8_source_stem(requested_source_path)}_uint8.tif"
+        )
+        out_path = _canonical_anatomy_registration_nrrd_path(output_seed_path)
     else:
         out_path = Path(output_path)
+        if out_path.suffix.lower() != ".nrrd":
+            out_path = out_path.with_suffix(".nrrd")
         out_dir = out_path.parent
     out_dir.mkdir(parents=True, exist_ok=True)
+    registration_nrrd_path = out_path
 
     source_path = requested_source_path
     passthrough_uint8_input = False
     if derived_input_path is not None:
         source_path = derived_input_path
-        out_path = derived_input_path
         meta_source_path: Path | None = None
         meta_source = _read_json_dict(_anatomy_uint8_cache_metadata_path(derived_input_path)).get("source_path")
         if meta_source:
@@ -1702,8 +2441,15 @@ def preprocess_anatomy_uint8_stage(
             source_path = meta_source_path
         else:
             passthrough_uint8_input = True
+    elif force_recompute and requested_source_path.suffix.lower() == ".nrrd":
+        meta_source = _read_json_dict(_anatomy_uint8_cache_metadata_path(requested_source_path)).get("source_path")
+        if meta_source:
+            meta_source_candidate = Path(meta_source)
+            if meta_source_candidate.exists() and not _is_uint8_anatomy_preprocess_path(meta_source_candidate):
+                source_path = meta_source_candidate
 
     apply_orientation = bool(cfg.apply_func_orientation)
+    flip_z_for_registration = bool(cfg.flip_z_for_registration)
     target_xy_shape = _normalize_target_xy_shape(cfg.target_xy_shape)
     orient_mode = func_orientation_mode(polarity) if apply_orientation else "none"
     polarity_norm = normalize_polarity_value(polarity)
@@ -1716,13 +2462,20 @@ def preprocess_anatomy_uint8_stage(
         )
     use_cached = bool(out_path.exists() and (not force_recompute or passthrough_uint8_input))
     if use_cached:
-        with tifffile.TiffFile(out_path) as tf:
-            shape = tuple(int(v) for v in tf.series[0].shape)
-            dtype_name = str(tf.series[0].dtype)
-        if dtype_name != "uint8":
-            log_lines.append(f"[INFO] Existing anatomy preprocessing output is {dtype_name}; rebuilding uint8 TIFF.")
+        cached_reader = None
+        try:
+            cached_uint8, cached_reader = _read_uint8_zyx_image(out_path)
+            shape = tuple(int(v) for v in cached_uint8.shape)
+            dtype_name = str(cached_uint8.dtype)
+        except Exception as exc:
+            log_lines.append(f"[INFO] Existing anatomy preprocessing NRRD is unreadable; rebuilding: {exc}")
+            shape = ()
+            dtype_name = ""
             use_cached = False
-        elif target_xy_shape is not None and tuple(shape[-2:]) != tuple(target_xy_shape):
+        if use_cached and dtype_name != "uint8":
+            log_lines.append(f"[INFO] Existing anatomy preprocessing output is {dtype_name}; rebuilding uint8 NRRD.")
+            use_cached = False
+        elif use_cached and target_xy_shape is not None and tuple(shape[-2:]) != tuple(target_xy_shape):
             if passthrough_uint8_input:
                 log_lines.append(
                     "[INFO] Existing anatomy preprocessing input has "
@@ -1735,7 +2488,7 @@ def preprocess_anatomy_uint8_stage(
                     f"Y/X={tuple(shape[-2:])}; rebuilding for Y/X={tuple(target_xy_shape)}."
                 )
                 use_cached = False
-        else:
+        elif use_cached:
             cache_meta = _read_json_dict(meta_path)
             cache_target = cache_meta.get("target_xy_shape")
             cache_target_tuple = tuple(int(v) for v in cache_target) if isinstance(cache_target, list | tuple) and len(cache_target) == 2 else None
@@ -1744,6 +2497,7 @@ def preprocess_anatomy_uint8_stage(
                 or (
                     int(cache_meta.get("cache_version", 0) or 0) >= int(cfg.cache_version)
                     and bool(cache_meta.get("apply_func_orientation", False)) == apply_orientation
+                    and bool(cache_meta.get("flip_z_for_registration", False)) == flip_z_for_registration
                     and str(cache_meta.get("orientation_mode", "")) == str(orient_mode)
                     and normalize_polarity_value(cache_meta.get("polarity")) == polarity_norm
                     and cache_target_tuple == target_xy_shape
@@ -1753,64 +2507,79 @@ def preprocess_anatomy_uint8_stage(
                 log_lines.append("[INFO] Existing anatomy preprocessing output lacks current orientation/resize metadata; rebuilding.")
                 use_cached = False
     if use_cached:
-        log_lines.append(f"[INFO] Using existing 8-bit anatomy preprocessing output: {out_path}")
+        log_lines.append(f"[INFO] Using existing 8-bit anatomy preprocessing NRRD: {out_path}")
         stats: dict[str, Any] = {
             "output_shape": shape,
             "output_dtype": dtype_name,
             "used_cached_uint8": True,
             "orientation_mode": orient_mode,
+            "flip_z_for_registration": flip_z_for_registration,
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": target_xy_shape,
+            "registration_nrrd_path": registration_nrrd_path,
+            "registration_nrrd_writer": cached_reader,
         }
     else:
-        vol, reader, reordered_to_zxy = _load_anatomy_volume_for_uint8(source_path)
-        anatomy_shape = tuple(int(v) for v in vol.shape)
-        log_lines.append(f"[INFO] Anatomy uint8 source: {source_path}")
-        log_lines.append(f"[INFO] Anatomy source shape={anatomy_shape} dtype={vol.dtype}")
-        if reordered_to_zxy:
-            log_lines.append(f"[INFO] Reordered anatomy to (Z, X, Y): {anatomy_shape}")
-        anat_u8, range_stats = _signed_stack_to_uint8(vol)
-        source_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
-        if apply_orientation:
-            anat_u8 = np.asarray(apply_func_orientation(anat_u8, polarity=polarity_norm, flip_x=True), dtype=np.uint8)
-            log_lines.append(
-                f"[INFO] Applied anatomy orientation mode={orient_mode} "
-                f"polarity={polarity_norm} source={polarity_source}"
-            )
-        anat_u8, resized_xy = _resize_uint8_xy(anat_u8, target_xy_shape)
+        if passthrough_uint8_input:
+            anat_u8, reader = _read_uint8_zyx_image(source_path)
+            anat_u8 = np.asarray(anat_u8, dtype=np.uint8)
+            anatomy_shape = tuple(int(v) for v in anat_u8.shape)
+            range_stats = {
+                "raw_min": int(anat_u8.min()) if anat_u8.size else 0,
+                "raw_max": int(anat_u8.max()) if anat_u8.size else 0,
+                "negative_offset": 0,
+                "output_min": int(anat_u8.min()) if anat_u8.size else 0,
+                "output_max": int(anat_u8.max()) if anat_u8.size else 0,
+            }
+            reordered_to_zxy = False
+            resized_xy = False
+            source_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
+            log_lines.append(f"[INFO] Backfilling 8-bit anatomy NRRD from existing preprocessing input: {source_path}")
+        else:
+            vol, reader, reordered_to_zxy = _load_anatomy_volume_for_uint8(source_path)
+            anatomy_shape = tuple(int(v) for v in vol.shape)
+            log_lines.append(f"[INFO] Anatomy uint8 source: {source_path}")
+            log_lines.append(f"[INFO] Anatomy source shape={anatomy_shape} dtype={vol.dtype}")
+            if reordered_to_zxy:
+                log_lines.append(f"[INFO] Reordered anatomy to (Z, X, Y): {anatomy_shape}")
+            anat_u8, range_stats = _signed_stack_to_uint8(vol)
+            source_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
+            if apply_orientation:
+                anat_u8 = np.asarray(apply_func_orientation(anat_u8, polarity=polarity_norm, flip_x=True), dtype=np.uint8)
+                log_lines.append(
+                    f"[INFO] Applied anatomy orientation mode={orient_mode} "
+                    f"polarity={polarity_norm} source={polarity_source}"
+                )
+            if flip_z_for_registration and anat_u8.ndim >= 3:
+                anat_u8 = np.flip(anat_u8, axis=0).copy()
+                log_lines.append("[INFO] Flipped anatomy Z axis to match bottom-to-top confocal registration convention.")
+            anat_u8, resized_xy = _resize_uint8_xy(anat_u8, target_xy_shape)
         output_xy_shape = tuple(int(v) for v in anat_u8.shape[-2:]) if anat_u8.ndim >= 2 else None
         if resized_xy and source_xy_shape is not None and output_xy_shape is not None:
             log_lines.append(f"[INFO] Resized anatomy Y/X from {source_xy_shape} to {output_xy_shape}")
-        resolution = None
-        resolutionunit = None
-        if source_xy_shape is not None and output_xy_shape is not None:
-            resolution, resolutionunit = _scaled_tiff_resolution(source_path, source_xy_shape, output_xy_shape)
-        imwrite_kwargs: dict[str, Any] = {
-            "compression": "deflate",
-            "metadata": {"axes": "ZYX"} if anat_u8.ndim == 3 else None,
-        }
-        if resolution is not None and resolutionunit is not None:
-            imwrite_kwargs["resolution"] = resolution
-            imwrite_kwargs["resolutionunit"] = resolutionunit
-        tifffile.imwrite(
-            out_path,
+        nrrd_writer = _write_registration_nrrd_from_zyx_uint8(
             anat_u8,
-            **imwrite_kwargs,
+            registration_nrrd_path,
+            source_path=source_path,
+            source_shape=anatomy_shape,
+            source_xy_shape=source_xy_shape,
+            output_xy_shape=output_xy_shape,
         )
         write_meta = {
             "cache_version": int(cfg.cache_version),
             "source_path": str(source_path),
             "output_path": str(out_path),
+            "registration_nrrd_path": str(registration_nrrd_path),
             "apply_func_orientation": apply_orientation,
+            "flip_z_for_registration": flip_z_for_registration,
             "orientation_mode": orient_mode,
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": list(target_xy_shape) if target_xy_shape is not None else None,
+            "source_shape": list(anatomy_shape),
             "source_xy_shape": list(source_xy_shape) if source_xy_shape is not None else None,
             "output_shape": [int(v) for v in anat_u8.shape],
-            "resolution": list(resolution) if resolution is not None else None,
-            "resolutionunit": resolutionunit,
         }
         try:
             meta_path.write_text(json.dumps(write_meta, indent=2, sort_keys=True))
@@ -1822,7 +2591,8 @@ def preprocess_anatomy_uint8_stage(
             f"offset={range_stats['negative_offset']} -> uint8 "
             f"[{range_stats['output_min']}, {range_stats['output_max']}]"
         )
-        log_lines.append(f"[INFO] Saved 8-bit anatomy preprocessing output: {out_path}")
+        log_lines.append(f"[INFO] Saved 8-bit anatomy preprocessing NRRD: {out_path}")
+        log_lines.append(f"[INFO] Saved registration-ready anatomy NRRD: {registration_nrrd_path}")
         stats = {
             **range_stats,
             "output_shape": tuple(int(v) for v in anat_u8.shape),
@@ -1832,11 +2602,14 @@ def preprocess_anatomy_uint8_stage(
             "used_cached_uint8": False,
             "apply_func_orientation": apply_orientation,
             "orientation_mode": orient_mode,
+            "flip_z_for_registration": flip_z_for_registration,
             "polarity": polarity_norm,
             "polarity_source": polarity_source,
             "target_xy_shape": target_xy_shape,
             "resized_xy": resized_xy,
             "metadata_path": meta_path,
+            "registration_nrrd_path": registration_nrrd_path,
+            "registration_nrrd_writer": nrrd_writer,
         }
 
     return {
@@ -1845,6 +2618,7 @@ def preprocess_anatomy_uint8_stage(
             "ANAT_STACK_PATH_ORIG": original_anat_path,
             "ANAT_STACK_PATH_16BIT": current_anat_path,
             "ANAT_8BIT_STACK_PATH": out_path,
+            "ANAT_REG_NRRD_PATH": registration_nrrd_path,
             "ANAT_STACK_PATH": out_path,
         },
         "log_lines": log_lines,
@@ -2438,12 +3212,15 @@ __all__ = [
     "AnatomyUint8PreprocessingConfig",
     "ContextStageConfig",
     "DEFAULT_RUN_CONFIG",
+    "ExVivoAnatomyPreprocessingConfig",
     "FinalFishAuditConfig",
     "FunctionalOrientationStageConfig",
     "FORCE_TRUE_RUN_CONFIG_KEYS",
     "FishStateStageConfig",
+    "ManualAnatomyOrientationConfig",
     "FishContext",
     "VoxelStageConfig",
+    "apply_manual_anatomy_orientation_stage",
     "build_context_audit_stage",
     "build_final_fish_audit_stage",
     "build_fish_state_audit_df",
@@ -2469,6 +3246,7 @@ __all__ = [
     "notebook_bindings_from_context",
     "owner_root",
     "prepare_notebook_paths",
+    "preprocess_ex_vivo_anatomy_stage",
     "preprocess_anatomy_uint8_stage",
     "read_raw_metadata_polarity",
     "read_matching_metadata_polarity",

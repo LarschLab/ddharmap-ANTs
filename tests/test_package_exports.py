@@ -4,6 +4,7 @@ from codeants_2pf_hcr import (
     AnatomyUint8PreprocessingConfig,
     ContextStageConfig,
     CohortBuildConfig,
+    ExVivoAnatomyPreprocessingConfig,
     FinalFishAuditConfig,
     FunctionalAnatomyDebugConfig,
     FunctionalPlacementConfig,
@@ -14,6 +15,7 @@ from codeants_2pf_hcr import (
     HcrActivityExportConfig,
     HcrCellposeConfig,
     InPlaneRegistrationComparisonConfig,
+    ManualAnatomyOrientationConfig,
     MultiFishAnatomySegmentationConfig,
     MultiFishFunctionalAnatomyMatchConfig,
     SingleFishBpiDiagnosticsConfig,
@@ -34,6 +36,7 @@ from codeants_2pf_hcr import (
     apply_square_region_mask,
     apply_func_orientation,
     annotate_session_anat_label_duplicates,
+    apply_manual_anatomy_orientation_stage,
     best_z_by_ncc,
     build_context_audit_stage,
     build_cohort_outputs_stage,
@@ -84,6 +87,7 @@ from codeants_2pf_hcr import (
     multifish_anatomy_segmentation_cache_paths,
     multifish_functional_anatomy_match_cache_paths,
     preprocess_anatomy_uint8_stage,
+    preprocess_ex_vivo_anatomy_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
     annotate_midline_side,
@@ -107,6 +111,7 @@ from codeants_2pf_hcr import (
     render_suite2p_stimulus_locked_trace_panels,
     render_cohort_56g_diagnostics,
     render_cohort_56h_by_fish,
+    render_cohort_56h_fish_average_poster_traces,
     render_cohort_56h_status_donut_grid,
     render_cohort_motion_auc,
     hungarian_match,
@@ -183,6 +188,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(AnatomyUint8PreprocessingConfig)
     assert callable(ContextStageConfig)
     assert callable(CohortBuildConfig)
+    assert callable(ExVivoAnatomyPreprocessingConfig)
     assert callable(FinalFishAuditConfig)
     assert callable(FunctionalAnatomyDebugConfig)
     assert callable(FunctionalPlacementConfig)
@@ -193,6 +199,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(HcrActivityExportConfig)
     assert callable(HcrCellposeConfig)
     assert callable(InPlaneRegistrationComparisonConfig)
+    assert callable(ManualAnatomyOrientationConfig)
     assert callable(MultiFishAnatomySegmentationConfig)
     assert callable(MultiFishFunctionalAnatomyMatchConfig)
     assert callable(SingleFishBpiDiagnosticsConfig)
@@ -213,6 +220,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(apply_square_region_mask)
     assert callable(apply_func_orientation)
     assert callable(annotate_session_anat_label_duplicates)
+    assert callable(apply_manual_anatomy_orientation_stage)
     assert callable(best_z_by_ncc)
     assert callable(build_context_audit_stage)
     assert callable(build_cohort_outputs_stage)
@@ -265,6 +273,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(multifish_anatomy_segmentation_cache_paths)
     assert callable(multifish_functional_anatomy_match_cache_paths)
     assert callable(preprocess_anatomy_uint8_stage)
+    assert callable(preprocess_ex_vivo_anatomy_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
     assert callable(MotionAucPlotConfig)
@@ -293,6 +302,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(render_suite2p_stimulus_locked_trace_panels)
     assert callable(render_cohort_56g_diagnostics)
     assert callable(render_cohort_56h_by_fish)
+    assert callable(render_cohort_56h_fish_average_poster_traces)
     assert callable(render_cohort_56h_status_donut_grid)
     assert callable(render_cohort_motion_auc)
     assert callable(resolve_conf_func_csv_analysis)

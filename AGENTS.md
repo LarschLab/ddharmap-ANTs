@@ -4,6 +4,22 @@ This repository uses a routed instruction system under `.agents/`.
 
 Start here, then read only what your task needs.
 
+## Large Log Routing
+
+Do not open workflow-specific `recent-changes-*.md` logs wholesale just to find context. First query them with:
+
+```bash
+python3 /Users/ddharmap/gitRepo/agenticWorkflow/scripts/query_recent_changes.py --repo <repo-name> --query <term> --limit 5
+```
+
+Open the full log only when the compact query shows that exact entries are needed.
+
+## Answer-Direct Route
+
+If the user asks a general question, asks for a short explanation, or provides enough context in the prompt to answer without repo/vault state, answer directly and do not load routers, references, indexes, logs, or templates.
+
+Use repo/vault routing only when the request requires local files, durable updates, validation, provenance, or project-specific workflow rules.
+
 ## Required startup order
 
 1. Open `.agents/workflows/2pf-hcr-router.md`.

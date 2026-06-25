@@ -673,6 +673,41 @@
 - Evidence:
   - saved functional refs matched `flipX` of the motion-corrected functional source, but their NCC scores were highest against the raw anatomy NRRD, not the `[14a]` `raw_flipX` cache.
 
+### 2026-06-17 - ex vivo 2P anatomy bridge preprocessing scaffold
+
+- Slice goal:
+  - add local codeANTs-owned preprocessing for ex vivo 2P anatomy stacks so L758_f02/L765_f04 bridge-registration trials can test `functional -> in vivo 2P anatomy <- ex vivo 2P anatomy <- rbest <- rn` without relying on an external app as source of truth.
+- Passes completed in this session:
+  - added/exported `ExVivoAnatomyPreprocessingConfig` + `preprocess_ex_vivo_anatomy_stage` for raw ex vivo stacks from `01_raw/2p/anatomy`, with signed-stack uint8 conversion, mirrored-2P X flip, registration-convention Z flip, default `750x750` Y/X resizing, and isolated NRRD/JSON outputs under `02_reg/00_preprocessing/2p_anatomy/ex_vivo/`.
+  - added/exported `ManualAnatomyOrientationConfig` + `apply_manual_anatomy_orientation_stage` for brainAtlas-style preview-angle rotation/crop plus explicit rot90 and axis flips, with manual-oriented NRRD/JSON provenance.
+  - added focused regression coverage for ex vivo X/Z flips, isolated output paths, package exports, and manual-orientation provenance.
+- What changed:
+  - ex vivo bridge preprocessing is now local package behavior and does not rebind canonical in vivo `ANAT_STACK_PATH`; image outputs are intentionally NRRD-only to avoid TIFF/NRRD duplication.
+- What remains broken:
+  - no live L758_f02/L765_f04 ex vivo stack preprocessing or downstream rbest->ex vivo / ex vivo->in vivo registration run was done in this session.
+- Rerun implications:
+  - run the new ex vivo preprocessing helpers for target fish before staging rbest->ex vivo and ex vivo->in vivo registration trials; rerunning canonical `[14a]` is not required unless in vivo anatomy preprocessing itself changes.
+
+### 2026-06-02 - external confocal registration uses current rbest/rn names
+
+- Slice goal:
+  - make the external ANTs and BigWarp helpers compatible with same-fish confocal preprocessing outputs that use `rbest` and `rN` labels instead of legacy `round1`/`roundN` filenames.
+- Passes completed in this session:
+  - updated `ants_toRef.sh` role/path resolution for `confocal_rbest`, `rbest`, `confocal_rN`, and `rn`.
+  - updated `applyTransform.py` discovery/output naming for `rbest` references and `rN -> rbest` aligned HCR channels, with legacy filename fallback.
+  - updated HCR Cellpose/BigWarp discovery to include current `*_rbest_channel*` and `*_rN_channel*` stack names.
+- What changed:
+  - current preprocessing outputs such as `<fish>_rbest_channel1_GCaMP.nrrd` and `<fish>_r2_channel2_gene.nrrd` are first-class inputs for downstream registration staging.
+  - aligned rn-to-best channel outputs now use `_in_rbest` rather than `_in_r<best_round>` for the current convention.
+- What remains broken:
+  - tracked `__pycache__` files in the worktree are unrelated generated artifacts and should not be staged with source changes.
+- Remaining in-slice work:
+  - none for filename compatibility.
+- Next likely breakpoint:
+  - live registration manifests should use explicit roles such as `confocal_rbest` and `confocal_r2` when selecting a specific rn round.
+- Rerun implications:
+  - rerun the external ANTs job and downstream transform-application stages only for fish whose registration outputs need regeneration under the current names.
+
 ### 2026-05-13 - single-fish notebook rename
 
 - Slice goal:
@@ -1459,3 +1494,49 @@
   - HCR-to-anatomy registration, ROI-to-anatomy geometry matching, HCR identity assignment, response/BPI master-table export, QA reports, and final figures remain downstream.
 - Rerun implications:
   - rerun staged `register-functional-to-anatomy --hash-files` when `tforms_by_plane.csv`, best-Z scores, registered functional images, or in-plane registration outputs change.
+
+### 2026-06-02 - `[14a]` writes canonical same-fish registration NRRD
+
+- Slice goal:
+  - make 2P anatomy preprocessing emit the same-fish registration contract `02_reg/00_preprocessing/2p_anatomy/<fish_id>_anatomy_2P_GCaMP.nrrd` instead of requiring registration fixed-path overrides to `*_anatomy_00001_uint8.tif`.
+- Passes completed in this session:
+  - extended `preprocess_anatomy_uint8_stage` to write/backfill a canonical registration-ready NRRD sibling while preserving the existing uint8 TIFF and `ANAT_STACK_PATH` binding for notebook consumers.
+  - added focused regression coverage for legacy `*_anatomy_00001.tif` sources and cached `*_anatomy_00001_uint8.tif` backfill.
+  - updated stage map, current-state, and symbol-index docs for the public output-contract change.
+- What changed:
+  - `[14a]` now exposes `ANAT_REG_NRRD_PATH` and creates `<fish_id>_anatomy_2P_GCaMP.nrrd` in the 2P anatomy preprocessing folder.
+- What remains broken:
+  - no live notebook rerun was done in this session.
+- Rerun implications:
+  - rerunning `[14a]` is enough to backfill the canonical NRRD for fish with existing uint8 anatomy preprocessing output.
+
+### 2026-06-10 - `[14a]` flips anatomy Z for same-fish registration
+
+- Slice goal:
+  - make preprocessed 2P anatomy stacks match the bottom-to-top confocal Z acquisition convention used by downstream same-fish registration.
+- Passes completed in this session:
+  - added a default anatomy Z flip to `preprocess_anatomy_uint8_stage` after functional XY orientation and before registration NRRD writing.
+  - bumped the anatomy uint8 cache version and persisted `flip_z_for_registration` in cache metadata/artifacts so old non-flipped caches rebuild.
+  - changed registration NRRD writing to uncompressed `raw` encoding and added ImageJ `Info` resolution fallback for anatomy TIFFs whose TIFF `ResolutionUnit` tag is `NONE`.
+  - added focused regression coverage for the two-plane Z reversal, raw NRRD encoding, and ImageJ `Info` spacing fallback.
+- What changed:
+  - `[14a]` now emits uncompressed registration-ready anatomy outputs with Z reversed relative to the top-to-bottom 2P anatomy acquisition.
+- Rerun implications:
+  - rerun `[14a]` and downstream same-fish registration stages for fish whose anatomy NRRDs were generated before this change.
+
+### 2026-06-17 - in vivo and ex vivo anatomy preprocessing are NRRD-only
+
+- Slice goal:
+  - reduce generated anatomy artifact bloat before testing the ex vivo bridge registration path.
+- Passes completed in this session:
+  - changed `preprocess_anatomy_uint8_stage` so canonical in vivo `[14a]` output is the 8-bit registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd` plus `.nrrd.json` metadata, with legacy `ANAT_8BIT_STACK_PATH` and `ANAT_STACK_PATH` bindings both pointing to the NRRD.
+  - kept forced reruns able to trace from an existing canonical NRRD back to the raw source through metadata.
+  - kept legacy `*_uint8.tif` inputs readable only as a migration/backfill path; new `[14a]` runs do not create duplicate TIFF image outputs.
+  - ex vivo preprocessing/manual-orientation outputs remain isolated NRRD/JSON outputs under `2p_anatomy/ex_vivo/`.
+  - added `tools/ex_vivo_manual_orientation_gui.py`, a codeANTs wrapper that reuses the brainAtlas rotation-preview convention for ex vivo NRRDs, temporarily saves review state while the GUI is open, applies the reviewed parameters through `apply_manual_anatomy_orientation_stage`, removes the temporary review JSON after successful apply, and writes max-Z before/after QC PNGs without side-projection axis ambiguity.
+  - added/updated focused regression tests for NRRD-only in vivo and ex vivo outputs.
+- What changed:
+  - generated in vivo anatomy preprocessing TIFFs are no longer part of the public `[14a]` output contract.
+- Rerun implications:
+  - rerunning `[14a]` updates metadata sidecars and should not recreate `*_uint8.tif`; existing duplicate TIFF artifacts can be removed once the canonical NRRD for a fish is verified readable.
+  - for ex vivo bridge work, launch `tools/ex_vivo_manual_orientation_gui.py` on fish folders, review rotations interactively, and apply centered `750x750` crops unless a different registration target is intentional.

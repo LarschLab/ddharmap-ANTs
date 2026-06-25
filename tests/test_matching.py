@@ -13,6 +13,7 @@ from codeants_2pf_hcr.matching import (
     build_hcr_mask_fate_df,
     build_functional_anatomy_debug_stage,
     resample_image,
+    resolve_anatomy_label_z,
     summarize_functional_anatomy_geometry_metrics,
     transform_points_between_spaces,
 )
@@ -51,6 +52,13 @@ def test_resample_image_uses_plane_transform_for_intensity_exports() -> None:
 
     assert out.shape == (6, 6)
     assert np.isclose(float(out[2, 3]), 5.0)
+
+
+def test_resolve_anatomy_label_z_supports_reversed_label_stacks() -> None:
+    assert resolve_anatomy_label_z({"best_z": 2}, 5) == 2
+    assert resolve_anatomy_label_z({"best_z": 2, "anat_label_z_mode": "reverse"}, 5) == 2
+    assert resolve_anatomy_label_z({"best_z": 3, "anat_label_z_mode": "reverse"}, 5) == 1
+    assert resolve_anatomy_label_z({"best_z": 3, "anat_label_z": 4, "anat_label_z_mode": "reverse"}, 5) == 4
 
 
 def test_transform_points_between_spaces_uses_skimage_transform_directions() -> None:

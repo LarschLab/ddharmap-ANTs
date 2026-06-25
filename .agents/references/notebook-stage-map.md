@@ -21,9 +21,11 @@
    - `[8]` resolves anatomy Z from fish metadata `step_size_um_anatomy`; TIFF page-count Z is not authoritative for the anatomy stack.
    - `[10]` resolves functional orientation and audits legacy full-stack `_flipX.tif` caches; it no longer saves full oriented functional movies by default.
    - `[12]` builds/reuses oriented 2D functional references from original motion-corrected stacks while preserving legacy reference filenames and `plane_refs` labels.
-   - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected 8-bit anatomy TIFF with anatomy XY preserved by default and Y/X resized to `750x750` in `02_reg/00_preprocessing/2p_anatomy`, rebinds `ANAT_STACK_PATH` for downstream anatomy consumers, and invalidates older functional-flipped uint8 caches.
+   - `[14]`/`[14a]` run before voxel inference `[8]`; `[14a]` saves a signed-16-bit-corrected 8-bit anatomy NRRD with anatomy XY preserved by default, anatomy Z flipped to match the bottom-to-top confocal registration convention, and Y/X resized to `750x750` at `02_reg/00_preprocessing/2p_anatomy/<fish_id>_anatomy_2P_GCaMP.nrrd`, writes spatial header metadata plus a `.nrrd.json` sidecar, rebinds `ANAT_STACK_PATH` for downstream anatomy consumers, and intentionally avoids duplicate TIFF image outputs.
+   - Experimental ex vivo 2P anatomy bridge preprocessing is package-owned in `context.py`: raw ex vivo stacks from `01_raw/2p/anatomy` can be converted to isolated `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` NRRD/JSON outputs with mirrored-2P X flip, registration-convention Z flip, and default `750x750` Y/X resizing; `tools/ex_vivo_manual_orientation_gui.py` provides the interactive review step and a separate manual-orientation helper applies brainAtlas-style preview-angle rotation/crop plus explicit flips before rbest->ex vivo and ex vivo->in vivo registration trials. These outputs are not canonical `[14a]` in vivo anatomy, must not silently replace `ANAT_STACK_PATH`, and intentionally avoid duplicate TIFF image outputs.
    - `[19a]` writes NCC-guided per-plane fixed anatomy-space squares for masked ANTs in-plane registration; `[20]` uses masked ANTs as the default in-plane backend and explicitly falls back to NCC when ANTs or its region JSON is unavailable.
    - `[24a]` runs before `[22e]` so the regional review can include anatomy-label boundaries; `[22e]` also runs after Suite2p loading so the same review can include ROI boundaries.
+   - `[22e]` infers whether the anatomy-label stack uses direct or reversed Z-page indexing against the anatomy intensity stack, then records `anat_label_z_mode` in `plane_refs` for downstream anatomy-label consumers.
    - Key object: `plane_refs`.
 4. **Functional ROI geometry QA** (`[23b] [25] [29] [33] [34a]`)
    - Suite2p orientation QC, functional labels on references, and geometry QC helpers.
@@ -49,6 +51,8 @@
    - Must filter canonical tables; they do not own semantic definitions.
 10. **Trace export and stimulus-aligned analyses** (`[50l] [51] [55] [56] [56h] [56g] [57a-responsive-identity-donut] [57b-anatomy-coexpression-summary] [57]`)
     - Trace export, stimulus alignment, full-session and diagnostics figures.
+    - `[56h]` also writes `sst12_contra_continuous_event_traces_56h.png/.pdf`, an auto-selected `sst1.2` contra-continuous all-events sanity trace.
+    - `[56h]` also writes `poster_single_row_average_traces_56h.png/.pdf`, a one-row poster trace figure with condition blocks adjacent and fixed gene colors.
     - Late trace/figure migration wrappers include `[51]`, `[54]`, and `[56d]`; their notebook cells should contain only the public package call and display/binding code.
 
 ## Core outputs by stage
@@ -58,7 +62,7 @@
 - Pre-identity response/BPI diagnostics: `suite2p_response_bpi_cells_23c.csv`, `suite2p_response_bpi_summary_23c.csv` (`[23c]`, non-canonical).
 - HCR-centric identified-cell outputs: `hcr_activity_status.csv`, `conf_to_func_pairs.csv`, `hcr_func_candidates.csv` (`[50]`).
 - Single-fish donut summary output: `hcr_activity_status_summary.csv` (`[50e]`), including per-gene inner/outer status counts and unmatched rows.
-- Single-fish `[50l]` composite output: `compound_50j_56i_unified.png/.pdf`, package-rendered by `plots.analysis.render_single_fish_50l_composite` from `[50ia]` response/BPI outputs plus `[56i]` motion-AUC point/count tables.
+- Single-fish `[50l]` composite output: `compound_50j_56i_unified.png/.pdf`, package-rendered by `plots.analysis.render_single_fish_50l_composite` from `[50ia]` response/BPI outputs plus `[56i]` motion-AUC point/count tables; poster-scale standalone population donut output: `poster_50l_population_response_donut.png/.pdf` plus counts CSV, package-rendered by `plots.analysis.render_single_fish_50l_population_response_donut_poster` from `[50ia]`.
 - Single-fish responsive hybrid donut outputs: `single_fish_50l_responsive_identity_donut.png/.pdf`, plus long/wide counts CSVs (`[57a-responsive-identity-donut]`).
 - Single-fish anatomy-label co-expression outputs: `single_fish_hcr_anatomy_coexpression_summary.png/.pdf` plus summary/combo-count CSVs (`[57b-anatomy-coexpression-summary]`).
 - Staged pipeline mirrors selected late outputs under `03_analysis/functional/pipeline_outputs/`: `assign-hcr-identity/registration/` stages the ROI identity master/lookup plus current HCR-centric `[50]` table family and regenerates `[50e]` `hcr_activity_status_summary.csv`, `assign-hcr-identity/recompute-audit/` records non-promoted disk-recomputed HCR `[50]` candidate outputs for migration QA, `score-activity-bpi/registration/` owns staged ROI/BPI scoring outputs layered on staged identity when available, `export-canonical-tables/registration/` promotes staged canonical table copies, and `make-figures/04_plots/` renders package-owned final donut/coexpression figures from the staged canonical bundle when available.

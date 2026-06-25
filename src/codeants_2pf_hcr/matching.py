@@ -707,6 +707,30 @@ def _resolve_best_z(plane_ref: dict[str, Any]) -> int:
         return -1
 
 
+def resolve_anatomy_label_z(plane_ref: dict[str, Any] | None, z_size: int, *, best_z: int | None = None) -> int:
+    """Resolve the anatomy-label stack page corresponding to a functional best-Z plane."""
+    z_count = int(z_size)
+    if z_count <= 0:
+        return -1
+    if not isinstance(plane_ref, dict):
+        plane_ref = {}
+    if plane_ref.get("anat_label_z") not in (None, "", False):
+        try:
+            return int(plane_ref["anat_label_z"])
+        except Exception:
+            pass
+    bz = _resolve_best_z(plane_ref) if best_z is None else int(best_z)
+    mode = str(
+        plane_ref.get(
+            "anat_label_z_mode",
+            plane_ref.get("anat_labels_z_mode", plane_ref.get("anat_label_stack_z_mode", "direct")),
+        )
+    ).strip().lower()
+    if mode in {"reverse", "reversed", "inverted", "invert", "flipz", "flip_z"}:
+        return int(z_count - 1 - bz)
+    return int(bz)
+
+
 def _keep_mask(plane_data: dict[str, Any]) -> np.ndarray:
     keep = plane_data.get("iscell_keep")
     if keep is None:
@@ -1004,7 +1028,12 @@ def build_functional_anatomy_debug_df(
             rows.append(row)
             continue
         row["func_source"] = func_src if func_src is not None else func_label_name
-        anat_slice = anat_all[best_z] if anat_all.ndim == 3 else anat_all
+        anat_label_z = resolve_anatomy_label_z(plane_ref, z_size, best_z=best_z)
+        if anat_all.ndim == 3 and (anat_label_z < 0 or anat_label_z >= z_size):
+            row["status"] = f"anat_label_z_out_of_bounds ({anat_label_z})"
+            rows.append(row)
+            continue
+        anat_slice = anat_all[anat_label_z] if anat_all.ndim == 3 else anat_all
         match_result = build_plane_centroid_matches(
             func_labels,
             anat_slice,
@@ -1219,7 +1248,23 @@ def build_functional_roi_master_df(
                 )
             continue
 
-        anat_slice = ensure(anat_labels_all[best_z])
+        anat_label_z = resolve_anatomy_label_z(plane_ref, z_size, best_z=best_z)
+        if anat_label_z < 0 or anat_label_z >= z_size:
+            plane_meta_rows.append(
+                {
+                    "plane": plane_label,
+                    "plane_idx": int(p_idx),
+                    "best_z": plane_ref.get("best_z", np.nan),
+                    "n_rois_requested": int(len(roi_indices)),
+                    "n_rois_rendered": int(len(raw_df)),
+                    "n_anat_total": np.nan,
+                    "status": f"anat_label_z_out_of_bounds ({anat_label_z})",
+                    "func_source": func_source,
+                }
+            )
+            continue
+
+        anat_slice = ensure(anat_labels_all[anat_label_z])
         try:
             func_warped = _resample_func_labels(
                 labels_raw,
@@ -1624,7 +1669,23 @@ def build_hcr_activity_tables(
             )
             continue
 
-        anat_slice = ensure(anat_labels_all[best_z])
+        anat_label_z = resolve_anatomy_label_z(plane_ref, z_size, best_z=best_z)
+        if anat_label_z < 0 or anat_label_z >= z_size:
+            plane_meta_rows.append(
+                {
+                    "plane": plane_label,
+                    "plane_idx": int(p_idx),
+                    "best_z": plane_ref.get("best_z", np.nan),
+                    "n_rois_requested": int(len(roi_indices)),
+                    "n_rois_rendered": int(len(raw_df)),
+                    "n_anat_total": np.nan,
+                    "status": f"anat_label_z_out_of_bounds ({anat_label_z})",
+                    "func_source": func_source,
+                }
+            )
+            continue
+
+        anat_slice = ensure(anat_labels_all[anat_label_z])
         try:
             func_warped = _resample_func_labels(
                 labels_raw,
@@ -1894,6 +1955,7 @@ __all__ = [
     "nearest_neighbor_match",
     "resample_image",
     "resample_labels_nn",
+    "resolve_anatomy_label_z",
     "resolve_plane_transform",
     "run_single_fish_cell_44_stage",
     "run_single_fish_cell_46_stage",

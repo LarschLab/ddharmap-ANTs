@@ -11,6 +11,7 @@ from codeants_2pf_hcr import (
     MultiFishAnatomySegmentationConfig,
     MultiFishFunctionalAnatomyMatchConfig,
     annotate_session_anat_label_duplicates,
+    imread_any,
     run_multifish_anatomy_segmentation_stage,
     run_multifish_functional_anatomy_match_stage,
 )
@@ -181,7 +182,7 @@ def test_run_multifish_anatomy_segmentation_preprocesses_raw_anatomy_to_750_xy(t
         mask_path.parent.mkdir(parents=True, exist_ok=True)
         tifffile.imwrite(str(mask_path), np.zeros((2, 750, 750), dtype=np.uint16))
         captured["anat_seg_source_path"] = src
-        captured["shape"] = tuple(int(v) for v in tifffile.imread(str(src)).shape)
+        captured["shape"] = tuple(int(v) for v in imread_any(src).shape)
         return {
             "status": "cached",
             "bindings": {
@@ -203,8 +204,9 @@ def test_run_multifish_anatomy_segmentation_preprocesses_raw_anatomy_to_750_xy(t
 
     summary = result["bindings"]["MULTIFISH_ANATOMY_SEGMENTATION_DF"]
     assert summary.iloc[0]["status"] == "cached"
-    assert captured["shape"] == (2, 750, 750)
-    assert str(captured["anat_seg_source_path"]).endswith("_uint8.tif")
+    assert captured["shape"][:2] == (750, 750)
+    assert captured["shape"][2] == 2
+    assert str(captured["anat_seg_source_path"]).endswith(".nrrd")
 
 
 def test_run_multifish_anatomy_segmentation_raises_when_orientation_missing(tmp_path: Path) -> None:

@@ -662,6 +662,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cohort_late_cells_use_package_renderers_only(self) -> None:
         expected_imports = {
             "56h-cohort": "from codeants_2pf_hcr.plots.analysis import render_cohort_56h_by_fish",
+            "56h-cohort-poster": "from codeants_2pf_hcr.plots.analysis import render_cohort_56h_fish_average_poster_traces",
             "56g-cohort": "from codeants_2pf_hcr.plots.analysis import render_cohort_56g_diagnostics",
             "cohort-auc": "from codeants_2pf_hcr.plots.analysis import render_cohort_motion_auc",
             "cohort-56h-donut-grid": "from codeants_2pf_hcr.plots.analysis import render_cohort_56h_status_donut_grid",
@@ -686,6 +687,7 @@ class NotebookPhase1RegressionTests(unittest.TestCase):
     def test_cohort_phase2_generator_tracks_late_slice_refactor(self) -> None:
         source = COHORT_PHASE2_GENERATOR_PATH.read_text()
         self.assertIn("render_cohort_56h_by_fish", source)
+        self.assertIn("render_cohort_56h_fish_average_poster_traces", source)
         self.assertIn("render_cohort_56g_diagnostics", source)
         self.assertIn("render_cohort_motion_auc", source)
         self.assertIn("render_cohort_56h_status_donut_grid", source)

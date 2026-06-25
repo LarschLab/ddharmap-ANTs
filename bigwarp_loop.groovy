@@ -261,7 +261,7 @@ if (INCLUDE_BEST_ROUND_RAW_LABELS && rawCpMasksDir.exists()) {
         String n = lower(f.getName())
         if (!isSupportedImageFile(f)) return
         if (!n.contains("_cp_masks")) return
-        if (!n.contains("${lower(FISH_ID)}_round${bestRound}_")) return
+        if (!n.contains("${lower(FISH_ID)}_rbest_") && !n.contains("${lower(FISH_ID)}_round${bestRound}_")) return
         labelInputs << f
     }
 }
@@ -280,7 +280,7 @@ if (INCLUDE_BEST_ROUND_RAW_INTENSITY && rbestDir.exists()) {
     rbestDir.eachFile(FileType.FILES) { File f ->
         String n = lower(f.getName())
         if (!isSupportedImageFile(f)) return
-        if (!n.contains("${lower(FISH_ID)}_round${bestRound}_channel")) return
+        if (!n.contains("${lower(FISH_ID)}_rbest_channel") && !n.contains("${lower(FISH_ID)}_round${bestRound}_channel")) return
         if (!INCLUDE_GCAMP_CHANNEL1 && n.contains("channel1") && n.contains("gcamp")) return
         if (n.contains("_landmarks")) return
         intensityInputs << f
