@@ -209,7 +209,8 @@ register_pair() {
 # Map roles to paths (minimal set; tweak confocal path if needed)
 resolve_role_path() {
   local fish="$1"
-  local role="${2,,}"  # lowercase
+  local role
+  role="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
 
   # helper: return first existing file from a candidate list
   _first_existing() {
@@ -242,8 +243,28 @@ resolve_role_path() {
       echo "$REF_AVG_2P"
       ;;
 
+    confocal_rbest|rbest)
+      local dir="$SCRATCH_BASE/experiments/subjects/$fish/raw/Rbest"
+      _first_existing \
+        "$dir/${fish}_rbest_channel1_GCaMP.nrrd" \
+        "$dir/${fish}_rbest_*GCaMP*.nrrd" \
+        "$dir/${fish}_round1_channel1_GCaMP.nrrd" \
+        "$dir/${fish}_round1_*GCaMP*.nrrd" \
+        "$dir/*GCaMP*.nrrd"
+      ;;
+
+    confocal_rn|rn)
+      local dir="$SCRATCH_BASE/experiments/subjects/$fish/raw/Rn"
+      _first_existing \
+        "$dir/${fish}_r*_channel1_GCaMP.nrrd" \
+        "$dir/${fish}_r*_*GCaMP*.nrrd" \
+        "$dir/${fish}_round*_channel1_GCaMP.nrrd" \
+        "$dir/${fish}_round*_*GCaMP*.nrrd" \
+        "$dir/*GCaMP*.nrrd"
+      ;;
+
     confocal_r*|confocal_round*)
-      # Support any round number with Rbest/Rn layout.
+      # Support any explicit non-best round with the Rbest/Rn layout.
       local round=""
       if [[ "$role" =~ ^confocal_r([0-9]+)$ ]]; then
         round="${BASH_REMATCH[1]}"
@@ -268,13 +289,19 @@ resolve_role_path() {
         [[ -d "$dir" ]] || continue
         if [[ "$dir" == */Rbest ]]; then
           candidate="$(_first_existing \
+            "$dir/${fish}_rbest_channel1_GCaMP.nrrd" \
+            "$dir/${fish}_rbest_*GCaMP*.nrrd" \
+            "$dir/${fish}_round1_channel1_GCaMP.nrrd" \
+            "$dir/${fish}_round1_*GCaMP*.nrrd" \
             "$dir/${fish}_*GCaMP*.nrrd" \
             "$dir/*GCaMP*.nrrd")"
         else
           candidate="$(_first_existing \
+            "$dir/${fish}_r${round}_channel1_GCaMP.nrrd" \
+            "$dir/${fish}_r${round}_*GCaMP*.nrrd" \
             "$dir/${fish}_round${round}_channel1_GCaMP.nrrd" \
             "$dir/${fish}_round${round}_*GCaMP*.nrrd" \
-            "$dir/round${round}_*GCaMP*.nrrd" \
+            "$dir/r${round}_*GCaMP*.nrrd" \
             "$dir/*GCaMP*.nrrd")"
         fi
         [[ -n "$candidate" ]] && { echo "$candidate"; return 0; }
@@ -292,8 +319,13 @@ resolve_role_path() {
 
 # Role helpers for output naming
 role_round() {
-  local role="${1,,}"
-  if [[ "$role" =~ ^confocal_r([0-9]+)$ ]]; then
+  local role
+  role="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$role" == "confocal_rbest" || "$role" == "rbest" ]]; then
+    echo "rbest"; return 0
+  elif [[ "$role" == "confocal_rn" || "$role" == "rn" ]]; then
+    echo "rn"; return 0
+  elif [[ "$role" =~ ^confocal_r([0-9]+)$ ]]; then
     echo "${BASH_REMATCH[1]}"; return 0
   elif [[ "$role" =~ ^confocal_round([0-9]+)$ ]]; then
     echo "${BASH_REMATCH[1]}"; return 0
@@ -303,10 +335,13 @@ role_round() {
 }
 
 role_label() {
-  local role="${1,,}"
+  local role
+  role="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   case "$role" in
     anatomy_2p) echo "2pA" ;;
     avg_2p)     echo "ref" ;;
+    confocal_rbest|rbest) echo "rbest" ;;
+    confocal_rn|rn) echo "rn" ;;
     confocal_r*|confocal_round*)
       local r=""; r="$(role_round "$role" || true)"
       if [[ "$r" == "1" ]]; then echo "rbest"; else echo "r${r}"; fi
@@ -316,10 +351,13 @@ role_label() {
 }
 
 role_group() {
-  local role="${1,,}"
+  local role
+  role="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
   case "$role" in
     anatomy_2p) echo "2pA" ;;
     avg_2p)     echo "ref" ;;
+    confocal_rbest|rbest) echo "Rbest" ;;
+    confocal_rn|rn) echo "Rn" ;;
     confocal_r*|confocal_round*)
       local r=""; r="$(role_round "$role" || true)"
       if [[ "$r" == "1" ]]; then echo "Rbest"; else echo "Rn"; fi
@@ -363,7 +401,7 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
     IFS=',' read -r moving_fish moving_role fixed_fish fixed_role mov_override fix_override <<< "$raw"
 
     # Skip header row
-    if [[ "${moving_fish,,}" == "moving_fish_id" ]]; then
+    if [[ "$(printf '%s' "$moving_fish" | tr '[:upper:]' '[:lower:]')" == "moving_fish_id" ]]; then
       continue
     fi
 
@@ -372,8 +410,8 @@ if [[ -n "${MANIFEST_CSV}" && -f "${MANIFEST_CSV}" ]]; then
       continue
     fi
     row_tag="row${row}"
-    local_mrole="${moving_role,,}"
-    local_frole="${fixed_role,,}"
+    local_mrole="$(printf '%s' "$moving_role" | tr '[:upper:]' '[:lower:]')"
+    local_frole="$(printf '%s' "$fixed_role" | tr '[:upper:]' '[:lower:]')"
 
     # Resolve moving
     if [[ -n "${mov_override:-}" ]]; then
@@ -511,14 +549,25 @@ sed -i "s|__INIT_MODE__|${INIT_MODE}|g" "$JOB"
 
 # Inject fish list only if NO manifest (legacy)
 if [[ -z "${JOB_MANIFEST}" ]]; then
-  tmpfish="$(mktemp)"
-  printf '%s\n' "${FISH_IDS[@]}" > "$tmpfish"
-  sed -i -e "/__FISH_LIST__/{
-    r $tmpfish
-    d
-  }" "$JOB"
-  rm -f "$tmpfish"
+  FISH_LIST_TEXT="$(printf '%s\n' "${FISH_IDS[@]}")"
 fi
+export JOB REF_AVG_2P JOB_MANIFEST JOB_MANIFEST_SHA DRY_RUN FISH_LIST_TEXT
+python3 - <<'PY'
+import os
+from pathlib import Path
+
+job = Path(os.environ["JOB"])
+text = job.read_text()
+for key, value in {
+    "__REF_AVG_2P__": os.environ.get("REF_AVG_2P", ""),
+    "__MANIFEST_CSV__": os.environ.get("JOB_MANIFEST", ""),
+    "__MANIFEST_SHA256__": os.environ.get("JOB_MANIFEST_SHA", ""),
+    "__DRY_RUN__": os.environ.get("DRY_RUN", ""),
+    "__FISH_LIST__": os.environ.get("FISH_LIST_TEXT", ""),
+}.items():
+    text = text.replace(key, value)
+job.write_text(text)
+PY
 
 chmod +x "$JOB"
 
@@ -536,7 +585,7 @@ if [[ -n "${JOB_MANIFEST}" ]]; then
     [[ -z "${raw//[ ,]/}" ]] && continue
     [[ "${raw:0:1}" == "#" ]] && continue
     IFS=',' read -r moving_fish moving_role fixed_fish fixed_role mov_override fix_override <<< "$raw"
-    if [[ "${moving_fish,,}" == "moving_fish_id" ]]; then
+    if [[ "$(printf '%s' "$moving_fish" | tr '[:upper:]' '[:lower:]')" == "moving_fish_id" ]]; then
       continue
     fi
     row=$((row+1))
@@ -544,8 +593,8 @@ if [[ -n "${JOB_MANIFEST}" ]]; then
     moving_fish="${moving_fish//[[:space:]]/}"
     moving_role="${moving_role//[[:space:]]/}"
     fixed_role="${fixed_role//[[:space:]]/}"
-    moving_role="${moving_role,,}"
-    fixed_role="${fixed_role,,}"
+    moving_role="$(printf '%s' "$moving_role" | tr '[:upper:]' '[:lower:]')"
+    fixed_role="$(printf '%s' "$fixed_role" | tr '[:upper:]' '[:lower:]')"
     row_mfish[$row]="$moving_fish"
     row_mrole[$row]="$moving_role"
     row_frole[$row]="$fixed_role"

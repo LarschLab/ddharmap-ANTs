@@ -1,0 +1,331 @@
+# Symbol Index
+
+Generated manually for the current extracted package surface.
+
+## Trusted patterns
+
+- `context.py`: path/config normalization pattern.
+- `stimulus.py`: explicit stage input/output pattern.
+- `activity.py`: response/BPI stage-owned semantics pattern.
+- `pipeline.py`: staged single-fish pipeline contract/manifest pattern.
+- `plots.*`: deterministic figure-builder pattern.
+- `tools/`: wrapper pattern only, not business-logic authority.
+
+## `codeants_2pf_hcr.pipeline`
+
+- `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the future single-fish staged pipeline.
+- `PIPELINE_MANIFEST_VERSION`: Current manifest schema version for staged pipeline manifests.
+- `SingleFishPipelineConfig`: Typed fish/root/strictness knob container for staged single-fish pipeline commands.
+- `LegacyBaselineConfig`: Typed fish/root/baseline knob container for freezing and comparing legacy singleFish output bundles.
+- `StagedOutputComparisonConfig`: Typed fish/root/baseline/tolerance knob container for comparing stage-owned outputs against a frozen legacy baseline, including numeric and visual-PNG thresholds.
+- `PipelinePaths`: Resolved fish-scoped paths for staged pipeline commands without creating notebook output folders during path resolution.
+- `StageContract`: Declarative stage contract record containing stage order, purpose, dependencies, and canonical/diagnostic outputs.
+- `LegacyOutputSpec`: Declared legacy output record with relative path, requirement status, and comparison class.
+- `StagedOutputComparisonSpec`: Declared baseline-versus-staged output pair with comparison mode, requirement status, optional CSV ignored columns, and optional per-artifact visual tolerances.
+- `ActivityBpiScoreRecord`: Response/BPI consistency summary for staged `score-activity-bpi` outputs.
+- `AnatomyPreprocessRecord`: TIFF inspection row for staged `preprocess-anatomy` outputs.
+- `CanonicalTableExportRecord`: Canonical table scope/existence/schema summary for staged `export-canonical-tables` outputs.
+- `FunctionalPreprocessInventoryRecord`: Suite2p plane inventory row for the staged `preprocess-functional` command.
+- `FunctionalRegistrationRecord`: Per-plane registered functional artifact row for staged `register-functional-to-anatomy` outputs.
+- `FigureArtifactRecord`: Final figure artifact presence and scope row for staged `make-figures` outputs.
+- `HcrPreprocessRecord`: HCR intensity/mask inspection row for staged `preprocess-hcr` outputs.
+- `HcrIdentityAssignmentRecord`: Identity-assignment consistency summary for staged `assign-hcr-identity` outputs.
+- `HcrRegistrationRecord`: Per-HCR-mask registered intensity/label/match artifact row for staged `register-hcr-to-anatomy` outputs.
+- `RoiAnatomyMatchRecord`: Per-plane ROI/anatomy geometry audit row for staged `match-roi-to-anatomy` outputs.
+- `PathAuditRecord`: Input-audit row describing expected paths/globs before manifest serialization.
+- `ManifestPathRecord`: JSON-ready path record with existence, kind, size, mtime, and optional SHA256 hash.
+- `QaReportArtifactRecord`: QA/report artifact presence and category row for staged `make-qa-report` outputs.
+- `BaselineCopyRecord`: Per-output result row for `freeze-legacy-baseline`.
+- `BaselineComparisonRecord`: Per-output result row for `compare-legacy-baseline`.
+- `StagedOutputComparisonRecord`: Per-output comparison result row for `compare-staged`, including semantic CSV dimensions, numeric/text/bool deltas, and visual-PNG thumbnail metrics when applicable.
+- `StageManifest`: JSON-ready stage manifest payload with fish ID, stage status, inputs, outputs, upstream manifests, warnings, and errors.
+- `pipeline_contracts`: Return the staged single-fish contract list in roadmap order.
+- `legacy_baseline_outputs`: Return the declared legacy output specs used for baseline freeze/compare.
+- `staged_output_comparison_specs`: Return declared stage-owned output comparisons for a staged pipeline stage.
+- `resolve_pipeline_paths`: Resolve staged pipeline paths without creating output directories.
+- `describe_manifest_path`: Build a manifest path record for a file or directory.
+- `write_stage_manifest`: Serialize a stage manifest to disk.
+- `load_stage_manifest`: Load a saved stage manifest JSON.
+- `run_single_fish_audit_inputs_stage`: Run the first staged pipeline input audit and write `audit-inputs_manifest.json`.
+- `run_single_fish_preprocess_anatomy_stage`: Run notebook-equivalent anatomy normalization/uint8 preprocessing through package-owned `[14]`/`[14a]` helpers and write `preprocess-anatomy_manifest.json`.
+- `run_single_fish_preprocess_functional_stage`: Inventory Suite2p plane outputs, write `[23a]`-style Suite2p load summary/source CSVs, optionally recreate `[23c]` Suite2p diagnostics under `pipeline_outputs/preprocess-functional/qa/`, and write `preprocess-functional_manifest.json`.
+- `run_single_fish_preprocess_hcr_stage`: Discover HCR intensity stacks, run/reuse HCR Cellpose masks, inspect mask labels, and write `preprocess-hcr_manifest.json`.
+- `run_single_fish_register_functional_to_anatomy_stage`: Audit per-plane functional-to-anatomy registration artifacts from `tforms_by_plane.csv` and write `register-functional-to-anatomy_manifest.json`.
+- `run_single_fish_register_hcr_to_anatomy_stage`: Audit registered HCR intensity, label, warp-metadata, matches, review, and final-pair artifacts in `03_analysis/confocal/aligned/` and write `register-hcr-to-anatomy_manifest.json`.
+- `run_single_fish_match_roi_to_anatomy_stage`: Audit geometry-only ROI/anatomy matching artifacts, including `plane_links.csv`, global/per-plane `f2a_centroid_matches*.csv`, and required geometry columns in `functional_roi_activity_identity.csv`, then write `match-roi-to-anatomy_manifest.json`.
+- `run_single_fish_assign_hcr_identity_stage`: Audit HCR identity assignment after geometry, including `anatomy_identity_lookup.csv`, ROI-level identity fields, and the invariant that identity-assigned ROIs have a unique anatomy match; stage the ROI identity master/lookup and current HCR-centric `[50]` table outputs under `pipeline_outputs/assign-hcr-identity/registration/`; regenerate `[50e]` `hcr_activity_status_summary.csv` from staged status plus HCR warp filter metadata; write a non-promoted HCR disk-recompute audit plus transform-replay, anatomy voxel-scale, affine-offset probe, candidate-key-diff, per-target functional-set, and per-target geometry diagnostics under `pipeline_outputs/assign-hcr-identity/recompute-audit/`; then write `assign-hcr-identity_manifest.json`.
+- `run_single_fish_score_activity_bpi_stage`: Generate staged `[50ia]` response/BPI outputs with `activity.build_response_bpi_tables`, preferring the staged identity master and staged `[23c]` pre-identity response calls when available, validate the staged BPI cells/summary/scored master tables, then write `score-activity-bpi_manifest.json`.
+- `run_single_fish_export_canonical_tables_stage`: Export canonical ROI-centric and HCR-centric table copies with explicit scope labels, preferring staged `score-activity-bpi` outputs for ROI master/BPI diagnostics and staged `assign-hcr-identity` outputs for HCR-centric tables when available, then write `export-canonical-tables_manifest.json`.
+- `run_single_fish_make_qa_report_stage`: Audit core biologist-facing QA/report artifacts across functional response, ROI/anatomy geometry, HCR identity/activity, BPI, and confocal plane coverage surfaces, then write `make-qa-report_manifest.json`.
+- `run_single_fish_make_figures_stage`: Audit final `04_plots` figure/table artifacts, regenerate package-owned responsive identity donut and HCR anatomy coexpression outputs into `pipeline_outputs/make-figures/04_plots/` from staged canonical exports when available, copy not-yet-extracted legacy figure artifacts, then write `make-figures_manifest.json`.
+- `freeze_legacy_single_fish_baseline`: Copy declared legacy outputs into a baseline bundle and write `baseline_manifest.json`.
+- `compare_legacy_single_fish_baseline`: Compare current declared legacy outputs to a frozen baseline bundle and write `comparison_manifest.json`.
+- `compare_staged_single_fish_outputs`: Compare stage-owned outputs against frozen legacy outputs, write a stage comparison CSV, and write `compare-staged-<stage>_manifest.json`.
+- CLI wrapper: `tools/single_fish_pipeline.py` exposes `audit-inputs`, `preprocess-functional`, `preprocess-anatomy`, `preprocess-hcr`, `register-functional-to-anatomy`, `register-hcr-to-anatomy`, `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, `make-figures`, `freeze-legacy-baseline`, `compare-legacy-baseline`, and `compare-staged`.
+
+## `codeants_2pf_hcr.context`
+
+- `AnatomyNormalizationStageConfig`: Typed anatomy-conversion knob container for notebook cell `[14]`.
+- `AnatomyUint8PreprocessingConfig`: Typed signed-anatomy uint8 preprocessing knob container for notebook cell `[14a]`, including default 2P XY mirroring/orientation, anatomy Z flip for same-fish registration, cache-version, target Y/X shape, and registration-NRRD write controls.
+- `ContextStageConfig`: Typed setup/path knob container for notebook cell `[4]`.
+- `ExVivoAnatomyPreprocessingConfig`: Typed ex vivo 2P anatomy preprocessing knob container for the experimental ex vivo bridge path, including mirrored-2P X flip, registration-convention Z flip, target Y/X shape, cache-version, and registration-NRRD write controls.
+- `FishStateStageConfig`: Typed fish-state marker configuration for notebook cell `[4a]`.
+- `FinalFishAuditConfig`: Typed final contamination-audit configuration for `[99-debug-fish-audit]`.
+- `ManualAnatomyOrientationConfig`: Typed manual anatomy-orientation knob container for applying brainAtlas-style preview-angle rotation/crop plus explicit rot90 and axis flips to an already preprocessed anatomy stack.
+- `VoxelStageConfig`: Typed voxel-resolution stage configuration for notebook cell `[8]`.
+- `FunctionalOrientationStageConfig`: Typed functional orientation/audit configuration for notebook cell `[10]`; full oriented movie stack saves are opt-in.
+- `OrientationResolutionError`: Fail-fast error for missing or ambiguous fish orientation metadata.
+- `resolve_fish_context`: Resolve fish-scoped roots, canonical output paths, and normalized run config.
+- `resolve_notebook_context_stage`: Notebook-facing setup stage for `[4]` that returns context, legacy bindings, and discovered paths.
+- `notebook_bindings_from_context`: Rebind package-resolved context back to legacy notebook variable names.
+- `normalize_run_config`: Apply defaults and forced recompute flags.
+- `build_run_config_stage`: Notebook-facing run-config rebinding stage for `[4b]`.
+- `reset_fish_state`: Update the fish marker explicitly.
+- `require_fish_state`: Check that the current fish matches the cached fish marker.
+- `resolve_fish_state_stage`: Notebook-facing fish-state stage for `[4a]`.
+- `build_fish_state_audit_df`: Build the audit dataframe used by cell `[4c]`.
+- `build_context_audit_stage`: Notebook-facing audit stage for `[4c]`.
+- `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
+- `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
+- `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
+- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that mirrors/orients 2P anatomy XY by default, flips anatomy Z to match bottom-to-top confocal registration convention, resizes anatomy Y/X to `750x750`, saves the canonical uncompressed 8-bit registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd` plus `.nrrd.json` metadata under `02_reg/00_preprocessing/2p_anatomy`, avoids duplicate TIFF image outputs, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_ex_vivo_anatomy_stage`: Experimental same-fish bridge preprocessing stage for raw ex vivo 2P anatomy stacks from `01_raw/2p/anatomy`; writes isolated pre-manual-rotation NRRD plus JSON provenance under `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` without rebinding canonical in vivo `ANAT_STACK_PATH` or creating duplicate TIFF image outputs.
+- `apply_manual_anatomy_orientation_stage`: Experimental helper that applies brainAtlas-style preview-angle XY rotation, optional square crop, rot90, and explicit axis flips to a preprocessed anatomy stack, then writes manual-oriented NRRD plus JSON provenance for ex vivo registration trials.
+- `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `bottom-left`/`top-right` to `north`/`south`, and fail on conflicts.
+- `read_matching_metadata_polarity`: Read the legacy fallback polarity from `matchingMetadata.csv`.
+- `resolve_func_polarity`: Resolve orientation with override support, preferring raw per-fish metadata and falling back to legacy matching metadata.
+- `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
+- `orient_functional_stacks_stage`: Notebook-facing functional orientation stage for `[10]` that audits legacy full-stack caches and only writes oriented movie stacks when explicitly requested.
+- `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
+
+## `codeants_2pf_hcr.cohort`
+
+- `CohortBuildConfig`: Typed cohort build/cache knob container for `multi_fish_56h_56g.ipynb` `[cfg]` + `[cohort-build]`.
+- `cohort_cache_paths`: Resolve canonical cohort cache/output filenames under `cohort_outputs/multi_fish_56h_56g/`.
+- `count_trace_genes`: Count available genes in panel-keyed trace cache payloads (flat and per-fish nested variants).
+- `resolve_cohort_context_stage`: Notebook-facing cohort environment/context stage for `[cfg]`; publishes stable cohort env bindings.
+- `load_cohort_analysis_state`: Cache-aware cohort analysis loader for late cohort cells; always returns stable env bindings plus cached tables/results.
+- `load_cohort_outputs_from_disk`: Load cached cohort tables and trace payload keys for cache reuse checks.
+- `save_cohort_outputs_to_disk`: Persist cohort summary tables, 53a cache tables, and trace cache payload.
+- `build_cohort_outputs_stage`: Notebook-facing owner stage for cohort fish discovery, metadata lookup, cache reuse/invalidation, aggregation, and legacy-shaped binding export.
+
+## `codeants_2pf_hcr.cohort_suite2p`
+
+- `CohortSuite2p23cConfig`: Typed build/cache knob container for `multiFish.ipynb` Suite2p `[23c]`.
+- `parse_fish_ids_csv`: Parse comma-separated fish IDs while preserving order and dropping blanks/duplicates.
+- `resolve_cohort_suite2p_23c_fish_dir`: Resolve an owner-free fish folder under the configured cohort data root.
+- `aggregate_cohort_23c_trace_means`: Collapse `[23c]` per-ROI traces to one mean trace per fish/session/stimulus.
+- `build_fish_session_color_map`: Assign stable fish colors with session shade variants for cohort trace rendering.
+- `cohort_suite2p_23c_cache_paths`: Resolve cache/output filenames under `cohort_outputs/suite2p_23c_response_overview/`.
+- `load_cohort_suite2p_23c_outputs_from_disk`: Load cached cohort `[23c]` tables and trace/heatmap payloads.
+- `build_cohort_suite2p_23c_stage`: Notebook-facing owner stage for cohort `[23c]` fish discovery, Suite2p loading, response/BPI scoring, trace aggregation, heatmap payload retention, and cache writing.
+
+## `codeants_2pf_hcr.multifish`
+
+- `MultiFishAnatomySegmentationConfig`: Typed per-fish anatomy segmentation knob container for `multiFish.ipynb`.
+- `MultiFishFunctionalAnatomyMatchConfig`: Typed multi-fish functional-anatomy ROI identity aggregation and session-aware duplicate-flagging knob container for `multiFish.ipynb`.
+- `multifish_anatomy_segmentation_cache_paths`: Resolve MultiFish anatomy segmentation summary outputs under `cohort_outputs/multiFish/`.
+- `multifish_functional_anatomy_match_cache_paths`: Resolve MultiFish functional-anatomy ROI identity, summary, and duplicate-summary outputs under `cohort_outputs/multiFish/`.
+- `run_multifish_anatomy_segmentation_stage`: Notebook-facing owner stage that resolves per-fish orientation from raw metadata with legacy fallback, preprocesses anatomy through the single-fish `[14a]` uint8/mirrored-2P-XY/`750x750` contract, then runs/reuses anatomy Cellpose `[24a]` per configured fish and writes a cohort-level segmentation summary.
+- `run_multifish_functional_anatomy_match_stage`: Notebook-facing owner stage that aggregates per-fish `functional_roi_activity_identity.csv`, maps global planes to imaging sessions from preprocessing metadata, flags same-anatomy-label ROI duplicates within fish/session, and writes multiFish ROI identity plus duplicate summary CSVs.
+
+## `codeants_2pf_hcr.spatial`
+
+- `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`; oriented references can be built from original motion-corrected stacks without saving full oriented movies.
+- `FunctionalPlacementConfig`: Typed NCC XY placement configuration for notebook cell `[20]`.
+- `InPlaneRegistrationComparisonConfig`: Typed in-plane method-comparison configuration for notebook cell `[20]`.
+- `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
+- `imread_any`: Read TIFF or NRRD images with minimal notebook dependencies.
+- `zproject_mean`: Mean projection helper.
+- `norm01`: Robust percentile normalization to `[0, 1]`.
+- `local_unsharp`: Local contrast sharpening helper.
+- `corrcoef_img`: Pearson correlation for image pairs.
+- `top_correlated_mean`: Suite2p-like top-k frame reference builder.
+- `best_z_by_ncc`: Best-z search by NCC-like scoring.
+- `apply_func_orientation`: Apply the notebook’s functional orientation convention.
+- `apply_square_region_mask`: Preserve values inside an anatomy-space square and set outside pixels to zero for masked registration.
+- `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy `ref2d_raw` / `ref2d` bindings and cache filenames while applying functional orientation to derived 2D references.
+- `ncc_xy`: Shared NCC XY placement primitive for notebook cell `[20]`.
+- `scale_image`: Resize a 2D functional reference by an empirical NCC search scale.
+- `registration_metric_from_scores`: Summarize NCC scores into best-z and peak metrics.
+- `run_ncc_placement_stage`: Notebook-facing NCC XY placement stage for `[20]` that updates `plane_refs` with placement metadata and warped reference aliases.
+- `run_in_plane_registration_comparison_stage`: Notebook-facing `[20]` comparison stage that evaluates current NCC XY placement against optional ANTs rigid+affine placement while keeping the configured active backend explicit.
+- `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, and rebinds legacy globals.
+
+## `codeants_2pf_hcr.matching`
+
+- `FunctionalAnatomyDebugConfig`: Typed functional↔anatomy debug summary configuration for notebook cell `[34a]`.
+- `FunctionalRoiIdentityConfig`: Typed per-ROI identity export configuration for notebook cell `[50i]`.
+- `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
+- `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
+- `resolve_anatomy_label_z`: Map an anatomy-intensity `best_z` to the corresponding anatomy-label stack page, including reversed label stacks.
+- `resample_labels_nn`: Apply nearest-neighbor label resampling for functional-to-anatomy plane warps and shape harmonization, including ANTs transformlists via ANTsPy or the SimpleITK fallback for single-file affine transformlists.
+- `resample_image`: Apply intensity-image resampling for functional-to-anatomy plane warps, including ANTs transform dictionaries.
+- `transform_points_between_spaces`: Transform 2D points between functional/moving and anatomy/fixed spaces for skimage and ANTs in-plane transform objects.
+- `harmonize_functional_labels_to_anatomy`: Enforce the shared per-plane functional/anatomy shape contract before overlap or centroid matching.
+- `compute_centroids`: Build label centroid tables for centroid-based QC and distance summaries.
+- `idx_to_um`: Convert centroid-index tables to micron coordinates with explicit voxel scaling.
+- `nearest_neighbor_match`: Build one-nearest-neighbor centroid matches for QC diagnostics.
+- `hungarian_match`: Build Hungarian centroid matches for QC diagnostics.
+- `summarize_distances`: Summarize centroid-match distance arrays for QC tables.
+- `summarize_functional_anatomy_geometry_metrics`: Summarize ROI-centric master-table geometry metrics for in-plane registration method comparison reports.
+- `build_plane_centroid_matches`: Build per-plane centroid-link tables and overlap-aware counts for notebook QA stages `[34]`/`[34a]`.
+- `build_functional_anatomy_debug_df`: Summarize per-plane functional-to-anatomy centroid matching status for notebook debug stage `[34a]`.
+- `build_functional_anatomy_debug_stage`: Notebook-facing functional↔anatomy debug stage for `[34a]` that loads anatomy labels, resolves voxel scale, and returns the debug summary bindings/log lines.
+- `gene_from_mask`: Infer a gene label from a confocal mask filename.
+- `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
+- `build_hcr_mask_fate_df`: Reconstruct per-confocal-label match fate rows from `[44]` `hcr_match_results` for downstream rejected-mask QA consumers such as `[50f]` and `[50g]`.
+- `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
+- `annotate_session_anat_label_duplicates`: Mark same-anatomy-label functional ROI duplicates within each fish/session while retaining all ROI rows and ranking by geometry.
+- `build_hcr_activity_tables`: Build HCR-centric functional candidate/status tables for `[50]`.
+- `finalize_hcr_activity_export_tables`: Apply response-aware `[50]` export semantics to HCR status/candidate tables, retaining accepted labels without functional candidates in the raw export and producing finalized status/raw/trace/candidate tables.
+- `MatchingConfig`: Typed matching-stage knob container.
+
+## `codeants_2pf_hcr.stimulus`
+
+- `StimulusConfig`: Typed stimulus parsing configuration.
+- `normalize_session_label`: Normalize imaging-session identifiers such as `2`/`r2` for stimulus metadata lookup.
+- `discover_functional_sessions`: Read preprocessing metadata to map output functional planes to imaging sessions.
+- `find_experiment_log`: Discover the fish experiment log CSV, optionally constrained to an imaging session.
+- `find_metadata_csv`: Discover the fish metadata CSV, optionally constrained to an imaging session.
+- `load_events_df`: Normalize event/time columns from the experiment log.
+- `load_metadata_params`: Read metadata key-value pairs.
+- `parse_float`: Robust numeric parser for mixed metadata values.
+- `resolve_presented_stimulus_metadata`: Resolve companion stimulus metadata (`trial_sequence`/`planned_schedule`), validate it against parsed experiment-log stimulus events, and expose planned-schedule block/stimulus tables when present.
+- `classify_stim_type`: Collapse notebook stimulus codes to bout/continuous/mixed.
+- `effective_motion_window`: Compute motion-response windows after onset delay.
+- `build_prestim_baseline_windows`: Build merged prestim baseline windows from `df_evt`.
+- `build_prestim_trial_windows`: Build per-trial prestim windows for null sampling.
+- `build_null_window_start_map`: Build null AUC bootstrap start indices by duration.
+- `compute_zscore_stats`: Compute pooled-baseline z-score parameters and validity masks.
+- `parse_unilateral_stim`: Parse unilateral stimulus code to side/mode.
+- `build_stim_tables`: Build block and trial tables from event logs.
+- `resolve_stimulus_context`: End-to-end notebook-facing stimulus loader for `[55]`.
+- `resolve_plane_stimulus_contexts`: Resolve per-plane stimulus contexts so multi-session fish use the session-specific experiment/meta CSVs.
+
+## `codeants_2pf_hcr.activity`
+
+- `ActivityConfig`: Typed response/BPI scoring configuration for `[50ia]`.
+- `SingleFishBpiDiagnosticsConfig`: Typed BPI/activity diagnostics configuration for notebook cell `[56g]`.
+- `build_suite2p_response_seed_table`: Build a pre-identity Suite2p ROI table plus in-memory dF/F map for early response scoring in `[23c]`.
+- `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table.
+- `prepare_single_fish_bpi_diagnostics_stage`: Notebook-facing response-aware diagnostics prep stage for `[56g]` that resolves activity/BPI columns, backfills response metadata from the ROI master table, and publishes plotting-ready bindings.
+
+## `codeants_2pf_hcr.suite2p`
+
+- `Suite2pStageConfig`: Typed Suite2p load/orientation configuration for notebook cell `[23a]`.
+- `Suite2pStimulusLockedDiagnosticConfig`: Typed Suite2p stimulus/full-session diagnostic configuration for notebook cell `[23c]`.
+- `infer_frame_rate_from_detail`: Resolve a consistent Suite2p frame rate from per-plane ops files.
+- `build_suite2p_stimulus_locked_diagnostic`: Compute per-neuron, per-stimulus average Suite2p traces with session-aware stimulus metadata and frame-grid block timing for `[23c]`.
+- `load_suite2p_stage`: Notebook-facing Suite2p stage loader for early `[23a]` that can run before functional reference preprocessing, returning legacy-shaped labels, plane maps, and source summary tables.
+- `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
+- `run_suite2p_stimulus_locked_diagnostic_stage`: Notebook-facing Suite2p stimulus-locked diagnostic stage for `[23c]`.
+
+## `codeants_2pf_hcr.segmentation`
+
+- `AnatomyCellposeConfig`: Typed anatomy Cellpose configuration for notebook cell `[24a]`.
+- `HcrCellposeConfig`: Typed HCR Cellpose segmentation configuration for notebook cell `[24]`.
+- `resolve_hcr_cellpose_model_path`: Resolve the active HCR Cellpose model path from overrides, run config, or repo defaults.
+- `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`, excluding fullbrain, channel1, mask outputs, and dot/AppleDouble sidecar files.
+- `deduplicate_hcr_intensity_targets`: Collapse duplicate intensity inputs that would write the same Cellpose mask output.
+- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import and cross-platform device selection.
+- `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, and writes mask TIFFs.
+- `resolve_functional_labels_for_plane`: Resolve per-plane functional labels for `[26]` from Suite2p, Cellpose, or legacy label sources with orientation handling.
+- `resolve_native_suite2p_labels_for_plane`: Resolve the native Suite2p label image for a plane without Cellpose fallback for `[26a]`.
+- `export_suite2p_native_labels_stage`: Notebook-facing Suite2p native-label export stage for `[26a]` that writes QA TIFFs and a manifest CSV.
+
+## `codeants_2pf_hcr.hcr_warp`
+
+- `run_hcr_external_bigwarp_label_stage`: Notebook-facing wrapper for single-fish `[43]` external-BigWarp label prep / load logic with stage-local ANTs import.
+- `run_hcr_external_bigwarp_intensity_stage`: Notebook-facing wrapper for single-fish `[43b]` rn->rbest intensity prep logic with stage-local ANTs import.
+
+## `codeants_2pf_hcr.traces`
+
+- `TraceExportConfig`: Typed trace-export configuration for `[51]`.
+- `MotionAucPlotConfig`: Typed motion-AUC table-build configuration for the `[50l]`-embedded `[56i]` owner path.
+- `load_midline_context`: Load and validate the fish-scoped midline bundle for `[56]`, `[56h]`, `[56f-qc*]`, and `[50l]`/`[56i]` AUC preparation.
+- `annotate_midline_side`: Add `midline_signed_dist_px`, `midline_side`, `midline_uncertain`, and `midline_space` columns using package-owned midline semantics.
+- `filter_high_confidence_pairs`: Drop HCR/functional pair rows flagged by known low-confidence columns while optionally returning filter counts.
+- `extract_window_with_padding`: Extract trace windows with notebook-compatible `pad_nan` and `strict` behavior.
+- `build_single_fish_motion_auc_plot_tables`: Build the single-fish motion-window AUC ROI panel / plot points / plot counts tables for `[50l]` / `[56i]`, preserving current ROI-centric all-neuron and HCR-centric gene-group semantics.
+- `export_suite2p_trace_metadata`: Export deduplicated HCR-selected Suite2p dF/F traces and metadata for `[51]`.
+- `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
+- `resolve_conf_func_csv_analysis`: Resolve the analysis-ready `conf_to_func_pairs.csv` path for `[51]`, `[56]`, `[56h]`, and `[57]`.
+
+## `codeants_2pf_hcr.plots.qa`
+
+- `build_best_plane_modality_merge_grid`: Render the merged best-plane modality QA panel.
+- `build_round_channel_mip_grid`: Render the round/channel MIP grid.
+- `collect_cohort_53a_tables`: Build pooled cohort [53a]-analogue cache tables for `multi_fish_56h_56g.ipynb` (`[cohort-build]`).
+- `_select_in_plane_hcr_status_like_53a`: Build the [53a] label-level in-plane HCR status subset (one row per accepted `(gene, anat_label)` represented on functional planes) for HCR↔anatomy QC sourcing.
+- `show_region_shift_square_selector_stage`: Notebook-facing region-square QA selector stage for `[22d]`, including JSON reuse/save behavior.
+- `show_ants_registration_region_selector_stage`: Notebook-facing NCC-guided per-plane fixed-region square writer for `[19a]` masked ANTs in-plane registration.
+- `show_inplane_registration_method_comparison_stage`: Notebook-facing regional ANTs-vs-NCC in-plane placement and ROI/anatomy-boundary review for `[22e]`, using stored `[20]` method outputs, Suite2p labels, anatomy labels, and the `[22d]` crop.
+- `show_regional_match_review_stage`: Notebook-facing anatomy-space ROI/anatomy regional overlay for `[34c]`, using the `[22d]` crop and selected in-plane transform to warp functional labels forward.
+- `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
+- `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
+- `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows.
+- `show_centroid_match_qa_stage`: Notebook-facing centroid-distance QA stage for `[34]` with threshold UI, plane switching, context rendering, and `[26]`-matched functional label source selection via `use_suite2p_labels`.
+- `show_functional_label_overlay_stage`: Notebook-facing functional-label overlay stage for `[26]`.
+- `show_registration_overlay_stage`: Notebook-facing interactive registration overlay stage for `[22]`.
+
+## `codeants_2pf_hcr.plots.annotations`
+
+- `place_labels_no_overlap`: Shared 53a-style collision-aware in-panel label placer for dense cohort annotations (stack-up on local x collisions + y-limit expansion).
+
+## `codeants_2pf_hcr.plots.analysis`
+
+- `render_suite2p_full_session_heatmap`: Render the `[23c]` full-experiment Suite2p cell heatmap with frame X axis, white-to-black activity scale, and transparent stimulus spans.
+- `plot_single_roi_57style`: Render the single-ROI `[57]` style figure and optional AUC table.
+- `render_single_fish_50l_bpi_panel`: Render the single-fish `[50l]` top-left whole-population AUC-vs-BPI scatter from `[50ia]` response/BPI outputs.
+- `render_single_fish_50l_gene_auc_panel`: Render the single-fish `[50l]` marker-specific ipsi/contra AUC box/point/count-strip panels from the package-owned motion AUC point/count tables.
+- `render_single_fish_50l_global_auc_panel`: Render the single-fish `[50l]` all-neurons ipsi/contra AUC panels as paired bout↔continuous ROI points with class-colored directional highlights, neutral non-directional classes, directional class-mean summaries, and unchanged count strips.
+- `render_single_fish_50l_composite`: Render notebook stage `[50l]` as one package-owned composite, including stale `[56i]` AUC cache rebuilding, BPI panel, response/BPI donut, AUC panels, legacy figure globals, and `compound_50j_56i_unified.png/.pdf`.
+- `render_single_fish_50l_population_response_donut_poster`: Render a standalone poster-scale `[50l]` population response donut with original response-status inner classes and collision-aware perimeter indicators.
+- `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
+- `render_cohort_56h_fish_average_poster_traces`: Render a gene-row cohort [56h]-style poster trace figure with equal-weight fish-averaged gene traces and SEM across fish.
+- `render_cohort_56g_diagnostics`: Render cohort [56g] activity/BPI diagnostic 2x2 panel from `cohort_bpi_cells_df`.
+- `render_cohort_motion_auc`: Render cohort [cohort-auc] motion-window AUC figure; supports cached aggregate CSV reuse or per-fish aggregation fallback, optional global-median-label suppression, and mode-colored median labels.
+- `render_cohort_56h_status_donut_grid`: Render cohort fish×gene HCR-status donut grid and export summary counts table.
+- `render_cohort_50l_donut_row`: Render cohort [50l]-style fish-row donut figure and export long/wide counts tables.
+- `render_cohort_50l_responsive_identity_donut_row`: Render cohort responsive-only fish-row donut figure with BPI inner ring and exact HCR-derived identity outer ring (plus `unidentified`) and export long/wide counts tables.
+- `render_cohort_suite2p_23c_traces`: Render cohort `[23c]` responsive average traces with one line per fish/session/stimulus.
+- `render_cohort_suite2p_23c_full_session_heatmaps`: Render and save per-fish `[23c]` full-session Suite2p heatmaps from cached cohort payloads.
+- `render_single_fish_50l_responsive_identity_donut`: Render single-fish responsive-only donut with the same hybrid semantics as cohort responsive-identity donut and export long/wide counts tables.
+
+## `codeants_2pf_hcr.single_fish_notebook_stages`
+
+- `run_single_fish_cell_22c_stage`: Migration shim for heavy single-fish notebook cell `[22c]`.
+- `run_single_fish_cell_30_stage`: Migration shim for single-fish segmentation-diameter QA cell `[30]`.
+- `run_single_fish_cell_34c_stage`: Migration shim for single-fish regional match review cell `[34c]`.
+- `run_single_fish_cell_38_stage`: Migration shim for single-fish HCR manifest/discovery cell `[38]`.
+- `run_single_fish_cell_40_stage`: Migration shim for single-fish run metadata snapshot cell `[40]`.
+- `run_single_fish_cell_41_stage`: Migration shim for single-fish HCR transform configuration cell `[41]`.
+- `run_single_fish_cell_44_stage`: Migration shim for single-fish HCR↔anatomy matching/QC cell `[44]`.
+- `run_single_fish_cell_46_stage`: Migration shim for single-fish functional↔anatomy matching summary cell `[46]`.
+- `run_single_fish_cell_47_stage`: Migration shim for single-fish per-plane 3D viewer cell `[47]`.
+- `run_single_fish_cell_47b_stage`: Migration shim for single-fish HCR/anatomy 3D viewer cell `[47b]`.
+- `run_single_fish_cell_50_stage`: Migration shim for heavy single-fish notebook cell `[50]`.
+- `run_single_fish_cell_50i_stage`: Migration shim for single-fish ROI-centric master-table writer cell `[50i]`.
+- `run_single_fish_cell_50ia_stage`: Migration shim for single-fish response/BPI writer cell `[50ia]`.
+- `run_single_fish_cell_50e_stage`: Migration shim for heavy single-fish notebook cell `[50e]`.
+- `run_single_fish_cell_50f_stage`: Migration shim for single-fish notebook cell `[50f]`.
+- `run_single_fish_cell_50g_stage`: Migration shim for single-fish notebook cell `[50g]`.
+- `run_single_fish_cell_51_stage`: Migration shim for single-fish Suite2p trace export cell `[51]`.
+- `run_single_fish_cell_53_stage`: Migration shim for heavy single-fish notebook cell `[53]`.
+- `run_single_fish_cell_53a_stage`: Migration shim for heavy single-fish notebook cell `[53a]`.
+- `run_single_fish_cell_54_stage`: Migration shim for single-fish functional warp export cell `[54]`.
+- `run_single_fish_cell_56_stage`: Migration shim for heavy single-fish notebook cell `[56]`.
+- `run_single_fish_cell_56d_stage`: Migration shim for single-fish `[53a]` + `[56]` side-by-side composite cell `[56d]`.
+- `run_single_fish_cell_56f_qc_stage`: Migration shim for heavy single-fish notebook cell `[56f-qc]`.
+- `run_single_fish_cell_56f_qc_activity_stage`: Migration shim for heavy single-fish notebook cell `[56f-qc-activity]`.
+- `run_single_fish_cell_56g_stage`: Migration shim for single-fish notebook cell `[56g]`.
+- `run_single_fish_cell_56h_stage`: Migration shim for heavy single-fish notebook cell `[56h]`.
+- `run_single_fish_cell_57_stage`: Migration shim for single-fish notebook cell `[57]`.
+
+## `codeants_2pf_hcr.notebook_contract`
+
+- `NotebookContractViolation`: Static notebook-contract violation record.
+- `find_top_level_defs`: Find code cells that still define top-level `def`/`class` blocks.
+- `find_figure_contract_violations`: Find late figure cells that are not package-renderer driven.
+- `check_notebook_contract`: Summarize static notebook and figure contract violations for smoke/tests.

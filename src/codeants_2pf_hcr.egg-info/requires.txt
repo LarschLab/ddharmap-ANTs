@@ -1,0 +1,9 @@
+matplotlib
+numpy
+nbclient
+nbformat
+pandas
+scipy
+scikit-image
+SimpleITK
+tifffile

@@ -1,0 +1,12 @@
+fish_id,fish_dir,status,notes,anat_source_path,anat_labels_path,n_anatomy_labels
+L758_f02,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L758_f03,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L758_f04,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L758_f06,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L758_f07,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L765_f01,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L765_f02,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L765_f03,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L765_f04,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L765_f05,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,
+L765_f06,,error,[Errno 13] Permission denied: '/Volumes/jlarsch',,,

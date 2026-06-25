@@ -1,0 +1,11 @@
+# macOS / editor noise
+.DS_Store
+.ipynb_checkpoints/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local scratch files
+tmp_*

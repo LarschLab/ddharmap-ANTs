@@ -1,0 +1,2 @@
+n_fish,n_planes,n_ants_better_by_post_ncc,n_ncc_better_or_tied_by_post_ncc,mean_ncc_xy_post_ncc,mean_ants_post_ncc,mean_delta_post_ncc_ants_minus_ncc,median_delta_post_ncc_ants_minus_ncc,min_delta_post_ncc_ants_minus_ncc,max_delta_post_ncc_ants_minus_ncc
+4,20,12,8,0.7675085812807083,0.5283157704863697,-0.23919281079433857,0.07406741380691528,-0.9605510160326958,0.166792094707489
