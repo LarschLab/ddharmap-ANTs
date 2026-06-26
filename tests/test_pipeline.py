@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from codeants_2pf_hcr.pipeline import (
+    GRANULAR_PREPROCESSING_STAGE_NAMES,
     PIPELINE_STAGE_ORDER,
     REQUIRED_CSV_COLUMNS,
     SingleFishPipelineConfig,
@@ -12,8 +13,12 @@ from codeants_2pf_hcr.pipeline import (
     build_single_fish_downstream_stage_manifests,
     build_single_fish_stage_status,
     build_single_fish_status,
+    cellpose_stage_manifest_path,
     compare_single_fish_staged_outputs,
+    discover_ex_vivo_anatomy_stack,
     downstream_stage_names,
+    ex_vivo_structural_root,
+    prepared_ex_vivo_anatomy_path,
     pipeline_contracts,
     resolve_pipeline_paths,
     run_single_fish_audit_inputs_stage,
@@ -29,6 +34,7 @@ def _make_minimal_fish(root: Path, fish_id: str = "L000_f00") -> Path:
     fish_dir = root / fish_id
     metadata_dir = fish_dir / "01_raw" / "2p" / "metadata"
     functional_raw_dir = fish_dir / "01_raw" / "2p" / "functional"
+    anatomy_raw_dir = fish_dir / "01_raw" / "2p" / "anatomy"
     anatomy_preproc_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_anatomy"
     rbest_dir = fish_dir / "02_reg" / "00_preprocessing" / "rbest"
     suite2p_plane_dir = fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0"
@@ -40,6 +46,7 @@ def _make_minimal_fish(root: Path, fish_id: str = "L000_f00") -> Path:
     for directory in (
         metadata_dir,
         functional_raw_dir,
+        anatomy_raw_dir,
         anatomy_preproc_dir,
         rbest_dir,
         suite2p_plane_dir,
@@ -168,6 +175,40 @@ def test_pipeline_contracts_follow_declared_stage_order() -> None:
     assert contracts[0].name == "audit-inputs"
     assert contracts[0].depends_on == ()
     assert contracts[-1].name == "make-figures"
+    assert "prepare-ex-vivo-anatomy-stack" in GRANULAR_PREPROCESSING_STAGE_NAMES
+    assert "segment-hcr-cellpose" in GRANULAR_PREPROCESSING_STAGE_NAMES
+    assert "segment-ex-vivo-anatomy-cellpose" in GRANULAR_PREPROCESSING_STAGE_NAMES
+
+
+def test_ex_vivo_stage_paths_are_structural_ex_vivo_scoped(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    paths = resolve_pipeline_paths(SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path))
+    assert ex_vivo_structural_root(paths) == fish_dir / "03_analysis" / "structural" / "ex_vivo"
+    assert prepared_ex_vivo_anatomy_path(paths) == (
+        fish_dir / "03_analysis" / "structural" / "ex_vivo" / "prepared" / f"{fish_dir.name}_exvivo_anatomy_2P_GCaMP_uint8.nrrd"
+    )
+    assert cellpose_stage_manifest_path(paths, "segment-hcr-cellpose") == (
+        fish_dir / "03_analysis" / "confocal" / "raw" / "manifests" / "segment-hcr-cellpose_manifest.json"
+    )
+    assert cellpose_stage_manifest_path(paths, "segment-ex-vivo-anatomy-cellpose") == (
+        fish_dir / "03_analysis" / "structural" / "ex_vivo" / "manifests" / "segment-ex-vivo-anatomy-cellpose_manifest.json"
+    )
+
+
+def test_discover_ex_vivo_anatomy_stack_requires_explicit_choice_when_ambiguous(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    anatomy_dir = fish_dir / "01_raw" / "2p" / "anatomy"
+    ex_vivo = anatomy_dir / f"{fish_dir.name}_anatomy_ex_vivo_00001.tif"
+    ex_vivo.write_bytes(b"tif")
+    paths = resolve_pipeline_paths(SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path))
+    assert discover_ex_vivo_anatomy_stack(paths) == ex_vivo
+    (anatomy_dir / f"{fish_dir.name}_second_ex_vivo_00001.tif").write_bytes(b"tif")
+    try:
+        discover_ex_vivo_anatomy_stack(paths)
+    except RuntimeError as exc:
+        assert "--ex-vivo-stack-path" in str(exc)
+    else:
+        raise AssertionError("ambiguous ex vivo stacks should require an explicit path")
 
 
 def test_audit_inputs_is_read_only_and_passes_on_minimal_fish(tmp_path: Path) -> None:
@@ -479,7 +520,7 @@ def test_single_fish_pipeline_cli_contracts_outputs_json() -> None:
     assert [stage["name"] for stage in payload] == list(PIPELINE_STAGE_ORDER)
 
 
-def test_single_fish_pipeline_cli_help_exposes_only_current_read_only_commands() -> None:
+def test_single_fish_pipeline_cli_help_exposes_current_read_only_and_granular_writer_commands() -> None:
     result = subprocess.run(
         [sys.executable, "tools/single_fish_pipeline.py", "--help"],
         cwd=REPO_ROOT,
@@ -488,7 +529,11 @@ def test_single_fish_pipeline_cli_help_exposes_only_current_read_only_commands()
         capture_output=True,
         check=True,
     )
-    assert "{contracts,audit-inputs,status,stage-status,compare-staged}" in result.stdout
+    assert "contracts" in result.stdout
+    assert "compare-staged" in result.stdout
+    assert "prepare-ex-vivo-anatomy-stack" in result.stdout
+    assert "segment-ex-vivo-anatomy-cellpose" in result.stdout
+    assert "segment-hcr-cellpose" in result.stdout
     for command in (
         "preprocess-functional",
         "assign-hcr-identity",

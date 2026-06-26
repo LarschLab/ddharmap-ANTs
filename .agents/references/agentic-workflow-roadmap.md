@@ -68,6 +68,7 @@ Validate and harden the read-only workflow surface:
 - `audit-inputs --write-manifest` may write `03_analysis/functional/pipeline_manifests/audit-inputs_manifest.json`; this remains a dry-run audit of stage outputs, not a staged output writer.
 - Existing `L395_f11` staged outputs are the first baseline/control; do not freeze a separate baseline bundle for this slice.
 - Current staged workflow work assumes preprocessing has already been done.
+- Future writer-stage work should avoid generic executable names like `preprocess-anatomy` or `preprocess-hcr`; use concrete operation names such as `prepare-ex-vivo-anatomy-stack`, `segment-ex-vivo-anatomy-cellpose`, and `segment-hcr-cellpose`, with ex vivo structural artifacts isolated under `03_analysis/structural/ex_vivo/`.
 - Keep the roadmap operational and short; use `single-fish-pipeline-roadmap.md` for the longer migration design.
 - Prefer additive pipeline files over editing notebook cells for the first slice.
 

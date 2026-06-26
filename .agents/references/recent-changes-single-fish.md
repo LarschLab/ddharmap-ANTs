@@ -1672,6 +1672,25 @@
 - Rerun implications:
   - rerun `[14a]` and downstream same-fish registration stages for fish whose anatomy NRRDs were generated before this change.
 
+### 2026-06-26 - granular Helga Cellpose stages for L765_f02 ex vivo/HCR segmentation
+
+- Slice goal:
+  - make Helga-backed Cellpose segmentation possible for the ex vivo anatomy and rbest HCR intensity stacks without hiding distinct data-handling operations behind a generic preprocessing command.
+- Passes completed in this session:
+  - added concrete CLI writer stages `prepare-ex-vivo-anatomy-stack`, `segment-ex-vivo-anatomy-cellpose`, and `segment-hcr-cellpose`.
+  - added package-owned pipeline wrappers/manifests for granular Cellpose/preparation stages, plus HCR source filtering for `rbest`/`rn` discovery.
+  - added Helga batch helpers for the credential-safe, temporary NAS `Y:` mapping workflow and the `L765_f02` Cellpose job.
+  - updated roadmap/current-state/stage-map docs so future agents use concrete operation names and keep ex vivo structural outputs under `03_analysis/structural/ex_vivo/`.
+  - corrected the `L765_f02` Helga job so anatomy Cellpose segments `02_reg/00_preprocessing/2p_anatomy/ex_vivo/L765_f02_exvivo_anatomy_2P_GCaMP_uint8_manual_oriented.nrrd`, not the raw or pre-manual/pre-rotation stack.
+- What changed:
+  - ex vivo anatomy Cellpose masks and manifests are isolated under `03_analysis/structural/ex_vivo/`.
+  - HCR Cellpose can be restricted to rbest intensity stacks, avoiding unrelated confocal sources during the ex vivo matching test.
+  - Helga NAS credentials are not stored on Helga or in the repo; the user enters the university password into a headful SSH session, and the batch files map `Y:` with `/persistent:no` for that session only.
+- What remains broken:
+  - the first real Helga job attempt used the wrong `--local-root` and the wrong ex vivo anatomy source; those scripts/docs were corrected, but the corrected real segmentation run still needs to be launched headfully.
+- Rerun implications:
+  - run `tools/helga_l765_f02_cellpose_job.bat` on Helga after entering NAS credentials, then verify manifests and masks in `L765_f02/03_analysis/structural/ex_vivo/` and `L765_f02/03_analysis/confocal/raw/cp_masks/`.
+
 ### 2026-06-17 - in vivo and ex vivo anatomy preprocessing are NRRD-only
 
 - Slice goal:

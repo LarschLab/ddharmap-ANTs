@@ -16,6 +16,7 @@ Generated manually for the current extracted package surface.
 - `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the single-fish staged pipeline.
 - `PIPELINE_MANIFEST_VERSION`: Current first-pass manifest schema version for staged pipeline manifests.
 - `POST_PREPROCESSING_STAGE_NAMES`: Read-only stage-status names for existing post-preprocessing staged output folders.
+- `GRANULAR_PREPROCESSING_STAGE_NAMES`: Concrete writer-stage names for preparation/segmentation slices that must not be hidden under generic `preprocess-*` command names.
 - `SingleFishPipelineConfig`: Typed fish/root/strictness/dry-run knob container for staged single-fish pipeline commands.
 - `PipelinePaths`: Resolved fish-scoped paths for staged pipeline commands without creating notebook output folders during path resolution.
 - `StageContract`: Declarative stage contract record containing stage order, purpose, dependencies, and first-pass read-only status.
@@ -25,6 +26,7 @@ Generated manually for the current extracted package surface.
 - `StageOutputSpec`: Declared read-only downstream staged output with optional control/parity metadata.
 - `PersistedManifestStatus`: JSON-ready persisted manifest trust-state record with missing/current/stale/fail status.
 - `pipeline_contracts`: Return the staged single-fish contract list in roadmap order.
+- `cellpose_stage_manifest_path`: Resolve modality-specific manifest paths for granular Cellpose/preparation writer stages.
 - `build_single_fish_status`: Build a compact read-only trust-state summary from the dry-run input audit plus any persisted audit manifest.
 - `build_single_fish_compare_staged_manifest`: Build a read-only comparison manifest for one existing post-preprocessing staged output folder.
 - `build_single_fish_downstream_stage_manifest`: Build a read-only manifest for an existing post-preprocessing staged output folder.
@@ -36,11 +38,20 @@ Generated manually for the current extracted package surface.
 - `describe_glob`: Build a manifest path record for a glob under a base directory.
 - `stage_manifest_path`: Resolve the fish-scoped path for a stage manifest under `03_analysis/functional/pipeline_manifests/`.
 - `write_stage_manifest`: Persist a stage manifest to its fish-scoped manifest path.
+- `write_cellpose_stage_manifest`: Persist granular Cellpose/preparation manifests under `03_analysis/confocal/raw/manifests/` or `03_analysis/structural/ex_vivo/manifests/`.
+- `discover_ex_vivo_anatomy_stack`: Discover exactly one raw ex vivo anatomy stack under `01_raw/2p/anatomy`, requiring an explicit path when ambiguous.
+- `ex_vivo_structural_root`: Resolve the ex vivo structural analysis subtree under `03_analysis/structural/ex_vivo/`.
+- `prepared_ex_vivo_anatomy_path`: Resolve the default prepared ex vivo anatomy NRRD under the structural ex vivo subtree.
+- `run_prepare_ex_vivo_anatomy_stack_stage`: Writer stage for converting/orienting the raw ex vivo stack into a registration-ready analysis NRRD without using a generic preprocessing command name.
+- `run_segment_ex_vivo_anatomy_cellpose_stage`: Writer stage for ex vivo anatomy Cellpose masks isolated under `03_analysis/structural/ex_vivo/`.
+- `run_segment_hcr_cellpose_stage`: Writer stage for HCR Cellpose masks from an explicit source such as `rbest`.
 - `compare_persisted_manifest`: Compare a persisted manifest's path records against the current audit and report missing/current/stale/fail state.
 - `compare_single_fish_staged_outputs`: Build a read-only aggregate comparison payload for declared existing post-preprocessing staged outputs.
 - `stage_manifest_to_json`: Serialize a stage manifest to JSON text for stdout or persistence.
 - `run_single_fish_audit_inputs_stage`: Run the first staged pipeline input audit in read-only/dry-run mode and return a JSON-ready manifest with labeled input records, schema checks, cross-table consistency checks, value-domain checks, and optional staged parity checks, without writing into fish folders.
 - CLI wrapper: `tools/single_fish_pipeline.py` currently exposes read-only `contracts`, `audit-inputs`, `status`, `stage-status`, and post-preprocessing `compare-staged`; `audit-inputs --write-manifest`, `stage-status --write-manifest`, and `compare-staged --write-manifest` persist only manifests. Later writer and broader comparison commands remain roadmap targets.
+- Helga helper: `tools/helga_nas_session_test.bat` prompts for `danin.dharmaperwira@unil.ch` NAS credentials in a headful SSH session, maps `Y:` with `/persistent:no`, verifies `L765_f02`, and removes the temporary mapping before exit. Use this pattern for future NAS-backed Helga GPU jobs; never store passwords in repo artifacts.
+- Helga job helper: `tools/helga_l765_f02_cellpose_job.bat` uses the same temporary credential prompt pattern, then runs `segment-ex-vivo-anatomy-cellpose` on the manual-oriented `L765_f02` ex vivo NRRD and `segment-hcr-cellpose --hcr-source rbest` on Helga's CUDA Cellpose environment.
 
 ## `codeants_2pf_hcr.context`
 
@@ -205,10 +216,10 @@ Generated manually for the current extracted package surface.
 - `AnatomyCellposeConfig`: Typed anatomy Cellpose configuration for notebook cell `[24a]`.
 - `HcrCellposeConfig`: Typed HCR Cellpose segmentation configuration for notebook cell `[24]`.
 - `resolve_hcr_cellpose_model_path`: Resolve the active HCR Cellpose model path from overrides, run config, or repo defaults.
-- `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`, excluding fullbrain, channel1, mask outputs, and dot/AppleDouble sidecar files.
+- `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`, optionally restricted to one source, excluding fullbrain, channel1, mask outputs, and dot/AppleDouble sidecar files.
 - `deduplicate_hcr_intensity_targets`: Collapse duplicate intensity inputs that would write the same Cellpose mask output.
-- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import and cross-platform device selection.
-- `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, and writes mask TIFFs.
+- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import, cross-platform device selection, and an optional output root used to isolate ex vivo masks under `03_analysis/structural/ex_vivo/`.
+- `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, can restrict discovery to `rbest`/`rn`, and writes mask TIFFs.
 - `resolve_functional_labels_for_plane`: Resolve per-plane functional labels for `[26]` from Suite2p, Cellpose, or legacy label sources with orientation handling.
 - `resolve_native_suite2p_labels_for_plane`: Resolve the native Suite2p label image for a plane without Cellpose fallback for `[26a]`.
 - `export_suite2p_native_labels_stage`: Notebook-facing Suite2p native-label export stage for `[26a]` that writes QA TIFFs and a manifest CSV.

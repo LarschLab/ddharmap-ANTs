@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin CLI wrapper for read-only staged single-fish pipeline commands."""
+"""Thin CLI wrapper for staged single-fish pipeline commands."""
 
 from __future__ import annotations
 
@@ -17,8 +17,12 @@ from codeants_2pf_hcr.pipeline import (
     downstream_stage_names,
     pipeline_contracts,
     resolve_pipeline_paths,
+    run_prepare_ex_vivo_anatomy_stack_stage,
+    run_segment_ex_vivo_anatomy_cellpose_stage,
+    run_segment_hcr_cellpose_stage,
     run_single_fish_audit_inputs_stage,
     stage_manifest_to_json,
+    write_cellpose_stage_manifest,
     write_stage_manifest,
 )
 
@@ -72,6 +76,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_fish_args(compare)
     compare.add_argument("--stage-name", choices=downstream_stage_names())
+
+    prepare_ex_vivo = subparsers.add_parser(
+        "prepare-ex-vivo-anatomy-stack",
+        help="Writer stage: prepare the ex vivo 2P anatomy stack as a registration-ready NRRD.",
+    )
+    _add_common_fish_args(prepare_ex_vivo)
+    prepare_ex_vivo.add_argument("--ex-vivo-stack-path", type=Path)
+    prepare_ex_vivo.add_argument("--output-path", type=Path)
+    prepare_ex_vivo.add_argument("--force-recompute", action="store_true")
+
+    segment_ex_vivo = subparsers.add_parser(
+        "segment-ex-vivo-anatomy-cellpose",
+        help="Writer stage: segment the prepared ex vivo anatomy stack with Cellpose.",
+    )
+    _add_common_fish_args(segment_ex_vivo)
+    segment_ex_vivo.add_argument("--anatomy-stack-path", type=Path)
+    segment_ex_vivo.add_argument("--anat-cp-model-path", required=True, type=Path)
+    segment_ex_vivo.add_argument("--use-gpu", action="store_true", default=True)
+    segment_ex_vivo.add_argument("--compute-device")
+    segment_ex_vivo.add_argument("--force-recompute", action="store_true")
+
+    segment_hcr = subparsers.add_parser(
+        "segment-hcr-cellpose",
+        help="Writer stage: segment HCR intensity stacks from a specific preprocessing source with Cellpose.",
+    )
+    _add_common_fish_args(segment_hcr)
+    segment_hcr.add_argument("--hcr-source", choices=("rbest", "rn", "all"), default="rbest")
+    segment_hcr.add_argument("--cp-hcr-model-path", required=True, type=Path)
+    segment_hcr.add_argument("--use-gpu", action="store_true", default=True)
+    segment_hcr.add_argument("--force-recompute", action="store_true")
     return parser
 
 
@@ -144,6 +178,69 @@ def main(argv: list[str] | None = None) -> int:
                 write_stage_manifest(manifest, paths)
         sys.stdout.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         return 1 if payload["status"] == "fail" else 0
+    if args.command == "prepare-ex-vivo-anatomy-stack":
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id,
+            local_root=args.local_root,
+            owner=args.owner,
+            strict=args.strict,
+            dry_run=False,
+            write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        manifest = run_prepare_ex_vivo_anatomy_stack_stage(
+            config,
+            ex_vivo_stack_path=args.ex_vivo_stack_path,
+            output_path=args.output_path,
+            force_recompute=args.force_recompute,
+        )
+        if args.write_manifest:
+            write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
+    if args.command == "segment-ex-vivo-anatomy-cellpose":
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id,
+            local_root=args.local_root,
+            owner=args.owner,
+            strict=args.strict,
+            dry_run=False,
+            write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        manifest = run_segment_ex_vivo_anatomy_cellpose_stage(
+            config,
+            anatomy_stack_path=args.anatomy_stack_path,
+            anat_cp_model_path=args.anat_cp_model_path,
+            use_gpu=args.use_gpu,
+            compute_device=args.compute_device,
+            force_recompute=args.force_recompute,
+        )
+        if args.write_manifest:
+            write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
+    if args.command == "segment-hcr-cellpose":
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id,
+            local_root=args.local_root,
+            owner=args.owner,
+            strict=args.strict,
+            dry_run=False,
+            write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        manifest = run_segment_hcr_cellpose_stage(
+            config,
+            hcr_source=args.hcr_source,
+            cp_hcr_model_path=args.cp_hcr_model_path,
+            use_gpu=args.use_gpu,
+            force_recompute=args.force_recompute,
+        )
+        if args.write_manifest:
+            write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
     parser.error(f"unsupported command: {args.command}")
     return 2
 

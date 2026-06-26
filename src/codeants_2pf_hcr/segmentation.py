@@ -90,6 +90,7 @@ def collect_hcr_intensity_stack_paths(
     *,
     hcr_intensity_paths: list[str | Path] | None = None,
     preproc_dir: str | Path | None = None,
+    source: str = "all",
 ) -> list[Path]:
     if hcr_intensity_paths:
         intensity_paths = [Path(path) for path in hcr_intensity_paths]
@@ -97,7 +98,14 @@ def collect_hcr_intensity_stack_paths(
         intensity_paths = []
         if preproc_dir is not None:
             base = Path(preproc_dir)
-            for directory in (base / "rbest", base / "rn"):
+            source_key = str(source).strip().lower()
+            if source_key in {"", "all", "both"}:
+                directories = (base / "rbest", base / "rn")
+            elif source_key in {"rbest", "rn"}:
+                directories = (base / source_key,)
+            else:
+                raise ValueError("source must be one of: all, rbest, rn")
+            for directory in directories:
                 if directory.exists():
                     intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.nrrd")))
                     intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.tif")))
@@ -293,6 +301,7 @@ def run_hcr_cellpose_stage(
     data_root: str | Path | None = None,
     local_root: str | Path | None = None,
     nas_root: str | Path | None = None,
+    source: str = "all",
     config: HcrCellposeConfig | None = None,
 ) -> dict[str, Any]:
     cfg = config or HcrCellposeConfig()
@@ -317,6 +326,7 @@ def run_hcr_cellpose_stage(
     intensity_paths = collect_hcr_intensity_stack_paths(
         hcr_intensity_paths=hcr_intensity_paths,
         preproc_dir=preproc_dir,
+        source=source,
     )
     if not intensity_paths:
         raise RuntimeError("No HCR intensity stacks found (rbest/rn, channel2/3 only).")
@@ -400,6 +410,7 @@ def run_hcr_cellpose_stage(
     return {
         "status": status,
         "bindings": bindings,
+        "source": source,
         "candidate_pairs": candidate_pairs,
         "pending_pairs": pending,
         "manifest_df": manifest_df,
@@ -411,6 +422,7 @@ def run_anatomy_cellpose_stage(
     *,
     anat_seg_source_path: str | Path,
     analysis_dir: str | Path,
+    output_root: str | Path | None = None,
     anat_labels_path: str | Path | None = None,
     anat_cp_model_path: str | Path | None,
     vox_anat: dict[str, Any] | None = None,
@@ -423,8 +435,9 @@ def run_anatomy_cellpose_stage(
 
     anat_src = Path(anat_seg_source_path)
     analysis_path = Path(analysis_dir)
-    out_dir = analysis_path / "structural" / "cp_masks"
-    convert_dir = analysis_path / "structural" / "raw" / "converted_nrrd_to_tif"
+    output_base = Path(output_root) if output_root is not None else analysis_path / "structural"
+    out_dir = output_base / "cp_masks"
+    convert_dir = output_base / "raw" / "converted_nrrd_to_tif"
     out_dir.mkdir(parents=True, exist_ok=True)
     convert_dir.mkdir(parents=True, exist_ok=True)
 

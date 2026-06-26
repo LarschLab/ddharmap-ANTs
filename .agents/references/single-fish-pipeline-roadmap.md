@@ -43,6 +43,48 @@ Notebooks should become read-only review surfaces for biologists:
 
 Notebooks should not secretly redefine matching, identity, response semantics, or canonical table schemas.
 
+## Stage Naming Rule
+
+Do not use generic executable names such as `preprocess-anatomy` or `preprocess-hcr` for writer commands when the command performs only one concrete operation. In this workflow, preprocessing includes raw audits, stack conversion, NRRD formatting, orientation, functional extraction, Suite2p/stimulus handling, anatomy preparation, HCR intensity discovery, segmentation, and registration preparation. Generic names hide the actual side effect and make manifests ambiguous.
+
+Use broad names only as roadmap groupings. Executable writer stages should name the operation and modality, for example:
+
+- `prepare-ex-vivo-anatomy-stack`: convert/orient the raw ex vivo 2P anatomy stack into a registration-ready analysis artifact.
+- `segment-ex-vivo-anatomy-cellpose`: run Cellpose on the prepared ex vivo anatomy stack.
+- `segment-hcr-cellpose`: run Cellpose on HCR/confocal intensity stacks from an explicit source such as `rbest`.
+
+Ex vivo analysis artifacts belong under `03_analysis/structural/ex_vivo/` and must not be mixed with canonical in vivo anatomy outputs. The earlier `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` location is legacy/bridge context for registration preparation; new ex vivo Cellpose masks and manifests should live under the structural analysis ex vivo subtree.
+
+For ex vivo segmentation, distinguish pre-rotation/pre-manual stack preparation from segmentation-ready anatomy. If a manual-oriented NRRD exists, `segment-ex-vivo-anatomy-cellpose` should consume that file explicitly via `--anatomy-stack-path`; do not silently regenerate and segment the raw or pre-rotation stack. For `L765_f02`, the intended source is:
+
+```text
+02_reg/00_preprocessing/2p_anatomy/ex_vivo/L765_f02_exvivo_anatomy_2P_GCaMP_uint8_manual_oriented.nrrd
+```
+
+## Helga NAS Credential Workflow
+
+Helga is the preferred workstation for CUDA Cellpose segmentation. The NAS share is:
+
+```text
+\\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch
+```
+
+When a job needs personal NAS credentials, use a headful SSH terminal so the user can enter the password directly. The username to use is `danin.dharmaperwira@unil.ch`. Do not extract stored credentials from macOS Keychain, do not store the password on Helga, and do not put credentials in scripts, repo files, logs, or shell history.
+
+Use a session-local mapping (`/persistent:no`) and run the NAS-dependent job in the same SSH session:
+
+```text
+net use Y: \\nasdcsr.unil.ch\RECHERCHE\FAC\FBM\CIG\jlarsch /user:danin.dharmaperwira@unil.ch * /persistent:no
+```
+
+Then delete the temporary mapping before exit:
+
+```text
+net use Y: /delete /yes
+```
+
+`tools/helga_nas_session_test.bat` is the minimal test script for this pattern. Future Helga Cellpose job scripts should follow the same shape: prompt, verify `Y:\default\D2c\07_Data`, run all NAS-dependent commands before the session ends, then unmap `Y:`.
+
 ## Migration Strategy
 
 Use a parallel "strangler" migration.
@@ -97,9 +139,11 @@ Target scaffold, not all currently runnable:
 
 ```text
 PYTHONPATH=src python tools/single_fish_pipeline.py audit-inputs --fish-id FISH_ID --local-root DATA_ROOT --strict
-PYTHONPATH=src python tools/single_fish_pipeline.py preprocess-functional --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files --run-23c
-PYTHONPATH=src python tools/single_fish_pipeline.py preprocess-anatomy --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
-PYTHONPATH=src python tools/single_fish_pipeline.py preprocess-hcr --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
+PYTHONPATH=src python tools/single_fish_pipeline.py prepare-functional-reference-stacks --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files --run-23c
+PYTHONPATH=src python tools/single_fish_pipeline.py prepare-in-vivo-anatomy-stack --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
+PYTHONPATH=src python tools/single_fish_pipeline.py prepare-ex-vivo-anatomy-stack --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
+PYTHONPATH=src python tools/single_fish_pipeline.py segment-ex-vivo-anatomy-cellpose --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
+PYTHONPATH=src python tools/single_fish_pipeline.py segment-hcr-cellpose --fish-id FISH_ID --local-root DATA_ROOT --strict --hcr-source rbest --hash-files
 PYTHONPATH=src python tools/single_fish_pipeline.py register-functional-to-anatomy --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
 PYTHONPATH=src python tools/single_fish_pipeline.py register-hcr-to-anatomy --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
 PYTHONPATH=src python tools/single_fish_pipeline.py match-roi-to-anatomy --fish-id FISH_ID --local-root DATA_ROOT --strict --hash-files
@@ -142,6 +186,8 @@ Current downstream staged-output status:
 - `compare-staged` is read-only and uses the same declared post-preprocessing stage output specs; it does not create/freeze baseline bundles.
 - This support does not execute, recompute, promote, or render downstream stages. Writer stages and broader comparison behavior remain roadmap targets.
 - Existing diagnostic folders such as `assign-hcr-identity/recompute-audit/` remain baseline evidence only until a package-owned writer stage is implemented and validated.
+
+Path contract for these CLI examples: `--local-root` is the directory that directly contains fish folders. For Danin/Microscopy NAS data, use `Y:\default\D2c\07_Data\Danin\Microscopy` on Helga, not the broader `Y:\default\D2c\07_Data` root.
 
 ## Phase 1: Define Stage Contracts
 
@@ -333,9 +379,11 @@ The CLI should be thin and stage-oriented, for example:
 
 ```text
 codeants single-fish audit-inputs --fish FISH_ID
-codeants single-fish preprocess-functional --fish FISH_ID
-codeants single-fish preprocess-anatomy --fish FISH_ID
-codeants single-fish preprocess-hcr --fish FISH_ID
+codeants single-fish prepare-functional-reference-stacks --fish FISH_ID
+codeants single-fish prepare-in-vivo-anatomy-stack --fish FISH_ID
+codeants single-fish prepare-ex-vivo-anatomy-stack --fish FISH_ID
+codeants single-fish segment-ex-vivo-anatomy-cellpose --fish FISH_ID
+codeants single-fish segment-hcr-cellpose --fish FISH_ID --hcr-source rbest
 codeants single-fish register --fish FISH_ID
 codeants single-fish match-geometry --fish FISH_ID
 codeants single-fish assign-identity --fish FISH_ID

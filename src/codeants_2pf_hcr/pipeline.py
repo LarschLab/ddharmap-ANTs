@@ -128,6 +128,12 @@ POST_PREPROCESSING_STAGE_NAMES: tuple[str, ...] = (
     "make-figures",
 )
 
+GRANULAR_PREPROCESSING_STAGE_NAMES: tuple[str, ...] = (
+    "prepare-ex-vivo-anatomy-stack",
+    "segment-hcr-cellpose",
+    "segment-ex-vivo-anatomy-cellpose",
+)
+
 STAGED_REGISTRATION_CSVS: tuple[str, ...] = (
     "functional_roi_activity_identity.csv",
     "functional_roi_activity_bpi_cells.csv",
@@ -267,9 +273,9 @@ class StageOutputSpec:
 def pipeline_contracts() -> tuple[StageContract, ...]:
     purposes = {
         "audit-inputs": "Inspect required fish-scoped inputs without writing pipeline outputs.",
-        "preprocess-functional": "Prepare or inventory functional preprocessing products.",
-        "preprocess-anatomy": "Prepare registration-ready 2P anatomy products.",
-        "preprocess-hcr": "Prepare or inventory HCR intensity and mask products.",
+        "preprocess-functional": "Roadmap grouping only for functional preparation; writer commands must use concrete operation names.",
+        "preprocess-anatomy": "Roadmap grouping only for anatomy preparation; writer commands must use concrete operation names.",
+        "preprocess-hcr": "Roadmap grouping only for HCR preparation; writer commands must use concrete operation names.",
         "register-functional-to-anatomy": "Audit or generate functional-to-anatomy registration products.",
         "register-hcr-to-anatomy": "Audit or generate HCR-to-anatomy registration products.",
         "match-roi-to-anatomy": "Fix geometry-only ROI-to-anatomy matches.",
@@ -401,6 +407,23 @@ def stage_manifest_path(paths: PipelinePaths, stage_name: str) -> Path:
 
 def write_stage_manifest(manifest: StageManifest, paths: PipelinePaths) -> Path:
     path = stage_manifest_path(paths, manifest.stage_name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(stage_manifest_to_json(manifest))
+    return path
+
+
+def cellpose_stage_manifest_path(paths: PipelinePaths, stage_name: str) -> Path:
+    if stage_name == "prepare-ex-vivo-anatomy-stack":
+        return paths.analysis_dir / "structural" / "ex_vivo" / "manifests" / f"{stage_name}_manifest.json"
+    if stage_name == "segment-hcr-cellpose":
+        return paths.confocal_dir / "raw" / "manifests" / f"{stage_name}_manifest.json"
+    if stage_name == "segment-ex-vivo-anatomy-cellpose":
+        return paths.analysis_dir / "structural" / "ex_vivo" / "manifests" / f"{stage_name}_manifest.json"
+    return stage_manifest_path(paths, stage_name)
+
+
+def write_cellpose_stage_manifest(manifest: StageManifest, paths: PipelinePaths) -> Path:
+    path = cellpose_stage_manifest_path(paths, manifest.stage_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(stage_manifest_to_json(manifest))
     return path
@@ -1824,10 +1847,299 @@ def run_single_fish_audit_inputs_stage(config: SingleFishPipelineConfig) -> Stag
     )
 
 
+def discover_ex_vivo_anatomy_stack(paths: PipelinePaths) -> Path:
+    patterns = (
+        "*ex*vivo*.tif",
+        "*ex*vivo*.tiff",
+        "*exvivo*.tif",
+        "*exvivo*.tiff",
+        "*ex*vivo*.nrrd",
+        "*exvivo*.nrrd",
+    )
+    matches: list[Path] = []
+    for pattern in patterns:
+        matches.extend(path for path in sorted(paths.raw_2p_anatomy_dir.glob(pattern)) if _is_real_match(path))
+    unique = tuple(dict.fromkeys(matches))
+    if not unique:
+        raise FileNotFoundError(f"No ex vivo anatomy stack found under {paths.raw_2p_anatomy_dir}")
+    if len(unique) > 1:
+        names = ", ".join(str(path) for path in unique)
+        raise RuntimeError(f"Multiple ex vivo anatomy stacks found; pass --ex-vivo-stack-path explicitly: {names}")
+    return unique[0]
+
+
+def ex_vivo_structural_root(paths: PipelinePaths) -> Path:
+    return paths.analysis_dir / "structural" / "ex_vivo"
+
+
+def prepared_ex_vivo_anatomy_path(paths: PipelinePaths) -> Path:
+    return ex_vivo_structural_root(paths) / "prepared" / f"{paths.fish_dir.name}_exvivo_anatomy_2P_GCaMP_uint8.nrrd"
+
+
+def _tiff_label_count(path: Path) -> int | None:
+    if not path.exists() or path.suffix.lower() not in {".tif", ".tiff"}:
+        return None
+    try:
+        import numpy as np
+        import tifffile
+
+        arr = np.asarray(tifffile.imread(path))
+        values = np.unique(arr)
+        return int(len(values) - (1 if np.any(values == 0) else 0))
+    except Exception:
+        return None
+
+
+def _optional_manifest_path(path: Path | None, *, label: str, required: bool = True) -> ManifestPathRecord:
+    if path is None:
+        return ManifestPathRecord(
+            path="",
+            exists=False,
+            kind="missing",
+            required=required,
+            label=label,
+        )
+    return describe_manifest_path(path, required=required, label=label)
+
+
+def run_prepare_ex_vivo_anatomy_stack_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    ex_vivo_stack_path: str | Path | None = None,
+    output_path: str | Path | None = None,
+    force_recompute: bool = False,
+) -> StageManifest:
+    from .context import ExVivoAnatomyPreprocessingConfig, preprocess_ex_vivo_anatomy_stage
+
+    paths = resolve_pipeline_paths(config)
+    source_path = Path(ex_vivo_stack_path) if ex_vivo_stack_path not in (None, "", False) else discover_ex_vivo_anatomy_stack(paths)
+    out_path = Path(output_path) if output_path not in (None, "", False) else prepared_ex_vivo_anatomy_path(paths)
+    try:
+        result = preprocess_ex_vivo_anatomy_stage(
+            fish_id=config.fish_id,
+            ex_vivo_stack_path=source_path,
+            preproc_dir=paths.preproc_dir,
+            output_path=out_path,
+            config=ExVivoAnatomyPreprocessingConfig(force_recompute=force_recompute),
+        )
+        artifacts = result.get("artifacts", {})
+        status = "pass"
+        errors: tuple[str, ...] = ()
+        warnings: tuple[str, ...] = ()
+        checks = (
+            StageCheckRecord(
+                label="prepared ex vivo anatomy stack",
+                status="pass" if Path(artifacts.get("registration_nrrd_path", out_path)).exists() else "fail",
+                detail="registration-ready ex vivo anatomy NRRD exists",
+                observed=str(artifacts.get("registration_nrrd_path", out_path)),
+            ),
+        )
+    except Exception as exc:
+        result = {"artifacts": {}, "log_lines": []}
+        status = "fail"
+        errors = (str(exc),)
+        warnings = ()
+        checks = ()
+    outputs = (
+        describe_manifest_path(out_path, label="prepared ex vivo anatomy NRRD"),
+        describe_manifest_path(Path(str(out_path) + ".json"), label="prepared ex vivo anatomy metadata"),
+    )
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name="prepare-ex-vivo-anatomy-stack",
+        fish_id=config.fish_id,
+        status=status,
+        dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=(describe_manifest_path(source_path, label="raw ex vivo anatomy stack"),),
+        outputs=outputs,
+        checks=checks,
+        parameters={
+            "local_root": str(config.local_root),
+            "force_recompute": bool(force_recompute),
+            "output_root": str(ex_vivo_structural_root(paths)),
+            "log_lines": tuple(result.get("log_lines", ())),
+        },
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def run_segment_ex_vivo_anatomy_cellpose_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    anatomy_stack_path: str | Path | None = None,
+    anat_cp_model_path: str | Path | None = None,
+    use_gpu: bool | None = None,
+    compute_device: str | None = None,
+    force_recompute: bool = False,
+) -> StageManifest:
+    from .segmentation import AnatomyCellposeConfig, run_anatomy_cellpose_stage
+
+    paths = resolve_pipeline_paths(config)
+    structural_root = ex_vivo_structural_root(paths)
+    source_path = Path(anatomy_stack_path) if anatomy_stack_path not in (None, "", False) else prepared_ex_vivo_anatomy_path(paths)
+    model_path = Path(anat_cp_model_path) if anat_cp_model_path not in (None, "", False) else None
+    try:
+        result = run_anatomy_cellpose_stage(
+            anat_seg_source_path=source_path,
+            analysis_dir=paths.analysis_dir,
+            output_root=structural_root,
+            anat_cp_model_path=model_path,
+            fish_id=config.fish_id,
+            config=AnatomyCellposeConfig(
+                force_recompute=force_recompute,
+                skip_if_exists=True,
+                use_gpu=use_gpu,
+                compute_device=compute_device,
+            ),
+        )
+        label_path = Path(result["bindings"]["ANAT_LABELS_PATH"])
+        n_labels = _tiff_label_count(label_path)
+        checks = (
+            StageCheckRecord(
+                label="ex vivo anatomy Cellpose labels",
+                status="pass" if label_path.exists() else "fail",
+                detail="ex vivo anatomy masks exist under structural/ex_vivo",
+                observed=str(label_path),
+            ),
+            StageCheckRecord(
+                label="ex vivo anatomy label count",
+                status="pass" if n_labels is None or n_labels >= 0 else "fail",
+                detail="non-background label count from mask TIFF",
+                observed=None if n_labels is None else str(n_labels),
+            ),
+        )
+        status = "pass" if all(check.status != "fail" for check in checks) else "fail"
+        errors: tuple[str, ...] = ()
+        warnings: tuple[str, ...] = ()
+        outputs = (
+            describe_manifest_path(label_path, label="ex vivo anatomy Cellpose masks"),
+            describe_glob(structural_root / "raw" / "converted_nrrd_to_tif", "*_8bit.tif", required=False, label="ex vivo anatomy converted uint8 TIFFs"),
+        )
+    except Exception as exc:
+        result = {"bindings": {}, "log_lines": []}
+        status = "fail"
+        errors = (str(exc),)
+        warnings = ()
+        checks = ()
+        outputs = (describe_manifest_path(structural_root / "cp_masks", required=False, label="ex vivo anatomy Cellpose mask directory"),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name="segment-ex-vivo-anatomy-cellpose",
+        fish_id=config.fish_id,
+        status=status,
+        dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=(
+            describe_manifest_path(source_path, label="prepared ex vivo anatomy stack"),
+            _optional_manifest_path(model_path, label="anatomy Cellpose model"),
+        ),
+        outputs=outputs,
+        checks=checks,
+        parameters={
+            "local_root": str(config.local_root),
+            "force_recompute": bool(force_recompute),
+            "use_gpu": use_gpu,
+            "compute_device": compute_device,
+            "output_root": str(structural_root),
+            "log_lines": tuple(result.get("log_lines", ())),
+        },
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def run_segment_hcr_cellpose_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    hcr_source: str = "rbest",
+    cp_hcr_model_path: str | Path | None = None,
+    use_gpu: bool = True,
+    force_recompute: bool = False,
+) -> StageManifest:
+    from .segmentation import HcrCellposeConfig, run_hcr_cellpose_stage
+
+    paths = resolve_pipeline_paths(config)
+    source_key = str(hcr_source).strip().lower()
+    model_path = Path(cp_hcr_model_path) if cp_hcr_model_path not in (None, "", False) else None
+    try:
+        result = run_hcr_cellpose_stage(
+            fish_dir=paths.fish_dir,
+            preproc_dir=paths.preproc_dir,
+            cp_hcr_model_path=model_path,
+            data_mode=config.data_mode,
+            data_root=paths.data_root,
+            local_root=paths.data_root,
+            source=source_key,
+            config=HcrCellposeConfig(
+                skip_if_exists=not force_recompute,
+                use_gpu=use_gpu,
+                data_mode=config.data_mode,
+            ),
+        )
+        resolved_model_path = Path(result["bindings"]["CP_MODEL_PATH"])
+        candidate_pairs = tuple(result.get("candidate_pairs", ()))
+        mask_paths = tuple(mask_path for _input_path, mask_path in candidate_pairs)
+        checks = (
+            StageCheckRecord(
+                label="HCR Cellpose candidate stacks",
+                status="pass" if candidate_pairs else "fail",
+                detail=f"discovered HCR intensity stacks from {source_key}",
+                observed=str(len(candidate_pairs)),
+            ),
+            StageCheckRecord(
+                label="HCR Cellpose mask outputs",
+                status="pass" if mask_paths and all(path.exists() for path in mask_paths) else "fail",
+                detail="expected mask TIFFs exist",
+                observed=str(sum(1 for path in mask_paths if path.exists())),
+                expected=str(len(mask_paths)),
+            ),
+        )
+        status = "pass" if all(check.status != "fail" for check in checks) else "fail"
+        errors: tuple[str, ...] = ()
+        warnings: tuple[str, ...] = ()
+        outputs = tuple(describe_manifest_path(path, label=f"HCR Cellpose mask: {path.name}") for path in mask_paths)
+        if not outputs:
+            outputs = (describe_manifest_path(paths.confocal_raw_cp_masks_dir, required=False, label="HCR Cellpose mask directory"),)
+    except Exception as exc:
+        result = {"candidate_pairs": (), "log_lines": []}
+        resolved_model_path = model_path
+        status = "fail"
+        errors = (str(exc),)
+        warnings = ()
+        checks = ()
+        outputs = (describe_manifest_path(paths.confocal_raw_cp_masks_dir, required=False, label="HCR Cellpose mask directory"),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name="segment-hcr-cellpose",
+        fish_id=config.fish_id,
+        status=status,
+        dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=(
+            describe_manifest_path(paths.preproc_dir / source_key, label=f"HCR {source_key} intensity directory"),
+            _optional_manifest_path(resolved_model_path, label="HCR Cellpose model"),
+        ),
+        outputs=outputs,
+        checks=checks,
+        parameters={
+            "local_root": str(config.local_root),
+            "hcr_source": source_key,
+            "force_recompute": bool(force_recompute),
+            "use_gpu": bool(use_gpu),
+            "log_lines": tuple(result.get("log_lines", ())),
+        },
+        warnings=warnings,
+        errors=errors,
+    )
+
+
 __all__ = [
     "PIPELINE_MANIFEST_VERSION",
     "PIPELINE_STAGE_ORDER",
     "POST_PREPROCESSING_STAGE_NAMES",
+    "GRANULAR_PREPROCESSING_STAGE_NAMES",
     "ManifestPathRecord",
     "PipelinePaths",
     "SingleFishPipelineConfig",
@@ -1843,13 +2155,21 @@ __all__ = [
     "build_single_fish_status",
     "compare_persisted_manifest",
     "compare_single_fish_staged_outputs",
+    "cellpose_stage_manifest_path",
     "describe_glob",
     "describe_manifest_path",
+    "discover_ex_vivo_anatomy_stack",
     "downstream_stage_names",
+    "ex_vivo_structural_root",
     "pipeline_contracts",
+    "prepared_ex_vivo_anatomy_path",
+    "run_prepare_ex_vivo_anatomy_stack_stage",
+    "run_segment_ex_vivo_anatomy_cellpose_stage",
+    "run_segment_hcr_cellpose_stage",
     "resolve_pipeline_paths",
     "run_single_fish_audit_inputs_stage",
     "stage_manifest_to_json",
     "stage_manifest_path",
+    "write_cellpose_stage_manifest",
     "write_stage_manifest",
 ]
