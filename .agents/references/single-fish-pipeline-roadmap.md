@@ -56,9 +56,24 @@ During migration, both paths may exist:
 
 Promotion happens only after the new path consistently recreates canonical outputs or produces documented, intentional differences.
 
-## Phase 0: Freeze Current Notebook Outputs
+## Phase 0: Use The First Control Outputs
 
-Select a small panel of representative fish and run the current notebook end to end.
+For the current migration slice, use the existing `L395_f11` staged outputs as the first control/baseline. Do not freeze a separate baseline bundle yet.
+
+Preprocessing is intentionally out of scope for this slice. Assume the fish folder already has completed preprocessing, Suite2p, registration, identity/activity tables, staged output folders, and plots before running the staged audit/status surface. Preprocessing should be tested later on a separate dataset.
+
+The currently runnable CLI surface is:
+
+```text
+PYTHONPATH=src python tools/single_fish_pipeline.py contracts
+PYTHONPATH=src python tools/single_fish_pipeline.py audit-inputs --fish-id FISH_ID --local-root DATA_ROOT --strict
+PYTHONPATH=src python tools/single_fish_pipeline.py audit-inputs --fish-id FISH_ID --local-root DATA_ROOT --strict --write-manifest
+PYTHONPATH=src python tools/single_fish_pipeline.py status --fish-id FISH_ID --local-root DATA_ROOT --strict
+PYTHONPATH=src python tools/single_fish_pipeline.py stage-status --fish-id FISH_ID --local-root DATA_ROOT --strict --stage-name STAGE_NAME
+PYTHONPATH=src python tools/single_fish_pipeline.py compare-staged --fish-id FISH_ID --local-root DATA_ROOT --strict --stage-name STAGE_NAME
+```
+
+Future stages should still compare against frozen/control outputs for representative fish before promotion. A later baseline bundle may include:
 
 Save a baseline bundle for each fish:
 
@@ -78,7 +93,7 @@ Define comparison classes:
 - visually equivalent: overlays, QA images, figures
 - allowed to differ with explanation: known stale-state artifacts or corrected notebook ambiguity
 
-Current scaffold:
+Target scaffold, not all currently runnable:
 
 ```text
 PYTHONPATH=src python tools/single_fish_pipeline.py audit-inputs --fish-id FISH_ID --local-root DATA_ROOT --strict
@@ -98,7 +113,7 @@ PYTHONPATH=src python tools/single_fish_pipeline.py compare-legacy-baseline --fi
 PYTHONPATH=src python tools/single_fish_pipeline.py compare-staged --fish-id FISH_ID --local-root DATA_ROOT --strict
 ```
 
-`compare-staged` treats declared comparison classes differently: exact-byte files must match exactly, semantic CSVs must match row/column/text/bool structure with numeric values inside configured absolute or relative tolerances, and visual PNGs are compared as thumbnails for visual-equivalence QA rather than raw encoded bytes. Declared comparison groups currently cover `preprocess-functional`, `score-activity-bpi`, `export-canonical-tables`, and `make-figures`. Visual PNG comparison can use per-artifact tolerances when a package renderer recreates Matplotlib output with small antialiasing/layout drift while its source tables match.
+Later writer stages, preprocessing comparisons, legacy-baseline commands, and non-declared comparison groups remain roadmap targets. The current `compare-staged` command is read-only and post-preprocessing only: it compares declared staged CSVs by header/row-count shape, warns on CSV byte differences, and checks declared figures for control presence plus non-empty staged files.
 
 By default, frozen legacy bundles are written under:
 
@@ -113,30 +128,20 @@ baseline_manifest.json
 comparison_manifest.json
 ```
 
-Stage-owned legacy comparison reports are written under the relevant staged output folder, for example:
+Future stage-owned legacy comparison reports may be written under the relevant staged output folder, for example:
 
 ```text
 FISH_ID/03_analysis/functional/pipeline_outputs/preprocess-functional/preprocess-functional_legacy_comparison.csv
 FISH_ID/03_analysis/functional/pipeline_manifests/compare-staged-preprocess-functional_manifest.json
 ```
 
-Current `score-activity-bpi` / `export-canonical-tables` status:
+Current downstream staged-output status:
 
-- `functional_roi_activity_bpi_cells.csv`, `functional_roi_activity_bpi_summary.csv`, and a scored `functional_roi_activity_identity.csv` are generated under `03_analysis/functional/pipeline_outputs/score-activity-bpi/registration/`.
-- The stage uses `codeants_2pf_hcr.activity.build_response_bpi_tables` with the fixed ROI master table as input and prefers the staged `[23c]` pre-identity response calls from `pipeline_outputs/preprocess-functional/qa/suite2p_response_bpi_cells_23c.csv` when present.
-- The notebook-equivalent `FUNC_ACTIVITY_BPI_ZERO_BAND=0.50` is used for this staged path.
-- `assign-hcr-identity` now stages the ROI identity master/lookup and the HCR-centric `[50]` table family under `03_analysis/functional/pipeline_outputs/assign-hcr-identity/registration/`.
-- `assign-hcr-identity` regenerates `[50e]` `hcr_activity_status_summary.csv` from staged `hcr_activity_status.csv` plus HCR warp filter metadata (`n_labels_after` minus `low_conf_labels`), so unmatched-label counts are no longer copied from the live registration summary.
-- `export-canonical-tables` now promotes the staged score outputs for `roi_master`, `bpi_cells`, and `bpi_summary`, and prefers the staged `assign-hcr-identity` HCR-centric tables when present.
-- `score-activity-bpi` prefers the staged identity master when it exists, so activity/BPI scoring is layered on the staged identity boundary instead of reaching back to the live registration master.
-- `assign-hcr-identity` also writes a non-promoted disk recompute audit under `pipeline_outputs/assign-hcr-identity/recompute-audit/`, using persisted transform replay candidates, notebook-equivalent functional orientation, Suite2p plane files, anatomy labels, HCR final pairs, and the staged scored ROI master.
-- The non-promoted audit now applies package-owned response-aware `[50]` export finalization via `matching.finalize_hcr_activity_export_tables`, so accepted HCR labels without functional candidates are retained in the recomputed raw export instead of being dropped at the lower-level candidate-table boundary.
-- The audit records `hcr_transform_replay_variants.csv` and selects the closest available persisted replay for the main recomputed outputs; on `L395_f11`, the closest current replay uses `tforms_by_plane.csv` affine matrices with selected `[20]` best-Z values plus a diagnostic single-plane `dx=-1`, `dy=+1` affine offset probe on plane `4`, while selected `ants_rigid_affine` transformlists replayed through the SimpleITK fallback remain worse.
-- The audit also records `hcr_func_candidate_key_diff_by_replay_variant.csv`, `hcr_func_candidate_target_set_diff_by_replay_variant.csv`, and `hcr_func_candidate_target_geometry_by_replay_variant.csv`; on `L395_f11`, the closest replay now matches the legacy candidate and responsive-pair row counts (`hcr_func_candidates=148`, `conf_to_func_pairs=40`), leaves `conf_to_func_pairs_raw` one row low (`253` versus legacy `254`), matches `126/148` legacy candidate keys, misses `22`, adds `22`, and represents all `56` legacy HCR/anatomy target groups, but `24` matched target groups still have different functional ROI sets listed explicitly in the target-set and geometry diffs.
-- On `L395_f11`, that disk recompute audit currently finds the expected input files but does not match legacy `[50]`: status rows match `162` but columns are `50` versus legacy `109`, `conf_to_func_pairs_raw` is now `253` rows versus legacy `254`, `conf_to_func_pairs` is `40` versus `40`, and `hcr_func_candidates` is `148` versus `148`.
-- HCR-centric staged identity outputs are therefore still promoted from table-level staging of the current `[50]` exports, except for the regenerated `[50e]` summary; replacing the full `[50]` table family with recomputed outputs remains blocked on recovering the exact transform/plane-ref representation used by the legacy notebook state.
-- `make-figures` now consumes the staged canonical export folder for package-rendered responsive identity donut and HCR anatomy coexpression summary inputs when that folder is complete.
-- `compare-staged --stage-name make-figures` ignores the responsive donut counts CSV provenance columns (`owner`, `master_csv`, `conf_func_csv`) because staged canonical rendering intentionally records different source paths while preserving the biological count columns.
+- `stage-status` is read-only. It inventories existing post-preprocessing staged output folders for `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, and `make-figures`.
+- These stage-status manifests declare required outputs and compare accepted staged CSV/file shapes against the existing `L395_f11` control outputs when present.
+- `compare-staged` is read-only and uses the same declared post-preprocessing stage output specs; it does not create/freeze baseline bundles.
+- This support does not execute, recompute, promote, or render downstream stages. Writer stages and broader comparison behavior remain roadmap targets.
+- Existing diagnostic folders such as `assign-hcr-identity/recompute-audit/` remain baseline evidence only until a package-owned writer stage is implemented and validated.
 
 ## Phase 1: Define Stage Contracts
 

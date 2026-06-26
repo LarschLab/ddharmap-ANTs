@@ -28,6 +28,134 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-06-26 - persist audit manifests and lock L395 baseline decision
+
+- Slice goal:
+  - make the first staged audit/status surface durable without enabling staged output writers.
+- Passes completed in this session:
+  - recorded the user decision that existing `L395_f11` staged outputs are the first baseline/control and preprocessing is out of scope for this slice.
+  - added explicit `audit-inputs --write-manifest` support for persisting only the audit manifest.
+  - added status comparison of persisted versus current audit inputs, including missing/current/stale/invalid states.
+  - added focused tests for explicit manifest writing, stale detection, invalid manifest failure, default no-write behavior, CLI opt-in writing, and staged canonical CSV parity mismatch.
+- What changed:
+  - default `contracts`, `audit-inputs`, and `status` remain read-only/dry-run.
+  - `audit-inputs --write-manifest` writes `03_analysis/functional/pipeline_manifests/audit-inputs_manifest.json` but does not write staged analysis outputs.
+  - `status` now reports persisted audit manifest state and warns when tracked input records differ from the saved manifest.
+  - glob manifest records now include aggregate file size and max file mtime so changed files inside a glob can mark the saved audit stale.
+- What remains broken:
+  - stale-state reporting is currently limited to the persisted `audit-inputs` manifest input records.
+  - downstream stage dependency/output freshness, writer stages, and preprocessing migration are still not implemented in this slice.
+- Remaining in-slice work:
+  - none for the manifest/status slice.
+- Next likely breakpoint:
+  - extend stale-state reporting only after the next downstream read-only stage declares expected inputs/outputs in tests.
+- Rerun implications:
+  - minimum validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py`, then real-data `audit-inputs --write-manifest` and `status` on `L395_f11`.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`25 passed`).
+  - `linnaeus` did not have `pytest` installed in the system `python3` environment, so remote unit tests were not run there.
+  - `linnaeus` real-data validation passed: `PYTHONPATH=src python3 tools/single_fish_pipeline.py audit-inputs --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --write-manifest`, then `status` reported `pass`, 64 input records, 71 checks, persisted `audit-inputs_manifest.json` status `current`, and no stale records/warnings/errors.
+
+### 2026-06-26 - add read-only downstream stage-status manifests
+
+- Slice goal:
+  - move existing post-preprocessing staged outputs from optional audit evidence to explicit read-only stage-status manifests without enabling writer stages.
+- Passes completed in this session:
+  - added read-only downstream stage manifest support for `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, and `make-figures`.
+  - added `tools/single_fish_pipeline.py stage-status --stage-name STAGE_NAME` with optional `--write-manifest`.
+  - extended top-level `status` with downstream stage summaries and persisted-manifest current/stale/fail state.
+  - tightened docs so current CLI behavior is not described as writer/recompute/promote behavior.
+- What changed:
+  - stage-specific status now fails when an existing staged output folder is incomplete, while missing untouched staged folders are shown as `not_started` in top-level `status`.
+  - `stage-status --write-manifest` refreshes per-stage manifests under `03_analysis/functional/pipeline_manifests/`.
+  - downstream stage checks compare declared staged CSV row/header shape or figure presence against the existing control outputs.
+- What remains broken:
+  - these are still read-only inventories over existing outputs; they do not execute/recompute downstream writer stages.
+  - preprocessing, writer-stage execution, full compare-staged behavior, and visual/numeric tolerance reports remain roadmap targets.
+- Remaining in-slice work:
+  - none for the read-only downstream stage-status surface.
+- Next likely breakpoint:
+  - implement the first actual writer stage only after its declared inputs/outputs and read-only status remain stable on control data.
+- Rerun implications:
+  - minimum validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py`, then `stage-status --strict` for each downstream stage on `L395_f11`.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`35 passed`).
+  - `linnaeus` real-data `stage-status --strict` passed for `assign-hcr-identity` (7 outputs, 14 checks), `score-activity-bpi` (3 outputs, 6 checks), `export-canonical-tables` (8 outputs, 16 checks), and `make-figures` (5 outputs, 10 checks).
+  - after refreshing those four manifests with `stage-status --write-manifest`, top-level `status` on `L395_f11` reported `pass`; all downstream persisted manifests reported `current`.
+
+### 2026-06-26 - add read-only post-preprocessing compare-staged
+
+- Slice goal:
+  - make `compare-staged` runnable for existing post-preprocessing staged outputs without enabling writer stages or freezing separate baseline bundles.
+- Passes completed in this session:
+  - added package-owned read-only comparison manifests for the same four downstream stages as `stage-status`.
+  - added `tools/single_fish_pipeline.py compare-staged --stage-name STAGE_NAME`.
+  - updated docs/tests so `compare-staged` is current but scoped to declared post-preprocessing outputs only.
+- What changed:
+  - CSV comparisons require matching header and row count, and emit warnings for byte differences.
+  - figure comparisons require the control figure to exist and the staged figure to be non-empty.
+  - `anatomy_identity_lookup.csv` has no control path and is checked as a non-empty CSV.
+- What remains broken:
+  - numeric tolerance reports, row-level semantic diff reports, visual thumbnail comparison, preprocessing comparisons, baseline freeze/compare commands, and writer-stage execution remain roadmap targets.
+- Remaining in-slice work:
+  - none for the read-only post-preprocessing comparison surface.
+- Next likely breakpoint:
+  - add richer comparison reports or start the first writer stage once comparison requirements are stable.
+- Rerun implications:
+  - minimum validation: local focused tests, then `compare-staged --strict` on `L395_f11`.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`39 passed`).
+  - `linnaeus` real-data aggregate `compare-staged --strict` on `L395_f11` returned `warn` with no failed checks: `assign-hcr-identity` 4 byte-parity warnings, `score-activity-bpi` 2, `export-canonical-tables` 6, and `make-figures` pass.
+  - `compare-staged --write-manifest` refreshed comparison manifests with the same no-failure result.
+
+### 2026-06-25 - add agentic workflow living roadmap
+
+- Slice goal:
+  - make the staged pipeline/agentic workflow migration trackable across sessions without relying on temporary handoff files.
+- Passes completed in this session:
+  - added `.agents/references/agentic-workflow-roadmap.md` as the compact operational status board.
+  - routed staged pipeline / agentic workflow migration tasks to the new roadmap from the single-fish router.
+  - added doc-test coverage so the roadmap remains discoverable from `AGENTS.md` and the router.
+- What changed:
+  - future workflow sessions should update the roadmap after meaningful design, implementation, validation, or breakage discoveries.
+  - the roadmap explicitly records that documented `pipeline.py` / `tools/single_fish_pipeline.py` commands are currently target contract, not runnable implementation in this checkout.
+- What remains broken:
+  - the package-owned staged pipeline module and CLI wrapper still need to be implemented.
+- Next likely breakpoint:
+  - create `src/codeants_2pf_hcr/pipeline.py`, `tools/single_fish_pipeline.py`, and focused `tests/test_pipeline.py` for the first `contracts` / `audit-inputs` slice.
+- Rerun implications:
+  - doc-only change; run `PYTHONPATH=src pytest -q tests/test_agent_docs.py`.
+
+### 2026-06-25 - add read-only staged pipeline first pass
+
+- Slice goal:
+  - create a safe first-pass command surface that can inspect real fish folders without writing pipeline artifacts.
+- Passes completed in this session:
+  - added `src/codeants_2pf_hcr/pipeline.py` with stage contracts, read-only path resolution, manifest records, and a dry-run `audit-inputs` stage.
+  - added `tools/single_fish_pipeline.py` with `contracts` and read-only `audit-inputs`.
+  - added focused `tests/test_pipeline.py` coverage for stage order, dry-run behavior, strict missing-input failure, and CLI JSON output.
+  - exported the new package symbols lazily and updated `symbol-index.md` / roadmap docs.
+- What changed:
+  - agents can now inspect the declared staged workflow and run a non-writing input audit before any real-data writer stage exists.
+  - the input audit now inventories processed-control prerequisites across metadata, Suite2p, anatomy preprocessing, HCR masks, functional registration, NCC comparison, canonical ROI/HCR/activity/BPI tables, final plots, and existing staged outputs.
+  - the input audit now includes lightweight semantic checks for Suite2p plane completeness, `tforms_by_plane.csv` row count versus Suite2p planes, core canonical CSV row presence, and required schemas for transform/ROI/BPI/HCR tables.
+  - added cross-table checks for Suite2p/tforms/ROI/BPI plane consistency, ROI/BPI key equality, HCR candidate key subset, and responsive-pair key subset.
+  - added value-level checks for geometry-before-identity flags, response domains, BPI numeric values, HCR trace-export selection consistency, responsive-pair selection consistency, and optional staged-vs-control table/figure parity.
+  - added read-only `status` summary command for the current dry-run trust state.
+- What remains broken:
+  - downstream stages after `audit-inputs` are declarative only.
+  - semantic validation is still partial across the full roadmap because it has only been verified on `L395_f11`; persisted manifest/stale-state checks and writer stages remain disabled.
+  - `status` summarizes dry-run state only; it does not yet read persisted manifests or detect stale outputs.
+  - `L395_f11` has no non-sidecar raw functional files and no files under `03_analysis/functional/registration/reference_planes`; these are currently optional.
+- Next likely breakpoint:
+  - decide whether to formalize the existing `L395_f11` staged outputs as a baseline or freeze a separate baseline bundle before enabling writer stages.
+- Rerun implications:
+  - no fish outputs are written by this slice.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`16 passed`).
+  - `linnaeus` read-only real-data dry run passed on `L395_f11`: `PYTHONPATH=src python3 tools/single_fish_pipeline.py audit-inputs --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict`.
+  - latest `L395_f11` dry-run evidence: 64 manifest input records; 71 semantic checks passing, including required schema, cross-table consistency, value-domain/selection, and staged parity checks; 1 metadata CSV; 1 experiment log CSV; 10 each Suite2p ops/F/Fneu/iscell/stat files; 5 Suite2p planes; 5 `tforms_by_plane.csv` rows; 4530 ROI identity rows; 4530 ROI activity/BPI cell rows; 162 HCR status rows; 40 responsive HCR/function pairs; 4 HCR masks; 8 staged canonical export CSVs; 12 staged figure outputs; no errors/warnings; no outputs written.
+
 ### 2026-06-25 - restore default 2P anatomy XY mirroring in `[14a]`
 
 - Slice goal:

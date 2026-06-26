@@ -30,6 +30,7 @@
 | canonical table / output confusion | `references/canonical-tables.md` |
 | figure or plot issue | `references/figure-rules.md` + `references/activity-semantics.md` |
 | cache/rerun issue | `references/cache-rerun-policy.md` |
+| staged pipeline / agentic workflow migration | `references/agentic-workflow-roadmap.md` + `references/single-fish-pipeline-roadmap.md` + `references/refactor-rules.md` |
 | smoke-test/bugfix workflow issue | `references/cache-rerun-policy.md` + `references/notebook-stage-map.md` |
 | continue refactor / multi-pass migration / resume previous slice | `references/refactor-loop-policy.md` + `references/refactor-rules.md` |
 | refactor or package ownership question | `references/refactor-rules.md` + `references/symbol-index.md` |

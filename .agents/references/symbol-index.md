@@ -13,55 +13,34 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.pipeline`
 
-- `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the future single-fish staged pipeline.
-- `PIPELINE_MANIFEST_VERSION`: Current manifest schema version for staged pipeline manifests.
-- `SingleFishPipelineConfig`: Typed fish/root/strictness knob container for staged single-fish pipeline commands.
-- `LegacyBaselineConfig`: Typed fish/root/baseline knob container for freezing and comparing legacy singleFish output bundles.
-- `StagedOutputComparisonConfig`: Typed fish/root/baseline/tolerance knob container for comparing stage-owned outputs against a frozen legacy baseline, including numeric and visual-PNG thresholds.
+- `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the single-fish staged pipeline.
+- `PIPELINE_MANIFEST_VERSION`: Current first-pass manifest schema version for staged pipeline manifests.
+- `POST_PREPROCESSING_STAGE_NAMES`: Read-only stage-status names for existing post-preprocessing staged output folders.
+- `SingleFishPipelineConfig`: Typed fish/root/strictness/dry-run knob container for staged single-fish pipeline commands.
 - `PipelinePaths`: Resolved fish-scoped paths for staged pipeline commands without creating notebook output folders during path resolution.
-- `StageContract`: Declarative stage contract record containing stage order, purpose, dependencies, and canonical/diagnostic outputs.
-- `LegacyOutputSpec`: Declared legacy output record with relative path, requirement status, and comparison class.
-- `StagedOutputComparisonSpec`: Declared baseline-versus-staged output pair with comparison mode, requirement status, optional CSV ignored columns, and optional per-artifact visual tolerances.
-- `ActivityBpiScoreRecord`: Response/BPI consistency summary for staged `score-activity-bpi` outputs.
-- `AnatomyPreprocessRecord`: TIFF inspection row for staged `preprocess-anatomy` outputs.
-- `CanonicalTableExportRecord`: Canonical table scope/existence/schema summary for staged `export-canonical-tables` outputs.
-- `FunctionalPreprocessInventoryRecord`: Suite2p plane inventory row for the staged `preprocess-functional` command.
-- `FunctionalRegistrationRecord`: Per-plane registered functional artifact row for staged `register-functional-to-anatomy` outputs.
-- `FigureArtifactRecord`: Final figure artifact presence and scope row for staged `make-figures` outputs.
-- `HcrPreprocessRecord`: HCR intensity/mask inspection row for staged `preprocess-hcr` outputs.
-- `HcrIdentityAssignmentRecord`: Identity-assignment consistency summary for staged `assign-hcr-identity` outputs.
-- `HcrRegistrationRecord`: Per-HCR-mask registered intensity/label/match artifact row for staged `register-hcr-to-anatomy` outputs.
-- `RoiAnatomyMatchRecord`: Per-plane ROI/anatomy geometry audit row for staged `match-roi-to-anatomy` outputs.
-- `PathAuditRecord`: Input-audit row describing expected paths/globs before manifest serialization.
-- `ManifestPathRecord`: JSON-ready path record with existence, kind, size, mtime, and optional SHA256 hash.
-- `QaReportArtifactRecord`: QA/report artifact presence and category row for staged `make-qa-report` outputs.
-- `BaselineCopyRecord`: Per-output result row for `freeze-legacy-baseline`.
-- `BaselineComparisonRecord`: Per-output result row for `compare-legacy-baseline`.
-- `StagedOutputComparisonRecord`: Per-output comparison result row for `compare-staged`, including semantic CSV dimensions, numeric/text/bool deltas, and visual-PNG thumbnail metrics when applicable.
-- `StageManifest`: JSON-ready stage manifest payload with fish ID, stage status, inputs, outputs, upstream manifests, warnings, and errors.
+- `StageContract`: Declarative stage contract record containing stage order, purpose, dependencies, and first-pass read-only status.
+- `ManifestPathRecord`: JSON-ready path record with path, existence, kind, required status, and optional glob count/pattern.
+- `StageCheckRecord`: JSON-ready semantic check record with status, expected value, observed value, and detail.
+- `StageManifest`: JSON-ready stage manifest payload with fish ID, stage status, dry-run state, inputs, outputs, parameters, warnings, and errors.
+- `StageOutputSpec`: Declared read-only downstream staged output with optional control/parity metadata.
+- `PersistedManifestStatus`: JSON-ready persisted manifest trust-state record with missing/current/stale/fail status.
 - `pipeline_contracts`: Return the staged single-fish contract list in roadmap order.
-- `legacy_baseline_outputs`: Return the declared legacy output specs used for baseline freeze/compare.
-- `staged_output_comparison_specs`: Return declared stage-owned output comparisons for a staged pipeline stage.
+- `build_single_fish_status`: Build a compact read-only trust-state summary from the dry-run input audit plus any persisted audit manifest.
+- `build_single_fish_compare_staged_manifest`: Build a read-only comparison manifest for one existing post-preprocessing staged output folder.
+- `build_single_fish_downstream_stage_manifest`: Build a read-only manifest for an existing post-preprocessing staged output folder.
+- `build_single_fish_downstream_stage_manifests`: Build read-only manifests for all current post-preprocessing staged output folders.
+- `build_single_fish_stage_status`: Summarize one downstream read-only stage manifest plus persisted-manifest state.
+- `downstream_stage_names`: Return the supported current downstream read-only stage-status names.
 - `resolve_pipeline_paths`: Resolve staged pipeline paths without creating output directories.
 - `describe_manifest_path`: Build a manifest path record for a file or directory.
-- `write_stage_manifest`: Serialize a stage manifest to disk.
-- `load_stage_manifest`: Load a saved stage manifest JSON.
-- `run_single_fish_audit_inputs_stage`: Run the first staged pipeline input audit and write `audit-inputs_manifest.json`.
-- `run_single_fish_preprocess_anatomy_stage`: Run notebook-equivalent anatomy normalization/uint8 preprocessing through package-owned `[14]`/`[14a]` helpers and write `preprocess-anatomy_manifest.json`.
-- `run_single_fish_preprocess_functional_stage`: Inventory Suite2p plane outputs, write `[23a]`-style Suite2p load summary/source CSVs, optionally recreate `[23c]` Suite2p diagnostics under `pipeline_outputs/preprocess-functional/qa/`, and write `preprocess-functional_manifest.json`.
-- `run_single_fish_preprocess_hcr_stage`: Discover HCR intensity stacks, run/reuse HCR Cellpose masks, inspect mask labels, and write `preprocess-hcr_manifest.json`.
-- `run_single_fish_register_functional_to_anatomy_stage`: Audit per-plane functional-to-anatomy registration artifacts from `tforms_by_plane.csv` and write `register-functional-to-anatomy_manifest.json`.
-- `run_single_fish_register_hcr_to_anatomy_stage`: Audit registered HCR intensity, label, warp-metadata, matches, review, and final-pair artifacts in `03_analysis/confocal/aligned/` and write `register-hcr-to-anatomy_manifest.json`.
-- `run_single_fish_match_roi_to_anatomy_stage`: Audit geometry-only ROI/anatomy matching artifacts, including `plane_links.csv`, global/per-plane `f2a_centroid_matches*.csv`, and required geometry columns in `functional_roi_activity_identity.csv`, then write `match-roi-to-anatomy_manifest.json`.
-- `run_single_fish_assign_hcr_identity_stage`: Audit HCR identity assignment after geometry, including `anatomy_identity_lookup.csv`, ROI-level identity fields, and the invariant that identity-assigned ROIs have a unique anatomy match; stage the ROI identity master/lookup and current HCR-centric `[50]` table outputs under `pipeline_outputs/assign-hcr-identity/registration/`; regenerate `[50e]` `hcr_activity_status_summary.csv` from staged status plus HCR warp filter metadata; write a non-promoted HCR disk-recompute audit plus transform-replay, anatomy voxel-scale, affine-offset probe, candidate-key-diff, per-target functional-set, and per-target geometry diagnostics under `pipeline_outputs/assign-hcr-identity/recompute-audit/`; then write `assign-hcr-identity_manifest.json`.
-- `run_single_fish_score_activity_bpi_stage`: Generate staged `[50ia]` response/BPI outputs with `activity.build_response_bpi_tables`, preferring the staged identity master and staged `[23c]` pre-identity response calls when available, validate the staged BPI cells/summary/scored master tables, then write `score-activity-bpi_manifest.json`.
-- `run_single_fish_export_canonical_tables_stage`: Export canonical ROI-centric and HCR-centric table copies with explicit scope labels, preferring staged `score-activity-bpi` outputs for ROI master/BPI diagnostics and staged `assign-hcr-identity` outputs for HCR-centric tables when available, then write `export-canonical-tables_manifest.json`.
-- `run_single_fish_make_qa_report_stage`: Audit core biologist-facing QA/report artifacts across functional response, ROI/anatomy geometry, HCR identity/activity, BPI, and confocal plane coverage surfaces, then write `make-qa-report_manifest.json`.
-- `run_single_fish_make_figures_stage`: Audit final `04_plots` figure/table artifacts, regenerate package-owned responsive identity donut and HCR anatomy coexpression outputs into `pipeline_outputs/make-figures/04_plots/` from staged canonical exports when available, copy not-yet-extracted legacy figure artifacts, then write `make-figures_manifest.json`.
-- `freeze_legacy_single_fish_baseline`: Copy declared legacy outputs into a baseline bundle and write `baseline_manifest.json`.
-- `compare_legacy_single_fish_baseline`: Compare current declared legacy outputs to a frozen baseline bundle and write `comparison_manifest.json`.
-- `compare_staged_single_fish_outputs`: Compare stage-owned outputs against frozen legacy outputs, write a stage comparison CSV, and write `compare-staged-<stage>_manifest.json`.
-- CLI wrapper: `tools/single_fish_pipeline.py` exposes `audit-inputs`, `preprocess-functional`, `preprocess-anatomy`, `preprocess-hcr`, `register-functional-to-anatomy`, `register-hcr-to-anatomy`, `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, `make-figures`, `freeze-legacy-baseline`, `compare-legacy-baseline`, and `compare-staged`.
+- `describe_glob`: Build a manifest path record for a glob under a base directory.
+- `stage_manifest_path`: Resolve the fish-scoped path for a stage manifest under `03_analysis/functional/pipeline_manifests/`.
+- `write_stage_manifest`: Persist a stage manifest to its fish-scoped manifest path.
+- `compare_persisted_manifest`: Compare a persisted manifest's path records against the current audit and report missing/current/stale/fail state.
+- `compare_single_fish_staged_outputs`: Build a read-only aggregate comparison payload for declared existing post-preprocessing staged outputs.
+- `stage_manifest_to_json`: Serialize a stage manifest to JSON text for stdout or persistence.
+- `run_single_fish_audit_inputs_stage`: Run the first staged pipeline input audit in read-only/dry-run mode and return a JSON-ready manifest with labeled input records, schema checks, cross-table consistency checks, value-domain checks, and optional staged parity checks, without writing into fish folders.
+- CLI wrapper: `tools/single_fish_pipeline.py` currently exposes read-only `contracts`, `audit-inputs`, `status`, `stage-status`, and post-preprocessing `compare-staged`; `audit-inputs --write-manifest`, `stage-status --write-manifest`, and `compare-staged --write-manifest` persist only manifests. Later writer and broader comparison commands remain roadmap targets.
 
 ## `codeants_2pf_hcr.context`
 
