@@ -72,6 +72,13 @@
 - Rerun implications:
   - run `PYTHONPATH=src pytest -q tests/test_agent_docs.py` after doc edits; run HCR real-data commands only after code behavior changes.
 
+### 2026-07-02 - add HCR activity replay QA recall notebook
+
+- Added `notebooks/hcr_activity_replay_qa.ipynb` as a thin interpretation/QA surface for the read-only HCR-centric replay audit.
+- The notebook keeps explicit path knobs for `L395_f11`, loads persisted audit manifests and historical recompute artifacts, summarizes replay variant scoreboard rows, compares accepted versus historical candidate keys, and displays historical warped functional label TIFFs when present.
+- Updated `notebook-stage-map.md` to mark the notebook as a recall/QA artifact, not a stage owner.
+- Reusable replay and table-generation logic remains in `src/codeants_2pf_hcr/`; the notebook is for evidence recall and manual interpretation.
+
 ### 2026-07-02 - add read-only HCR activity replay audit
 
 - Slice goal:
