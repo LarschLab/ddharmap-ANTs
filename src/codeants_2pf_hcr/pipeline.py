@@ -5812,15 +5812,30 @@ def run_match_roi_to_anatomy_stage(
             mode = "control_geometry"
             polarity = None
             polarity_source = None
+            anatomy_xy_spacing = (1.0, 1.0)
+            transform_report = {"overlay_applied_planes": 0}
+            accepted_parity_checks: tuple[StageCheckRecord, ...] = ()
         else:
             if anat_labels_path is None:
                 raise FileNotFoundError(f"No anatomy labels found under {paths.fish_dir}")
             plane_refs = load_plane_refs_summary(plane_summary_path)
+            anatomy_xy_spacing = _anatomy_xy_spacing_from_voxel_cache(paths)
+            plane_refs, transform_report = _overlay_selected_ants_transformlists(
+                plane_refs,
+                _selected_ants_inplane_comparison_path(paths),
+                xy_spacing=anatomy_xy_spacing,
+            )
             polarity, polarity_source = resolve_func_polarity(
                 config.fish_id,
                 paths.matching_metadata_csv,
                 fish_dir=paths.fish_dir,
             )
+
+            def _apply_match_func_orientation(arr):
+                from .spatial import apply_func_orientation
+
+                return apply_func_orientation(arr, polarity=polarity, flip_x=True)
+
             suite2p_result = load_suite2p_stage(
                 plane_refs=plane_refs,
                 suite2p_root=paths.functional_suite2p_dir,
@@ -5835,6 +5850,8 @@ def run_match_roi_to_anatomy_stage(
                 suite2p_result["suite2p_by_ref_idx"],
                 plane_refs,
                 anat_labels,
+                dx_um=float(anatomy_xy_spacing[0]),
+                dy_um=float(anatomy_xy_spacing[1]),
                 fish_id=config.fish_id,
                 active_class=cfg.active_class,
                 inactive_class=cfg.inactive_class,
@@ -5851,6 +5868,7 @@ def run_match_roi_to_anatomy_stage(
                 claim_matched=cfg.claim_matched,
                 claim_duplicate=cfg.claim_duplicate,
                 claim_unmatched=cfg.claim_unmatched,
+                apply_func_orientation_func=_apply_match_func_orientation,
             )
             geometry_columns = [column for column in ROI_ANATOMY_GEOMETRY_COLUMNS if column in detail_df.columns]
             detail_df = detail_df.loc[:, geometry_columns].copy()
@@ -5859,6 +5877,70 @@ def run_match_roi_to_anatomy_stage(
                 method="staged_register_functional_to_anatomy",
                 fish_id=config.fish_id,
             )
+            accepted_parity_checks = ()
+            accepted_detail_path = paths.functional_registration_dir / "functional_roi_activity_identity.csv"
+            if accepted_detail_path.exists():
+                accepted_df = pd.read_csv(accepted_detail_path)
+                parity_columns = ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")
+                if all(column in accepted_df.columns for column in parity_columns) and all(column in detail_df.columns for column in parity_columns):
+                    merged = detail_df.loc[:, list(parity_columns)].merge(
+                        accepted_df.loc[:, list(parity_columns)],
+                        on=["plane_idx", "func_label"],
+                        how="outer",
+                        suffixes=("_staged", "_accepted"),
+                        indicator=True,
+                    )
+                    left_only = int((merged["_merge"] == "left_only").sum())
+                    right_only = int((merged["_merge"] == "right_only").sum())
+
+                    def _numeric_parity_count(column: str) -> int:
+                        staged_values = pd.to_numeric(merged[f"{column}_staged"], errors="coerce")
+                        accepted_values = pd.to_numeric(merged[f"{column}_accepted"], errors="coerce")
+                        equal = (staged_values.isna() & accepted_values.isna()) | (staged_values == accepted_values)
+                        return int(equal.sum())
+
+                    anat_label_equal = _numeric_parity_count("anat_label")
+                    selected_label_equal = _numeric_parity_count("selected_anat_label")
+                    staged_unique = merged["has_unique_anat_match_staged"].astype("boolean")
+                    accepted_unique = merged["has_unique_anat_match_accepted"].astype("boolean")
+                    unique_equal = int(((staged_unique.isna() & accepted_unique.isna()) | (staged_unique == accepted_unique)).sum())
+                    accepted_parity_checks = (
+                        StageCheckRecord(
+                            label="accepted ROI/anatomy key parity",
+                            status="pass" if left_only == 0 and right_only == 0 else "fail",
+                            detail="recomputed ROI/anatomy geometry keys match accepted control when present",
+                            observed=f"both={int((merged['_merge'] == 'both').sum())},left_only={left_only},right_only={right_only}",
+                            expected=f"both={len(merged)},left_only=0,right_only=0",
+                        ),
+                        StageCheckRecord(
+                            label="accepted ROI/anatomy label parity",
+                            status="pass" if anat_label_equal == len(merged) and selected_label_equal == len(merged) else "fail",
+                            detail="recomputed anatomy labels match accepted control when present",
+                            observed=f"anat_label={anat_label_equal}/{len(merged)},selected_anat_label={selected_label_equal}/{len(merged)}",
+                            expected=f"{len(merged)}/{len(merged)}",
+                        ),
+                        StageCheckRecord(
+                            label="accepted ROI/anatomy unique-match parity",
+                            status="pass" if unique_equal == len(merged) else "fail",
+                            detail="recomputed unique-match flags match accepted control when present",
+                            observed=f"{unique_equal}/{len(merged)}",
+                            expected=f"{len(merged)}/{len(merged)}",
+                        ),
+                    )
+                else:
+                    missing = [
+                        column
+                        for column in parity_columns
+                        if column not in accepted_df.columns or column not in detail_df.columns
+                    ]
+                    accepted_parity_checks = (
+                        StageCheckRecord(
+                            label="accepted ROI/anatomy parity inputs",
+                            status="warn",
+                            detail="accepted-control parity skipped because required columns are missing",
+                            observed=",".join(missing),
+                        ),
+                    )
             suite2p_plane_count = len(suite2p_result["suite2p_by_ref_idx"])
             mode = "recompute_from_staged_registration"
         registration_dir.mkdir(parents=True, exist_ok=True)
@@ -5899,7 +5981,7 @@ def run_match_roi_to_anatomy_stage(
                 detail="geometry summary CSV exists",
                 observed=str(summary_path),
             ),
-        )
+        ) + accepted_parity_checks
         status = "pass" if not any(check.status == "fail" for check in checks) else "fail"
         errors: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
         warnings: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "warn")
@@ -5937,6 +6019,11 @@ def run_match_roi_to_anatomy_stage(
             "match_policy_version": FunctionalRoiIdentityConfig().match_policy_version,
             "geometry_only": True,
             "mode": mode if "mode" in locals() else None,
+            "functional_polarity": polarity if "polarity" in locals() else None,
+            "functional_polarity_source": polarity_source if "polarity_source" in locals() else None,
+            "anatomy_xy_spacing_um": tuple(float(v) for v in anatomy_xy_spacing) if "anatomy_xy_spacing" in locals() else None,
+            "selected_ants_overlay_count": int((transform_report or {}).get("overlay_applied_planes", 0)) if "transform_report" in locals() else 0,
+            "selected_ants_missing_transform_files": int((transform_report or {}).get("missing_transform_files", 0)) if "transform_report" in locals() else 0,
         },
         warnings=warnings,
         errors=errors,

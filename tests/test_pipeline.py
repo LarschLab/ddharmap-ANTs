@@ -1218,6 +1218,88 @@ def test_match_roi_to_anatomy_stage_writes_geometry_outputs(tmp_path: Path) -> N
     assert any(check.label == "ROI/anatomy match rows" and check.status == "pass" for check in manifest.checks)
 
 
+def test_match_roi_to_anatomy_stage_threads_selected_ants_and_orientation(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    import numpy as np
+    import pandas as pd
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,top-right\n"
+    )
+    _write_minimal_suite2p_plane(fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0")
+    anatomy_labels = tmp_path / "anat_labels.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_labels)
+    plane_summary = tmp_path / "plane_refs_summary.json"
+    _write_plane_refs_summary(plane_summary)
+    analysis_dir = fish_dir / "03_analysis"
+    (analysis_dir / "voxel_sizes.json").write_text(
+        json.dumps({"by_path": {"2p_anatomy/anatomy.nrrd": {"X": 0.5, "Y": 0.75, "Z": 2.0}}})
+    )
+    comparison_dir = analysis_dir / "functional" / "ncc" / "inplane_registration_comparison"
+    transform_dir = comparison_dir / "transforms"
+    transform_dir.mkdir(parents=True)
+    transform_path = transform_dir / "plane0_0GenericAffine.mat"
+    transform_path.write_text("#Insight Transform File V1.0\n")
+    (comparison_dir / "inplane_registration_comparison.csv").write_text(
+        "\n".join(
+            [
+                "plane_idx,plane,method,selected,best_z,scale,ref_shape,ref_scaled_shape,transformlist",
+                f"0,{fish_dir.name}_plane0_mcorrected_flipX,ants_rigid_affine,True,0,1.0,\"(4, 5)\",\"(4, 5)\",{transform_path}",
+            ]
+        )
+        + "\n"
+    )
+    captured: dict[str, object] = {}
+
+    def fake_build_functional_roi_master_df(suite2p_by_ref_idx, plane_refs, anat_labels, **kwargs):
+        captured["plane_refs"] = plane_refs
+        captured["kwargs"] = kwargs
+        oriented = kwargs["apply_func_orientation_func"](np.asarray([[1, 2], [3, 4]], dtype=np.uint16))
+        captured["oriented"] = oriented
+        return (
+            pd.DataFrame(
+                [
+                    {
+                        "fish_id": fish_dir.name,
+                        "plane": f"{fish_dir.name}_plane0_mcorrected_flipX",
+                        "plane_idx": 0,
+                        "best_z": 0,
+                        "func_label": 1,
+                        "roi_idx": 0,
+                        "selected_anat_label": 7,
+                        "has_unique_anat_match": True,
+                        "anat_label": 7,
+                    }
+                ]
+            ),
+            pd.DataFrame([{"plane_idx": 0, "status": "ok"}]),
+        )
+
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    with patch("codeants_2pf_hcr.matching.build_functional_roi_master_df", side_effect=fake_build_functional_roi_master_df):
+        manifest = run_match_roi_to_anatomy_stage(
+            config,
+            plane_refs_summary_path=plane_summary,
+            anatomy_labels_path=anatomy_labels,
+            force_recompute=True,
+        )
+
+    assert manifest.status == "pass"
+    passed_refs = captured["plane_refs"]
+    passed_kwargs = captured["kwargs"]
+    assert passed_refs[0]["tform_src"] == "ants_rigid_affine"
+    assert passed_refs[0]["ants_transform"]["transformlist"] == [str(transform_path)]
+    assert passed_kwargs["dx_um"] == 0.5
+    assert passed_kwargs["dy_um"] == 0.75
+    assert callable(passed_kwargs["apply_func_orientation_func"])
+    assert captured["oriented"].tolist() == [[2, 1], [4, 3]]
+    assert manifest.parameters["selected_ants_overlay_count"] == 1
+    assert manifest.parameters["selected_ants_missing_transform_files"] == 0
+    assert manifest.parameters["anatomy_xy_spacing_um"] == (0.5, 0.75)
+
+
 def test_match_roi_to_anatomy_stage_stages_control_geometry_only(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     source_root = tmp_path / "control-registration"

@@ -28,6 +28,31 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-02 - promote match-roi-to-anatomy recompute parity
+
+- Slice goal:
+  - retire the accepted-control geometry copy as the validated `match-roi-to-anatomy` path by making the stage recompute ROI/anatomy geometry from staged functional/anatomy registration.
+- Passes completed in this session:
+  - wired `run_match_roi_to_anatomy_stage` recompute mode to overlay selected accepted `ants_rigid_affine` transformlists from the in-plane comparison CSV.
+  - passed anatomy XY spacing from the voxel cache into `matching.build_functional_roi_master_df`.
+  - passed notebook-equivalent functional orientation into Suite2p-label reconstruction before ROI/anatomy matching.
+  - added manifest checks for accepted-control key, anatomy-label, selected-label, and unique-match parity when `functional_roi_activity_identity.csv` exists.
+  - added a focused regression test proving the stage threads selected ANTs refs, anatomy spacing, and the orientation callback into the matcher.
+- What changed:
+  - `match-roi-to-anatomy` recompute mode now writes geometry-only ROI/anatomy outputs with accepted-control parity on real `L395_f11`.
+  - Remote evidence from `/tmp/codeants-match-recompute-promote-RrFHvB`: `match-roi-to-anatomy --strict --force-recompute` reported `status=pass`, `mode=recompute_from_staged_registration`, `selected_ants_overlay_count=5`, `selected_ants_missing_transform_files=0`, anatomy XY spacing `0.5964024861653645`, 4,530 ROI rows, 3,724 unique anatomy matches, accepted key parity `both=4530,left_only=0,right_only=0`, label parity `4530/4530`, and unique-match parity `4530/4530`.
+  - The same temp root ran `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` from the recomputed geometry with zero failed checks; remaining warnings were expected byte-parity warnings for recomputed CSVs.
+- What remains broken:
+  - `register-hcr-to-anatomy` still stages accepted aligned HCR artifacts rather than rerunning the HCR warp.
+  - `compare-staged` still declares only downstream post-processing stages; it does not yet expose `match-roi-to-anatomy` as a compare target.
+- Remaining in-slice work:
+  - none for ROI/anatomy recompute promotion.
+- Next likely breakpoint:
+  - continue upstream by deciding whether to promote true `register-hcr-to-anatomy` HCR warp recomputation or broaden comparison surfaces for geometry-stage outputs.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py`, `PYTHONPATH=src pytest -q tests/test_matching.py tests/test_package_exports.py`, and `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`.
+  - real validation: rerun `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` in one temp `--pipeline-root` seeded with staged `register-functional-to-anatomy` and `register-hcr-to-anatomy`.
+
 ### 2026-07-02 - promote HCR activity replay into assign-hcr-identity
 
 - Slice goal:
