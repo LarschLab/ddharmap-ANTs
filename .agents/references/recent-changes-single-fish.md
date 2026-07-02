@@ -28,6 +28,31 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-02 - promote HCR activity replay into assign-hcr-identity
+
+- Slice goal:
+  - replace `assign-hcr-identity` HCR activity CSV copy-through with the now-validated label-first HCR replay while preserving ROI-centric table authority.
+- Passes completed in this session:
+  - changed `run_single_fish_assign_hcr_identity_stage` to require staged functional/anatomy `plane_refs_summary.json`, Suite2p, and anatomy labels in addition to staged ROI/anatomy geometry and HCR/anatomy final pairs.
+  - wired the writer to recompute `hcr_activity_status.csv`, `conf_to_func_pairs_raw.csv`, `conf_to_func_pairs.csv`, and `hcr_func_candidates.csv` through `matching.build_hcr_activity_tables` plus `matching.finalize_hcr_activity_export_tables`, using the recomputed staged ROI identity master as the response lookup.
+  - regenerated `hcr_activity_status_summary.csv` from recomputed status rows plus HCR warp metadata high-quality mask counts (`n_labels_after - low_conf_labels`).
+  - added keyed/numeric comparison coverage for `hcr_activity_status_summary.csv`.
+  - adjusted the HCR finalizer column order so raw/candidate exports keep legacy `candidate_rank_for_anat` placement before temporary key columns.
+- What changed:
+  - `assign-hcr-identity` now writes all 7 staged identity/HCR CSVs from package-owned recomputation, except accepted source CSVs remain as comparison controls and ROI response/BPI passthrough sources.
+  - On real `L395_f11`, a temp-root run on `linnaeus` recomputed HCR activity outputs with `status_rows=162`, `raw_rows=254`, `analysis_rows=40`, `candidate_rows=148`, `summary_rows=19`, and `selected_ants_planes=5`.
+  - Real downstream `score-activity-bpi` and `export-canonical-tables` consumed the recomputed assign output with zero failed checks; remaining warnings were byte-parity only.
+- What remains broken:
+  - `match-roi-to-anatomy` still stages control geometry rather than recomputing full NCC/ANTs ROI/anatomy matching from first principles.
+  - `register-hcr-to-anatomy` still stages accepted aligned HCR artifacts rather than rerunning the HCR warp.
+- Remaining in-slice work:
+  - none for HCR activity promotion.
+- Next likely breakpoint:
+  - continue upstream from the remaining staged-control dependencies: true ROI/anatomy matching recompute parity or true HCR warp recomputation, depending on which roadmap dependency should be retired first.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py`, `PYTHONPATH=src pytest -q tests/test_matching.py tests/test_package_exports.py`, and `git diff --check`.
+  - real validation: run `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` in one temp `--pipeline-root`; expect zero failed checks and byte-parity warnings for recomputed CSVs.
+
 ### 2026-07-02 - restore notebook-equivalent orientation in HCR replay audit
 
 - Slice goal:

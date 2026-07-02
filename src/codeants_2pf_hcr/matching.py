@@ -2269,6 +2269,17 @@ def _hcr_candidate_sort_df(df: pd.DataFrame) -> pd.DataFrame:
     return out.drop(columns=["_rank_sort", "_dist_sort", "_overlap_sort", "_plane_sort", "_func_sort"])
 
 
+def _move_hcr_candidate_rank_before_key_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df
+    columns = list(df.columns)
+    if "candidate_rank_for_anat" not in columns or "plane_idx_key" not in columns:
+        return df
+    columns.remove("candidate_rank_for_anat")
+    columns.insert(columns.index("plane_idx_key"), "candidate_rank_for_anat")
+    return df.loc[:, columns]
+
+
 def _hcr_candidate_key(row: dict[str, Any] | pd.Series | None) -> tuple[int, int] | None:
     if row is None:
         return None
@@ -2704,9 +2715,11 @@ def finalize_hcr_activity_export_tables(
         ascending=[True, True, False, False, True, True, True][: len([column for column in raw_sort_cols if column in raw_df.columns])],
         na_position="last",
     ).reset_index(drop=True)
+    raw_df = _move_hcr_candidate_rank_before_key_columns(raw_df)
     analysis_df = analysis_df.sort_values(["gene", "anat_label", "plane", "func_label"]).reset_index(drop=True)
     if not candidate_work.empty:
         candidate_work = candidate_work.sort_values(["anat_label", "plane_idx", "func_label"]).reset_index(drop=True)
+        candidate_work = _move_hcr_candidate_rank_before_key_columns(candidate_work)
     return status_df, raw_df, analysis_df, candidate_work
 
 

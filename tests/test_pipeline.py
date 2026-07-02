@@ -58,8 +58,11 @@ from codeants_2pf_hcr.pipeline import (
 )
 from codeants_2pf_hcr.activity import ActivityConfig
 from codeants_2pf_hcr.matching import (
+    HcrActivityExportConfig,
     attach_identity_to_functional_roi_geometry_df,
+    build_hcr_activity_tables,
     finalize_hcr_activity_export_tables,
+    gene_from_mask,
     hcr_response_lookup_from_roi_master_df,
 )
 
@@ -123,6 +126,8 @@ def _make_minimal_fish(root: Path, fish_id: str = "L000_f00") -> Path:
             header = ("anat_label", "identity_label", "identity_gene_count", "identity_genes")
         if name == "conf_to_func_pairs.csv":
             header = tuple(dict.fromkeys((*header, "conf_mask", "conf_label")))
+        if name == "hcr_activity_status_summary.csv":
+            header = ("gene", "inner_status", "outer_status", "n_labels")
         row_values = {
             "plane_index": "0",
             "plane_idx": "0",
@@ -144,6 +149,9 @@ def _make_minimal_fish(root: Path, fish_id: str = "L000_f00") -> Path:
             "bpi": "1.0",
             "identity_gene_count": "1",
             "identity_genes": "['sst1.1']",
+            "inner_status": "within functional planes",
+            "outer_status": "in-plane responsive ROI",
+            "n_labels": "1",
         }
         if name == "anatomy_identity_lookup.csv":
             row_values["anat_label"] = "7"
@@ -413,7 +421,9 @@ def _write_hcr_aligned_artifacts(source_root: Path, fish_id: str = "L000_f00") -
     (source_root / f"{prefix}_matches.csv").write_text(pair_header + "\n" + pair_row + "\n")
     (source_root / f"{prefix}_review.csv").write_text(pair_header + "\n" + pair_row + "\n")
     (source_root / f"{prefix}_final_pairs.csv").write_text(pair_header + "\n" + pair_row + "\n")
-    (source_root / f"{prefix}_warp_meta.json").write_text('{"space":"2p"}\n')
+    (source_root / f"{prefix}_warp_meta.json").write_text(
+        '{"space":"2p","filter_stats":{"n_labels_after":2,"low_conf_labels":[]}}\n'
+    )
     (source_root / f"{fish_id}_round1_channel2_sst1_1_in_2p.nrrd").write_bytes(b"large-volume-placeholder")
 
 
@@ -450,6 +460,89 @@ def _write_staged_identity_geometry_dependencies(pipeline_root: Path, fish_id: s
     )
     hcr_root = pipeline_root / "register-hcr-to-anatomy" / "confocal" / "aligned"
     _write_hcr_aligned_artifacts(hcr_root, fish_id)
+
+
+def _write_assign_hcr_replay_inputs_and_controls(fish_dir: Path, pipeline_root: Path) -> None:
+    import pandas as pd
+
+    from codeants_2pf_hcr.context import resolve_func_polarity
+    from codeants_2pf_hcr.pipeline import _build_hcr_activity_status_summary_df
+    from codeants_2pf_hcr.spatial import apply_func_orientation, imread_any
+    from codeants_2pf_hcr.suite2p import Suite2pStageConfig, load_suite2p_stage
+
+    fish_id = fish_dir.name
+    suite2p_plane = fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0"
+    _write_minimal_suite2p_plane(suite2p_plane)
+    anatomy_labels = fish_dir / "03_analysis" / "structural" / "cp_masks" / f"{fish_id}_anatomy_00001_8bit_cp_masks.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_labels)
+    plane_summary = pipeline_root / "register-functional-to-anatomy" / "plane_refs_summary.json"
+    _write_plane_refs_summary(plane_summary)
+
+    plane_refs = load_plane_refs_summary(plane_summary)
+    polarity, polarity_source = resolve_func_polarity(
+        fish_id,
+        fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_id}_metadata.csv",
+        fish_dir=fish_dir,
+    )
+    suite2p_result = load_suite2p_stage(
+        plane_refs=plane_refs,
+        suite2p_root=fish_dir / "03_analysis" / "functional" / "suite2P",
+        fish_id=fish_id,
+        polarity=polarity,
+        polarity_source=polarity_source,
+        config=Suite2pStageConfig(verbose=False),
+    )
+    response_lookup = hcr_response_lookup_from_roi_master_df(
+        pd.read_csv(fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_activity_identity.csv"),
+        fish_id=fish_id,
+    )
+    hcr_root = pipeline_root / "register-hcr-to-anatomy" / "confocal" / "aligned"
+    cfg = HcrActivityExportConfig()
+
+    def orient(arr):
+        return apply_func_orientation(arr, polarity=polarity, flip_x=True)
+
+    status_df, raw_df, _analysis_df, candidate_df, _plane_meta_df = build_hcr_activity_tables(
+        suite2p_result["suite2p_by_ref_idx"],
+        plane_refs,
+        imread_any(anatomy_labels),
+        [
+            {
+                "mask_path": str(next(hcr_root.glob("*_cp_masks_in_2p_labels_uint16.tif"))),
+                "final_pairs": pd.read_csv(next(hcr_root.glob("*_cp_masks_in_2p_final_pairs.csv"))),
+            }
+        ],
+        fish_id=fish_id,
+        active_class=cfg.active_class,
+        inactive_class=cfg.inactive_class,
+        require_overlap=cfg.require_overlap_func_anat,
+        min_overlap=cfg.min_overlap_func_anat,
+        max_dist_um=cfg.max_dist_func_anat,
+        out_of_plane=cfg.hcr_out_of_plane,
+        in_plane_active=cfg.hcr_in_plane_responsive,
+        in_plane_inactive=cfg.hcr_in_plane_unavailable,
+        in_plane_no_func=cfg.hcr_in_plane_no_func,
+        match_policy_version=cfg.hcr_activity_match_policy,
+        selection_rule=cfg.selection_rule,
+        gene_from_mask_func=gene_from_mask,
+        response_lookup_df=response_lookup,
+        apply_func_orientation_func=orient,
+    )
+    final_status_df, final_raw_df, final_analysis_df, final_candidate_df = finalize_hcr_activity_export_tables(
+        status_df,
+        raw_df,
+        candidate_df,
+        response_lookup,
+        config=cfg,
+        fish_id=fish_id,
+    )
+    final_summary_df = _build_hcr_activity_status_summary_df(final_status_df, hcr_root)
+    registration_dir = fish_dir / "03_analysis" / "functional" / "registration"
+    final_status_df.to_csv(registration_dir / "hcr_activity_status.csv", index=False)
+    final_summary_df.to_csv(registration_dir / "hcr_activity_status_summary.csv", index=False)
+    final_raw_df.to_csv(registration_dir / "conf_to_func_pairs_raw.csv", index=False)
+    final_analysis_df.to_csv(registration_dir / "conf_to_func_pairs.csv", index=False)
+    final_candidate_df.to_csv(registration_dir / "hcr_func_candidates.csv", index=False)
 
 
 def test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_source_identity() -> None:
@@ -2428,6 +2521,7 @@ def test_assign_hcr_identity_writer_stages_baseline_identity_and_hcr_outputs(tmp
     fish_dir = _make_minimal_fish(tmp_path)
     output_root = tmp_path / "staged-output-root"
     _write_staged_identity_geometry_dependencies(output_root, fish_dir.name)
+    _write_assign_hcr_replay_inputs_and_controls(fish_dir, output_root)
     manifest = run_single_fish_assign_hcr_identity_stage(
         SingleFishPipelineConfig(
             fish_id=fish_dir.name,
@@ -2443,13 +2537,17 @@ def test_assign_hcr_identity_writer_stages_baseline_identity_and_hcr_outputs(tmp
     assert len(tuple(assign_dir.glob("*.csv"))) == 7
     for filename in (
         "anatomy_identity_lookup.csv",
+    ):
+        assert (assign_dir / filename).read_bytes() == (registration_dir / filename).read_bytes()
+    for filename in (
         "hcr_activity_status.csv",
         "hcr_activity_status_summary.csv",
         "conf_to_func_pairs_raw.csv",
         "conf_to_func_pairs.csv",
         "hcr_func_candidates.csv",
     ):
-        assert (assign_dir / filename).read_bytes() == (registration_dir / filename).read_bytes()
+        assert (assign_dir / filename).exists()
+        assert (assign_dir / filename).read_text()
     roi_identity_text = (assign_dir / "functional_roi_activity_identity.csv").read_text()
     assert "sst1.1" in roi_identity_text
     assert ",7," in roi_identity_text
@@ -2480,6 +2578,13 @@ def test_assign_hcr_identity_writer_stages_baseline_identity_and_hcr_outputs(tmp
     assert any(
         check.label == "assign-hcr-identity ROI identity master parity" and check.status == "pass"
         for check in manifest.checks
+    )
+    assert any(
+        check.label == "assign-hcr-identity recomputed HCR activity replay" and check.status == "pass"
+        for check in manifest.checks
+    )
+    assert manifest.parameters["source_policy"].startswith(
+        "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed"
     )
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_outputs").exists()
 
@@ -2530,6 +2635,7 @@ def test_single_fish_pipeline_cli_assign_hcr_identity_outputs_manifest(tmp_path:
     fish_dir = _make_minimal_fish(tmp_path)
     output_root = tmp_path / "staged-output-root"
     _write_staged_identity_geometry_dependencies(output_root, fish_dir.name)
+    _write_assign_hcr_replay_inputs_and_controls(fish_dir, output_root)
     result = subprocess.run(
         [
             sys.executable,
@@ -2586,6 +2692,7 @@ def test_export_canonical_tables_writer_uses_staged_assign_root_by_default(tmp_p
     fish_dir = _make_minimal_fish(tmp_path)
     output_root = tmp_path / "staged-output-root"
     _write_staged_identity_geometry_dependencies(output_root, fish_dir.name)
+    _write_assign_hcr_replay_inputs_and_controls(fish_dir, output_root)
     assign_manifest = run_single_fish_assign_hcr_identity_stage(
         SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, pipeline_root=output_root, strict=True)
     )

@@ -274,6 +274,11 @@ CSV_COMPARISON_COLUMNS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
         "numeric": (),
     },
+    "hcr_activity_status_summary.csv": {
+        "key": ("gene", "inner_status", "outer_status"),
+        "exact": (),
+        "numeric": ("n_labels",),
+    },
     "conf_to_func_pairs.csv": {
         "key": ("gene", "anat_label", "func_label", "plane"),
         "exact": (
@@ -1045,6 +1050,7 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
                 str(registration_dir / "hcr_activity_status_summary.csv"),
                 control_path=str(paths.functional_registration_dir / "hcr_activity_status_summary.csv"),
                 parity="csv_shape",
+                **_csv_comparison_kwargs("hcr_activity_status_summary.csv"),
             ),
             StageOutputSpec(
                 "staged raw HCR/function pairs",
@@ -2564,6 +2570,91 @@ def _append_roi_identity_master_checks(
     )
 
 
+def _hcr_high_quality_mask_counts_by_gene(hcr_anatomy_root: Path) -> dict[str, int]:
+    from .matching import gene_from_mask
+
+    counts: dict[str, int] = {}
+    for meta_path in sorted(hcr_anatomy_root.glob("*_cp_masks_in_2p_warp_meta.json")):
+        if not _is_real_match(meta_path):
+            continue
+        try:
+            payload = json.loads(meta_path.read_text())
+        except Exception:
+            continue
+        filter_stats = payload.get("filter_stats")
+        if not isinstance(filter_stats, dict):
+            continue
+        try:
+            n_after = int(filter_stats.get("n_labels_after", 0) or 0)
+        except Exception:
+            n_after = 0
+        low_conf = filter_stats.get("low_conf_labels", ())
+        try:
+            n_low_conf = len(low_conf) if isinstance(low_conf, (list, tuple, set)) else 0
+        except Exception:
+            n_low_conf = 0
+        gene = str(payload.get("gene") or gene_from_mask(meta_path.name))
+        counts[gene] = int(counts.get(gene, 0) + max(0, n_after - n_low_conf))
+    return counts
+
+
+def _pipeline_bool_from_any(value: Any) -> bool:
+    try:
+        import pandas as pd
+
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        try:
+            return math.isfinite(float(value)) and float(value) != 0.0
+        except Exception:
+            return bool(value)
+    return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+
+def _build_hcr_activity_status_summary_df(status_df: Any, hcr_anatomy_root: Path) -> Any:
+    import pandas as pd
+
+    columns = ["gene", "inner_status", "outer_status", "n_labels"]
+    if status_df is None or getattr(status_df, "empty", True):
+        return pd.DataFrame(columns=columns)
+    work = pd.DataFrame(status_df).copy()
+    work["gene"] = work.get("gene", pd.Series("", index=work.index)).astype(str)
+    functional_status = work.get("functional_status", pd.Series("", index=work.index)).astype(str)
+    represented = work.get("represented_on_func_plane", pd.Series(False, index=work.index))
+    represented_bool = represented.map(_pipeline_bool_from_any) if hasattr(represented, "map") else pd.Series(False, index=work.index)
+    work["inner_status"] = "within functional planes"
+    work.loc[(~represented_bool.astype(bool)) | functional_status.eq("out-of-plane anatomy label"), "inner_status"] = "outside functional planes"
+    work["outer_status"] = functional_status
+
+    rows = []
+    grouped = work.groupby(["gene", "inner_status", "outer_status"], dropna=False).size().reset_index(name="n_labels")
+    rows.extend(grouped.loc[:, columns].to_dict("records"))
+
+    accepted_counts = work.groupby("gene", dropna=False).size().astype(int).to_dict()
+    hq_counts = _hcr_high_quality_mask_counts_by_gene(hcr_anatomy_root)
+    for gene, total_hq in sorted(hq_counts.items()):
+        unmatched = int(total_hq) - int(accepted_counts.get(str(gene), 0))
+        if unmatched > 0:
+            rows.append(
+                {
+                    "gene": str(gene),
+                    "inner_status": "unmatched",
+                    "outer_status": "unmatched",
+                    "n_labels": int(unmatched),
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=columns)
+    out = pd.DataFrame(rows, columns=columns)
+    out["n_labels"] = pd.to_numeric(out["n_labels"], errors="coerce").fillna(0).astype(int)
+    return out.sort_values(["gene", "inner_status", "outer_status"]).reset_index(drop=True)
+
+
 def run_single_fish_assign_hcr_identity_stage(
     config: SingleFishPipelineConfig,
     *,
@@ -2576,6 +2667,10 @@ def run_single_fish_assign_hcr_identity_stage(
     input_root = _assign_hcr_identity_source_root(paths, source_root)
     roi_anatomy_root_path = _assign_hcr_identity_roi_anatomy_root(paths, roi_anatomy_root)
     hcr_anatomy_root_path = _assign_hcr_identity_hcr_anatomy_root(paths, hcr_anatomy_root)
+    plane_summary_path = _hcr_activity_replay_plane_refs_path(paths, None)
+    from .context import infer_anat_labels_path
+
+    anat_labels_path = infer_anat_labels_path(paths.fish_dir, config.fish_id)
     output_specs = _stage_output_specs(paths, "assign-hcr-identity")
     output_paths = tuple(Path(spec.path) for spec in output_specs)
     source_paths = {filename: input_root / filename for filename in ASSIGN_HCR_IDENTITY_CSVS}
@@ -2584,6 +2679,10 @@ def run_single_fish_assign_hcr_identity_stage(
         describe_glob(roi_anatomy_root_path, "functional_roi_anatomy_match*.csv", required=False, label="staged ROI/anatomy geometry summaries"),
         describe_glob(hcr_anatomy_root_path, "*_cp_masks_in_2p_labels_uint16.tif", label="staged HCR/anatomy aligned labels"),
         describe_glob(hcr_anatomy_root_path, "*_cp_masks_in_2p_final_pairs.csv", label="staged HCR/anatomy final-pair CSVs"),
+        describe_manifest_path(plane_summary_path, label="staged functional/anatomy plane refs summary"),
+        describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root for HCR activity replay"),
+        describe_glob(paths.functional_suite2p_dir, "plane*/*F.npy", label="Suite2p F traces for HCR activity replay"),
+        _optional_manifest_path(anat_labels_path, label="anatomy labels for HCR activity replay"),
     ) + tuple(
         describe_manifest_path(source_paths[filename], label=f"assign-hcr-identity source: {filename}")
         for filename in ASSIGN_HCR_IDENTITY_CSVS
@@ -2611,14 +2710,29 @@ def run_single_fish_assign_hcr_identity_stage(
 
         from .matching import (
             FunctionalRoiIdentityConfig,
+            HcrActivityExportConfig,
             attach_identity_to_functional_roi_geometry_df,
             build_anat_identity_lookup_df,
+            build_hcr_activity_tables,
+            finalize_hcr_activity_export_tables,
             gene_from_mask,
+            hcr_response_lookup_from_roi_master_df,
         )
+        from .context import resolve_func_polarity
+        from .spatial import apply_func_orientation, imread_any
+        from .suite2p import Suite2pStageConfig, load_suite2p_stage
 
         output_by_name = {Path(spec.path).name: Path(spec.path) for spec in output_specs}
         for filename in ASSIGN_HCR_IDENTITY_CSVS:
-            if filename in {"functional_roi_activity_identity.csv", "anatomy_identity_lookup.csv"}:
+            if filename in {
+                "functional_roi_activity_identity.csv",
+                "anatomy_identity_lookup.csv",
+                "hcr_activity_status.csv",
+                "hcr_activity_status_summary.csv",
+                "conf_to_func_pairs_raw.csv",
+                "conf_to_func_pairs.csv",
+                "hcr_func_candidates.csv",
+            }:
                 continue
             source_path = source_paths[filename]
             output_path = output_by_name[filename]
@@ -2651,6 +2765,98 @@ def run_single_fish_assign_hcr_identity_stage(
             recomputed_path=roi_identity_path,
             control_path=source_paths["functional_roi_activity_identity.csv"],
         )
+        base_plane_refs = load_plane_refs_summary(plane_summary_path)
+        anatomy_xy_spacing = _anatomy_xy_spacing_from_voxel_cache(paths)
+        replay_plane_refs, transform_report = _overlay_selected_ants_transformlists(
+            base_plane_refs,
+            _selected_ants_inplane_comparison_path(paths),
+            xy_spacing=anatomy_xy_spacing,
+        )
+        polarity, _polarity_source = resolve_func_polarity(
+            config.fish_id,
+            paths.matching_metadata_csv,
+            fish_dir=paths.fish_dir,
+        )
+
+        def _apply_replay_func_orientation(arr: Any) -> Any:
+            return apply_func_orientation(arr, polarity=polarity, flip_x=True)
+
+        suite2p_result = load_suite2p_stage(
+            plane_refs=replay_plane_refs,
+            suite2p_root=paths.functional_suite2p_dir,
+            fish_id=config.fish_id,
+            polarity=polarity,
+            polarity_source=_polarity_source,
+            config=Suite2pStageConfig(verbose=False),
+        )
+        response_lookup = hcr_response_lookup_from_roi_master_df(
+            roi_identity_df,
+            fish_id=config.fish_id,
+        )
+        hcr_cfg = HcrActivityExportConfig()
+        status_df, raw_df, _analysis_df, candidate_df, plane_meta_df = build_hcr_activity_tables(
+            suite2p_result["suite2p_by_ref_idx"],
+            replay_plane_refs,
+            imread_any(anat_labels_path),
+            _hcr_match_results_from_staged_final_pairs(hcr_anatomy_root_path),
+            fish_id=config.fish_id,
+            active_class=hcr_cfg.active_class,
+            inactive_class=hcr_cfg.inactive_class,
+            require_overlap=hcr_cfg.require_overlap_func_anat,
+            min_overlap=hcr_cfg.min_overlap_func_anat,
+            max_dist_um=hcr_cfg.max_dist_func_anat,
+            out_of_plane=hcr_cfg.hcr_out_of_plane,
+            in_plane_active=hcr_cfg.hcr_in_plane_responsive,
+            in_plane_inactive=hcr_cfg.hcr_in_plane_unavailable,
+            in_plane_no_func=hcr_cfg.hcr_in_plane_no_func,
+            match_policy_version=hcr_cfg.hcr_activity_match_policy,
+            selection_rule=hcr_cfg.selection_rule,
+            dx_um=float(anatomy_xy_spacing[0]),
+            dy_um=float(anatomy_xy_spacing[1]),
+            gene_from_mask_func=gene_from_mask,
+            response_lookup_df=response_lookup,
+            apply_func_orientation_func=_apply_replay_func_orientation,
+        )
+        final_status_df, final_raw_df, final_analysis_df, final_candidate_df = finalize_hcr_activity_export_tables(
+            status_df,
+            raw_df,
+            candidate_df,
+            response_lookup,
+            config=hcr_cfg,
+            fish_id=config.fish_id,
+        )
+        final_summary_df = _build_hcr_activity_status_summary_df(final_status_df, hcr_anatomy_root_path)
+        hcr_outputs = {
+            "hcr_activity_status.csv": final_status_df,
+            "hcr_activity_status_summary.csv": final_summary_df,
+            "conf_to_func_pairs_raw.csv": final_raw_df,
+            "conf_to_func_pairs.csv": final_analysis_df,
+            "hcr_func_candidates.csv": final_candidate_df,
+        }
+        for filename, df in hcr_outputs.items():
+            output_path = output_by_name[filename]
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(output_path, index=False)
+        checks.append(
+            StageCheckRecord(
+                label="assign-hcr-identity recomputed HCR activity replay",
+                status="pass" if len(final_status_df) > 0 else "fail",
+                detail="HCR-centric activity/status/candidate exports are recomputed from staged HCR final pairs and functional/anatomy replay inputs",
+                expected=">0 status rows",
+                observed=json.dumps(
+                    {
+                        "status_rows": int(len(final_status_df)),
+                        "raw_rows": int(len(final_raw_df)),
+                        "analysis_rows": int(len(final_analysis_df)),
+                        "candidate_rows": int(len(final_candidate_df)),
+                        "summary_rows": int(len(final_summary_df)),
+                        "plane_meta_rows": int(len(plane_meta_df)),
+                        "selected_ants_planes": int(transform_report.get("backend_counts", {}).get("ants_rigid_affine", 0)),
+                    },
+                    sort_keys=True,
+                ),
+            )
+        )
         checks.extend(_build_staged_comparison_checks(paths, "assign-hcr-identity"))
 
     outputs = _stage_output_records(paths, "assign-hcr-identity")
@@ -2682,8 +2888,10 @@ def run_single_fish_assign_hcr_identity_stage(
             "roi_anatomy_root_is_explicit": roi_anatomy_root not in (None, "", False),
             "hcr_anatomy_root": str(hcr_anatomy_root_path),
             "hcr_anatomy_root_is_explicit": hcr_anatomy_root not in (None, "", False),
+            "plane_refs_summary_path": str(plane_summary_path),
+            "anatomy_labels_path": str(anat_labels_path),
             "force_recompute": bool(force_recompute),
-            "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; remaining baseline HCR activity artifacts are staged from the source registration root after staged geometry dependencies pass",
+            "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; HCR activity/status/candidate exports are recomputed by label-first HCR replay from staged HCR final pairs, Suite2p, anatomy labels, and staged functional/anatomy plane refs; source registration CSVs are comparison controls",
         },
         warnings=warnings,
         errors=errors,
