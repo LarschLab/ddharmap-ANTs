@@ -72,6 +72,16 @@
 - Rerun implications:
   - run `PYTHONPATH=src pytest -q tests/test_agent_docs.py` after doc edits; run HCR real-data commands only after code behavior changes.
 
+### 2026-07-02 - add functional/anatomy plane-row visual QA renderer
+
+- Added `plots.qa.render_functional_anatomy_plane_qc_row_png` to produce one row per functional plane with five panels: functional reference, native Suite2p ROI boundaries on the reference, best-Z in vivo anatomy, anatomy-label boundaries on the best-Z anatomy slice, and the positioned functional reference in anatomy space.
+- Added `plots.qa.render_functional_anatomy_center_overlay_qc_png` for the cleaner manual QA view: one center crop per functional plane with transformed functional ROI outlines in cyan, anatomy-label outlines in red, and shared outline pixels in yellow. The default crop is now 200x200 px.
+- Wired `register-functional-to-anatomy` to automatically emit the 200 px center-overlay QA PNG/CSV under the stage `qa/` folder when anatomy labels and anatomy-space functional labels are available; missing QA prerequisites warn but do not fail registration.
+- Rendered real `L395_f11` QA output on `linnaeus` from staged `plane_refs_summary.json`, accepted Suite2p native label TIFFs, the in vivo anatomy TIFF, and structural anatomy Cellpose labels.
+- Local visual-verification artifacts: `/tmp/L395_f11_functional_anatomy_plane_qc_5col.png` and `/tmp/L395_f11_center200_func_anat_label_overlay.png`; per-plane review CSVs use the same basename with `.csv`.
+- Manual interpretation from the 200 px overlay: functional-to-anatomy orientation, best-Z selection, and segmented anatomy labels look coherent for this checkpoint; the current HCR replay blocker is less likely to be gross functional/anatomy transform failure.
+- Validation: `PYTHONPATH=src pytest -q tests/test_plots_qa.py -k functional_anatomy_center_overlay`, `PYTHONPATH=src pytest -q tests/test_plots_qa.py -k functional_anatomy_plane_qc`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/plots/qa.py tests/test_plots_qa.py`, visual-verification image sanity checks, and manual image inspection.
+
 ### 2026-07-02 - add HCR activity replay QA recall notebook
 
 - Added `notebooks/hcr_activity_replay_qa.ipynb` as a thin interpretation/QA surface for the read-only HCR-centric replay audit.

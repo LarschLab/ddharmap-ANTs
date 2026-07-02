@@ -236,10 +236,14 @@ def build_parser() -> argparse.ArgumentParser:
     register_func.add_argument("--reference-dir", type=Path)
     register_func.add_argument("--functional-reference-dir", dest="reference_dir", type=Path)
     register_func.add_argument("--anatomy-stack-path", type=Path)
+    register_func.add_argument("--anatomy-labels-path", type=Path)
+    register_func.add_argument("--functional-labels-anatomy-dir", type=Path)
     register_func.add_argument("--output-root", type=Path)
     register_func.add_argument("--skip-inplane-comparison", action="store_true")
     register_func.add_argument("--inplane-method", action="append", default=None)
     register_func.add_argument("--active-inplane-method", default="ncc_xy")
+    register_func.add_argument("--skip-visual-qa", action="store_true")
+    register_func.add_argument("--visual-qa-crop-size-px", type=int, default=200)
     register_func.add_argument("--no-cv2", dest="use_cv2", action="store_false")
     register_func.set_defaults(use_cv2=False)
     register_func.add_argument("--force-recompute", action="store_true")
@@ -572,12 +576,16 @@ def main(argv: list[str] | None = None) -> int:
             config,
             reference_dir=args.reference_dir,
             anatomy_stack_path=args.anatomy_stack_path,
+            anatomy_labels_path=args.anatomy_labels_path,
+            functional_labels_anatomy_dir=args.functional_labels_anatomy_dir,
             output_root=args.output_root,
             force_recompute=args.force_recompute,
             run_inplane_comparison=not args.skip_inplane_comparison,
             inplane_methods=tuple(args.inplane_method or ("ncc_xy",)),
             active_inplane_method=args.active_inplane_method,
             use_cv2=args.use_cv2,
+            emit_visual_qa=not args.skip_visual_qa,
+            visual_qa_crop_size_px=args.visual_qa_crop_size_px,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

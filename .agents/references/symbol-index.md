@@ -281,6 +281,8 @@ Generated manually for the current extracted package surface.
 - `show_regional_match_review_stage`: Notebook-facing anatomy-space ROI/anatomy regional overlay for `[34c]`, using the `[22d]` crop and selected in-plane transform to warp functional labels forward.
 - `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
+- `render_functional_anatomy_center_overlay_qc_png`: Render center-crop anatomy-space overlays of transformed functional ROI outlines and anatomy-label outlines over the best-Z anatomy image for manual functional/anatomy registration QA.
+- `render_functional_anatomy_plane_qc_row_png`: Render one functional-plane QA row per plane with functional reference, native Suite2p ROI boundaries, best-Z in vivo anatomy, anatomy-label boundaries, and the positioned functional reference in anatomy space; writes PNG plus per-plane review CSV for manual orientation/segmentation QA.
 - `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows; top-level/lazy exports now resolve to lightweight `plots.hcr` for staged pipeline use, while notebook QA imports may still use `plots.qa`.
 - `show_centroid_match_qa_stage`: Notebook-facing centroid-distance QA stage for `[34]` with threshold UI, plane switching, context rendering, and `[26]`-matched functional label source selection via `use_suite2p_labels`.
 - `show_functional_label_overlay_stage`: Notebook-facing functional-label overlay stage for `[26]`.

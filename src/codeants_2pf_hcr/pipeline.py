@@ -5029,15 +5029,21 @@ def run_register_functional_to_anatomy_stage(
     *,
     reference_dir: str | Path | None = None,
     anatomy_stack_path: str | Path | None = None,
+    anatomy_labels_path: str | Path | None = None,
+    functional_labels_anatomy_dir: str | Path | None = None,
     output_root: str | Path | None = None,
     force_recompute: bool = False,
     run_inplane_comparison: bool = True,
     inplane_methods: tuple[str, ...] = ("ncc_xy",),
     active_inplane_method: str = "ncc_xy",
     use_cv2: bool = False,
+    emit_visual_qa: bool = True,
+    visual_qa_crop_size_px: int = 200,
 ) -> StageManifest:
     import numpy as np
 
+    from .context import infer_anat_labels_path
+    from .plots.qa import render_functional_anatomy_center_overlay_qc_png
     from .spatial import (
         InPlaneRegistrationComparisonConfig,
         RegistrationSearchConfig,
@@ -5053,8 +5059,11 @@ def run_register_functional_to_anatomy_stage(
     anat_path = Path(anatomy_stack_path) if anatomy_stack_path not in (None, "", False) else prepared_in_vivo_anatomy_path(paths)
     out_ncc = stage_root / "ncc"
     registration_dir = stage_root / "registration"
+    qa_dir = stage_root / "qa"
     tforms_path = registration_dir / "tforms_by_plane.csv"
     summary_path = stage_root / "plane_refs_summary.json"
+    qa_overlay_path = qa_dir / f"functional_anatomy_center_overlay_{int(visual_qa_crop_size_px)}px.png"
+    qa_overlay_csv_path = qa_overlay_path.with_suffix(".csv")
     comparison_path = out_ncc / "inplane_registration_comparison" / "inplane_registration_comparison.csv"
     recommendation_path = out_ncc / "inplane_registration_comparison" / "inplane_registration_recommendation.csv"
     required_output_paths = (
@@ -5121,6 +5130,60 @@ def run_register_functional_to_anatomy_stage(
         _write_tforms_by_plane_csv(tforms_path, final_plane_refs)
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(json.dumps(_plane_refs_summary(final_plane_refs), indent=2, sort_keys=True))
+        qa_checks: tuple[StageCheckRecord, ...] = ()
+        warnings_list: list[str] = []
+        if emit_visual_qa:
+            anat_labels_path = (
+                Path(anatomy_labels_path)
+                if anatomy_labels_path not in (None, "", False)
+                else infer_anat_labels_path(paths.fish_dir, config.fish_id)
+            )
+            func_labels_dir = (
+                Path(functional_labels_anatomy_dir)
+                if functional_labels_anatomy_dir not in (None, "", False)
+                else paths.functional_dir / "derived"
+            )
+            if anat_labels_path is None:
+                warnings_list.append("functional/anatomy visual QA skipped: no anatomy label stack found")
+                qa_checks = (
+                    StageCheckRecord(
+                        label="functional/anatomy center overlay QA",
+                        status="warn",
+                        detail="visual QA skipped because no anatomy label stack was found",
+                        expected="anatomy labels",
+                        observed="missing",
+                    ),
+                )
+            else:
+                try:
+                    render_functional_anatomy_center_overlay_qc_png(
+                        fish_id=config.fish_id,
+                        plane_refs_summary_path=summary_path,
+                        anatomy_stack_path=anat_path,
+                        anatomy_labels_path=anat_labels_path,
+                        functional_labels_anatomy_dir=func_labels_dir,
+                        out_path=qa_overlay_path,
+                        crop_size_px=int(visual_qa_crop_size_px),
+                    )
+                    qa_checks = (
+                        StageCheckRecord(
+                            label="functional/anatomy center overlay QA",
+                            status="pass" if qa_overlay_path.exists() and qa_overlay_csv_path.exists() else "warn",
+                            detail="center-crop anatomy-space functional/anatomy overlay was rendered",
+                            observed=str(qa_overlay_path),
+                        ),
+                    )
+                except Exception as qa_exc:
+                    warnings_list.append(f"functional/anatomy visual QA skipped: {qa_exc}")
+                    qa_checks = (
+                        StageCheckRecord(
+                            label="functional/anatomy center overlay QA",
+                            status="warn",
+                            detail="visual QA render did not complete",
+                            observed=str(qa_exc),
+                        ),
+                    )
+
         checks = (
             StageCheckRecord(
                 label="functional reference inputs",
@@ -5154,10 +5217,10 @@ def run_register_functional_to_anatomy_stage(
                 detail="lightweight plane reference summary exists",
                 observed=str(summary_path),
             ),
-        )
+        ) + qa_checks
         status = "pass"
         errors: tuple[str, ...] = ()
-        warnings: tuple[str, ...] = ()
+        warnings: tuple[str, ...] = tuple(warnings_list)
         if any(check.status == "fail" for check in checks):
             status = "fail"
             errors = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
@@ -5184,6 +5247,16 @@ def run_register_functional_to_anatomy_stage(
         ),
         describe_manifest_path(summary_path, label="staged plane refs summary"),
         describe_manifest_path(tforms_path, label="staged functional transform table"),
+        describe_manifest_path(
+            qa_overlay_path,
+            required=False,
+            label="functional/anatomy center overlay QA PNG",
+        ),
+        describe_manifest_path(
+            qa_overlay_csv_path,
+            required=False,
+            label="functional/anatomy center overlay QA CSV",
+        ),
         describe_glob(
             out_ncc / "inplane_registration_comparison",
             "*_ncc_xy_warped.tif",
@@ -5218,6 +5291,9 @@ def run_register_functional_to_anatomy_stage(
             "run_inplane_comparison": bool(run_inplane_comparison),
             "inplane_methods": tuple(inplane_methods),
             "use_cv2": bool(use_cv2),
+            "emit_visual_qa": bool(emit_visual_qa),
+            "visual_qa_crop_size_px": int(visual_qa_crop_size_px),
+            "functional_anatomy_center_overlay_path": str(qa_overlay_path),
             "log_lines": log_lines,
         },
         warnings=warnings,

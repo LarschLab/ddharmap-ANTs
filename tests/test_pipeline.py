@@ -754,6 +754,18 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     _write_tiny_functional_tiff(source)
     anatomy = tmp_path / "registration-anatomy.tif"
     _write_tiny_registration_anatomy_tiff(anatomy)
+    import numpy as np
+    import tifffile
+
+    anatomy_labels = tmp_path / "registration-anatomy-labels.tif"
+    labels = np.zeros((4, 12, 12), dtype=np.uint16)
+    labels[:, 4:8, 5:9] = 3
+    tifffile.imwrite(anatomy_labels, labels)
+    func_labels_dir = fish_dir / "03_analysis" / "functional" / "derived"
+    func_labels_dir.mkdir(parents=True, exist_ok=True)
+    func_labels = np.zeros((12, 12), dtype=np.uint16)
+    func_labels[4:8, 5:9] = 11
+    tifffile.imwrite(func_labels_dir / f"{fish_dir.name}_plane0_mcorrected_flipX_func_mask_in_2p.tif", func_labels)
     config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
     refs_manifest = run_prepare_functional_reference_stacks_stage(
         config,
@@ -765,15 +777,20 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     manifest = run_register_functional_to_anatomy_stage(
         config,
         anatomy_stack_path=anatomy,
+        anatomy_labels_path=anatomy_labels,
         force_recompute=True,
     )
 
     stage_root = functional_to_anatomy_registration_root(resolve_pipeline_paths(config))
     tforms_path = stage_root / "registration" / "tforms_by_plane.csv"
     summary_path = stage_root / "plane_refs_summary.json"
+    qa_png = stage_root / "qa" / "functional_anatomy_center_overlay_200px.png"
+    qa_csv = stage_root / "qa" / "functional_anatomy_center_overlay_200px.csv"
     assert manifest.status == "pass"
     assert tforms_path.exists()
     assert summary_path.exists()
+    assert qa_png.exists()
+    assert qa_csv.exists()
     summary = json.loads(summary_path.read_text())
     assert summary[0]["label"] == f"{fish_dir.name}_plane0_mcorrected_flipX"
     assert summary[0]["ncc_scores_count"] > 0
@@ -782,6 +799,7 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     assert (stage_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_comparison.csv").exists()
     assert discover_functional_reference_pairs(functional_reference_output_dir(resolve_pipeline_paths(config)))
     assert any(check.label == "functional transform table" and check.status == "pass" for check in manifest.checks)
+    assert any(check.label == "functional/anatomy center overlay QA" and check.status == "pass" for check in manifest.checks)
 
 
 def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest(tmp_path: Path) -> None:
