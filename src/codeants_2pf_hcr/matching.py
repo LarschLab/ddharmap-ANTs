@@ -107,6 +107,9 @@ def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
                 "transformlist": list(transformlist),
                 "moving_shape": tuple(plane_ref.get("ref_scaled_shape", ())),
             }
+    affine_transform = plane_ref.get("affine_transform")
+    if isinstance(affine_transform, dict) and affine_transform.get("type") == "skimage_affine":
+        return affine_transform
     for key in ("tform", "func_to_anat_tform", "transform", "affine_tform"):
         tform = plane_ref.get(key)
         if tform is not None:
@@ -169,6 +172,9 @@ def transform_points_between_spaces(
             pd.to_numeric(out["x"], errors="coerce").to_numpy(dtype=float).reshape(out_shape),
             pd.to_numeric(out["y"], errors="coerce").to_numpy(dtype=float).reshape(out_shape),
         )
+
+    if isinstance(tform, dict) and tform.get("type") == "skimage_affine":
+        tform = AffineTransform(matrix=np.asarray(tform.get("matrix", np.eye(3)), dtype=float))
 
     pts = np.column_stack([xr, yr]).astype(float, copy=False)
     xform = tform if direction == "moving_to_fixed" else getattr(tform, "inverse", None)
@@ -275,6 +281,87 @@ def build_anat_identity_lookup_df(
             }
         )
     return pd.DataFrame(rows)
+
+
+def attach_identity_to_functional_roi_geometry_df(
+    geometry_df: pd.DataFrame,
+    anat_identity_df: pd.DataFrame,
+    *,
+    passthrough_df: pd.DataFrame | None = None,
+    identity_none: str = "no identity assigned",
+) -> pd.DataFrame:
+    """Attach anatomy identity labels to staged ROI/anatomy geometry rows."""
+    out = geometry_df.copy()
+    if out.empty:
+        return out
+
+    key_columns = ("plane_idx", "func_label")
+    identity_columns = {
+        "identity_label",
+        "identity_gene_count",
+        "has_identity_assigned",
+        "identity_display_label",
+    }
+
+    if passthrough_df is not None and not passthrough_df.empty and all(column in out.columns for column in key_columns):
+        passthrough = passthrough_df.copy()
+        if all(column in passthrough.columns for column in key_columns):
+            out["_plane_idx_key"] = pd.to_numeric(out["plane_idx"], errors="coerce").astype("Int64").astype(str)
+            out["_func_label_key"] = pd.to_numeric(out["func_label"], errors="coerce").astype("Int64").astype(str)
+            passthrough["_plane_idx_key"] = pd.to_numeric(passthrough["plane_idx"], errors="coerce").astype("Int64").astype(str)
+            passthrough["_func_label_key"] = pd.to_numeric(passthrough["func_label"], errors="coerce").astype("Int64").astype(str)
+            passthrough_columns = [
+                column
+                for column in passthrough.columns
+                if column not in out.columns
+                and column not in identity_columns
+                and not column.endswith("_key")
+            ]
+            if passthrough_columns:
+                out = out.merge(
+                    passthrough[["_plane_idx_key", "_func_label_key", *passthrough_columns]],
+                    on=["_plane_idx_key", "_func_label_key"],
+                    how="left",
+                )
+            out = out.drop(columns=["_plane_idx_key", "_func_label_key"], errors="ignore")
+
+    lookup = anat_identity_df.copy() if anat_identity_df is not None else pd.DataFrame()
+    if not lookup.empty and "anat_label" in lookup.columns:
+        lookup["_anat_label_key"] = pd.to_numeric(lookup["anat_label"], errors="coerce").astype("Int64").astype(str)
+        out["_anat_label_key"] = pd.to_numeric(out.get("anat_label", pd.Series(pd.NA, index=out.index)), errors="coerce").astype("Int64").astype(str)
+        keep = ["_anat_label_key", "identity_label"]
+        if "identity_gene_count" in lookup.columns:
+            keep.append("identity_gene_count")
+        lookup = lookup[keep].drop_duplicates(subset=["_anat_label_key"], keep="last")
+        out = out.merge(
+            lookup.rename(
+                columns={
+                    "identity_label": "_identity_label",
+                    "identity_gene_count": "_identity_gene_count",
+                }
+            ),
+            on="_anat_label_key",
+            how="left",
+        )
+        out["identity_label"] = out["_identity_label"]
+        if "identity_gene_count" in out.columns or "identity_gene_count" in (passthrough_df.columns if passthrough_df is not None else ()):
+            out["identity_gene_count"] = out.get("_identity_gene_count", pd.Series(pd.NA, index=out.index))
+        out = out.drop(columns=["_anat_label_key", "_identity_label", "_identity_gene_count"], errors="ignore")
+    else:
+        out["identity_label"] = pd.NA
+        if "identity_gene_count" in out.columns or "identity_gene_count" in (passthrough_df.columns if passthrough_df is not None else ()):
+            out["identity_gene_count"] = pd.NA
+
+    has_identity = out["identity_label"].notna() & out["identity_label"].astype(str).str.strip().ne("")
+    out["has_identity_assigned"] = has_identity.astype(bool)
+    if "identity_display_label" in out.columns or "identity_display_label" in (passthrough_df.columns if passthrough_df is not None else ()):
+        out["identity_display_label"] = out["identity_label"].where(has_identity, identity_none).astype(str)
+
+    if passthrough_df is not None and not passthrough_df.empty:
+        ordered_columns = [column for column in passthrough_df.columns if column in out.columns]
+        out = out.loc[:, ordered_columns]
+
+    return out
 
 
 def build_hcr_mask_fate_df(
@@ -447,6 +534,8 @@ def resample_labels_nn(
         raise ValueError(f"Expected 2D output_shape, got {output_shape!r}")
     if isinstance(tform, dict) and tform.get("type") == "ants_transformlist":
         return _resample_labels_ants_nn(labels, tform, output_shape=shape)
+    if isinstance(tform, dict) and tform.get("type") == "skimage_affine":
+        return _resample_labels_skimage_affine_nn(labels, tform, output_shape=shape)
     xform = tform if tform is not None else AffineTransform()
     warped = warp(
         labels.astype(np.float32, copy=False),
@@ -475,11 +564,74 @@ def resample_image(
         raise ValueError(f"Expected 2D output_shape, got {output_shape!r}")
     if isinstance(tform, dict) and tform.get("type") == "ants_transformlist":
         return _resample_image_ants(image, tform, output_shape=shape)
+    if isinstance(tform, dict) and tform.get("type") == "skimage_affine":
+        return _resample_image_skimage_affine(image, tform, output_shape=shape, order=order)
     xform = tform if tform is not None else AffineTransform()
     warped = warp(
         image,
         xform.inverse,
         output_shape=shape,
+        order=int(order),
+        mode="constant",
+        cval=0.0,
+        preserve_range=True,
+    )
+    return np.asarray(warped, dtype=np.float32)
+
+
+def _skimage_affine_moving_shape(tform: dict[str, Any]) -> tuple[int, int] | None:
+    moving_shape_raw = tform.get("moving_shape")
+    if isinstance(moving_shape_raw, (tuple, list)) and len(moving_shape_raw) >= 2:
+        return (int(moving_shape_raw[-2]), int(moving_shape_raw[-1]))
+    return None
+
+
+def _resample_labels_skimage_affine_nn(labels: np.ndarray, tform: dict[str, Any], *, output_shape: tuple[int, int]) -> np.ndarray:
+    labels_moving = labels
+    moving_shape = _skimage_affine_moving_shape(tform)
+    if moving_shape is not None and tuple(labels.shape) != moving_shape:
+        labels_moving = resize(
+            labels.astype(np.float32, copy=False),
+            moving_shape,
+            order=0,
+            preserve_range=True,
+            anti_aliasing=False,
+        ).astype(np.uint32)
+    xform = AffineTransform(matrix=np.asarray(tform.get("matrix", np.eye(3)), dtype=float))
+    warped = warp(
+        labels_moving.astype(np.float32, copy=False),
+        xform.inverse,
+        output_shape=tuple(output_shape),
+        order=0,
+        mode="constant",
+        cval=0.0,
+        preserve_range=True,
+    )
+    return _ensure_uint_labels(warped)
+
+
+def _resample_image_skimage_affine(
+    image: np.ndarray,
+    tform: dict[str, Any],
+    *,
+    output_shape: tuple[int, int],
+    order: int = 1,
+) -> np.ndarray:
+    moving_np = np.asarray(image, dtype=np.float32)
+    moving_shape = _skimage_affine_moving_shape(tform)
+    if moving_shape is not None and tuple(moving_np.shape) != moving_shape:
+        moving_np = resize(
+            moving_np,
+            moving_shape,
+            order=int(order),
+            preserve_range=True,
+            anti_aliasing=int(order) > 0,
+        ).astype(np.float32)
+    xform = AffineTransform(matrix=np.asarray(tform.get("matrix", np.eye(3)), dtype=float))
+    warped = warp(
+        moving_np,
+        xform.inverse,
+        output_shape=tuple(output_shape),
         order=int(order),
         mode="constant",
         cval=0.0,
@@ -603,6 +755,35 @@ def _bool_from_any(value: Any) -> bool:
     if isinstance(value, (float, np.floating)):
         return bool(np.isfinite(value) and float(value) != 0.0)
     return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+
+def _maybe_bool_or_na(value: Any) -> bool | Any:
+    try:
+        if pd.isna(value):
+            return pd.NA
+    except Exception:
+        pass
+    return bool(_bool_from_any(value))
+
+
+def _to_int_or_na(value: Any) -> int | Any:
+    try:
+        if pd.isna(value):
+            return pd.NA
+    except Exception:
+        pass
+    try:
+        return int(value)
+    except Exception:
+        return pd.NA
+
+
+def _to_float_or_nan(value: Any) -> float:
+    try:
+        out = float(value)
+    except Exception:
+        return float("nan")
+    return out if np.isfinite(out) else float("nan")
 
 
 def compute_label_overlap(
@@ -1574,8 +1755,15 @@ def _decorate_hcr_candidates(
         return out
 
     lookup = response_lookup_df.copy()
-    lookup["plane_idx_key"] = pd.to_numeric(lookup.get("plane_idx", lookup.get("plane", np.nan)), errors="coerce").astype("Int64")
-    lookup["func_label_key"] = pd.to_numeric(lookup["func_label"], errors="coerce").astype("Int64")
+    if "plane_idx_key" not in lookup.columns:
+        plane_values = lookup["plane_idx"] if "plane_idx" in lookup.columns else lookup.get("plane", pd.Series(np.nan, index=lookup.index))
+        lookup["plane_idx_key"] = pd.to_numeric(plane_values, errors="coerce").astype("Int64")
+    else:
+        lookup["plane_idx_key"] = pd.to_numeric(lookup["plane_idx_key"], errors="coerce").astype("Int64")
+    if "func_label_key" not in lookup.columns:
+        lookup["func_label_key"] = pd.to_numeric(lookup["func_label"], errors="coerce").astype("Int64")
+    else:
+        lookup["func_label_key"] = pd.to_numeric(lookup["func_label_key"], errors="coerce").astype("Int64")
     keep_cols = ["plane_idx_key", "func_label_key", "response_is_active", "response_class", "response_summary_class"]
     lookup = lookup[keep_cols].drop_duplicates(subset=["plane_idx_key", "func_label_key"], keep="last")
 
@@ -1933,6 +2121,595 @@ def build_hcr_activity_tables(
     return status_df, raw_df, analysis_df, candidate_df, plane_meta_df
 
 
+def _hcr_status_uid(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=str)
+    gene = df.get("gene", pd.Series("", index=df.index)).astype(str)
+    conf_mask = df.get("conf_mask", pd.Series("", index=df.index)).astype(str)
+    anat = pd.to_numeric(df.get("anat_label", pd.Series(np.nan, index=df.index)), errors="coerce").fillna(-1).astype(int).astype(str)
+    primary = pd.to_numeric(df.get("primary_conf_label", pd.Series(np.nan, index=df.index)), errors="coerce").fillna(-1).astype(int).astype(str)
+    return gene + "||" + conf_mask + "||" + anat + "||" + primary
+
+
+def hcr_response_lookup_from_roi_master_df(
+    master_df: pd.DataFrame,
+    *,
+    fish_id: str | None = None,
+) -> pd.DataFrame:
+    if master_df is None or master_df.empty:
+        raise RuntimeError("response-aware ROI table is empty")
+    out = master_df.copy()
+    if fish_id is not None and "fish_id" in out.columns:
+        out = out[out["fish_id"].astype(str) == str(fish_id)].copy()
+    required = {"plane_idx", "func_label", "response_is_active", "response_class", "response_summary_class"}
+    missing = sorted(required - set(out.columns))
+    if missing:
+        raise RuntimeError(f"response-aware ROI table is missing columns {missing}")
+    if "suite2p_is_cell" not in out.columns:
+        out["suite2p_is_cell"] = out.get("is_active", pd.Series(False, index=out.index))
+    if "suite2p_activity_class" not in out.columns:
+        out["suite2p_activity_class"] = out.get("activity_class", pd.Series(pd.NA, index=out.index, dtype="object"))
+    lookup = out[
+        [
+            "plane_idx",
+            "func_label",
+            "response_is_active",
+            "response_class",
+            "response_summary_class",
+            "suite2p_is_cell",
+            "suite2p_activity_class",
+        ]
+    ].copy()
+    lookup["plane_idx_key"] = pd.to_numeric(lookup["plane_idx"], errors="coerce").astype("Int64")
+    lookup["func_label_key"] = pd.to_numeric(lookup["func_label"], errors="coerce").astype("Int64")
+    lookup = lookup.drop(columns=["plane_idx", "func_label"])
+    lookup = lookup.drop_duplicates(subset=["plane_idx_key", "func_label_key"], keep="last").reset_index(drop=True)
+    lookup["response_is_active"] = lookup["response_is_active"].map(_bool_from_any).astype(bool)
+    lookup["response_class"] = lookup["response_class"].fillna("response unavailable").astype(str)
+    lookup["response_summary_class"] = lookup["response_summary_class"].fillna("Response unavailable").astype(str)
+    lookup["suite2p_is_cell"] = lookup["suite2p_is_cell"].map(_maybe_bool_or_na)
+    lookup["suite2p_activity_class"] = lookup["suite2p_activity_class"].where(lookup["suite2p_activity_class"].notna(), pd.NA)
+    return lookup
+
+
+def _attach_hcr_response_columns(candidate_df: pd.DataFrame, response_lookup_df: pd.DataFrame) -> pd.DataFrame:
+    out = pd.DataFrame() if candidate_df is None else candidate_df.copy()
+    if out.empty:
+        if "plane_idx" not in out.columns:
+            out["plane_idx"] = pd.Series(dtype="Int64")
+        if "func_label" not in out.columns:
+            out["func_label"] = pd.Series(dtype="Int64")
+        out["plane_idx_key"] = pd.to_numeric(out["plane_idx"], errors="coerce").astype("Int64")
+        out["func_label_key"] = pd.to_numeric(out["func_label"], errors="coerce").astype("Int64")
+        out["response_is_active"] = pd.Series(dtype=bool)
+        out["response_class"] = pd.Series(dtype=object)
+        out["response_summary_class"] = pd.Series(dtype=object)
+        out["suite2p_is_cell"] = pd.Series(dtype=object)
+        out["suite2p_activity_class"] = pd.Series(dtype=object)
+        out["legacy_is_active"] = pd.Series(dtype=object)
+        out["legacy_activity_class"] = pd.Series(dtype=object)
+        return out
+
+    legacy_is_active = out.get("is_active", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+    legacy_activity_class = out.get("activity_class", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+    prior_response_is_active = out.get("response_is_active", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+    prior_response_class = out.get("response_class", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+    prior_response_summary_class = out.get("response_summary_class", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+    prior_suite2p_is_cell = out.get("suite2p_is_cell", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+    prior_suite2p_activity_class = out.get("suite2p_activity_class", pd.Series(pd.NA, index=out.index, dtype="object")).copy()
+
+    out["plane_idx_key"] = pd.to_numeric(out.get("plane_idx", pd.Series(np.nan, index=out.index)), errors="coerce").astype("Int64")
+    out["func_label_key"] = pd.to_numeric(out.get("func_label", pd.Series(np.nan, index=out.index)), errors="coerce").astype("Int64")
+    lookup = response_lookup_df.rename(
+        columns={
+            "response_is_active": "_lookup_response_is_active",
+            "response_class": "_lookup_response_class",
+            "response_summary_class": "_lookup_response_summary_class",
+            "suite2p_is_cell": "_lookup_suite2p_is_cell",
+            "suite2p_activity_class": "_lookup_suite2p_activity_class",
+        }
+    )
+    out = out.merge(lookup, on=["plane_idx_key", "func_label_key"], how="left")
+    out["response_is_active"] = out.get("_lookup_response_is_active", pd.Series(pd.NA, index=out.index)).where(
+        out.get("_lookup_response_is_active", pd.Series(pd.NA, index=out.index)).notna(), prior_response_is_active
+    )
+    out["response_class"] = out.get("_lookup_response_class", pd.Series(pd.NA, index=out.index)).where(
+        out.get("_lookup_response_class", pd.Series(pd.NA, index=out.index)).notna(), prior_response_class
+    )
+    out["response_summary_class"] = out.get("_lookup_response_summary_class", pd.Series(pd.NA, index=out.index)).where(
+        out.get("_lookup_response_summary_class", pd.Series(pd.NA, index=out.index)).notna(), prior_response_summary_class
+    )
+    out["suite2p_is_cell"] = out.get("_lookup_suite2p_is_cell", pd.Series(pd.NA, index=out.index)).where(
+        out.get("_lookup_suite2p_is_cell", pd.Series(pd.NA, index=out.index)).notna(), prior_suite2p_is_cell
+    )
+    out["suite2p_activity_class"] = out.get("_lookup_suite2p_activity_class", pd.Series(pd.NA, index=out.index)).where(
+        out.get("_lookup_suite2p_activity_class", pd.Series(pd.NA, index=out.index)).notna(), prior_suite2p_activity_class
+    )
+    out["suite2p_is_cell"] = out["suite2p_is_cell"].where(out["suite2p_is_cell"].notna(), legacy_is_active)
+    out["suite2p_activity_class"] = out["suite2p_activity_class"].where(out["suite2p_activity_class"].notna(), legacy_activity_class)
+    out["response_is_active"] = out["response_is_active"].map(_bool_from_any).astype(bool)
+    out["response_class"] = out["response_class"].fillna("response unavailable").astype(str)
+    out["response_summary_class"] = out["response_summary_class"].fillna("Response unavailable").astype(str)
+    out["suite2p_is_cell"] = out["suite2p_is_cell"].map(_maybe_bool_or_na)
+    out["suite2p_activity_class"] = out["suite2p_activity_class"].where(out["suite2p_activity_class"].notna(), pd.NA)
+    out = out.drop(
+        columns=[
+            column
+            for column in (
+                "_lookup_response_is_active",
+                "_lookup_response_class",
+                "_lookup_response_summary_class",
+                "_lookup_suite2p_is_cell",
+                "_lookup_suite2p_activity_class",
+            )
+            if column in out.columns
+        ]
+    )
+    out["legacy_is_active"] = legacy_is_active.map(_maybe_bool_or_na)
+    out["legacy_activity_class"] = legacy_activity_class.where(legacy_activity_class.notna(), pd.NA)
+    out["is_active"] = out["response_is_active"]
+    out["activity_class"] = out["response_summary_class"]
+    return out
+
+
+def _hcr_candidate_sort_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+    out = df.copy()
+    out["_rank_sort"] = pd.to_numeric(out.get("candidate_rank_for_anat", pd.Series(np.nan, index=out.index)), errors="coerce").astype(float).fillna(np.inf)
+    out["_dist_sort"] = pd.to_numeric(out.get("dist_func_anat_um", pd.Series(np.nan, index=out.index)), errors="coerce").astype(float).fillna(np.inf)
+    out["_overlap_sort"] = pd.to_numeric(out.get("overlap_px_func_anat", pd.Series(np.nan, index=out.index)), errors="coerce").astype(float).fillna(0.0)
+    out["_plane_sort"] = pd.to_numeric(out.get("plane_idx", pd.Series(np.nan, index=out.index)), errors="coerce").astype(float).fillna(np.inf)
+    out["_func_sort"] = pd.to_numeric(out.get("func_label", pd.Series(np.nan, index=out.index)), errors="coerce").astype(float).fillna(np.inf)
+    out = out.sort_values(
+        ["_rank_sort", "_dist_sort", "_overlap_sort", "_plane_sort", "_func_sort"],
+        ascending=[True, True, False, True, True],
+        na_position="last",
+    )
+    return out.drop(columns=["_rank_sort", "_dist_sort", "_overlap_sort", "_plane_sort", "_func_sort"])
+
+
+def _hcr_candidate_key(row: dict[str, Any] | pd.Series | None) -> tuple[int, int] | None:
+    if row is None:
+        return None
+    plane = _to_int_or_na(row.get("plane_idx", pd.NA))
+    func_label = _to_int_or_na(row.get("func_label", pd.NA))
+    if pd.isna(plane) or pd.isna(func_label):
+        return None
+    return int(plane), int(func_label)
+
+
+def _hcr_empty_payload() -> dict[str, Any]:
+    return {
+        "plane": pd.NA,
+        "plane_label": None,
+        "func_label": pd.NA,
+        "roi_idx": pd.NA,
+        "overlap_px": np.nan,
+        "dist_um": np.nan,
+        "func_source": None,
+        "response_is_active": False,
+        "response_class": "response unavailable",
+        "response_summary_class": "Response unavailable",
+        "suite2p_is_cell": pd.NA,
+        "suite2p_activity_class": pd.NA,
+    }
+
+
+def _hcr_candidate_payload(row: dict[str, Any] | pd.Series | None) -> dict[str, Any]:
+    if row is None:
+        return _hcr_empty_payload()
+    payload = {
+        "plane": _to_int_or_na(row.get("plane_idx", pd.NA)),
+        "plane_label": None if pd.isna(row.get("plane", pd.NA)) else str(row.get("plane")),
+        "func_label": _to_int_or_na(row.get("func_label", pd.NA)),
+        "roi_idx": _to_int_or_na(row.get("roi_idx", pd.NA)),
+        "overlap_px": _to_float_or_nan(row.get("overlap_px_func_anat", np.nan)),
+        "dist_um": _to_float_or_nan(row.get("dist_func_anat_um", np.nan)),
+        "func_source": row.get("func_source", None),
+        "response_is_active": bool(_bool_from_any(row.get("response_is_active", False))),
+        "response_class": str(row.get("response_class", "response unavailable")) if row.get("response_class", None) is not None else "response unavailable",
+        "response_summary_class": str(row.get("response_summary_class", "Response unavailable")) if row.get("response_summary_class", None) is not None else "Response unavailable",
+        "suite2p_is_cell": _maybe_bool_or_na(row.get("suite2p_is_cell", pd.NA)),
+        "suite2p_activity_class": row.get("suite2p_activity_class", pd.NA),
+    }
+    if payload["plane_label"] in {"nan", "None"}:
+        payload["plane_label"] = None
+    if payload["response_class"] in {"nan", "None"}:
+        payload["response_class"] = "response unavailable"
+    if payload["response_summary_class"] in {"nan", "None"}:
+        payload["response_summary_class"] = "Response unavailable"
+    return payload
+
+
+def finalize_hcr_activity_export_tables(
+    status_df_legacy: pd.DataFrame,
+    raw_df_legacy: pd.DataFrame,
+    candidate_df: pd.DataFrame,
+    response_lookup_df: pd.DataFrame,
+    *,
+    config: HcrActivityExportConfig | None = None,
+    fish_id: str | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    cfg = config or HcrActivityExportConfig()
+    response_summary_responsive = cfg.response_summary_responsive
+    response_summary_low = cfg.response_summary_low
+    response_summary_unavailable = cfg.response_summary_unavailable
+    response_class_unavailable = cfg.response_class_unavailable
+
+    status_work = pd.DataFrame() if status_df_legacy is None else status_df_legacy.copy()
+    raw_work = pd.DataFrame() if raw_df_legacy is None else raw_df_legacy.copy()
+    candidate_work = pd.DataFrame() if candidate_df is None else candidate_df.copy()
+    if status_work.empty:
+        return status_work, raw_work, pd.DataFrame(), candidate_work
+
+    candidate_work = _attach_hcr_response_columns(candidate_work, response_lookup_df)
+    raw_work = _attach_hcr_response_columns(raw_work, response_lookup_df)
+    status_work["hcr_status_uid"] = _hcr_status_uid(status_work)
+    raw_work["hcr_status_uid"] = _hcr_status_uid(raw_work)
+
+    status_rows: list[dict[str, Any]] = []
+    raw_rows: list[dict[str, Any]] = []
+    analysis_rows: list[dict[str, Any]] = []
+
+    for _, status_old in status_work.iterrows():
+        uid = str(status_old.get("hcr_status_uid", ""))
+        group = raw_work[raw_work["hcr_status_uid"].astype(str) == uid].copy()
+        group = _hcr_candidate_sort_df(group)
+        cand = group[group["plane_idx_key"].notna() & group["func_label_key"].notna()].copy()
+        cand = _hcr_candidate_sort_df(cand)
+
+        responsive_cand = cand[cand["response_is_active"].astype(bool)].copy()
+        low_cand = cand[cand["response_summary_class"].astype(str) == response_summary_low].copy()
+        unavailable_cand = cand[cand["response_summary_class"].astype(str) == response_summary_unavailable].copy()
+        nonresponsive_cand = cand[cand["response_is_active"].astype(bool) == False].copy()
+
+        geom_row = cand.iloc[0].to_dict() if not cand.empty else None
+        response_row = responsive_cand.iloc[0].to_dict() if not responsive_cand.empty else None
+        low_row = low_cand.iloc[0].to_dict() if not low_cand.empty else None
+        unavailable_row = unavailable_cand.iloc[0].to_dict() if not unavailable_cand.empty else None
+        nonresponsive_row = nonresponsive_cand.iloc[0].to_dict() if not nonresponsive_cand.empty else None
+        selected_row = response_row if response_row is not None else (low_row if low_row is not None else (unavailable_row if unavailable_row is not None else geom_row))
+
+        geom_key = _hcr_candidate_key(geom_row)
+        response_key = _hcr_candidate_key(response_row)
+        low_key = _hcr_candidate_key(low_row)
+        unavailable_key = _hcr_candidate_key(unavailable_row)
+        nonresponsive_key = _hcr_candidate_key(nonresponsive_row)
+        selected_key = _hcr_candidate_key(selected_row)
+
+        represented = bool(_bool_from_any(status_old.get("represented_on_func_plane", False)))
+        if not represented:
+            try:
+                represented = int(status_old.get("represented_plane_count", 0) or 0) > 0
+            except Exception:
+                represented = False
+        if not represented:
+            functional_status = cfg.hcr_out_of_plane
+        elif cand.empty:
+            functional_status = cfg.hcr_in_plane_no_func
+        elif response_row is not None:
+            functional_status = cfg.hcr_in_plane_responsive
+        elif low_row is not None:
+            functional_status = cfg.hcr_in_plane_low
+        else:
+            functional_status = cfg.hcr_in_plane_unavailable
+
+        selected_payload = _hcr_candidate_payload(selected_row)
+        geom_payload = _hcr_candidate_payload(geom_row)
+        response_payload = _hcr_candidate_payload(response_row)
+        low_payload = _hcr_candidate_payload(low_row)
+        unavailable_payload = _hcr_candidate_payload(unavailable_row)
+        nonresponsive_payload = _hcr_candidate_payload(nonresponsive_row)
+
+        status_new = status_old.to_dict()
+        status_new["functional_status_legacy"] = str(status_old.get("functional_status", pd.NA))
+        status_new["match_policy_version"] = cfg.hcr_activity_match_policy
+        status_new["selection_rule"] = cfg.selection_rule
+        status_new["functional_status"] = functional_status
+        status_new["response_is_active"] = bool(selected_payload["response_is_active"])
+        status_new["response_class"] = selected_payload["response_class"]
+        status_new["response_summary_class"] = selected_payload["response_summary_class"]
+        status_new["is_active"] = bool(selected_payload["response_is_active"])
+        status_new["activity_class"] = selected_payload["response_summary_class"]
+        status_new["selected_plane"] = selected_payload["plane"]
+        status_new["selected_plane_label"] = selected_payload["plane_label"]
+        status_new["selected_func_label"] = selected_payload["func_label"]
+        status_new["selected_roi_idx"] = selected_payload["roi_idx"]
+        status_new["selected_is_active"] = bool(selected_payload["response_is_active"])
+        status_new["selected_activity_class"] = selected_payload["response_summary_class"]
+        status_new["selected_overlap_px"] = selected_payload["overlap_px"]
+        status_new["selected_dist_um"] = selected_payload["dist_um"]
+        status_new["selected_func_source"] = selected_payload["func_source"]
+        status_new["selected_response_is_active"] = bool(selected_payload["response_is_active"])
+        status_new["selected_response_class"] = selected_payload["response_class"]
+        status_new["selected_response_summary_class"] = selected_payload["response_summary_class"]
+        status_new["selected_suite2p_is_cell"] = selected_payload["suite2p_is_cell"]
+        status_new["selected_suite2p_activity_class"] = selected_payload["suite2p_activity_class"]
+
+        for prefix, payload in (
+            ("selected_geometry", geom_payload),
+            ("selected_response", response_payload),
+            ("selected_low", low_payload),
+            ("selected_nonresponsive", nonresponsive_payload),
+            ("selected_unavailable", unavailable_payload),
+        ):
+            status_new[f"{prefix}_plane"] = payload["plane"]
+            status_new[f"{prefix}_plane_label"] = payload["plane_label"]
+            status_new[f"{prefix}_func_label"] = payload["func_label"]
+            status_new[f"{prefix}_roi_idx"] = payload["roi_idx"]
+            status_new[f"{prefix}_overlap_px"] = payload["overlap_px"]
+            status_new[f"{prefix}_dist_um"] = payload["dist_um"]
+            status_new[f"{prefix}_func_source"] = payload["func_source"]
+            if prefix == "selected_geometry":
+                status_new[f"{prefix}_response_is_active"] = bool(payload["response_is_active"])
+                status_new[f"{prefix}_response_class"] = payload["response_class"]
+                status_new[f"{prefix}_response_summary_class"] = payload["response_summary_class"]
+                status_new[f"{prefix}_suite2p_is_cell"] = payload["suite2p_is_cell"]
+                status_new[f"{prefix}_suite2p_activity_class"] = payload["suite2p_activity_class"]
+
+        status_new["n_func_candidates_total"] = int(len(cand))
+        status_new["n_responsive_candidates"] = int(len(responsive_cand))
+        status_new["n_low_candidates"] = int(len(low_cand))
+        status_new["n_response_unavailable_candidates"] = int(len(unavailable_cand))
+        status_new["has_any_responsive_candidate"] = bool(response_row is not None)
+        status_new["has_any_low_candidate"] = bool(low_row is not None)
+        status_new["has_any_response_unavailable_candidate"] = bool(unavailable_row is not None)
+        status_new["has_responsive_alternative"] = bool(response_key is not None and geom_key is not None and response_key != geom_key)
+        status_new["has_low_alternative"] = bool(low_key is not None and geom_key is not None and low_key != geom_key)
+        status_new["has_unavailable_alternative"] = bool(unavailable_key is not None and geom_key is not None and unavailable_key != geom_key)
+        status_new["selected_for_trace_export"] = bool(response_row is not None)
+        status_new["n_active_candidates"] = int(len(responsive_cand))
+        status_new["n_inactive_candidates"] = int(len(nonresponsive_cand))
+        status_new["has_any_active_candidate"] = bool(response_row is not None)
+        status_new["has_any_inactive_candidate"] = bool(nonresponsive_row is not None)
+        status_new["has_active_alternative"] = bool(response_key is not None and geom_key is not None and response_key != geom_key)
+        status_new["has_inactive_alternative"] = bool(nonresponsive_key is not None and geom_key is not None and nonresponsive_key != geom_key)
+        status_new["selected_plane_active"] = response_payload["plane"]
+        status_new["selected_plane_label_active"] = response_payload["plane_label"]
+        status_new["selected_func_label_active"] = response_payload["func_label"]
+        status_new["selected_roi_idx_active"] = response_payload["roi_idx"]
+        status_new["selected_overlap_px_active"] = response_payload["overlap_px"]
+        status_new["selected_dist_um_active"] = response_payload["dist_um"]
+        status_new["selected_func_source_active"] = response_payload["func_source"]
+        status_new["selected_plane_inactive"] = nonresponsive_payload["plane"]
+        status_new["selected_plane_label_inactive"] = nonresponsive_payload["plane_label"]
+        status_new["selected_func_label_inactive"] = nonresponsive_payload["func_label"]
+        status_new["selected_roi_idx_inactive"] = nonresponsive_payload["roi_idx"]
+        status_new["selected_overlap_px_inactive"] = nonresponsive_payload["overlap_px"]
+        status_new["selected_dist_um_inactive"] = nonresponsive_payload["dist_um"]
+        status_new["selected_func_source_inactive"] = nonresponsive_payload["func_source"]
+        status_rows.append(status_new)
+
+        if group.empty:
+            group = pd.DataFrame([status_old.to_dict()])
+        for _, raw_row in group.iterrows():
+            raw_new = raw_row.to_dict()
+            rr_key = _hcr_candidate_key(raw_row)
+            rr_is_candidate = rr_key is not None
+            rr_summary = str(raw_row.get("response_summary_class", response_summary_unavailable)) if raw_row.get("response_summary_class", None) is not None else response_summary_unavailable
+            if not rr_is_candidate:
+                bucket = "no functional ROI candidate"
+            elif bool(_bool_from_any(raw_row.get("response_is_active", False))):
+                bucket = "responsive"
+            elif rr_summary == response_summary_low:
+                bucket = "low activity"
+            else:
+                bucket = "response unavailable"
+            raw_new["match_policy_version"] = cfg.hcr_activity_match_policy
+            raw_new["selection_rule"] = cfg.selection_rule
+            raw_new["functional_status"] = functional_status
+            raw_new["functional_status_legacy"] = str(status_old.get("functional_status", pd.NA))
+            raw_new["response_is_active"] = bool(_bool_from_any(raw_row.get("response_is_active", False))) if rr_is_candidate else False
+            raw_new["response_class"] = str(raw_row.get("response_class", response_class_unavailable)) if rr_is_candidate else response_class_unavailable
+            raw_new["response_summary_class"] = rr_summary if rr_is_candidate else response_summary_unavailable
+            raw_new["is_active"] = raw_new["response_is_active"]
+            raw_new["activity_class"] = raw_new["response_summary_class"]
+            raw_new["candidate_response_bucket"] = bucket
+            raw_new["selected_response_is_active"] = bool(selected_payload["response_is_active"])
+            raw_new["selected_response_class"] = selected_payload["response_class"]
+            raw_new["selected_response_summary_class"] = selected_payload["response_summary_class"]
+            raw_new["is_selected_best_any"] = bool(rr_is_candidate and geom_key is not None and rr_key == geom_key)
+            raw_new["is_selected_best_geometry"] = bool(rr_is_candidate and geom_key is not None and rr_key == geom_key)
+            raw_new["is_selected_best_response"] = bool(rr_is_candidate and response_key is not None and rr_key == response_key)
+            raw_new["is_selected_best_low"] = bool(rr_is_candidate and low_key is not None and rr_key == low_key)
+            raw_new["is_selected_best_unavailable"] = bool(rr_is_candidate and unavailable_key is not None and rr_key == unavailable_key)
+            raw_new["is_selected_canonical"] = bool(rr_is_candidate and selected_key is not None and rr_key == selected_key)
+            raw_new["is_selected_best_active"] = bool(rr_is_candidate and response_key is not None and rr_key == response_key)
+            raw_new["is_selected_best_inactive"] = bool(rr_is_candidate and nonresponsive_key is not None and rr_key == nonresponsive_key)
+            raw_new["is_selected_for_analysis"] = bool(rr_is_candidate and response_key is not None and rr_key == response_key)
+            raw_rows.append(raw_new)
+
+        if response_row is not None:
+            analysis_rows.append(
+                {
+                    "fish_id": status_old.get("fish_id", fish_id),
+                    "gene": str(status_old.get("gene", "unknown")),
+                    "conf_mask": status_old.get("conf_mask", None),
+                    "conf_label": _to_int_or_na(status_old.get("primary_conf_label", status_old.get("conf_label", pd.NA))),
+                    "conf_labels": status_old.get("conf_labels", None),
+                    "conf_label_count": _to_int_or_na(status_old.get("conf_label_count", pd.NA)),
+                    "anat_label": _to_int_or_na(status_old.get("anat_label", pd.NA)),
+                    "func_label": response_payload["func_label"],
+                    "plane": response_payload["plane"],
+                    "plane_label": response_payload["plane_label"],
+                    "roi_idx": response_payload["roi_idx"],
+                    "is_active": True,
+                    "activity_class": response_summary_responsive,
+                    "response_is_active": True,
+                    "response_class": response_payload["response_class"],
+                    "response_summary_class": response_payload["response_summary_class"],
+                    "suite2p_is_cell": response_payload["suite2p_is_cell"],
+                    "suite2p_activity_class": response_payload["suite2p_activity_class"],
+                    "dist_conf_anat_um": _to_float_or_nan(status_old.get("dist_conf_anat_um", np.nan)),
+                    "dist_func_anat_um": response_payload["dist_um"],
+                    "overlap_px_func_anat": response_payload["overlap_px"],
+                    "represented_on_func_plane": represented,
+                    "functional_status": functional_status,
+                    "functional_status_legacy": str(status_old.get("functional_status", pd.NA)),
+                    "n_func_candidates_total": int(len(cand)),
+                    "n_responsive_candidates": int(len(responsive_cand)),
+                    "n_low_candidates": int(len(low_cand)),
+                    "n_response_unavailable_candidates": int(len(unavailable_cand)),
+                    "has_any_responsive_candidate": bool(response_row is not None),
+                    "has_any_low_candidate": bool(low_row is not None),
+                    "has_any_response_unavailable_candidate": bool(unavailable_row is not None),
+                    "has_responsive_alternative": bool(response_key is not None and geom_key is not None and response_key != geom_key),
+                    "has_low_alternative": bool(low_key is not None and geom_key is not None and low_key != geom_key),
+                    "selected_geometry_plane": geom_payload["plane"],
+                    "selected_geometry_func_label": geom_payload["func_label"],
+                    "selection_rule": cfg.selection_rule,
+                    "selection_rank_gene_anat": 1,
+                    "is_selected_for_analysis": True,
+                    "match_policy_version": cfg.hcr_activity_match_policy,
+                }
+            )
+
+    status_df = pd.DataFrame(status_rows)
+    raw_df = pd.DataFrame(raw_rows)
+    analysis_df = pd.DataFrame(analysis_rows)
+    if analysis_df.empty:
+        analysis_df = pd.DataFrame(
+            columns=[
+                "fish_id",
+                "gene",
+                "conf_mask",
+                "conf_label",
+                "conf_labels",
+                "conf_label_count",
+                "anat_label",
+                "func_label",
+                "plane",
+                "plane_label",
+                "roi_idx",
+                "is_active",
+                "activity_class",
+                "response_is_active",
+                "response_class",
+                "response_summary_class",
+                "suite2p_is_cell",
+                "suite2p_activity_class",
+                "dist_conf_anat_um",
+                "dist_func_anat_um",
+                "overlap_px_func_anat",
+                "represented_on_func_plane",
+                "functional_status",
+                "functional_status_legacy",
+                "n_func_candidates_total",
+                "n_responsive_candidates",
+                "n_low_candidates",
+                "n_response_unavailable_candidates",
+                "has_any_responsive_candidate",
+                "has_any_low_candidate",
+                "has_any_response_unavailable_candidate",
+                "has_responsive_alternative",
+                "has_low_alternative",
+                "selected_geometry_plane",
+                "selected_geometry_func_label",
+                "selection_rule",
+                "selection_rank_gene_anat",
+                "is_selected_for_analysis",
+                "match_policy_version",
+                "roi_reuse_count_within_gene",
+                "roi_reused_within_gene",
+            ]
+        )
+
+    if not candidate_work.empty:
+        if "gene" not in candidate_work.columns:
+            candidate_work["gene"] = pd.NA
+        candidate_work["candidate_response_bucket"] = np.select(
+            [
+                candidate_work["response_is_active"].astype(bool),
+                candidate_work["response_summary_class"].astype(str) == response_summary_low,
+            ],
+            ["responsive", "low activity"],
+            default="response unavailable",
+        )
+
+    int_cols_status = [
+        "anat_label",
+        "conf_label",
+        "primary_conf_label",
+        "conf_label_count",
+        "represented_plane_count",
+        "n_func_candidates_total",
+        "n_responsive_candidates",
+        "n_low_candidates",
+        "n_response_unavailable_candidates",
+        "n_active_candidates",
+        "n_inactive_candidates",
+        "selected_plane",
+        "selected_func_label",
+        "selected_roi_idx",
+        "selected_geometry_plane",
+        "selected_geometry_func_label",
+        "selected_geometry_roi_idx",
+        "selected_response_plane",
+        "selected_response_func_label",
+        "selected_response_roi_idx",
+        "selected_low_plane",
+        "selected_low_func_label",
+        "selected_low_roi_idx",
+        "selected_nonresponsive_plane",
+        "selected_nonresponsive_func_label",
+        "selected_nonresponsive_roi_idx",
+        "selected_unavailable_plane",
+        "selected_unavailable_func_label",
+        "selected_unavailable_roi_idx",
+        "selected_plane_active",
+        "selected_func_label_active",
+        "selected_roi_idx_active",
+        "selected_plane_inactive",
+        "selected_func_label_inactive",
+        "selected_roi_idx_inactive",
+    ]
+    for col in int_cols_status:
+        if col in status_df.columns:
+            status_df[col] = pd.to_numeric(status_df[col], errors="coerce").astype("Int64")
+    if not status_df.empty and status_df.get("selected_plane", pd.Series(dtype=object)).notna().any() and status_df.get("selected_func_label", pd.Series(dtype=object)).notna().any():
+        reuse_df = status_df[status_df["selected_plane"].notna() & status_df["selected_func_label"].notna()].copy()
+        reuse_counts = reuse_df.groupby(["gene", "selected_plane", "selected_func_label"]).size().rename("selected_roi_reuse_count").reset_index()
+        status_df = status_df.merge(reuse_counts, on=["gene", "selected_plane", "selected_func_label"], how="left")
+        status_df["selected_roi_reuse_count"] = pd.to_numeric(status_df.get("selected_roi_reuse_count", pd.Series(0, index=status_df.index)), errors="coerce").fillna(0).astype(int)
+        status_df["selected_roi_reused_within_gene"] = status_df["selected_roi_reuse_count"] > 1
+    elif not status_df.empty:
+        status_df["selected_roi_reuse_count"] = 0
+        status_df["selected_roi_reused_within_gene"] = False
+
+    for col in ("plane_idx", "best_z", "func_label", "roi_idx", "anat_label", "candidate_rank_for_anat"):
+        if col in raw_df.columns:
+            raw_df[col] = pd.to_numeric(raw_df[col], errors="coerce").astype("Int64")
+    for col in ("conf_label", "conf_label_count", "anat_label", "func_label", "plane", "roi_idx", "selection_rank_gene_anat"):
+        if col in analysis_df.columns:
+            analysis_df[col] = pd.to_numeric(analysis_df[col], errors="coerce").astype("Int64")
+    if not analysis_df.empty:
+        reuse_counts = analysis_df.groupby(["gene", "plane", "func_label"]).size().rename("roi_reuse_count_within_gene").reset_index()
+        analysis_df = analysis_df.merge(reuse_counts, on=["gene", "plane", "func_label"], how="left")
+        analysis_df["roi_reuse_count_within_gene"] = pd.to_numeric(analysis_df.get("roi_reuse_count_within_gene", pd.Series(0, index=analysis_df.index)), errors="coerce").fillna(0).astype(int)
+        analysis_df["roi_reused_within_gene"] = analysis_df["roi_reuse_count_within_gene"] > 1
+
+    status_df = status_df.sort_values(["gene", "anat_label"]).reset_index(drop=True)
+    raw_sort_cols = [
+        "gene",
+        "anat_label",
+        "is_selected_best_geometry",
+        "is_selected_for_analysis",
+        "candidate_rank_for_anat",
+        "plane_idx",
+        "func_label",
+    ]
+    raw_df = raw_df.sort_values(
+        [column for column in raw_sort_cols if column in raw_df.columns],
+        ascending=[True, True, False, False, True, True, True][: len([column for column in raw_sort_cols if column in raw_df.columns])],
+        na_position="last",
+    ).reset_index(drop=True)
+    analysis_df = analysis_df.sort_values(["gene", "anat_label", "plane", "func_label"]).reset_index(drop=True)
+    if not candidate_work.empty:
+        candidate_work = candidate_work.sort_values(["anat_label", "plane_idx", "func_label"]).reset_index(drop=True)
+    return status_df, raw_df, analysis_df, candidate_work
+
+
 __all__ = [
     "FunctionalAnatomyDebugConfig",
     "FunctionalRoiIdentityConfig",
@@ -1944,6 +2721,8 @@ __all__ = [
     "build_functional_anatomy_debug_stage",
     "build_functional_roi_master_df",
     "build_hcr_activity_tables",
+    "finalize_hcr_activity_export_tables",
+    "hcr_response_lookup_from_roi_master_df",
     "build_plane_centroid_matches",
     "annotate_session_anat_label_duplicates",
     "compute_centroids",

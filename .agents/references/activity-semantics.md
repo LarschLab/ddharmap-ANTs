@@ -15,15 +15,15 @@
 - `suite2p_is_cell=True`: high-quality trace provenance (`Active neurons` in provenance columns).
 - `suite2p_is_cell=False`: low-quality trace provenance (`Low-quality traces`), retained in master ROI table.
 - In `[50ia]`, `suite2p_is_cell=False` rows are currently marked `response unavailable`.
-- This is a conservative trace-quality gate, not a biological inactivity statement.
+- This is a conservative trace-quality gate: these rows are treated as having no extractable cellular response information for the current analysis, not as a biological inactivity or absence statement.
 
 ## Two-stage classification in `[50ia]`
 
 ### Stage 1: response-state classification
 
 - **Responsive**: passes AUC null-threshold test in bout and/or continuous condition.
-- **Low activity**: sufficient trials but fails both response thresholds.
-- **Response unavailable**: insufficient trials or low-quality trace policy gate.
+- **Low activity**: extractable/high-quality trace with sufficient trials but fails both response thresholds.
+- **Response unavailable**: insufficient trials or low-quality trace policy gate, including the current `suite2p_is_cell=False` policy.
 
 Primary fields:
 
@@ -38,11 +38,11 @@ Primary fields:
 BPI formula: `(bout_auc - cont_auc) / (bout_auc + cont_auc)`.
 
 - Both conditions pass:
-  - `|BPI| > 0.10` -> bout-responsive or continuous-responsive
-  - `|BPI| <= 0.10` -> both-responsive
+  - `|BPI| > 0.50` -> bout-responsive or continuous-responsive
+  - `|BPI| <= 0.50` -> both-responsive
 - Only one condition passes:
-  - `|BPI| <= 0.10` -> weak-response
-  - `|BPI| > 0.10` -> directional class (bout/continuous)
+  - `|BPI| <= 0.50` -> weak-response
+  - `|BPI| > 0.50` -> directional class (bout/continuous)
 
 Primary fields:
 
@@ -58,6 +58,7 @@ Primary fields:
 
 - `[50ia]` owns the exported BPI/activity thresholds used to interpret downstream plots.
 - `[23c]` may compute pre-identity Suite2p response/BPI calls with the same threshold knobs so early diagnostics can filter trace panels before HCR geometry exists; those outputs are diagnostic until merged by `[50ia]`.
+- `functional_roi_activity_bpi_cells.csv` is a response/BPI diagnostic helper table. It may carry an `anat_label` column for schema compatibility, but identity should remain blank there; use the ROI master table for authoritative anatomy identity.
 - Downstream figures should reuse `bpi_zero_band` for near-zero BPI guide lines and `bpi_activity_threshold` for low-activity guide lines when those columns are present.
 - Do not hard-code duplicate threshold constants in downstream cohort or figure stages when the authoritative `[50ia]` columns are available.
 

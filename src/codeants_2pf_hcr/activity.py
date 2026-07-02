@@ -20,7 +20,12 @@ from .stimulus import (
     resolve_plane_stimulus_contexts,
 )
 from .suite2p import infer_frame_rate_from_detail, load_suite2p_dff_map
-from .single_fish_notebook_stages import run_single_fish_cell_50ia_stage
+
+
+def run_single_fish_cell_50ia_stage(namespace: dict[str, Any]) -> None:
+    from .single_fish_notebook_stages import run_single_fish_cell_50ia_stage as _run_stage
+
+    _run_stage(namespace)
 
 
 @dataclass(frozen=True)
@@ -33,7 +38,7 @@ class ActivityConfig:
     response_low: str = "low activity"
     response_unavailable: str = "response unavailable"
     bpi_weak: str = "weak-response"
-    zero_band: float = 0.10
+    zero_band: float = 0.50
     min_trials_per_class: int = 3
     denom_eps: float = 1e-6
     edge_policy: str = "pad_nan"
@@ -572,8 +577,8 @@ def build_response_bpi_tables(
             "func_label": func_label,
             "roi_idx": roi_idx,
             "plane": row.get("plane", pd.NA),
-            "anat_label": row.get("anat_label", pd.NA),
-            "identity_display_label": row.get("identity_display_label", pd.NA),
+            "anat_label": pd.NA,
+            "identity_display_label": pd.NA,
             "bpi_status": "ok",
             "n_bout_trials": 0,
             "n_cont_trials": 0,

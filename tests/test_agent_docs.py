@@ -106,9 +106,10 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("stage-status --fish-id FISH_ID --local-root DATA_ROOT --strict --stage-name STAGE_NAME", source)
         self.assertIn("compare-staged --fish-id FISH_ID --local-root DATA_ROOT --strict --stage-name STAGE_NAME", source)
         self.assertIn("Target scaffold, not all currently runnable", source)
-        self.assertIn("Later writer stages, preprocessing comparisons, legacy-baseline commands, and non-declared comparison groups remain roadmap targets", source)
+        self.assertIn("freeze-legacy-baseline` and `compare-legacy-baseline` now provide a first frozen-bundle surface", source)
         self.assertNotIn("Current `score-activity-bpi` / `export-canonical-tables` status:", source)
-        self.assertNotIn("compare-staged --stage-name make-figures", source)
+        self.assertIn("baseline `make-figures --strict` now runs", source)
+        self.assertIn("compare-staged --stage-name make-figures", source)
 
     def test_symbol_index_includes_pipeline_manifest_persistence_surface(self) -> None:
         source = _read(".agents/references/symbol-index.md")
@@ -118,12 +119,17 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("write_stage_manifest", source)
         self.assertIn("compare_persisted_manifest", source)
         self.assertIn("build_single_fish_compare_staged_manifest", source)
+        self.assertIn("build_single_fish_compare_legacy_baseline_manifest", source)
         self.assertIn("build_single_fish_downstream_stage_manifest", source)
+        self.assertIn("run_single_fish_freeze_legacy_baseline_stage", source)
+        self.assertIn("compare_single_fish_legacy_baseline", source)
         self.assertIn("compare_single_fish_staged_outputs", source)
         self.assertIn("downstream_stage_names", source)
-        self.assertIn("audit-inputs --write-manifest", source)
+        self.assertIn("--write-manifest", source)
         self.assertIn("stage-status", source)
         self.assertIn("compare-staged", source)
+        self.assertIn("freeze-legacy-baseline", source)
+        self.assertIn("compare-legacy-baseline", source)
 
     def test_docs_do_not_overclaim_downstream_writer_stage_availability(self) -> None:
         current_state = _read(".agents/references/current-state.md")

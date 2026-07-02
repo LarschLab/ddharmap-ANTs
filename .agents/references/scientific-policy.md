@@ -20,7 +20,7 @@ Current conservative policy:
 
 - `suite2p_is_cell=True` is treated as high-quality trace provenance.
 - `suite2p_is_cell=False` remains in the master ROI inventory but is currently labeled low-quality trace and marked response-unavailable in `[50ia]`.
-- This is a conservative trace-quality gate, not a biological inactivity claim.
+- This is a conservative trace-quality gate: these rows are treated as having no extractable cellular response information for the current trace analysis, not as a biological inactivity or absence claim.
 
 ## Authoritative matching policy
 
@@ -40,12 +40,15 @@ Short form: **geometry first, identity second, activity third, figures last**.
 
 - Canonical path for whole-population QA/activity/BPI summaries.
 - Authoritative table: `functional_roi_activity_identity.csv`.
+- Starts from the global functional ROI inventory, including Suite2p rows with `iscell=0`.
+- Response classification then separates response-unavailable rows, low-activity/non-threshold-passing rows, and responsive/high-quality signal rows after geometry is fixed.
 
 ### HCR-centric (identified-cell activity only)
 
 - Starts from accepted HCR↔anatomy labels, then finds local ROI candidates.
 - Used for identified-cell response status and trace-ready exports.
 - Prioritizes recovering responses for identified labels.
+- Its candidate universe is intentionally label-first and local to identified HCR/anatomy labels; it should not be forced to reuse the ROI-centric one-to-one competition table when that would suppress identified cells of interest.
 - Must not silently replace the ROI-centric authoritative path.
 
 ## Ambiguity ladder

@@ -77,6 +77,8 @@ class ActivityTests(unittest.TestCase):
                 {
                     "plane_idx": [0, 5],
                     "func_label": [1, 1],
+                    "anat_label": [101, 202],
+                    "identity_display_label": ["sst1.1", "npy"],
                     "activity_class": ["Active neurons", "Active neurons"],
                     "is_active": [True, True],
                 }
@@ -101,6 +103,9 @@ class ActivityTests(unittest.TestCase):
             self.assertEqual(scored.loc[0, "n_bout_trials"], 1)
             self.assertEqual(scored.loc[1, "n_bout_trials"], 1)
             self.assertGreater(scored.loc[1, "mean_bout_dff"], 20.0)
+            self.assertTrue(scored["anat_label"].isna().all())
+            detail_out = result["detail_df"].sort_values("plane_idx").reset_index(drop=True)
+            self.assertEqual(list(detail_out["anat_label"]), [101, 202])
             self.assertIn("r1", set(result["df_stim"]["session_label"]))
             self.assertIn("r2", set(result["df_stim"]["session_label"]))
 

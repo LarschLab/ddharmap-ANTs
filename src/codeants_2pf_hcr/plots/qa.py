@@ -24,10 +24,18 @@ import matplotlib.patheffects as path_effects
 from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
-from skimage import color as skcolor
-from skimage import segmentation
-from skimage import transform
-import tifffile
+try:
+    from skimage import color as skcolor
+    from skimage import segmentation
+    from skimage import transform
+except Exception:  # pragma: no cover - optional dependency for heavyweight QA overlays
+    skcolor = None
+    segmentation = None
+    transform = None
+try:
+    import tifffile
+except Exception:  # pragma: no cover - optional dependency for TIFF-backed QA overlays
+    tifffile = None
 
 from ..context import infer_anat_labels_path
 from ..matching import (
@@ -62,6 +70,18 @@ try:
     import SimpleITK as sitk
 except Exception:  # pragma: no cover
     sitk = None
+
+
+def _require_skimage_module(module: Any, module_name: str) -> Any:
+    if module is None:
+        raise RuntimeError(f"scikit-image is required for this QA plotting operation ({module_name}).")
+    return module
+
+
+def _read_tiff(path: str | Path) -> np.ndarray:
+    if tifffile is None:
+        raise RuntimeError("tifffile is required for this QA plotting operation.")
+    return np.asarray(tifffile.imread(str(path)))
 
 DEFAULT_DATA_ROOT = default_local_root(fallback=Path.cwd())
 DEFAULT_FUNCTIONAL_IMAGE = DEFAULT_DATA_ROOT / "L396_f04/03_analysis/functional/derived/L396_f04_plane0_mcorrected_flipX_func_ref_in_2p_8bitnorm.tif"
@@ -99,7 +119,7 @@ FONT_FAMILY = pick_font_family()
 def _read_image(path: Path) -> np.ndarray:
     suffixes = [suffix.lower() for suffix in path.suffixes]
     if suffixes and suffixes[-1] in {".tif", ".tiff"}:
-        return np.asarray(tifffile.imread(path), dtype=np.float32)
+        return np.asarray(_read_tiff(path), dtype=np.float32)
     if suffixes and suffixes[-1] == ".nrrd":
         if sitk is None:
             raise ImportError("Reading .nrrd in plots.qa requires SimpleITK.")
@@ -358,7 +378,8 @@ def show_registration_overlay_stage(
             f_vis = norm01(f_src)
             a_vis = norm01(a_src)
             if f_vis.shape != a_vis.shape:
-                f_vis = transform.resize(
+                sk_transform = _require_skimage_module(transform, "transform.resize")
+                f_vis = sk_transform.resize(
                     f_vis,
                     a_vis.shape,
                     order=1,
@@ -479,7 +500,8 @@ def show_functional_label_overlay_stage(
         if labels.shape != ref_img.shape:
             log_lines.append(f"[SKIP] Label/ref shape mismatch for {label}: labels {labels.shape}, ref {ref_img.shape}")
             continue
-        overlay = skcolor.label2rgb(labels, image=norm01(ref_img), bg_label=0, alpha=0.35, image_alpha=1.0)
+        sk_color = _require_skimage_module(skcolor, "color.label2rgb")
+        overlay = sk_color.label2rgb(labels, image=norm01(ref_img), bg_label=0, alpha=0.35, image_alpha=1.0)
         fig, ax = plt.subplots(figsize=(6, 6))
         ax.imshow(overlay)
         title_src = src_desc if src_desc else "labels"
@@ -596,7 +618,8 @@ def show_region_shift_square_selector_stage(
             continue
         func_img = np.asarray(func_src, dtype=np.float32)
         if func_img.shape != anat_img.shape:
-            func_img = transform.resize(
+            sk_transform = _require_skimage_module(transform, "transform.resize")
+            func_img = sk_transform.resize(
                 func_img,
                 anat_img.shape,
                 order=1,
@@ -968,7 +991,8 @@ def _overlay_registration_pair(
     anat_vis = norm01(anat_img)
     func_vis = norm01(func_img)
     if func_vis.shape != anat_vis.shape:
-        func_vis = transform.resize(
+        sk_transform = _require_skimage_module(transform, "transform.resize")
+        func_vis = sk_transform.resize(
             func_vis,
             anat_vis.shape,
             order=1,
@@ -987,7 +1011,8 @@ def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]
     out = np.zeros(labels.shape + (4,), dtype=np.float32)
     if labels.size == 0:
         return out
-    boundaries = segmentation.find_boundaries(labels, mode="outer")
+    sk_segmentation = _require_skimage_module(segmentation, "segmentation.find_boundaries")
+    boundaries = sk_segmentation.find_boundaries(labels, mode="outer")
     if np.any(boundaries):
         r, g, b, a = [float(v) for v in rgba]
         out[boundaries, 0] = r
@@ -999,7 +1024,8 @@ def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]
 
 def _label_boundary_edge_score(anat_img: np.ndarray, label_img: np.ndarray) -> float | None:
     labels = _ensure_uint_labels(label_img)
-    boundaries = segmentation.find_boundaries(labels, mode="outer")
+    sk_segmentation = _require_skimage_module(segmentation, "segmentation.find_boundaries")
+    boundaries = sk_segmentation.find_boundaries(labels, mode="outer")
     if int(np.count_nonzero(boundaries)) < 20:
         return None
     img = norm01(np.asarray(anat_img, dtype=np.float32))
@@ -1059,7 +1085,8 @@ def _method_transform_for_label_warp(method: str, result: dict[str, Any]) -> Any
     if method == "ncc_xy":
         ncc_xy_record = result.get("ncc_xy")
         if isinstance(ncc_xy_record, dict) and {"x0", "y0"}.issubset(ncc_xy_record):
-            return transform.SimilarityTransform(
+            sk_transform = _require_skimage_module(transform, "transform.SimilarityTransform")
+            return sk_transform.SimilarityTransform(
                 translation=(int(ncc_xy_record["x0"]), int(ncc_xy_record["y0"]))
             )
     return None
@@ -2130,7 +2157,7 @@ def _collect_func_anat_offsets_for_fish(
     if anat_labels_path is None or not Path(anat_labels_path).exists():
         z_offsets = np.full((len(matched),), np.nan, dtype=float)
     else:
-        anat_labels = np.asarray(tifffile.imread(str(anat_labels_path)))
+        anat_labels = _read_tiff(anat_labels_path)
         anat_centroids = compute_centroids(anat_labels)
         z_lookup = dict(zip(anat_centroids["label"].astype(int), pd.to_numeric(anat_centroids["z"], errors="coerce")))
         dz = float(vox_anat.get("Z", 1.0))
@@ -2414,7 +2441,7 @@ def _collect_hcr_offsets_for_fish(
     anat_labels_path = infer_anat_labels_path(fish_dir, fish_id)
     if anat_labels_path is None or not Path(anat_labels_path).exists():
         return pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
-    anat_labels = np.asarray(tifffile.imread(str(anat_labels_path)))
+    anat_labels = _read_tiff(anat_labels_path)
     anat_centroids = compute_centroids(anat_labels)
     anat_centroids["label"] = pd.to_numeric(anat_centroids["label"], errors="coerce").astype("Int64")
     anat_centroids = anat_centroids.dropna(subset=["label"])
@@ -2460,7 +2487,7 @@ def _collect_hcr_offsets_for_fish(
         conf_label_val = getattr(row, "conf_label", getattr(row, "primary_conf_label", np.nan))
         conf_label = pd.to_numeric(pd.Series([conf_label_val]), errors="coerce").iloc[0]
         if conf_mask_path is not None and not pd.isna(conf_label):
-            conf_labels = np.asarray(tifffile.imread(str(conf_mask_path)))
+            conf_labels = _read_tiff(conf_mask_path)
             if conf_labels.shape == anat_labels.shape:
                 conf_centroids = compute_centroids(conf_labels)
                 if not conf_centroids.empty:

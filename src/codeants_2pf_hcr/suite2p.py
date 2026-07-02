@@ -11,8 +11,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .context import func_orientation_effective, func_orientation_mode
-from .spatial import apply_func_orientation
 from .stimulus import StimulusConfig, build_prestim_baseline_windows, compute_zscore_stats, resolve_plane_stimulus_contexts
 
 
@@ -743,6 +741,9 @@ def load_suite2p_stage(
     config: Suite2pStageConfig | None = None,
     assert_fish_compatible: Any = None,
 ) -> dict[str, Any]:
+    from .context import func_orientation_effective, func_orientation_mode
+    from .spatial import apply_func_orientation
+
     cfg = config or Suite2pStageConfig()
     default_root = Path(suite2p_root)
     resolved_root = default_root
