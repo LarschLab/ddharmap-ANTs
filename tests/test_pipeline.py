@@ -948,7 +948,7 @@ def _write_hcr_replay_response_master(path: Path, fish_id: str = "L000_f00") -> 
     )
 
 
-def test_hcr_activity_replay_audit_runs_label_first_without_outputs(tmp_path: Path) -> None:
+def test_hcr_activity_replay_audit_runs_label_first_without_outputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
         "parameter,value\nfish_orientation,top-right\n"
@@ -963,6 +963,16 @@ def test_hcr_activity_replay_audit_runs_label_first_without_outputs(tmp_path: Pa
     response_master = tmp_path / "functional_roi_activity_identity.csv"
     _write_hcr_replay_response_master(response_master, fish_dir.name)
     config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    import codeants_2pf_hcr.matching as matching_module
+
+    observed_orientation_callbacks = []
+    original_build_hcr_activity_tables = matching_module.build_hcr_activity_tables
+
+    def spy_build_hcr_activity_tables(*args, **kwargs):
+        observed_orientation_callbacks.append(kwargs.get("apply_func_orientation_func"))
+        return original_build_hcr_activity_tables(*args, **kwargs)
+
+    monkeypatch.setattr(matching_module, "build_hcr_activity_tables", spy_build_hcr_activity_tables)
 
     manifest = build_single_fish_hcr_activity_replay_manifest(
         config,
@@ -980,6 +990,8 @@ def test_hcr_activity_replay_audit_runs_label_first_without_outputs(tmp_path: Pa
     assert any(check.label == "HCR replay source policy" and check.status == "pass" for check in manifest.checks)
     assert any(check.label == "HCR replay transform backend" and check.status == "warn" for check in manifest.checks)
     assert any(check.label == "HCR activity replay recompute" and check.status == "pass" for check in manifest.checks)
+    assert observed_orientation_callbacks
+    assert all(callable(callback) for callback in observed_orientation_callbacks)
 
 
 def test_hcr_activity_replay_overlays_selected_ants_transformlists(tmp_path: Path) -> None:

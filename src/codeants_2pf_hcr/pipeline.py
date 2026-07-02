@@ -2728,7 +2728,7 @@ def build_single_fish_hcr_activity_replay_manifest(
     identity_path = _hcr_activity_replay_identity_path(paths, identity_input_path)
 
     from .context import infer_anat_labels_path, resolve_func_polarity
-    from .spatial import imread_any
+    from .spatial import apply_func_orientation, imread_any
     from .suite2p import Suite2pStageConfig, load_suite2p_stage
 
     anat_labels_path = (
@@ -2832,6 +2832,9 @@ def build_single_fish_hcr_activity_replay_manifest(
                 paths.matching_metadata_csv,
                 fish_dir=paths.fish_dir,
             )
+            def _apply_replay_func_orientation(arr: Any) -> Any:
+                return apply_func_orientation(arr, polarity=polarity, flip_x=True)
+
             suite2p_result = load_suite2p_stage(
                 plane_refs=plane_refs,
                 suite2p_root=paths.functional_suite2p_dir,
@@ -2868,6 +2871,7 @@ def build_single_fish_hcr_activity_replay_manifest(
                 dy_um=float(anatomy_xy_spacing[1]),
                 gene_from_mask_func=gene_from_mask,
                 response_lookup_df=response_lookup,
+                apply_func_orientation_func=_apply_replay_func_orientation,
             )
             final_status_df, final_raw_df, final_analysis_df, final_candidate_df = finalize_hcr_activity_export_tables(
                 status_df,
@@ -2970,6 +2974,7 @@ def build_single_fish_hcr_activity_replay_manifest(
                         dy_um=float(anatomy_xy_spacing[1]),
                         gene_from_mask_func=gene_from_mask,
                         response_lookup_df=response_lookup,
+                        apply_func_orientation_func=_apply_replay_func_orientation,
                     )
                     v_final_status_df, v_final_raw_df, v_final_analysis_df, v_final_candidate_df = finalize_hcr_activity_export_tables(
                         v_status_df,

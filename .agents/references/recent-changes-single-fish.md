@@ -28,6 +28,29 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-02 - restore notebook-equivalent orientation in HCR replay audit
+
+- Slice goal:
+  - close the current `audit-hcr-activity-replay` parity gap after visual QA showed functional/anatomy geometry, best-Z, and segmented labels were coherent.
+- Passes completed in this session:
+  - compared accepted `hcr_func_candidates.csv` against historical recompute-audit artifacts on `linnaeus` and confirmed `hcr_func_candidates_recomputed.csv` has exact `148/148` candidate-key parity.
+  - reproduced the current audit gap and found that current warped Suite2p label images did not match the historical replay labels because the audit rebuilt labels from raw Suite2p stats without passing the notebook-equivalent functional orientation callback.
+  - wired `audit-hcr-activity-replay` to pass `spatial.apply_func_orientation(..., flip_x=True)` into `matching.build_hcr_activity_tables` for the primary selected-ANTs replay and all transform variants.
+  - added a focused regression test asserting the pipeline audit supplies a callable functional-orientation callback to the HCR activity builder.
+- What changed:
+  - On `L395_f11`, the remote read-only audit now completes with status `pass`, zero errors, and zero warnings from `/tmp/codeants-plane-qc/codeANTs` against `/tmp/codeants-hcr-replay-abzbAl/staged-L395`.
+  - Primary selected-ANTs replay now matches accepted HCR outputs exactly: `hcr_activity_status.csv=162/162`, `conf_to_func_pairs_raw.csv=254/254`, `conf_to_func_pairs.csv=40/40`, `hcr_func_candidates.csv=148/148`, and candidate-key parity is missing `0`, extra `0`.
+  - Promotion remains intentionally disabled; this is still a read-only audit proving replay parity before a later writer-stage promotion.
+- What remains broken:
+  - `assign-hcr-identity` still stages HCR activity CSVs from accepted outputs; replacing that copy step with recomputed HCR activity exports is the next promotion slice.
+- Remaining in-slice work:
+  - none for the replay-audit parity fix.
+- Next likely breakpoint:
+  - promote HCR activity recomputation into `assign-hcr-identity` behind strict parity checks, then rerun `export-canonical-tables` and downstream comparisons.
+- Rerun implications:
+  - focused local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "hcr_activity_replay"`.
+  - real-data validation: rerun `audit-hcr-activity-replay --strict` on `linnaeus` after staged functional registration and HCR aligned artifacts exist in the same `--pipeline-root`.
+
 ### 2026-07-02 - AntsPyx instrumentation for HCR activity replay audit
 
 - Slice goal:
