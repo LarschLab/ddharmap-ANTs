@@ -5533,18 +5533,22 @@ def _copy_hcr_aligned_stage_files(
     *,
     skip_label_tiffs: bool = False,
     skip_warp_meta_jsons: bool = False,
+    skip_match_csvs: bool = False,
 ) -> tuple[Path, ...]:
     groups = _discover_hcr_aligned_stage_files(source_root)
     qc_tiffs = groups["qc_tiffs"]
     if skip_label_tiffs:
         qc_tiffs = tuple(path for path in qc_tiffs if path not in set(groups["label_tiffs"]))
     warp_meta_jsons = () if skip_warp_meta_jsons else groups["warp_meta_jsons"]
+    match_csvs = () if skip_match_csvs else groups["match_csvs"]
+    review_csvs = () if skip_match_csvs else groups["review_csvs"]
+    final_pair_csvs = () if skip_match_csvs else groups["final_pair_csvs"]
     copied: list[Path] = []
     stage_inputs = (
         *qc_tiffs,
-        *groups["match_csvs"],
-        *groups["review_csvs"],
-        *groups["final_pair_csvs"],
+        *match_csvs,
+        *review_csvs,
+        *final_pair_csvs,
         *warp_meta_jsons,
     )
     for source_path in dict.fromkeys(stage_inputs):
@@ -5667,6 +5671,31 @@ def _count_real_files(directory: Path, pattern: str) -> int:
     return len(tuple(path for path in directory.glob(pattern) if path.is_file() and _is_real_match(path)))
 
 
+def _anatomy_zyx_spacing_from_voxel_cache(paths: PipelinePaths) -> dict[str, float]:
+    cache_path = paths.analysis_dir / "voxel_sizes.json"
+    if not cache_path.exists():
+        return {"dz": 1.0, "dy": 1.0, "dx": 1.0}
+    try:
+        data = json.loads(cache_path.read_text())
+    except Exception:
+        return {"dz": 1.0, "dy": 1.0, "dx": 1.0}
+    records = tuple((str(path), values) for path, values in (data.get("by_path") or {}).items())
+    preferred_records = tuple(
+        item
+        for item in records
+        if "anatomy" in item[0].lower() or "2p_anatomy" in item[0].lower()
+    )
+    for _path, values in preferred_records + records:
+        if not isinstance(values, dict):
+            continue
+        if all(key in values and values.get(key) not in (None, "", False) for key in ("X", "Y", "Z")):
+            try:
+                return {"dz": float(values["Z"]), "dy": float(values["Y"]), "dx": float(values["X"])}
+            except Exception:
+                continue
+    return {"dz": 1.0, "dy": 1.0, "dx": 1.0}
+
+
 def _hcr_raw_mask_paths(paths: PipelinePaths) -> tuple[Path, ...]:
     if not paths.confocal_raw_cp_masks_dir.exists():
         return ()
@@ -5719,6 +5748,83 @@ def _overlay_accepted_hcr_filter_stats(
         metadata_path.write_text(json.dumps(payload, indent=2))
         updated += 1
     return updated
+
+
+def _hcr_final_pair_key_set(path: Path) -> set[tuple[str, str]]:
+    rows = _csv_dict_rows(path) or ()
+    return {
+        (str(row.get("conf_label", "")).strip(), str(row.get("twoP_label", "")).strip())
+        for row in rows
+        if str(row.get("conf_label", "")).strip() and str(row.get("twoP_label", "")).strip()
+    }
+
+
+def _hcr_final_pair_key_parity_checks(source_root: Path, output_root: Path) -> tuple[StageCheckRecord, ...]:
+    checks: list[StageCheckRecord] = []
+    for output_path in sorted(output_root.glob("*_cp_masks_in_2p_final_pairs.csv")):
+        if not _is_real_match(output_path):
+            continue
+        source_path = source_root / output_path.name
+        if not source_path.exists():
+            checks.append(
+                StageCheckRecord(
+                    label=f"HCR recomputed final-pair key parity: {output_path.name}",
+                    status="warn",
+                    detail="accepted final-pair CSV control is missing for recomputed HCR/anatomy pairs",
+                    observed="accepted missing",
+                    expected="accepted control exists",
+                )
+            )
+            continue
+        left = _hcr_final_pair_key_set(output_path)
+        right = _hcr_final_pair_key_set(source_path)
+        missing = right - left
+        extra = left - right
+        checks.append(
+            StageCheckRecord(
+                label=f"HCR recomputed final-pair key parity: {output_path.name}",
+                status="pass" if not missing and not extra else "fail",
+                detail="recomputed HCR/anatomy final-pair conf/twoP keys match accepted control",
+                observed=f"missing={len(missing)},extra={len(extra)},both={len(left & right)}",
+                expected="missing=0,extra=0",
+            )
+        )
+    return tuple(checks)
+
+
+def _write_recomputed_hcr_anatomy_match_csvs(
+    *,
+    direct_warp_results: tuple[Any, ...],
+    anatomy_labels_path: Path,
+    output_root: Path,
+    vox_anat_um: dict[str, float],
+) -> tuple[Path, ...]:
+    from .matching import build_hcr_anatomy_match_tables
+    from .spatial import imread_any
+
+    anatomy_labels = imread_any(anatomy_labels_path)
+    written: list[Path] = []
+    for result in direct_warp_results:
+        label_path = Path(result.output_label_path)
+        if not label_path.exists():
+            continue
+        hcr_labels = imread_any(label_path)
+        matches, final_pairs, review, _qc = build_hcr_anatomy_match_tables(
+            hcr_labels,
+            anatomy_labels,
+            vox_anat_um=vox_anat_um,
+        )
+        save_base = output_root / label_path.name.replace("_labels_uint16.tif", "")
+        paths_and_frames = (
+            (Path(f"{save_base}_matches.csv"), matches),
+            (Path(f"{save_base}_final_pairs.csv"), final_pairs),
+            (Path(f"{save_base}_review.csv"), review),
+        )
+        for path, frame in paths_and_frames:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(path, index=False)
+            written.append(path)
+    return tuple(written)
 
 
 def _hcr_direct_ants_recompute_provenance(
@@ -5823,6 +5929,8 @@ def run_register_hcr_to_anatomy_stage(
     force_recompute: bool = False,
     recompute_direct_ants: bool = False,
 ) -> StageManifest:
+    from .context import infer_anat_labels_path
+
     paths = resolve_pipeline_paths(config)
     source_root_path = Path(source_root) if source_root not in (None, "", False) else paths.confocal_aligned_dir
     stage_root = Path(output_root) if output_root not in (None, "", False) else hcr_to_anatomy_registration_root(paths)
@@ -5837,12 +5945,16 @@ def run_register_hcr_to_anatomy_stage(
             )
         direct_ants_provenance, direct_ants_checks = _hcr_direct_ants_recompute_provenance(paths)
         direct_warp_results: tuple[Any, ...] = ()
+        recomputed_match_outputs: tuple[Path, ...] = ()
+        anat_labels_path = infer_anat_labels_path(paths.fish_dir, config.fish_id)
         if recompute_direct_ants:
             if not direct_ants_provenance.get("hcr_direct_ants_expected"):
                 raise RuntimeError("Direct ANTs HCR recompute requested, but matching metadata does not select bigwarp=False.")
             best_round_raw = direct_ants_provenance.get("matching_metadata_best_round")
             if best_round_raw in (None, ""):
                 raise RuntimeError("Direct ANTs HCR recompute requested, but best_round is missing from matching metadata.")
+            if anat_labels_path is None or not Path(anat_labels_path).exists():
+                raise FileNotFoundError(f"Direct HCR/anatomy match recompute requires anatomy labels for {config.fish_id}")
             best_round_idx = int(str(best_round_raw).lower().lstrip("r"))
             from .hcr_warp import run_direct_ants_hcr_label_warp
 
@@ -5857,6 +5969,12 @@ def run_register_hcr_to_anatomy_stage(
                 rn_to_rbest_transform_dir=paths.preproc_dir.parent / "02_rn-rbest" / "transMatrices",
             )
             accepted_filter_stats_overlay_count = _overlay_accepted_hcr_filter_stats(direct_warp_results, source_root_path)
+            recomputed_match_outputs = _write_recomputed_hcr_anatomy_match_csvs(
+                direct_warp_results=direct_warp_results,
+                anatomy_labels_path=Path(anat_labels_path),
+                output_root=aligned_output_root,
+                vox_anat_um=_anatomy_zyx_spacing_from_voxel_cache(paths),
+            )
         else:
             accepted_filter_stats_overlay_count = 0
         copied_outputs = _copy_hcr_aligned_stage_files(
@@ -5864,10 +5982,12 @@ def run_register_hcr_to_anatomy_stage(
             aligned_output_root,
             skip_label_tiffs=bool(recompute_direct_ants),
             skip_warp_meta_jsons=bool(recompute_direct_ants),
+            skip_match_csvs=bool(recompute_direct_ants),
         )
-        recomputed_outputs = tuple(Path(result.output_label_path) for result in direct_warp_results) + tuple(
+        recomputed_label_outputs = tuple(Path(result.output_label_path) for result in direct_warp_results) + tuple(
             Path(result.output_metadata_path) for result in direct_warp_results
         )
+        recomputed_outputs = recomputed_label_outputs + recomputed_match_outputs
         staged_outputs = (*copied_outputs, *recomputed_outputs)
         copied_names = {path.name for path in copied_outputs}
         staged_label_count = sum(1 for path in staged_outputs if path.name.endswith("_cp_masks_in_2p_labels_uint16.tif"))
@@ -5952,15 +6072,27 @@ def run_register_hcr_to_anatomy_stage(
                 observed=f"{accepted_filter_stats_overlay_count}/{len(direct_warp_results)}",
                 expected="all recomputed masks",
             ),
-        ) + direct_ants_checks
+            StageCheckRecord(
+                label="HCR direct ANTs match table recompute",
+                status="pass" if (not recompute_direct_ants or len(recomputed_match_outputs) >= 3 * len(direct_warp_results)) else "fail",
+                detail="HCR/anatomy match, review, and final-pair CSVs were recomputed from warped labels when requested",
+                observed=f"{len(recomputed_match_outputs)}/{3 * len(direct_warp_results)}",
+                expected="3 CSVs per recomputed mask",
+            ),
+        ) + direct_ants_checks + (
+            _hcr_final_pair_key_parity_checks(source_root_path, aligned_output_root) if recompute_direct_ants else ()
+        )
         status = "pass" if not any(check.status == "fail" for check in checks) else "fail"
         errors: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
         warnings: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "warn")
     except Exception as exc:
         direct_ants_provenance = {}
         direct_warp_results = ()
+        recomputed_label_outputs = ()
         recomputed_outputs = ()
+        recomputed_match_outputs = ()
         accepted_filter_stats_overlay_count = 0
+        anat_labels_path = None
         source_groups = {
             "label_tiffs": (),
             "qc_tiffs": (),
@@ -6011,13 +6143,17 @@ def run_register_hcr_to_anatomy_stage(
             "force_recompute": bool(force_recompute),
             "recompute_direct_ants": bool(recompute_direct_ants),
             "copied_artifact_count": len(copied_outputs),
-            "recomputed_label_artifact_count": len(recomputed_outputs),
+            "recomputed_label_artifact_count": len(recomputed_label_outputs),
+            "recomputed_artifact_count": len(recomputed_outputs),
             "direct_ants_warp_result_count": len(direct_warp_results),
             "direct_ants_filter_stats_overlay_count": accepted_filter_stats_overlay_count,
+            "direct_ants_match_table_artifact_count": len(recomputed_match_outputs),
+            "anatomy_labels_path": str(anat_labels_path) if anat_labels_path is not None else None,
+            "anatomy_zyx_spacing_um": _anatomy_zyx_spacing_from_voxel_cache(paths),
             "input_aligned_nrrd_count": len(source_groups["aligned_nrrds"]),
             "copy_policy": "csv_json_tif_only",
             "hcr_recompute_mode": (
-                "direct_ants_label_warp_with_accepted_match_tables"
+                "direct_ants_label_warp_and_match_tables"
                 if recompute_direct_ants
                 else "accepted_artifact_staging_with_direct_ants_readiness"
             ),

@@ -28,6 +28,29 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - wire direct HCR/anatomy match recompute
+
+- Slice goal:
+  - stop copying accepted HCR/anatomy match tables in `register-hcr-to-anatomy --recompute-direct-ants` and make the direct path expose real match/final-pair parity.
+- Passes completed in this session:
+  - wired `matching.build_hcr_anatomy_match_tables` into the direct HCR label-warp path.
+  - skipped accepted match/review/final-pair CSV copies when direct recompute is requested.
+  - added final-pair `(conf_label, twoP_label)` parity checks against accepted controls.
+  - updated the focused pipeline test to require recomputed match, review, and final-pair CSVs.
+- What changed:
+  - direct mode now reports `hcr_recompute_mode=direct_ants_label_warp_and_match_tables`.
+  - direct mode writes recomputed label TIFFs, warp metadata JSONs, and 3 recomputed HCR/anatomy CSVs per warped mask.
+  - on `L395_f11`, `/tmp/codeants-hcr-match-V8VB55` produced 4 direct label TIFFs, 4 metadata JSONs, and 12 recomputed match/review/final-pair CSVs.
+- What remains broken:
+  - strict final-pair key parity fails on real `L395_f11`: sst1_1 missing 3 extra 5, pth2 missing 1 extra 3, sst1_2 missing 0 extra 1, tac3b missing 7 extra 9.
+  - HCR warp filter statistics are still overlaid from accepted metadata; notebook-equivalent filter-stat recomputation has not been promoted.
+- Remaining in-slice work:
+  - none for exposing the recompute and parity gate.
+- Next likely breakpoint:
+  - compare accepted versus recomputed HCR labels, filter statistics, and match rows for the missing/extra final-pair keys to determine whether the mismatch is caused by label filtering, transform/resampling differences, or exact match/dedup policy.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_matching.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
+
 ### 2026-07-03 - extract HCR/anatomy match table builder
 
 - Slice goal:
