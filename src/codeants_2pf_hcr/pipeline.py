@@ -222,12 +222,18 @@ STAGED_FIGURE_FILES: tuple[str, ...] = (
 )
 
 RENDERED_FIGURE_FILES: tuple[str, ...] = (
+    "compound_50j_56i_unified.png",
     "single_fish_50l_responsive_identity_donut.png",
     "single_fish_hcr_anatomy_coexpression_summary.png",
 )
 
 LEGACY_COPIED_FIGURE_FILES: tuple[str, ...] = tuple(
     filename for filename in STAGED_FIGURE_FILES if filename not in RENDERED_FIGURE_FILES
+)
+
+COMPOSITE_50L_RENDER_INPUT_FILES: tuple[str, ...] = (
+    "motion_auc_plot_points.csv",
+    "motion_auc_plot_counts.csv",
 )
 
 CSV_COMPARISON_COLUMNS: dict[str, dict[str, tuple[str, ...]]] = {
@@ -3796,12 +3802,15 @@ def _render_package_owned_single_fish_figures(
     *,
     fish_id: str,
     canonical_root: Path,
+    composite_input_root: Path,
     output_dir: Path,
 ) -> None:
+    from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_responsive_identity_donut
     from codeants_2pf_hcr.plots.hcr import render_single_fish_hcr_anatomy_coexpression_summary
 
     master_csv = canonical_root / "functional_roi_activity_identity.csv"
+    bpi_cells_csv = canonical_root / "functional_roi_activity_bpi_cells.csv"
     conf_func_csv = canonical_root / "conf_to_func_pairs.csv"
     status_csv = canonical_root / "hcr_activity_status.csv"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -3809,8 +3818,16 @@ def _render_package_owned_single_fish_figures(
     with tempfile.TemporaryDirectory(prefix="codeants-make-figures-") as tmpdir:
         temp_reg = Path(tmpdir) / fish_id / "03_analysis" / "functional" / "registration"
         temp_reg.mkdir(parents=True, exist_ok=True)
-        for source in (master_csv, conf_func_csv):
+        for source in (master_csv, bpi_cells_csv, conf_func_csv, status_csv):
             (temp_reg / source.name).write_bytes(source.read_bytes())
+        for filename in COMPOSITE_50L_RENDER_INPUT_FILES:
+            source = composite_input_root / filename
+            (temp_reg / source.name).write_bytes(source.read_bytes())
+        render_single_fish_50l_composite(
+            out_reg=temp_reg,
+            outdir=output_dir,
+            fish_id=fish_id,
+        )
         render_single_fish_50l_responsive_identity_donut(
             fish_id=fish_id,
             master_csv=temp_reg / master_csv.name,
@@ -3844,6 +3861,7 @@ def run_single_fish_make_figures_stage(
         canonical_input_root=canonical_input_root,
         figure_input_root=figure_input_root,
     )
+    composite_input_root = paths.functional_registration_dir
     output_specs = _stage_output_specs(paths, "make-figures")
     output_paths = tuple(Path(spec.path) for spec in output_specs)
     figure_sources = {filename: figure_root / filename for filename in LEGACY_COPIED_FIGURE_FILES}
@@ -3856,6 +3874,13 @@ def run_single_fish_make_figures_stage(
                 "conf_to_func_pairs.csv",
                 "hcr_activity_status.csv",
             )
+        ),
+        *(
+            describe_manifest_path(
+                composite_input_root / filename,
+                label=f"make-figures composite render input: {filename}",
+            )
+            for filename in COMPOSITE_50L_RENDER_INPUT_FILES
         ),
         *(
             describe_manifest_path(figure_sources[filename], label=f"make-figures legacy source figure: {filename}")
@@ -3884,6 +3909,7 @@ def run_single_fish_make_figures_stage(
         _render_package_owned_single_fish_figures(
             fish_id=config.fish_id,
             canonical_root=canonical_root,
+            composite_input_root=composite_input_root,
             output_dir=output_by_name[RENDERED_FIGURE_FILES[0]].parent,
         )
         checks.extend(_build_staged_comparison_checks(paths, "make-figures"))
@@ -3913,12 +3939,13 @@ def run_single_fish_make_figures_stage(
             "pipeline_root": str(paths.pipeline_root),
             "canonical_input_root": str(canonical_root),
             "figure_input_root": str(figure_root),
+            "composite_input_root": str(composite_input_root),
             "canonical_input_root_is_explicit": canonical_input_root not in (None, "", False),
             "figure_input_root_is_explicit": figure_input_root not in (None, "", False),
             "force_recompute": bool(force_recompute),
             "rendered_figures": RENDERED_FIGURE_FILES,
             "legacy_copied_figures": LEGACY_COPIED_FIGURE_FILES,
-            "source_policy": "package-owned renderers produce the responsive identity donut and HCR anatomy coexpression summary from staged canonical CSVs; remaining declared figures are copied from the legacy figure input root until their full render inputs are staged",
+            "source_policy": "package-owned renderers produce the 50l composite, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs; remaining declared figures are copied from the legacy figure input root until their full render inputs are staged",
         },
         warnings=warnings,
         errors=errors,

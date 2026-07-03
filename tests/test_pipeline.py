@@ -163,6 +163,41 @@ def _make_minimal_fish(root: Path, fish_id: str = "L000_f00") -> Path:
             row_values["identity_label"] = "sst1.1"
         row = tuple(row_values.get(column, "1") for column in header)
         (registration_dir / name).write_text(",".join(header) + "\n" + ",".join(row) + "\n")
+    motion_points_header = (
+        "group",
+        "laterality",
+        "stim_mode",
+        "auc_dff",
+        "response_class",
+        "response_is_active",
+        "bpi_category",
+        "point_label_id",
+        "plane_idx",
+        "func_label",
+    )
+    motion_points_rows = [
+        ("All neurons", "ipsi", "bout", "0.30", "bout-responsive", "True", "bout-responsive", "all-ipsi-1", "0", "1"),
+        ("All neurons", "ipsi", "continuous", "0.42", "bout-responsive", "True", "bout-responsive", "all-ipsi-1", "0", "1"),
+        ("All neurons", "contra", "bout", "0.25", "bout-responsive", "True", "bout-responsive", "all-contra-1", "0", "1"),
+        ("All neurons", "contra", "continuous", "0.37", "bout-responsive", "True", "bout-responsive", "all-contra-1", "0", "1"),
+        ("sst1.1", "ipsi", "bout", "0.20", "bout-responsive", "True", "bout-responsive", "sst11-ipsi-1", "0", "1"),
+        ("sst1.1", "ipsi", "continuous", "0.32", "bout-responsive", "True", "bout-responsive", "sst11-ipsi-1", "0", "1"),
+        ("sst1.1", "contra", "bout", "0.18", "bout-responsive", "True", "bout-responsive", "sst11-contra-1", "0", "1"),
+        ("sst1.1", "contra", "continuous", "0.28", "bout-responsive", "True", "bout-responsive", "sst11-contra-1", "0", "1"),
+    ]
+    motion_counts_header = ("group", "laterality", "stim_mode", "n_total", "frac_responsive_used", "frac_low_used", "frac_other")
+    motion_counts_rows = [
+        (group, laterality, stim_mode, "1", "1.0", "0.0", "0.0")
+        for group in ("All neurons", "sst1.1")
+        for laterality in ("ipsi", "contra")
+        for stim_mode in ("bout", "continuous")
+    ]
+    (registration_dir / "motion_auc_plot_points.csv").write_text(
+        ",".join(motion_points_header) + "\n" + "\n".join(",".join(row) for row in motion_points_rows) + "\n"
+    )
+    (registration_dir / "motion_auc_plot_counts.csv").write_text(
+        ",".join(motion_counts_header) + "\n" + "\n".join(",".join(row) for row in motion_counts_rows) + "\n"
+    )
     (registration_dir / "reference_planes" / f"{fish_id}_plane0_ref.tif").write_bytes(b"tif")
     (fish_dir / "03_analysis" / "functional" / "ncc" / "ncc_bestz_by_plane.json").write_text("{}\n")
     (ncc_compare_dir / "inplane_registration_comparison.csv").write_text("col\n")
@@ -188,6 +223,15 @@ def _copy_file(src: Path, dst: Path) -> None:
 def _copy_csv_with_crlf(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_bytes(src.read_text().replace("\n", "\r\n").encode())
+
+
+def _add_make_figures_bpi_render_columns(csv_path: Path) -> None:
+    import pandas as pd
+
+    df = pd.read_csv(csv_path)
+    df["mean_bout_auc_dff"] = 0.30
+    df["mean_cont_auc_dff"] = 0.10
+    df.to_csv(csv_path, index=False)
 
 
 def _make_minimal_staged_outputs(fish_dir: Path) -> None:
@@ -3292,6 +3336,7 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
         "hcr_func_candidates.csv",
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
+    _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
 
     manifest = run_single_fish_make_figures_stage(
         SingleFishPipelineConfig(
@@ -3305,7 +3350,7 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     figure_dir = output_root / "make-figures" / "04_plots"
     assert manifest.status == "pass"
     assert len(tuple(figure_dir.glob("*.png"))) == 5
-    assert (figure_dir / "compound_50j_56i_unified.png").read_bytes() == (
+    assert (figure_dir / "compound_50j_56i_unified.png").read_bytes() != (
         fish_dir / "04_plots" / "compound_50j_56i_unified.png"
     ).read_bytes()
     assert (figure_dir / "single_fish_50l_responsive_identity_donut.png").read_bytes() != (
@@ -3319,11 +3364,11 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert manifest.parameters is not None
     assert "package-owned renderers" in manifest.parameters["source_policy"]
     assert tuple(manifest.parameters["rendered_figures"]) == (
+        "compound_50j_56i_unified.png",
         "single_fish_50l_responsive_identity_donut.png",
         "single_fish_hcr_anatomy_coexpression_summary.png",
     )
     assert tuple(manifest.parameters["legacy_copied_figures"]) == (
-        "compound_50j_56i_unified.png",
         "bpi_all_pairs.png",
         "per_gene_stimulus_trace_with_hcr_status_56h.png",
     )
@@ -3374,6 +3419,7 @@ def test_single_fish_pipeline_cli_make_figures_outputs_manifest(tmp_path: Path) 
         "hcr_func_candidates.csv",
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
+    _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
     result = subprocess.run(
         [
             sys.executable,

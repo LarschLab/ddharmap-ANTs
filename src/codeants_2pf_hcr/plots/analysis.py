@@ -1786,21 +1786,30 @@ def render_single_fish_50l_composite(
             }
         )
     y_limit = outer_label_radius - 0.06
+    outer_label_min_sep = float(run_config_d.get("COMPOSITE_50L_DONUT_OUTER_LABEL_MIN_SEP", 0.24))
     for side in (-1.0, 1.0):
         side_items = [item for item in outer_label_items if item["side"] == side]
         side_items.sort(key=lambda d: d["text_y"])
-        prev_y = -np.inf
-        for item in side_items:
-            if item["text_y"] - prev_y < 0.20:
-                item["text_y"] = prev_y + 0.20
-            prev_y = item["text_y"]
-        prev_y = np.inf
-        for item in reversed(side_items):
-            if prev_y - item["text_y"] < 0.20:
-                item["text_y"] = prev_y - 0.20
-            prev_y = item["text_y"]
-        for item in side_items:
-            item["text_y"] = float(np.clip(item["text_y"], -y_limit, y_limit))
+        if not side_items:
+            continue
+        ys = np.asarray([float(item["text_y"]) for item in side_items], dtype=float)
+        for idx in range(1, len(ys)):
+            ys[idx] = max(float(ys[idx]), float(ys[idx - 1]) + outer_label_min_sep)
+        allowed_span = 2.0 * float(y_limit)
+        current_span = float(ys[-1] - ys[0]) if len(ys) > 1 else 0.0
+        if current_span > allowed_span and len(ys) > 1:
+            ys = np.linspace(-float(y_limit), float(y_limit), num=len(ys), dtype=float)
+        else:
+            if float(ys[-1]) > float(y_limit):
+                ys -= float(ys[-1]) - float(y_limit)
+            if float(ys[0]) < -float(y_limit):
+                ys += -float(y_limit) - float(ys[0])
+            for idx in range(1, len(ys)):
+                ys[idx] = max(float(ys[idx]), float(ys[idx - 1]) + outer_label_min_sep)
+            if float(ys[-1]) > float(y_limit):
+                ys -= float(ys[-1]) - float(y_limit)
+        for item, y_val in zip(side_items, ys):
+            item["text_y"] = float(np.clip(float(y_val), -float(y_limit), float(y_limit)))
     for item in outer_label_items:
         ax_donut.annotate(
             item["label"],

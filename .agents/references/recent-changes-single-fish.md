@@ -28,6 +28,33 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - render staged 50l composite in `make-figures`
+
+- Slice goal:
+  - replace one remaining copied `make-figures` artifact with an existing package-owned renderer.
+- Passes completed in this session:
+  - changed `make-figures` so `compound_50j_56i_unified.png` is rendered by `plots.analysis.render_single_fish_50l_composite`.
+  - declared `motion_auc_plot_points.csv` and `motion_auc_plot_counts.csv` as composite render inputs from the functional registration root.
+  - kept the stage as figure rendering only by copying canonical and `[56i]` CSV inputs into a temporary self-consistent registration bundle instead of rebuilding AUC tables.
+  - updated local make-figures tests so the synthetic fixture includes the required AUC and BPI render columns.
+- What changed:
+  - `make-figures` now records three rendered figures: `compound_50j_56i_unified.png`, `single_fish_50l_responsive_identity_donut.png`, and `single_fish_hcr_anatomy_coexpression_summary.png`.
+  - only `bpi_all_pairs.png` and `per_gene_stimulus_trace_with_hcr_status_56h.png` remain copied from the legacy plot root.
+- What remains broken:
+  - `bpi_all_pairs.png` and `per_gene_stimulus_trace_with_hcr_status_56h.png` still need package-owned render promotion.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_plots_analysis.py -k '50l_composite'` and `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'make_figures'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_plots_analysis.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, and `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`.
+  - real `L395_f11` validation on `linnaeus` used `/tmp/codeants-fig-composite-xjyda6` with an explicit accepted canonical input root. `make-figures --strict` wrote all 5 PNG outputs with zero errors; the only warning was the pre-existing responsive-identity donut thumbnail warning.
+  - strict `compare-staged --stage-name make-figures` against that root reported zero failed checks and zero warning entries.
+  - visual verification opened `/tmp/codeants-fig-composite-xjyda6/compound_50j_56i_unified.png`, confirmed nonblank 3150x3456 output, separated donut callouts after label-stacking repair, populated panels, and visible legends.
+- Remaining in-slice work:
+  - none for the 50l composite make-figures promotion.
+- Next likely breakpoint:
+  - after validation, update the stage comparison/roadmap evidence and choose the next copied figure or QA/freshness slice.
+- Rerun implications:
+  - run focused make-figures tests, plot tests for 50l composite, docs tests, and `make-figures --strict` plus `compare-staged --stage-name make-figures` on `L395_f11`.
+
 ### 2026-07-03 - reconcile staged roadmap after HCR replay/direct-warp promotion
 
 - Slice goal:
