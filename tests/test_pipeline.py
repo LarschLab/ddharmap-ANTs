@@ -427,6 +427,34 @@ def _write_hcr_aligned_artifacts(source_root: Path, fish_id: str = "L000_f00") -
     (source_root / f"{fish_id}_round1_channel2_sst1_1_in_2p.nrrd").write_bytes(b"large-volume-placeholder")
 
 
+def _write_hcr_direct_recompute_inputs(fish_dir: Path) -> None:
+    fish_id = fish_dir.name
+    data_root = fish_dir.parent
+    (data_root / "matchingMetadata.csv").write_text(
+        "\ufefffish_id,best_round,num_rounds,polarity,bigwarp\n"
+        f"{fish_id},r2,2,south,False\n"
+    )
+    raw_cp_masks = fish_dir / "03_analysis" / "confocal" / "raw" / "cp_masks"
+    raw_cp_masks.mkdir(parents=True, exist_ok=True)
+    (raw_cp_masks / f"{fish_id}_round1_channel2_sst1_1_cp_masks.tif").write_bytes(b"raw-mask")
+    rbest = fish_dir / "02_reg" / "00_preprocessing" / "rbest"
+    rn = fish_dir / "02_reg" / "00_preprocessing" / "rn"
+    rbest.mkdir(parents=True, exist_ok=True)
+    rn.mkdir(parents=True, exist_ok=True)
+    (rbest / f"{fish_id}_round2_channel2_sst1_2.nrrd").write_bytes(b"rbest-hcr")
+    (rn / f"{fish_id}_round1_channel2_sst1_1.nrrd").write_bytes(b"rn-hcr")
+    rbest_tforms = fish_dir / "02_reg" / "01_rbest-2p" / "transMatrices"
+    rn_tforms = fish_dir / "02_reg" / "02_rn-rbest" / "transMatrices"
+    rbest_tforms.mkdir(parents=True, exist_ok=True)
+    rn_tforms.mkdir(parents=True, exist_ok=True)
+    (rbest_tforms / f"{fish_id}_round2_GCaMP_to_2p_0GenericAffine.mat").write_text("affine\n")
+    (rbest_tforms / f"{fish_id}_round2_GCaMP_to_2p_1Warp.nii.gz").write_bytes(b"warp")
+    (rbest_tforms / f"{fish_id}_round2_GCaMP_to_2p_1InverseWarp.nii.gz").write_bytes(b"inverse")
+    (rn_tforms / f"{fish_id}_round1_GCaMP_to_r2_0GenericAffine.mat").write_text("affine\n")
+    (rn_tforms / f"{fish_id}_round1_GCaMP_to_r2_1Warp.nii.gz").write_bytes(b"warp")
+    (rn_tforms / f"{fish_id}_round1_GCaMP_to_r2_1InverseWarp.nii.gz").write_bytes(b"inverse")
+
+
 def _write_control_roi_identity_csv(source_root: Path) -> Path:
     source_root.mkdir(parents=True, exist_ok=True)
     path = source_root / "functional_roi_activity_identity.csv"
@@ -962,7 +990,38 @@ def test_register_hcr_to_anatomy_stage_stages_small_aligned_artifacts(tmp_path: 
     assert not (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_in_2p.nrrd").exists()
     assert manifest.parameters["copy_policy"] == "csv_json_tif_only"
     assert manifest.parameters["input_aligned_nrrd_count"] == 1
+    assert manifest.parameters["hcr_recompute_mode"] == "accepted_artifact_staging_with_direct_ants_readiness"
     assert any(check.label == "large aligned intensity volumes not copied" and check.status == "pass" for check in manifest.checks)
+    assert any(check.label == "HCR direct recompute matching metadata" and check.status == "warn" for check in manifest.checks)
+
+
+def test_register_hcr_to_anatomy_stage_reports_direct_ants_recompute_prerequisites(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    source_root = fish_dir / "03_analysis" / "confocal" / "aligned"
+    _write_hcr_aligned_artifacts(source_root, fish_dir.name)
+    _write_hcr_direct_recompute_inputs(fish_dir)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+
+    manifest = run_register_hcr_to_anatomy_stage(config, source_root=source_root, force_recompute=True)
+
+    checks_by_label = {check.label: check for check in manifest.checks}
+    assert manifest.status == "pass"
+    assert manifest.parameters["matching_metadata_best_round"] == "r2"
+    assert manifest.parameters["matching_metadata_num_rounds"] == "2"
+    assert manifest.parameters["matching_metadata_bigwarp"] is False
+    assert manifest.parameters["hcr_direct_ants_expected"] is True
+    assert manifest.parameters["hcr_raw_cp_mask_count"] == 2
+    assert manifest.parameters["hcr_rbest_nrrd_count"] == 2
+    assert manifest.parameters["hcr_rn_nrrd_count"] == 1
+    assert manifest.parameters["hcr_rbest_to_2p_affine_count"] == 1
+    assert manifest.parameters["hcr_rbest_to_2p_warp_count"] == 1
+    assert manifest.parameters["hcr_rn_to_rbest_required"] is True
+    assert checks_by_label["HCR direct recompute matching metadata"].status == "pass"
+    assert checks_by_label["HCR direct recompute route"].status == "pass"
+    assert checks_by_label["HCR direct recompute raw masks"].status == "pass"
+    assert checks_by_label["HCR direct recompute rbest NRRDs"].status == "pass"
+    assert checks_by_label["HCR direct recompute rbest-to-2p transforms"].status == "pass"
+    assert checks_by_label["HCR direct recompute rn-to-rbest transforms"].status == "pass"
 
 
 def test_register_hcr_to_anatomy_stage_refuses_existing_outputs_without_force(tmp_path: Path) -> None:

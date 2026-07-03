@@ -28,6 +28,28 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - add HCR direct-ANTs recompute readiness checks
+
+- Slice goal:
+  - make the remaining `register-hcr-to-anatomy` recompute boundary explicit before extracting true HCR warp recomputation from notebook-derived code.
+- Passes completed in this session:
+  - added package-owned manifest provenance for the current fish matching metadata row, `bigwarp` route, raw HCR Cellpose masks, rbest/rn HCR NRRDs, rbest-to-2p transform files, and rn-to-rbest transform files.
+  - added warning-level readiness checks to `run_register_hcr_to_anatomy_stage` without changing the accepted-artifact staging copy policy or making missing recompute prerequisites fail the existing staging mode.
+  - added focused tests for the minimal accepted-artifact staging path and the fully present direct-ANTs prerequisite path.
+- What changed:
+  - `register-hcr-to-anatomy` manifests now report `hcr_recompute_mode=accepted_artifact_staging_with_direct_ants_readiness` plus direct-ANTs prerequisite counts/route fields.
+  - On real `L395_f11`, a temporary `linnaeus` run at `/tmp/codeants-hcr-readiness-YUhSnp` passed with zero warnings: metadata `best_round=r2`, `num_rounds=2`, `bigwarp=False`; raw HCR masks `4`; rbest HCR NRRDs `2`; rn HCR NRRDs `2`; rbest-to-2p affine/warp `1/1`; rn-to-rbest affine/warp `1/1`; staged accepted artifacts `46`; aligned intensity NRRD inputs `6`.
+  - The stage still stages accepted aligned HCR artifacts; it does not yet warp raw HCR masks or intensity volumes.
+- What remains broken:
+  - true HCR warp recomputation remains unimplemented in the staged writer.
+- Remaining in-slice work:
+  - none for readiness instrumentation.
+- Next likely breakpoint:
+  - extract a minimal direct-ANTs HCR mask warp implementation from the notebook-derived HCR warp cells into package-owned code, using the readiness fields as the prerequisite gate.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py` plus docs/package export checks before commit.
+  - real validation is complete for `L395_f11`; rerun `register-hcr-to-anatomy --strict --force-recompute` in a temporary `--pipeline-root` if the mounted fish inputs or matching metadata change.
+
 ### 2026-07-02 - promote match-roi-to-anatomy recompute parity
 
 - Slice goal:

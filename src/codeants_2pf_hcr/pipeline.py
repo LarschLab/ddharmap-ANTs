@@ -5595,6 +5595,162 @@ def _hcr_match_results_from_staged_final_pairs(hcr_anatomy_root: Path) -> list[d
     return results
 
 
+def _matching_metadata_row(path: Path, fish_id: str) -> dict[str, str]:
+    if not path.exists() or not path.is_file():
+        return {}
+    with path.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        if not reader.fieldnames:
+            return {}
+        normalized = {str(field).lstrip("\ufeff").strip().lower(): field for field in reader.fieldnames}
+        fish_col = next((normalized[key] for key in ("fish_id", "fish", "fishid") if key in normalized), None)
+        if fish_col is None:
+            return {}
+        for row in reader:
+            if str(row.get(fish_col, "")).strip() == str(fish_id):
+                return {str(key).lstrip("\ufeff"): str(value).strip() for key, value in row.items()}
+    return {}
+
+
+def _matching_metadata_value(row: dict[str, str], *names: str) -> str | None:
+    normalized = {key.strip().lower(): value for key, value in row.items()}
+    for name in names:
+        value = normalized.get(name.strip().lower())
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _parse_bool_text(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "y"}:
+        return True
+    if text in {"false", "0", "no", "n"}:
+        return False
+    return None
+
+
+def _hcr_channel_nrrds(directory: Path) -> tuple[Path, ...]:
+    if not directory.exists():
+        return ()
+    return tuple(
+        path
+        for path in sorted(directory.glob("*.nrrd"))
+        if path.is_file() and _is_real_match(path) and "gcamp" not in path.name.lower()
+    )
+
+
+def _transform_file_counts(directory: Path) -> dict[str, int]:
+    if not directory.exists():
+        return {"affine": 0, "warp": 0, "inverse_warp": 0}
+    files = tuple(path for path in directory.glob("*") if path.is_file() and _is_real_match(path))
+    return {
+        "affine": sum(1 for path in files if path.name.endswith("0GenericAffine.mat")),
+        "warp": sum(1 for path in files if path.name.endswith("1Warp.nii.gz")),
+        "inverse_warp": sum(1 for path in files if path.name.endswith("1InverseWarp.nii.gz")),
+    }
+
+
+def _count_real_files(directory: Path, pattern: str) -> int:
+    return len(tuple(path for path in directory.glob(pattern) if path.is_file() and _is_real_match(path)))
+
+
+def _hcr_direct_ants_recompute_provenance(
+    paths: PipelinePaths,
+) -> tuple[dict[str, Any], tuple[StageCheckRecord, ...]]:
+    metadata_row = _matching_metadata_row(paths.matching_metadata_csv, paths.fish_dir.name)
+    best_round = _matching_metadata_value(metadata_row, "best_round", "best round")
+    num_rounds = _matching_metadata_value(metadata_row, "num_rounds", "num rounds", "n_rounds")
+    bigwarp = _parse_bool_text(_matching_metadata_value(metadata_row, "bigwarp", "big_warp", "use_bigwarp"))
+    rbest_dir = paths.preproc_dir / "rbest"
+    rn_dir = paths.preproc_dir / "rn"
+    rbest_to_2p_dir = paths.preproc_dir.parent / "01_rbest-2p" / "transMatrices"
+    rn_to_rbest_dir = paths.preproc_dir.parent / "02_rn-rbest" / "transMatrices"
+    raw_cp_mask_count = _count_real_files(paths.confocal_raw_cp_masks_dir, "*_cp_masks.tif")
+    rbest_hcr_nrrds = _hcr_channel_nrrds(rbest_dir)
+    rn_hcr_nrrds = _hcr_channel_nrrds(rn_dir)
+    rbest_to_2p_counts = _transform_file_counts(rbest_to_2p_dir)
+    rn_to_rbest_counts = _transform_file_counts(rn_to_rbest_dir)
+    num_rounds_value: float | None = None
+    try:
+        num_rounds_value = float(num_rounds) if num_rounds not in (None, "") else None
+    except ValueError:
+        num_rounds_value = None
+    needs_rn_to_rbest = bool(rn_hcr_nrrds) or (num_rounds_value is not None and num_rounds_value > 1)
+    direct_ants_expected = bigwarp is False
+    provenance: dict[str, Any] = {
+        "matching_metadata_row_found": bool(metadata_row),
+        "matching_metadata_best_round": best_round,
+        "matching_metadata_num_rounds": num_rounds,
+        "matching_metadata_bigwarp": bigwarp,
+        "hcr_raw_cp_mask_count": raw_cp_mask_count,
+        "hcr_rbest_nrrd_count": len(rbest_hcr_nrrds),
+        "hcr_rn_nrrd_count": len(rn_hcr_nrrds),
+        "hcr_rbest_to_2p_affine_count": rbest_to_2p_counts["affine"],
+        "hcr_rbest_to_2p_warp_count": rbest_to_2p_counts["warp"],
+        "hcr_rbest_to_2p_inverse_warp_count": rbest_to_2p_counts["inverse_warp"],
+        "hcr_rn_to_rbest_affine_count": rn_to_rbest_counts["affine"],
+        "hcr_rn_to_rbest_warp_count": rn_to_rbest_counts["warp"],
+        "hcr_rn_to_rbest_inverse_warp_count": rn_to_rbest_counts["inverse_warp"],
+        "hcr_direct_ants_expected": direct_ants_expected,
+        "hcr_rn_to_rbest_required": needs_rn_to_rbest,
+    }
+    checks = [
+        StageCheckRecord(
+            label="HCR direct recompute matching metadata",
+            status="pass" if metadata_row else "warn",
+            detail="matchingMetadata.csv row is available to select the HCR warp route",
+            observed="found" if metadata_row else "missing",
+            expected=paths.fish_dir.name,
+        ),
+        StageCheckRecord(
+            label="HCR direct recompute route",
+            status="pass" if direct_ants_expected else "warn",
+            detail="matching metadata selects the direct ANTs HCR warp route rather than external BigWarp",
+            observed=f"bigwarp={bigwarp}",
+            expected="bigwarp=False",
+        ),
+        StageCheckRecord(
+            label="HCR direct recompute raw masks",
+            status="pass" if raw_cp_mask_count > 0 else "warn",
+            detail="raw HCR Cellpose masks are available as warp inputs",
+            observed=str(raw_cp_mask_count),
+            expected=">=1",
+        ),
+        StageCheckRecord(
+            label="HCR direct recompute rbest NRRDs",
+            status="pass" if len(rbest_hcr_nrrds) > 0 else "warn",
+            detail="rbest HCR intensity NRRDs are available for mask/intensity pairing",
+            observed=str(len(rbest_hcr_nrrds)),
+            expected=">=1",
+        ),
+        StageCheckRecord(
+            label="HCR direct recompute rbest-to-2p transforms",
+            status="pass" if rbest_to_2p_counts["affine"] > 0 and rbest_to_2p_counts["warp"] > 0 else "warn",
+            detail="current fish rbest-to-2p ANTs affine and warp files are available",
+            observed=f"affine={rbest_to_2p_counts['affine']},warp={rbest_to_2p_counts['warp']}",
+            expected="affine>=1,warp>=1",
+        ),
+        StageCheckRecord(
+            label="HCR direct recompute rn-to-rbest transforms",
+            status=(
+                "pass"
+                if not needs_rn_to_rbest or (rn_to_rbest_counts["affine"] > 0 and rn_to_rbest_counts["warp"] > 0)
+                else "warn"
+            ),
+            detail="current fish rn-to-rbest ANTs affine and warp files are available when non-rbest rounds are present",
+            observed=(
+                f"required={needs_rn_to_rbest},affine={rn_to_rbest_counts['affine']},"
+                f"warp={rn_to_rbest_counts['warp']}"
+            ),
+            expected="not required or affine>=1,warp>=1",
+        ),
+    ]
+    return provenance, tuple(checks)
+
+
 def run_register_hcr_to_anatomy_stage(
     config: SingleFishPipelineConfig,
     *,
@@ -5624,6 +5780,7 @@ def run_register_hcr_to_anatomy_stage(
         final_pair_rows = sum((_csv_row_count(path) or 0) for path in final_pair_paths)
         final_pair_schema_status, final_pair_schema_observed = _hcr_final_pair_schema_status(final_pair_paths)
         final_pair_acceptance_status, final_pair_acceptance_observed = _hcr_final_pair_acceptance_status(final_pair_paths)
+        direct_ants_provenance, direct_ants_checks = _hcr_direct_ants_recompute_provenance(paths)
         checks = (
             StageCheckRecord(
                 label="HCR aligned label TIFFs",
@@ -5680,11 +5837,12 @@ def run_register_hcr_to_anatomy_stage(
                 detail="multi-GB aligned intensity NRRDs are recorded as inputs only for this baseline writer",
                 observed=str(len(source_groups["aligned_nrrds"])),
             ),
-        )
+        ) + direct_ants_checks
         status = "pass" if not any(check.status == "fail" for check in checks) else "fail"
         errors: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
         warnings: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "warn")
     except Exception as exc:
+        direct_ants_provenance = {}
         source_groups = {
             "label_tiffs": (),
             "qc_tiffs": (),
@@ -5735,6 +5893,8 @@ def run_register_hcr_to_anatomy_stage(
             "copied_artifact_count": len(copied_outputs),
             "input_aligned_nrrd_count": len(source_groups["aligned_nrrds"]),
             "copy_policy": "csv_json_tif_only",
+            "hcr_recompute_mode": "accepted_artifact_staging_with_direct_ants_readiness",
+            **direct_ants_provenance,
         },
         warnings=warnings,
         errors=errors,
