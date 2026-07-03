@@ -255,6 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_fish_args(register_hcr)
     register_hcr.add_argument("--source-root", type=Path)
     register_hcr.add_argument("--output-root", type=Path)
+    register_hcr.add_argument("--recompute-direct-ants", action="store_true")
     register_hcr.add_argument("--force-recompute", action="store_true")
 
     match_roi = subparsers.add_parser(
@@ -606,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
             source_root=args.source_root,
             output_root=args.output_root,
             force_recompute=args.force_recompute,
+            recompute_direct_ants=args.recompute_direct_ants,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

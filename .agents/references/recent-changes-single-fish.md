@@ -28,6 +28,30 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - add opt-in direct ANTs HCR label warp
+
+- Slice goal:
+  - replace the accepted HCR label TIFF copy path with a package-owned direct ANTs label warp while preserving downstream parity gates.
+- Passes completed in this session:
+  - added `hcr_warp.HcrDirectWarpResult`, `build_direct_ants_hcr_transform_chain`, and `run_direct_ants_hcr_label_warp`.
+  - implemented notebook-equivalent direct label-warp mechanics: raw HCR mask TIFF ZYX -> ANTs XYZ image, clone moving-intensity geometry, apply best-round rbest-to-2p warp/affine plus rn-to-rbest warp/affine for non-best rounds, all with `whichtoinvert=False`, then write 2P-space uint16 label TIFFs and warp metadata.
+  - added `register-hcr-to-anatomy --recompute-direct-ants`; in this opt-in mode the stage recomputes HCR label TIFFs/warp metadata, copies accepted match/review/final-pair CSVs, and overlays accepted filter stats into recomputed metadata until filter-stat recomputation is promoted.
+  - added focused local tests for transform-chain order, ZYX/XYZ transposition with a fake `ants` module, and pipeline-level direct-recompute wiring.
+- What changed:
+  - `register-hcr-to-anatomy` can now run in `hcr_recompute_mode=direct_ants_label_warp_with_accepted_match_tables`.
+  - On real `L395_f11`, `/tmp/codeants-hcr-direct-Cjks9D` ran `register-hcr-to-anatomy --recompute-direct-ants --force-recompute` with `status=pass`, zero errors, zero warnings, `direct_ants_warp_result_count=4`, `direct_ants_filter_stats_overlay_count=4`, `recomputed_label_artifact_count=8`, and `copied_artifact_count=32`.
+  - The same temp root fed dependency-aware `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` with zero failed checks; remaining warnings were byte-parity only.
+- What remains broken:
+  - HCR/anatomy match/review/final-pair CSVs are still accepted controls, not recomputed from recomputed label TIFFs.
+  - HCR warp filter statistics are still overlaid from accepted metadata; the notebook filter policy has not yet been promoted.
+- Remaining in-slice work:
+  - none for opt-in direct label warp promotion.
+- Next likely breakpoint:
+  - promote HCR filter-stat recomputation and/or HCR/anatomy match/final-pair recomputation so `register-hcr-to-anatomy` no longer depends on accepted HCR metadata/CSV controls.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_hcr_warp.py tests/test_pipeline.py -k "register_hcr_to_anatomy"` plus full pipeline/doc checks before commit.
+  - real validation: rerun `register-hcr-to-anatomy --recompute-direct-ants`, then first downstream `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` in one temporary `--pipeline-root`.
+
 ### 2026-07-03 - add HCR direct-ANTs recompute readiness checks
 
 - Slice goal:

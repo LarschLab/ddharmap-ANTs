@@ -3,6 +3,7 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1022,6 +1023,58 @@ def test_register_hcr_to_anatomy_stage_reports_direct_ants_recompute_prerequisit
     assert checks_by_label["HCR direct recompute rbest NRRDs"].status == "pass"
     assert checks_by_label["HCR direct recompute rbest-to-2p transforms"].status == "pass"
     assert checks_by_label["HCR direct recompute rn-to-rbest transforms"].status == "pass"
+
+
+def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    source_root = fish_dir / "03_analysis" / "confocal" / "aligned"
+    _write_hcr_aligned_artifacts(source_root, fish_dir.name)
+    _write_hcr_direct_recompute_inputs(fish_dir)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+
+    def fake_direct_warp(**kwargs):
+        output_dir = Path(kwargs["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        label_path = output_dir / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_labels_uint16.tif"
+        meta_path = output_dir / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_warp_meta.json"
+        label_path.write_bytes(b"recomputed-label")
+        meta_path.write_text('{"method":"ants_direct_to_2p"}\n')
+        return (
+            SimpleNamespace(
+                output_label_path=str(label_path),
+                output_metadata_path=str(meta_path),
+            ),
+        )
+
+    import codeants_2pf_hcr.hcr_warp as hcr_warp
+
+    monkeypatch.setattr(hcr_warp, "run_direct_ants_hcr_label_warp", fake_direct_warp)
+
+    manifest = run_register_hcr_to_anatomy_stage(
+        config,
+        source_root=source_root,
+        force_recompute=True,
+        recompute_direct_ants=True,
+    )
+
+    out_root = hcr_to_anatomy_registration_root(resolve_pipeline_paths(config)) / "confocal" / "aligned"
+    checks_by_label = {check.label: check for check in manifest.checks}
+    assert manifest.status == "pass"
+    assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_labels_uint16.tif").read_bytes() == b"recomputed-label"
+    assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_matches.csv").exists()
+    assert manifest.parameters["hcr_recompute_mode"] == "direct_ants_label_warp_with_accepted_match_tables"
+    assert manifest.parameters["recompute_direct_ants"] is True
+    assert manifest.parameters["direct_ants_warp_result_count"] == 1
+    assert manifest.parameters["direct_ants_filter_stats_overlay_count"] == 1
+    assert manifest.parameters["recomputed_label_artifact_count"] == 2
+    assert checks_by_label["HCR direct ANTs label warp recompute"].status == "pass"
+    assert checks_by_label["HCR direct ANTs accepted filter stats overlay"].status == "pass"
+    meta = json.loads((out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_warp_meta.json").read_text())
+    assert meta["filter_stats"]["n_labels_after"] == 2
+    assert meta["filter_stats_source"] == "accepted_hcr_warp_metadata"
 
 
 def test_register_hcr_to_anatomy_stage_refuses_existing_outputs_without_force(tmp_path: Path) -> None:

@@ -5527,15 +5527,25 @@ def _discover_hcr_aligned_stage_files(source_root: Path) -> dict[str, tuple[Path
     }
 
 
-def _copy_hcr_aligned_stage_files(source_root: Path, output_root: Path) -> tuple[Path, ...]:
+def _copy_hcr_aligned_stage_files(
+    source_root: Path,
+    output_root: Path,
+    *,
+    skip_label_tiffs: bool = False,
+    skip_warp_meta_jsons: bool = False,
+) -> tuple[Path, ...]:
     groups = _discover_hcr_aligned_stage_files(source_root)
+    qc_tiffs = groups["qc_tiffs"]
+    if skip_label_tiffs:
+        qc_tiffs = tuple(path for path in qc_tiffs if path not in set(groups["label_tiffs"]))
+    warp_meta_jsons = () if skip_warp_meta_jsons else groups["warp_meta_jsons"]
     copied: list[Path] = []
     stage_inputs = (
-        *groups["qc_tiffs"],
+        *qc_tiffs,
         *groups["match_csvs"],
         *groups["review_csvs"],
         *groups["final_pair_csvs"],
-        *groups["warp_meta_jsons"],
+        *warp_meta_jsons,
     )
     for source_path in dict.fromkeys(stage_inputs):
         target_path = output_root / source_path.name
@@ -5657,6 +5667,60 @@ def _count_real_files(directory: Path, pattern: str) -> int:
     return len(tuple(path for path in directory.glob(pattern) if path.is_file() and _is_real_match(path)))
 
 
+def _hcr_raw_mask_paths(paths: PipelinePaths) -> tuple[Path, ...]:
+    if not paths.confocal_raw_cp_masks_dir.exists():
+        return ()
+    return tuple(
+        path
+        for path in sorted(
+            [*paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tif"), *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tiff")]
+        )
+        if path.is_file() and _is_real_match(path)
+    )
+
+
+def _accepted_hcr_filter_stats_by_stem(source_root: Path) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for path in sorted(source_root.glob("*_cp_masks_in_2p_warp_meta.json")):
+        if not _is_real_match(path):
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except Exception:
+            continue
+        filter_stats = payload.get("filter_stats")
+        if not isinstance(filter_stats, dict):
+            continue
+        stem = path.name.replace("_in_2p_warp_meta.json", "")
+        out[stem] = dict(filter_stats)
+    return out
+
+
+def _overlay_accepted_hcr_filter_stats(
+    direct_warp_results: tuple[Any, ...],
+    source_root: Path,
+) -> int:
+    filter_stats_by_stem = _accepted_hcr_filter_stats_by_stem(source_root)
+    updated = 0
+    for result in direct_warp_results:
+        metadata_path = Path(result.output_metadata_path)
+        if not metadata_path.exists():
+            continue
+        stem = metadata_path.name.replace("_in_2p_warp_meta.json", "")
+        filter_stats = filter_stats_by_stem.get(stem)
+        if filter_stats is None:
+            continue
+        try:
+            payload = json.loads(metadata_path.read_text())
+        except Exception:
+            continue
+        payload["filter_stats"] = filter_stats
+        payload["filter_stats_source"] = "accepted_hcr_warp_metadata"
+        metadata_path.write_text(json.dumps(payload, indent=2))
+        updated += 1
+    return updated
+
+
 def _hcr_direct_ants_recompute_provenance(
     paths: PipelinePaths,
 ) -> tuple[dict[str, Any], tuple[StageCheckRecord, ...]]:
@@ -5757,6 +5821,7 @@ def run_register_hcr_to_anatomy_stage(
     source_root: str | Path | None = None,
     output_root: str | Path | None = None,
     force_recompute: bool = False,
+    recompute_direct_ants: bool = False,
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
     source_root_path = Path(source_root) if source_root not in (None, "", False) else paths.confocal_aligned_dir
@@ -5770,23 +5835,55 @@ def run_register_hcr_to_anatomy_stage(
                 "register-hcr-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
                 + ", ".join(str(path) for path in existing_outputs[:10])
             )
-        copied_outputs = _copy_hcr_aligned_stage_files(source_root_path, aligned_output_root)
+        direct_ants_provenance, direct_ants_checks = _hcr_direct_ants_recompute_provenance(paths)
+        direct_warp_results: tuple[Any, ...] = ()
+        if recompute_direct_ants:
+            if not direct_ants_provenance.get("hcr_direct_ants_expected"):
+                raise RuntimeError("Direct ANTs HCR recompute requested, but matching metadata does not select bigwarp=False.")
+            best_round_raw = direct_ants_provenance.get("matching_metadata_best_round")
+            if best_round_raw in (None, ""):
+                raise RuntimeError("Direct ANTs HCR recompute requested, but best_round is missing from matching metadata.")
+            best_round_idx = int(str(best_round_raw).lower().lstrip("r"))
+            from .hcr_warp import run_direct_ants_hcr_label_warp
+
+            direct_warp_results = run_direct_ants_hcr_label_warp(
+                fish_id=config.fish_id,
+                mask_paths=_hcr_raw_mask_paths(paths),
+                preproc_dir=paths.preproc_dir,
+                anatomy_intensity_path=paths.anatomy_preproc_dir / f"{config.fish_id}_anatomy_2P_GCaMP.nrrd",
+                output_dir=aligned_output_root,
+                best_round_idx=best_round_idx,
+                rbest_to_2p_transform_dir=paths.preproc_dir.parent / "01_rbest-2p" / "transMatrices",
+                rn_to_rbest_transform_dir=paths.preproc_dir.parent / "02_rn-rbest" / "transMatrices",
+            )
+            accepted_filter_stats_overlay_count = _overlay_accepted_hcr_filter_stats(direct_warp_results, source_root_path)
+        else:
+            accepted_filter_stats_overlay_count = 0
+        copied_outputs = _copy_hcr_aligned_stage_files(
+            source_root_path,
+            aligned_output_root,
+            skip_label_tiffs=bool(recompute_direct_ants),
+            skip_warp_meta_jsons=bool(recompute_direct_ants),
+        )
+        recomputed_outputs = tuple(Path(result.output_label_path) for result in direct_warp_results) + tuple(
+            Path(result.output_metadata_path) for result in direct_warp_results
+        )
+        staged_outputs = (*copied_outputs, *recomputed_outputs)
         copied_names = {path.name for path in copied_outputs}
-        copied_label_count = sum(1 for path in copied_outputs if path.name.endswith("_cp_masks_in_2p_labels_uint16.tif"))
-        copied_match_count = sum(1 for path in copied_outputs if path.name.endswith("_cp_masks_in_2p_matches.csv"))
-        copied_final_pair_count = sum(1 for path in copied_outputs if path.name.endswith("_cp_masks_in_2p_final_pairs.csv"))
-        copied_meta_count = sum(1 for path in copied_outputs if path.name.endswith("_warp_meta.json"))
-        final_pair_paths = tuple(path for path in copied_outputs if path.name.endswith("_cp_masks_in_2p_final_pairs.csv"))
+        staged_label_count = sum(1 for path in staged_outputs if path.name.endswith("_cp_masks_in_2p_labels_uint16.tif"))
+        copied_match_count = sum(1 for path in staged_outputs if path.name.endswith("_cp_masks_in_2p_matches.csv"))
+        copied_final_pair_count = sum(1 for path in staged_outputs if path.name.endswith("_cp_masks_in_2p_final_pairs.csv"))
+        staged_meta_count = sum(1 for path in staged_outputs if path.name.endswith("_warp_meta.json"))
+        final_pair_paths = tuple(path for path in staged_outputs if path.name.endswith("_cp_masks_in_2p_final_pairs.csv"))
         final_pair_rows = sum((_csv_row_count(path) or 0) for path in final_pair_paths)
         final_pair_schema_status, final_pair_schema_observed = _hcr_final_pair_schema_status(final_pair_paths)
         final_pair_acceptance_status, final_pair_acceptance_observed = _hcr_final_pair_acceptance_status(final_pair_paths)
-        direct_ants_provenance, direct_ants_checks = _hcr_direct_ants_recompute_provenance(paths)
         checks = (
             StageCheckRecord(
                 label="HCR aligned label TIFFs",
-                status="pass" if copied_label_count > 0 else "fail",
+                status="pass" if staged_label_count > 0 else "fail",
                 detail="staged aligned HCR label TIFFs exist",
-                observed=str(copied_label_count),
+                observed=str(staged_label_count),
                 expected=">=1",
             ),
             StageCheckRecord(
@@ -5826,9 +5923,9 @@ def run_register_hcr_to_anatomy_stage(
             ),
             StageCheckRecord(
                 label="HCR warp metadata",
-                status="pass" if copied_meta_count > 0 else "warn",
+                status="pass" if staged_meta_count > 0 else "warn",
                 detail="warp metadata JSON sidecars were staged",
-                observed=str(copied_meta_count),
+                observed=str(staged_meta_count),
                 expected=">=1",
             ),
             StageCheckRecord(
@@ -5837,12 +5934,33 @@ def run_register_hcr_to_anatomy_stage(
                 detail="multi-GB aligned intensity NRRDs are recorded as inputs only for this baseline writer",
                 observed=str(len(source_groups["aligned_nrrds"])),
             ),
+            StageCheckRecord(
+                label="HCR direct ANTs label warp recompute",
+                status="pass" if (not recompute_direct_ants or len(direct_warp_results) > 0) else "fail",
+                detail="raw HCR Cellpose masks were warped into 2P anatomy space with current direct ANTs transforms when requested",
+                observed=str(len(direct_warp_results)),
+                expected=">0 when recompute_direct_ants=True",
+            ),
+            StageCheckRecord(
+                label="HCR direct ANTs accepted filter stats overlay",
+                status=(
+                    "pass"
+                    if not recompute_direct_ants or accepted_filter_stats_overlay_count == len(direct_warp_results)
+                    else "warn"
+                ),
+                detail="accepted HCR filter statistics were copied into recomputed warp metadata until filter recomputation is promoted",
+                observed=f"{accepted_filter_stats_overlay_count}/{len(direct_warp_results)}",
+                expected="all recomputed masks",
+            ),
         ) + direct_ants_checks
         status = "pass" if not any(check.status == "fail" for check in checks) else "fail"
         errors: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
         warnings: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "warn")
     except Exception as exc:
         direct_ants_provenance = {}
+        direct_warp_results = ()
+        recomputed_outputs = ()
+        accepted_filter_stats_overlay_count = 0
         source_groups = {
             "label_tiffs": (),
             "qc_tiffs": (),
@@ -5883,17 +6001,26 @@ def run_register_hcr_to_anatomy_stage(
             describe_glob(aligned_output_root, "*_cp_masks_in_2p_final_pairs.csv", required=False, label="staged HCR final-pair CSVs"),
             describe_glob(aligned_output_root, "*_warp_meta.json", required=False, label="staged HCR warp metadata"),
         )
-        + tuple(describe_manifest_path(path, label=f"staged HCR aligned artifact: {path.name}") for path in copied_outputs),
+        + tuple(describe_manifest_path(path, label=f"staged HCR aligned artifact: {path.name}") for path in copied_outputs)
+        + tuple(describe_manifest_path(path, label=f"recomputed HCR direct ANTs artifact: {path.name}") for path in recomputed_outputs),
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
             "source_root": str(source_root_path),
             "output_root": str(stage_root),
             "force_recompute": bool(force_recompute),
+            "recompute_direct_ants": bool(recompute_direct_ants),
             "copied_artifact_count": len(copied_outputs),
+            "recomputed_label_artifact_count": len(recomputed_outputs),
+            "direct_ants_warp_result_count": len(direct_warp_results),
+            "direct_ants_filter_stats_overlay_count": accepted_filter_stats_overlay_count,
             "input_aligned_nrrd_count": len(source_groups["aligned_nrrds"]),
             "copy_policy": "csv_json_tif_only",
-            "hcr_recompute_mode": "accepted_artifact_staging_with_direct_ants_readiness",
+            "hcr_recompute_mode": (
+                "direct_ants_label_warp_with_accepted_match_tables"
+                if recompute_direct_ants
+                else "accepted_artifact_staging_with_direct_ants_readiness"
+            ),
             **direct_ants_provenance,
         },
         warnings=warnings,
