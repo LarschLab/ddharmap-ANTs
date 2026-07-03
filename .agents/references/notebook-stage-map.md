@@ -65,7 +65,7 @@
 - Single-fish `[50l]` composite output: `compound_50j_56i_unified.png/.pdf`, package-rendered by `plots.analysis.render_single_fish_50l_composite` from `[50ia]` response/BPI outputs plus `[56i]` motion-AUC point/count tables; poster-scale standalone population donut output: `poster_50l_population_response_donut.png/.pdf` plus counts CSV, package-rendered by `plots.analysis.render_single_fish_50l_population_response_donut_poster` from `[50ia]`.
 - Single-fish responsive hybrid donut outputs: `single_fish_50l_responsive_identity_donut.png/.pdf`, plus long/wide counts CSVs (`[57a-responsive-identity-donut]`).
 - Single-fish anatomy-label co-expression outputs: `single_fish_hcr_anatomy_coexpression_summary.png/.pdf` plus summary/combo-count CSVs (`[57b-anatomy-coexpression-summary]`).
-- Staged pipeline status currently inventories selected late-output folders under `03_analysis/functional/pipeline_outputs/`: `assign-hcr-identity/registration/`, `score-activity-bpi/registration/`, `export-canonical-tables/registration/`, and `make-figures/04_plots/`. The current CLI reads existing outputs and can persist manifests; these stages remain declarative contracts only until writer commands are implemented.
+- Staged pipeline status inventories selected late-output folders under `03_analysis/functional/pipeline_outputs/`: `assign-hcr-identity/registration/`, `score-activity-bpi/registration/`, `export-canonical-tables/registration/`, `make-qa-report/`, and `make-figures/04_plots/`. These stages now have package-owned writer commands plus read-only status/comparison surfaces; remaining migration work is stage-specific promotion of upstream writers, richer QA, freshness checks, and figure render replacements.
 
 ## Concept ownership
 

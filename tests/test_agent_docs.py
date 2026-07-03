@@ -131,14 +131,19 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("freeze-legacy-baseline", source)
         self.assertIn("compare-legacy-baseline", source)
 
-    def test_docs_do_not_overclaim_downstream_writer_stage_availability(self) -> None:
+    def test_docs_describe_current_downstream_writer_stage_boundary(self) -> None:
         current_state = _read(".agents/references/current-state.md")
         stage_map = _read(".agents/references/notebook-stage-map.md")
+        self.assertIn(
+            "assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, and `make-figures` now also have writer commands",
+            current_state,
+        )
+        self.assertIn("Upstream preprocessing, registration, matching, and broader comparison commands remain declarative contracts only", current_state)
+        self.assertIn("These stages now have package-owned writer commands plus read-only status/comparison surfaces", stage_map)
+        self.assertIn("remaining migration work is stage-specific promotion of upstream writers", stage_map)
         for source in (current_state, stage_map):
-            self.assertIn("declarative contracts only", source)
             self.assertNotIn("staged CLI path now stages", source)
             self.assertNotIn("promotes staged identity/score outputs", source)
-            self.assertNotIn("renders package-owned final donut/coexpression figures", source)
 
 
 if __name__ == "__main__":

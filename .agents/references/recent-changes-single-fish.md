@@ -28,6 +28,28 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - reconcile staged roadmap after HCR replay/direct-warp promotion
+
+- Slice goal:
+  - remove stale roadmap blockers after HCR activity replay/promotion and direct HCR/anatomy recompute parity were validated.
+- Passes completed in this session:
+  - compared `current-state.md`, `single-fish-pipeline-roadmap.md`, `agentic-workflow-roadmap.md`, `notebook-stage-map.md`, and `symbol-index.md`.
+  - replaced stale `assign-hcr-identity` wording that still described copied HCR activity tables and unpromoted replay.
+  - replaced stale direct-HCR wording that still described accepted filter-stat overlays or missing match/final-pair recompute.
+  - updated the next-slice pointer away from solved HCR replay parity and toward remaining roadmap gaps.
+- What changed:
+  - `agentic-workflow-roadmap.md` now says `assign-hcr-identity` recomputes the HCR-centric activity/status/candidate CSV family and that selected-ANTs replay has exact accepted-control row/key parity on `L395_f11`.
+  - `notebook-stage-map.md` now treats downstream staged writers as implemented writer surfaces, not declarative contracts only.
+  - `symbol-index.md` now describes direct-HCR recompute, ROI/anatomy recompute, and remaining CLI roadmap targets consistently with the current code.
+- What remains broken:
+  - remaining roadmap work is now figure render replacement, richer biologist-facing QA, dependency/output freshness reporting, full functional-to-anatomy ANTs parity, and broader positive upstream validation.
+- Remaining in-slice work:
+  - none for this documentation reconciliation.
+- Next likely breakpoint:
+  - choose and implement one remaining roadmap slice from the reconciled status board.
+- Rerun implications:
+  - run `PYTHONPATH=src pytest -q tests/test_agent_docs.py` and grep for stale HCR replay/direct-warp claims before committing.
+
 ### 2026-07-03 - restore HCR prewarp label filtering in direct recompute
 
 - Slice goal:
