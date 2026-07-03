@@ -813,6 +813,244 @@ def compute_label_overlap(
     return df
 
 
+def _label_volumes(labels: np.ndarray) -> pd.Series:
+    values, counts = np.unique(labels, return_counts=True)
+    out = pd.Series(counts, index=values)
+    return out.drop(index=0, errors="ignore").astype(int)
+
+
+def build_hcr_anatomy_match_tables(
+    conf_labels_2p: ArrayLike,
+    anatomy_labels: ArrayLike,
+    *,
+    vox_anat_um: dict[str, Any],
+    require_overlap: bool = True,
+    min_overlap_voxels: int = 1,
+    max_distance_um: float = float("inf"),
+    match_method: str = "nn",
+    dedup_by_twop: str = "closest",
+    dedup_by_conf: str = "closest",
+    iou_min: float = 0.05,
+    use_frac_filters: bool = False,
+    min_overlap_frac_conf: float = 0.0,
+    min_overlap_frac_twop: float = 0.0,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series]:
+    conf_arr = _ensure_uint_labels(conf_labels_2p)
+    anat_arr = _ensure_uint_labels(anatomy_labels)
+    if conf_arr.shape != anat_arr.shape and conf_arr.ndim == 3:
+        transposed = np.transpose(conf_arr, (2, 1, 0))
+        if transposed.shape == anat_arr.shape:
+            conf_arr = transposed
+    if conf_arr.shape != anat_arr.shape:
+        raise ValueError(f"HCR and anatomy label volumes must share shape: {conf_arr.shape} vs {anat_arr.shape}")
+    if match_method not in {"nn", "hungarian"}:
+        raise ValueError("match_method must be 'nn' or 'hungarian'")
+    if dedup_by_twop not in {"closest", "max_overlap", "none"}:
+        raise ValueError("dedup_by_twop must be 'closest', 'max_overlap', or 'none'")
+    if dedup_by_conf not in {"closest", "max_overlap", "none"}:
+        raise ValueError("dedup_by_conf must be 'closest', 'max_overlap', or 'none'")
+
+    df_conf = compute_centroids(conf_arr)
+    df_twop = compute_centroids(anat_arr)
+    if df_conf.empty or df_twop.empty:
+        empty = pd.DataFrame(
+            columns=[
+                "conf_label",
+                "twoP_label",
+                "distance_um",
+                "overlap_voxels",
+                "within_gate",
+                "conf_vol",
+                "twoP_vol",
+                "iou",
+                "overlap_frac_conf",
+                "overlap_frac_twoP",
+                "pair_type",
+                "quality",
+            ]
+        )
+        return empty.copy(), empty.copy(), empty.copy(), pd.Series(dtype=object, name="QC Summary")
+
+    labels_conf = df_conf["label"].to_numpy(dtype=int)
+    labels_twop = df_twop["label"].to_numpy(dtype=int)
+    p_conf_um = idx_to_um(df_conf, vox_anat_um)
+    p_twop_um = idx_to_um(df_twop, vox_anat_um)
+    overlap_df = compute_label_overlap(conf_arr, anat_arr, min_overlap_voxels=int(min_overlap_voxels))
+
+    if bool(require_overlap):
+        if overlap_df.empty:
+            empty = pd.DataFrame(columns=["conf_label", "twoP_label", "distance_um", "overlap_voxels", "within_gate"])
+            return empty.copy(), empty.copy(), empty.copy(), pd.Series(dtype=object, name="QC Summary")
+        conf_coords = dict(zip(labels_conf, p_conf_um))
+        twop_coords = dict(zip(labels_twop, p_twop_um))
+        overlap_df = overlap_df.copy()
+        overlap_df["distance_um"] = overlap_df.apply(
+            lambda row: float(np.linalg.norm(conf_coords[int(row["conf_label"])] - twop_coords[int(row["twoP_label"])])),
+            axis=1,
+        )
+        if match_method == "hungarian":
+            conf_ids = sorted(overlap_df["conf_label"].unique())
+            twop_ids = sorted(overlap_df["twoP_label"].unique())
+            cost_fill = 1e9
+            cost = np.full((len(conf_ids), len(twop_ids)), cost_fill, dtype=float)
+            conf_idx = {label: index for index, label in enumerate(conf_ids)}
+            twop_idx = {label: index for index, label in enumerate(twop_ids)}
+            for _, row in overlap_df.iterrows():
+                cost[conf_idx[int(row["conf_label"])], twop_idx[int(row["twoP_label"])]] = float(row["distance_um"])
+            row_ind, col_ind = linear_sum_assignment(cost)
+            keep = cost[row_ind, col_ind] < cost_fill
+            matches = pd.DataFrame(
+                {
+                    "conf_label": np.asarray(conf_ids, dtype=int)[row_ind[keep]],
+                    "twoP_label": np.asarray(twop_ids, dtype=int)[col_ind[keep]],
+                    "distance_um": cost[row_ind[keep], col_ind[keep]],
+                }
+            )
+            matches = matches.merge(
+                overlap_df[["conf_label", "twoP_label", "overlap_voxels"]],
+                on=["conf_label", "twoP_label"],
+                how="left",
+            )
+        else:
+            best_idx = overlap_df.groupby("conf_label")["distance_um"].idxmin()
+            matches = overlap_df.loc[best_idx, ["conf_label", "twoP_label", "distance_um", "overlap_voxels"]].copy()
+        matches["within_gate"] = matches["distance_um"] <= float(max_distance_um)
+    else:
+        if match_method == "nn":
+            dists, nn = nearest_neighbor_match(p_conf_um, p_twop_um)
+            matched_twop_labels = labels_twop[nn]
+            matched_conf_labels = labels_conf
+        else:
+            dists, col_ind, row_ind = hungarian_match(p_conf_um, p_twop_um, max_cost=np.inf)
+            matched_conf_labels = labels_conf[row_ind]
+            matched_twop_labels = labels_twop[col_ind]
+        matches = pd.DataFrame(
+            {
+                "conf_label": matched_conf_labels,
+                "twoP_label": matched_twop_labels,
+                "distance_um": dists,
+                "within_gate": np.asarray(dists) <= float(max_distance_um),
+            }
+        )
+        matches = matches.merge(overlap_df, on=["conf_label", "twoP_label"], how="left")
+        matches["overlap_voxels"] = matches["overlap_voxels"].fillna(0).astype(int)
+        if require_overlap:
+            matches["within_gate"] = matches["within_gate"] & (matches["overlap_voxels"] >= int(min_overlap_voxels))
+
+    matches["overlap_voxels"] = matches["overlap_voxels"].fillna(0).astype(int)
+    matches = matches.sort_values("distance_um", ascending=True).reset_index(drop=True)
+    n_pairs_overlap_candidates = int(len(overlap_df)) if overlap_df is not None else int(len(matches))
+    after_overlap = int(len(matches))
+
+    if dedup_by_twop in {"closest", "max_overlap"}:
+        valid = matches["within_gate"].to_numpy(dtype=bool)
+        if valid.any():
+            sub = matches.loc[valid].copy()
+            if dedup_by_twop == "closest":
+                sub = sub.sort_values(["twoP_label", "distance_um"], ascending=[True, True])
+            else:
+                sub = sub.sort_values(["twoP_label", "overlap_voxels", "distance_um"], ascending=[True, False, True])
+            keep_idx = sub.drop_duplicates(subset=["twoP_label"], keep="first").index
+            drop_idx = sub.index.difference(keep_idx)
+            if len(drop_idx) > 0:
+                matches.loc[drop_idx, "within_gate"] = False
+    after_twop = int(matches["within_gate"].sum())
+
+    if dedup_by_conf in {"closest", "max_overlap"}:
+        valid = matches["within_gate"].to_numpy(dtype=bool)
+        if valid.any():
+            sub = matches.loc[valid].copy()
+            if dedup_by_conf == "closest":
+                sub = sub.sort_values(["conf_label", "distance_um"], ascending=[True, True])
+            else:
+                sub = sub.sort_values(["conf_label", "overlap_voxels", "distance_um"], ascending=[True, False, True])
+            keep_idx = sub.drop_duplicates(subset=["conf_label"], keep="first").index
+            drop_idx = sub.index.difference(keep_idx)
+            if len(drop_idx) > 0:
+                matches.loc[drop_idx, "within_gate"] = False
+    after_conf = int(matches["within_gate"].sum())
+
+    conf_vol = _label_volumes(conf_arr)
+    twop_vol = _label_volumes(anat_arr)
+    matches["conf_vol"] = matches["conf_label"].map(conf_vol).fillna(0).astype(int)
+    matches["twoP_vol"] = matches["twoP_label"].map(twop_vol).fillna(0).astype(int)
+    den = matches["conf_vol"] + matches["twoP_vol"] - matches["overlap_voxels"]
+    matches["iou"] = np.divide(matches["overlap_voxels"], den, out=np.zeros_like(den, dtype=float), where=(den > 0))
+    matches["overlap_frac_conf"] = np.divide(
+        matches["overlap_voxels"],
+        matches["conf_vol"],
+        out=np.zeros_like(matches["conf_vol"], dtype=float),
+        where=(matches["conf_vol"] > 0),
+    )
+    matches["overlap_frac_twoP"] = np.divide(
+        matches["overlap_voxels"],
+        matches["twoP_vol"],
+        out=np.zeros_like(matches["twoP_vol"], dtype=float),
+        where=(matches["twoP_vol"] > 0),
+    )
+    acc = matches.loc[matches["within_gate"]].copy()
+    conf_counts = acc["conf_label"].value_counts()
+    twop_counts = acc["twoP_label"].value_counts()
+
+    def pair_type(row: pd.Series) -> str:
+        if not bool(row["within_gate"]):
+            return "rejected"
+        conf_count = int(conf_counts.get(row["conf_label"], 0))
+        twop_count = int(twop_counts.get(row["twoP_label"], 0))
+        if conf_count == 1 and twop_count == 1:
+            return "1-1"
+        if conf_count > 1 and twop_count == 1:
+            return "merge"
+        if conf_count == 1 and twop_count > 1:
+            return "split"
+        return "complex"
+
+    matches["pair_type"] = matches.apply(pair_type, axis=1)
+    if use_frac_filters:
+        ok_frac = (matches["overlap_frac_conf"] >= float(min_overlap_frac_conf)) & (
+            matches["overlap_frac_twoP"] >= float(min_overlap_frac_twop)
+        )
+    else:
+        ok_frac = True
+    matches["quality"] = np.where(
+        matches["within_gate"] & (matches["iou"] >= float(iou_min)) & ok_frac,
+        "good",
+        np.where(matches["within_gate"], "iffy", "rejected"),
+    )
+    final_pairs = matches[(matches["pair_type"] == "1-1") & (matches["quality"] == "good")].copy()
+    final_pairs = final_pairs.sort_values(["distance_um", "twoP_label", "conf_label"]).reset_index(drop=True)
+    review = matches[
+        ((matches["pair_type"].isin(["split", "merge", "complex"])) & matches["within_gate"])
+        | ((matches["pair_type"] == "1-1") & (matches["quality"] != "good"))
+    ].copy()
+    review = review.sort_values(["pair_type", "iou", "distance_um"], ascending=[True, False, True]).reset_index(drop=True)
+    gate_mask = matches["distance_um"] <= float(max_distance_um)
+    if bool(require_overlap):
+        gate_mask = gate_mask & (matches["overlap_voxels"] >= int(min_overlap_voxels))
+    qc = pd.Series(
+        {
+            "pairs_all_overlap_candidates": int(n_pairs_overlap_candidates),
+            "pairs_after_overlap_pair_selection": int(after_overlap),
+            "pairs_after_filter_distance_overlap_gate": int(gate_mask.sum()),
+            "pairs_after_filter_dedup_twoP": int(after_twop),
+            "pairs_after_filter_dedup_conf": int(after_conf),
+            "pairs_after_filter_pair_type_1to1": int((matches["within_gate"] & (matches["pair_type"] == "1-1")).sum()),
+            "pairs_after_filter_iou_quality_good": int(
+                (matches["within_gate"] & (matches["pair_type"] == "1-1") & (matches["quality"] == "good")).sum()
+            ),
+            "pairs_final": int(final_pairs.shape[0]),
+            "gate_only_pairs": int(gate_mask.sum()),
+            "accepted_pairs_after_dedup": int(after_conf),
+            "final_1to1_good": int(final_pairs.shape[0]),
+            "splits_among_accepted": int((matches["pair_type"] == "split").sum()),
+            "merges_among_accepted": int((matches["pair_type"] == "merge").sum()),
+            "complex_among_accepted": int((matches["pair_type"] == "complex").sum()),
+        },
+        name="QC Summary",
+    )
+    return matches, final_pairs, review, qc
+
+
 def _regionprops_centroids_2d(label_img: ArrayLike) -> pd.DataFrame:
     props = regionprops_table(np.asarray(label_img, dtype=np.int32), properties=("label", "centroid"))
     df = pd.DataFrame(props).rename(columns={"centroid-0": "cy", "centroid-1": "cx"})
@@ -2730,6 +2968,7 @@ __all__ = [
     "MatchingConfig",
     "build_anat_identity_lookup_df",
     "build_hcr_mask_fate_df",
+    "build_hcr_anatomy_match_tables",
     "build_functional_anatomy_debug_df",
     "build_functional_anatomy_debug_stage",
     "build_functional_roi_master_df",

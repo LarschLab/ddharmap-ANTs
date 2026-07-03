@@ -10,6 +10,7 @@ import tifffile
 
 from codeants_2pf_hcr.matching import (
     FunctionalAnatomyDebugConfig,
+    build_hcr_anatomy_match_tables,
     build_hcr_mask_fate_df,
     build_functional_anatomy_debug_stage,
     resample_image,
@@ -17,6 +18,49 @@ from codeants_2pf_hcr.matching import (
     summarize_functional_anatomy_geometry_metrics,
     transform_points_between_spaces,
 )
+
+
+def test_build_hcr_anatomy_match_tables_classifies_final_and_review_pairs() -> None:
+    conf = np.zeros((1, 4, 4), dtype=np.uint16)
+    anat = np.zeros_like(conf)
+    conf[0, 0, 0] = 1
+    conf[0, 0, 1] = 1
+    anat[0, 0, 0] = 10
+    anat[0, 0, 1] = 10
+    conf[0, 2, 1] = 2
+    conf[0, 2, 2] = 2
+    conf[0, 3, 1] = 2
+    anat[0, 2, 1] = 20
+
+    matches, final_pairs, review, qc = build_hcr_anatomy_match_tables(
+        conf,
+        anat,
+        vox_anat_um={"dz": 1.0, "dy": 1.0, "dx": 1.0},
+        iou_min=0.8,
+    )
+
+    assert list(matches.columns) == [
+        "conf_label",
+        "twoP_label",
+        "distance_um",
+        "overlap_voxels",
+        "within_gate",
+        "conf_vol",
+        "twoP_vol",
+        "iou",
+        "overlap_frac_conf",
+        "overlap_frac_twoP",
+        "pair_type",
+        "quality",
+    ]
+    assert final_pairs[["conf_label", "twoP_label", "pair_type", "quality"]].to_dict("records") == [
+        {"conf_label": 1, "twoP_label": 10, "pair_type": "1-1", "quality": "good"}
+    ]
+    assert review[["conf_label", "twoP_label", "pair_type", "quality"]].to_dict("records") == [
+        {"conf_label": 2, "twoP_label": 20, "pair_type": "1-1", "quality": "iffy"}
+    ]
+    assert int(qc["pairs_final"]) == 1
+    assert int(qc["pairs_after_filter_iou_quality_good"]) == 1
 
 
 def test_build_functional_anatomy_debug_stage_returns_debug_df_bindings() -> None:

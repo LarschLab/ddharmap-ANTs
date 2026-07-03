@@ -192,6 +192,7 @@ Generated manually for the current extracted package surface.
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
 - `build_hcr_mask_fate_df`: Reconstruct per-confocal-label match fate rows from `[44]` `hcr_match_results` for downstream rejected-mask QA consumers such as `[50f]` and `[50g]`.
+- `build_hcr_anatomy_match_tables`: Recompute HCR/anatomy match, final-pair, review, and QC summary tables from warped HCR labels and anatomy labels using notebook-compatible overlap, distance, deduplication, pair-type, and quality rules.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
 - `annotate_session_anat_label_duplicates`: Mark same-anatomy-label functional ROI duplicates within each fish/session while retaining all ROI rows and ranking by geometry.
 - `build_hcr_activity_tables`: Build HCR-centric functional candidate/status tables for `[50]`.

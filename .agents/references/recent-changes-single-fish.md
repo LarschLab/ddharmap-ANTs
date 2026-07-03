@@ -28,6 +28,27 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - extract HCR/anatomy match table builder
+
+- Slice goal:
+  - move the notebook `[44]` HCR/anatomy matching rules toward package-owned code before wiring final-pair recomputation into `register-hcr-to-anatomy`.
+- Passes completed in this session:
+  - added `matching.build_hcr_anatomy_match_tables`.
+  - reused package-owned centroid and overlap helpers to produce HCR/anatomy `matches`, `final_pairs`, `review`, and QC summary outputs from warped HCR labels and anatomy labels.
+  - preserved notebook-compatible overlap gating, nearest-neighbor or Hungarian pair selection, twoP/conf deduplication, IoU/overlap-fraction quality rules, pair-type labels, and final 1-to-1 good pair selection.
+  - added a focused unit test covering a good final pair and an in-gate low-IoU review pair.
+- What changed:
+  - HCR/anatomy match table semantics are now available as reusable package logic rather than only embedded in migrated notebook source.
+- What remains broken:
+  - `register-hcr-to-anatomy --recompute-direct-ants` still stages accepted HCR/anatomy match/review/final-pair CSVs; it does not yet call the new matcher.
+  - HCR warp filter stats are still overlaid from accepted metadata in the direct label-warp path.
+- Remaining in-slice work:
+  - none for matcher extraction.
+- Next likely breakpoint:
+  - wire `build_hcr_anatomy_match_tables` into `register-hcr-to-anatomy --recompute-direct-ants`, compare recomputed match/final-pair CSVs against accepted controls on `L395_f11`, and decide whether mismatches come from label filtering or matching policy.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_matching.py` plus package export/docs checks.
+
 ### 2026-07-03 - add opt-in direct ANTs HCR label warp
 
 - Slice goal:
