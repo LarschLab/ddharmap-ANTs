@@ -198,6 +198,52 @@ def _warp_zyx_labels_with_ants(
     return np.transpose(warped_xyz, (2, 1, 0)).astype(np.int32, copy=False), fixed_img
 
 
+def _filter_hcr_labels_for_direct_warp(
+    labels_zyx: Any,
+    *,
+    min_component_voxels: int = 200,
+) -> tuple[Any, dict[str, Any]]:
+    import numpy as np
+
+    labels = np.asarray(labels_zyx)
+    if labels.ndim != 3:
+        raise ValueError(f"Expected 3D HCR labels for direct warp filtering; got {labels.shape}")
+    values, counts = np.unique(labels.astype(np.int64, copy=False), return_counts=True)
+    nonzero = values != 0
+    values = values[nonzero]
+    counts = counts[nonzero]
+    threshold = max(0, int(min_component_voxels))
+    dropped = values[counts < threshold] if threshold > 0 else np.asarray([], dtype=np.int64)
+    filtered = labels.astype(np.int32, copy=True)
+    if dropped.size:
+        filtered[np.isin(filtered, dropped)] = 0
+    kept_count = int(len(values) - len(dropped))
+    stats = {
+        "n_labels_before": int(len(values)),
+        "n_labels_after": kept_count,
+        "n_dropped_low_q": int(len(dropped)),
+        "n_dropped_noise_prewarp_total": int(len(dropped)),
+        "n_dropped_low_q_quantile_only": 0,
+        "n_dropped_small_components_abs": int(len(dropped)),
+        "n_low_confidence_high_q": 0,
+        "low_conf_labels": [],
+        "dropped_labels": [int(value) for value in dropped.tolist()],
+        "dropped_labels_low_q_only": [],
+        "dropped_labels_small_components_abs": [int(value) for value in dropped.tolist()],
+        "filter_metric_name": "n_voxels",
+        "low_filter_metric_name": "n_voxels",
+        "high_filter_metric_name": "equivalent_diameter_um",
+        "absolute_filter_metric_name": "n_voxels",
+        "min_component_volume_um3": None,
+        "min_component_voxels_fallback": threshold,
+        "filter_policy_version": "label_voxel_floor_v3",
+        "n_original_labels_before_split": int(len(values)),
+        "n_components_before_abs_filter": int(len(values)),
+        "n_components_after_abs_filter": kept_count,
+    }
+    return filtered, stats
+
+
 def _write_warped_label_tiff(path: Path, labels_zyx: Any, *, like_img: Any | None = None) -> None:
     import numpy as np
     import tifffile
@@ -229,6 +275,7 @@ def run_direct_ants_hcr_label_warp(
     best_round_idx: int,
     rbest_to_2p_transform_dir: Path,
     rn_to_rbest_transform_dir: Path,
+    min_component_voxels: int = 200,
 ) -> tuple[HcrDirectWarpResult, ...]:
     import numpy as np
     import tifffile
@@ -242,6 +289,10 @@ def run_direct_ants_hcr_label_warp(
         labels_zyx = tifffile.imread(mask_path)
         if np.asarray(labels_zyx).ndim != 3:
             raise ValueError(f"Expected 3D HCR mask TIFF for direct warp: {mask_path}")
+        filtered_labels_zyx, filter_stats = _filter_hcr_labels_for_direct_warp(
+            labels_zyx,
+            min_component_voxels=min_component_voxels,
+        )
         moving_intensity = _find_hcr_intensity_for_mask(preproc_dir, mask_path, round_idx, fish_id)
         if moving_intensity is None or not moving_intensity.exists():
             moving_intensity = _find_intensity_for_round(preproc_dir, round_idx)
@@ -254,7 +305,7 @@ def run_direct_ants_hcr_label_warp(
             rn_to_rbest_transform_dir=rn_to_rbest_transform_dir,
         )
         warped_zyx, fixed_img = _warp_zyx_labels_with_ants(
-            labels_zyx=labels_zyx,
+            labels_zyx=filtered_labels_zyx,
             moving_intensity_path=moving_intensity,
             fixed_intensity_path=anatomy_intensity_path,
             transformlist=transform_chain,
@@ -274,11 +325,7 @@ def run_direct_ants_hcr_label_warp(
             "transformlist": [str(path) for path in transform_chain],
             "whichtoinvert": [False for _ in transform_chain],
             "outputs": {"tif": str(label_path)},
-            "filter_stats": {
-                "n_labels_before": int(len([value for value in np.unique(labels_zyx) if int(value) != 0])),
-                "n_labels_after": int(len([value for value in np.unique(warped_zyx) if int(value) != 0])),
-                "low_conf_labels": [],
-            },
+            "filter_stats": filter_stats,
         }
         metadata_path.write_text(json.dumps(metadata, indent=2))
         results.append(

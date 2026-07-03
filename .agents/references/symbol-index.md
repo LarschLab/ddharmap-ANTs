@@ -256,7 +256,7 @@ Generated manually for the current extracted package surface.
 
 - `HcrDirectWarpResult`: Result record for a direct ANTs HCR label warp.
 - `build_direct_ants_hcr_transform_chain`: Build the notebook-equivalent direct HCR label warp transform chain: best-round rbest-to-2p warp/affine, plus rn-to-rbest warp/affine for non-best rounds.
-- `run_direct_ants_hcr_label_warp`: Recompute HCR label TIFFs and warp metadata from raw HCR Cellpose masks, matching HCR intensity NRRDs, the prepared in vivo anatomy NRRD, and current ANTs transforms.
+- `run_direct_ants_hcr_label_warp`: Recompute HCR label TIFFs and warp metadata from raw HCR Cellpose masks, matching HCR intensity NRRDs, the prepared in vivo anatomy NRRD, and current ANTs transforms after notebook-equivalent prewarp small-label filtering.
 - `run_hcr_external_bigwarp_label_stage`: Notebook-facing wrapper for single-fish `[43]` external-BigWarp label prep / load logic with stage-local ANTs import.
 - `run_hcr_external_bigwarp_intensity_stage`: Notebook-facing wrapper for single-fish `[43b]` rn->rbest intensity prep logic with stage-local ANTs import.
 

@@ -28,6 +28,30 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-03 - restore HCR prewarp label filtering in direct recompute
+
+- Slice goal:
+  - fix the direct HCR/anatomy final-pair parity failure by restoring the notebook prewarp HCR label filter before direct ANTs warping.
+- Passes completed in this session:
+  - diagnosed `/tmp/codeants-hcr-match-V8VB55`: missing accepted pairs had identical overlap/distance metrics in recomputed matches but lost to tiny competing labels absent from accepted label TIFFs.
+  - confirmed accepted label TIFFs are strict subsets of direct recomputed labels; missing accepted labels are retained in accepted TIFFs, while extra/conflicting labels are absent.
+  - added package-owned direct-warp filtering that drops HCR labels below the notebook `label_voxel_floor_v3` default of 200 voxels before ANTs warping.
+  - added focused unit coverage for the prewarp small-label filter.
+- What changed:
+  - `run_direct_ants_hcr_label_warp` now filters small raw HCR labels before warping and writes notebook-style filter stats into warp metadata.
+  - on `L395_f11`, `/tmp/codeants-hcr-filter-nooverlay-w1yksx` produced 4 filtered label TIFFs, 4 metadata JSONs, and 12 recomputed match/review/final-pair CSVs with `register-hcr-to-anatomy status=pass`, zero errors, zero warnings, recomputed filter stats `4/4`, and accepted filter-stat overlay count `0`.
+  - strict final-pair key parity passed for all four masks: sst1_1 `73/73`, pth2 `18/18`, sst1_2 `9/9`, tac3b `62/62`.
+- What remains broken:
+  - downstream assign/score/export still report expected byte-parity warnings for recomputed CSVs; no semantic/key failures were observed in this validation.
+- Remaining in-slice work:
+  - none for the direct HCR label-filter parity fix.
+- Next likely breakpoint:
+  - continue the roadmap past HCR registration by deciding whether to promote the remaining byte-level CSV differences, broaden visual QA/report surfaces, or move to the next unimplemented writer stage.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_hcr_warp.py tests/test_pipeline.py tests/test_matching.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/hcr_warp.py tests/test_hcr_warp.py src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
+  - real validation root for no-overlay register stage: `/tmp/codeants-hcr-filter-nooverlay-w1yksx`.
+  - downstream validation root: `/tmp/codeants-hcr-filter-t86kC0`; after staging functional registration and ROI/anatomy geometry in that same root, `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` completed with zero errors and expected byte-parity warnings only.
+
 ### 2026-07-03 - wire direct HCR/anatomy match recompute
 
 - Slice goal:
@@ -42,12 +66,12 @@
   - direct mode writes recomputed label TIFFs, warp metadata JSONs, and 3 recomputed HCR/anatomy CSVs per warped mask.
   - on `L395_f11`, `/tmp/codeants-hcr-match-V8VB55` produced 4 direct label TIFFs, 4 metadata JSONs, and 12 recomputed match/review/final-pair CSVs.
 - What remains broken:
-  - strict final-pair key parity fails on real `L395_f11`: sst1_1 missing 3 extra 5, pth2 missing 1 extra 3, sst1_2 missing 0 extra 1, tac3b missing 7 extra 9.
-  - HCR warp filter statistics are still overlaid from accepted metadata; notebook-equivalent filter-stat recomputation has not been promoted.
+  - fixed in the follow-up 2026-07-03 prewarp-filter slice; the mismatch was caused by missing small-label filtering before direct ANTs warping.
+  - before that fix, strict final-pair key parity failed on real `L395_f11`: sst1_1 missing 3 extra 5, pth2 missing 1 extra 3, sst1_2 missing 0 extra 1, tac3b missing 7 extra 9.
 - Remaining in-slice work:
   - none for exposing the recompute and parity gate.
 - Next likely breakpoint:
-  - compare accepted versus recomputed HCR labels, filter statistics, and match rows for the missing/extra final-pair keys to determine whether the mismatch is caused by label filtering, transform/resampling differences, or exact match/dedup policy.
+  - see the follow-up prewarp-filter slice for the resolved cause and validation evidence.
 - Rerun implications:
   - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_matching.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
 

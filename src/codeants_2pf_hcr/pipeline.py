@@ -5708,46 +5708,25 @@ def _hcr_raw_mask_paths(paths: PipelinePaths) -> tuple[Path, ...]:
     )
 
 
-def _accepted_hcr_filter_stats_by_stem(source_root: Path) -> dict[str, dict[str, Any]]:
-    out: dict[str, dict[str, Any]] = {}
-    for path in sorted(source_root.glob("*_cp_masks_in_2p_warp_meta.json")):
-        if not _is_real_match(path):
-            continue
-        try:
-            payload = json.loads(path.read_text())
-        except Exception:
-            continue
-        filter_stats = payload.get("filter_stats")
-        if not isinstance(filter_stats, dict):
-            continue
-        stem = path.name.replace("_in_2p_warp_meta.json", "")
-        out[stem] = dict(filter_stats)
-    return out
-
-
-def _overlay_accepted_hcr_filter_stats(
-    direct_warp_results: tuple[Any, ...],
-    source_root: Path,
-) -> int:
-    filter_stats_by_stem = _accepted_hcr_filter_stats_by_stem(source_root)
-    updated = 0
+def _hcr_direct_filter_stats_recompute_count(direct_warp_results: tuple[Any, ...]) -> int:
+    count = 0
     for result in direct_warp_results:
         metadata_path = Path(result.output_metadata_path)
         if not metadata_path.exists():
-            continue
-        stem = metadata_path.name.replace("_in_2p_warp_meta.json", "")
-        filter_stats = filter_stats_by_stem.get(stem)
-        if filter_stats is None:
             continue
         try:
             payload = json.loads(metadata_path.read_text())
         except Exception:
             continue
-        payload["filter_stats"] = filter_stats
-        payload["filter_stats_source"] = "accepted_hcr_warp_metadata"
-        metadata_path.write_text(json.dumps(payload, indent=2))
-        updated += 1
-    return updated
+        filter_stats = payload.get("filter_stats")
+        if not isinstance(filter_stats, dict):
+            continue
+        if str(filter_stats.get("filter_policy_version", "")) != "label_voxel_floor_v3":
+            continue
+        if "n_dropped_small_components_abs" not in filter_stats:
+            continue
+        count += 1
+    return count
 
 
 def _hcr_final_pair_key_set(path: Path) -> set[tuple[str, str]]:
@@ -5946,6 +5925,7 @@ def run_register_hcr_to_anatomy_stage(
         direct_ants_provenance, direct_ants_checks = _hcr_direct_ants_recompute_provenance(paths)
         direct_warp_results: tuple[Any, ...] = ()
         recomputed_match_outputs: tuple[Path, ...] = ()
+        direct_filter_stats_recompute_count = 0
         anat_labels_path = infer_anat_labels_path(paths.fish_dir, config.fish_id)
         if recompute_direct_ants:
             if not direct_ants_provenance.get("hcr_direct_ants_expected"):
@@ -5968,7 +5948,8 @@ def run_register_hcr_to_anatomy_stage(
                 rbest_to_2p_transform_dir=paths.preproc_dir.parent / "01_rbest-2p" / "transMatrices",
                 rn_to_rbest_transform_dir=paths.preproc_dir.parent / "02_rn-rbest" / "transMatrices",
             )
-            accepted_filter_stats_overlay_count = _overlay_accepted_hcr_filter_stats(direct_warp_results, source_root_path)
+            accepted_filter_stats_overlay_count = 0
+            direct_filter_stats_recompute_count = _hcr_direct_filter_stats_recompute_count(direct_warp_results)
             recomputed_match_outputs = _write_recomputed_hcr_anatomy_match_csvs(
                 direct_warp_results=direct_warp_results,
                 anatomy_labels_path=Path(anat_labels_path),
@@ -5977,6 +5958,7 @@ def run_register_hcr_to_anatomy_stage(
             )
         else:
             accepted_filter_stats_overlay_count = 0
+            direct_filter_stats_recompute_count = 0
         copied_outputs = _copy_hcr_aligned_stage_files(
             source_root_path,
             aligned_output_root,
@@ -6062,14 +6044,14 @@ def run_register_hcr_to_anatomy_stage(
                 expected=">0 when recompute_direct_ants=True",
             ),
             StageCheckRecord(
-                label="HCR direct ANTs accepted filter stats overlay",
+                label="HCR direct ANTs filter stats recompute",
                 status=(
                     "pass"
-                    if not recompute_direct_ants or accepted_filter_stats_overlay_count == len(direct_warp_results)
-                    else "warn"
+                    if not recompute_direct_ants or direct_filter_stats_recompute_count == len(direct_warp_results)
+                    else "fail"
                 ),
-                detail="accepted HCR filter statistics were copied into recomputed warp metadata until filter recomputation is promoted",
-                observed=f"{accepted_filter_stats_overlay_count}/{len(direct_warp_results)}",
+                detail="HCR prewarp label-filter statistics were recomputed into direct warp metadata",
+                observed=f"{direct_filter_stats_recompute_count}/{len(direct_warp_results)}",
                 expected="all recomputed masks",
             ),
             StageCheckRecord(
@@ -6092,6 +6074,7 @@ def run_register_hcr_to_anatomy_stage(
         recomputed_outputs = ()
         recomputed_match_outputs = ()
         accepted_filter_stats_overlay_count = 0
+        direct_filter_stats_recompute_count = 0
         anat_labels_path = None
         source_groups = {
             "label_tiffs": (),
@@ -6147,6 +6130,7 @@ def run_register_hcr_to_anatomy_stage(
             "recomputed_artifact_count": len(recomputed_outputs),
             "direct_ants_warp_result_count": len(direct_warp_results),
             "direct_ants_filter_stats_overlay_count": accepted_filter_stats_overlay_count,
+            "direct_ants_filter_stats_recompute_count": direct_filter_stats_recompute_count,
             "direct_ants_match_table_artifact_count": len(recomputed_match_outputs),
             "anatomy_labels_path": str(anat_labels_path) if anat_labels_path is not None else None,
             "anatomy_zyx_spacing_um": _anatomy_zyx_spacing_from_voxel_cache(paths),

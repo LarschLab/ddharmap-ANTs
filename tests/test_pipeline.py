@@ -1050,7 +1050,20 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
         labels[0, 1, 3] = 3
         labels[0, 2, 3] = 3
         tifffile.imwrite(label_path, labels)
-        meta_path.write_text('{"method":"ants_direct_to_2p"}\n')
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "method": "ants_direct_to_2p",
+                    "filter_stats": {
+                        "n_labels_before": 2,
+                        "n_labels_after": 2,
+                        "n_dropped_small_components_abs": 0,
+                        "filter_policy_version": "label_voxel_floor_v3",
+                    },
+                }
+            )
+            + "\n"
+        )
         return (
             SimpleNamespace(
                 output_label_path=str(label_path),
@@ -1078,15 +1091,16 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
     assert manifest.parameters["hcr_recompute_mode"] == "direct_ants_label_warp_and_match_tables"
     assert manifest.parameters["recompute_direct_ants"] is True
     assert manifest.parameters["direct_ants_warp_result_count"] == 1
-    assert manifest.parameters["direct_ants_filter_stats_overlay_count"] == 1
+    assert manifest.parameters["direct_ants_filter_stats_overlay_count"] == 0
+    assert manifest.parameters["direct_ants_filter_stats_recompute_count"] == 1
     assert manifest.parameters["recomputed_label_artifact_count"] == 2
     assert manifest.parameters["direct_ants_match_table_artifact_count"] == 3
     assert checks_by_label["HCR direct ANTs label warp recompute"].status == "pass"
-    assert checks_by_label["HCR direct ANTs accepted filter stats overlay"].status == "pass"
+    assert checks_by_label["HCR direct ANTs filter stats recompute"].status == "pass"
     assert checks_by_label["HCR direct ANTs match table recompute"].status == "pass"
     meta = json.loads((out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_warp_meta.json").read_text())
     assert meta["filter_stats"]["n_labels_after"] == 2
-    assert meta["filter_stats_source"] == "accepted_hcr_warp_metadata"
+    assert meta["filter_stats"]["filter_policy_version"] == "label_voxel_floor_v3"
 
 
 def test_register_hcr_to_anatomy_stage_refuses_existing_outputs_without_force(tmp_path: Path) -> None:
