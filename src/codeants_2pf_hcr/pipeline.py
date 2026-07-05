@@ -223,6 +223,7 @@ STAGED_FIGURE_FILES: tuple[str, ...] = (
 
 RENDERED_FIGURE_FILES: tuple[str, ...] = (
     "compound_50j_56i_unified.png",
+    "bpi_all_pairs.png",
     "single_fish_50l_responsive_identity_donut.png",
     "single_fish_hcr_anatomy_coexpression_summary.png",
 )
@@ -3839,6 +3840,7 @@ def _render_package_owned_single_fish_figures(
     composite_input_root: Path,
     output_dir: Path,
 ) -> None:
+    from codeants_2pf_hcr.plots.analysis import render_single_fish_bpi_all_pairs_diagnostics
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_responsive_identity_donut
     from codeants_2pf_hcr.plots.hcr import render_single_fish_hcr_anatomy_coexpression_summary
@@ -3861,6 +3863,12 @@ def _render_package_owned_single_fish_figures(
             out_reg=temp_reg,
             outdir=output_dir,
             fish_id=fish_id,
+        )
+        render_single_fish_bpi_all_pairs_diagnostics(
+            fish_id=fish_id,
+            bpi_cells_csv=temp_reg / bpi_cells_csv.name,
+            master_detail_csv=temp_reg / master_csv.name,
+            outdir=output_dir,
         )
         render_single_fish_50l_responsive_identity_donut(
             fish_id=fish_id,
@@ -3905,6 +3913,7 @@ def run_single_fish_make_figures_stage(
             describe_manifest_path(canonical_root / filename, label=f"make-figures canonical render input: {filename}")
             for filename in (
                 "functional_roi_activity_identity.csv",
+                "functional_roi_activity_bpi_cells.csv",
                 "conf_to_func_pairs.csv",
                 "hcr_activity_status.csv",
             )
@@ -3979,7 +3988,7 @@ def run_single_fish_make_figures_stage(
             "force_recompute": bool(force_recompute),
             "rendered_figures": RENDERED_FIGURE_FILES,
             "legacy_copied_figures": LEGACY_COPIED_FIGURE_FILES,
-            "source_policy": "package-owned renderers produce the 50l composite, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs; remaining declared figures are copied from the legacy figure input root until their full render inputs are staged",
+            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs; the remaining declared trace figure is copied from the legacy figure input root until its full render inputs are staged",
         },
         warnings=warnings,
         errors=errors,

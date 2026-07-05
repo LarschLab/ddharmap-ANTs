@@ -230,6 +230,9 @@ def _add_make_figures_bpi_render_columns(csv_path: Path) -> None:
     import pandas as pd
 
     df = pd.read_csv(csv_path)
+    df["gene"] = "sst1.1"
+    df["mean_bout_zdff"] = 0.30
+    df["mean_cont_zdff"] = 0.10
     df["mean_bout_auc_dff"] = 0.30
     df["mean_cont_auc_dff"] = 0.10
     df.to_csv(csv_path, index=False)
@@ -3391,6 +3394,9 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert (figure_dir / "compound_50j_56i_unified.png").read_bytes() != (
         fish_dir / "04_plots" / "compound_50j_56i_unified.png"
     ).read_bytes()
+    assert (figure_dir / "bpi_all_pairs.png").read_bytes() != (
+        fish_dir / "04_plots" / "bpi_all_pairs.png"
+    ).read_bytes()
     assert (figure_dir / "single_fish_50l_responsive_identity_donut.png").read_bytes() != (
         fish_dir / "04_plots" / "single_fish_50l_responsive_identity_donut.png"
     ).read_bytes()
@@ -3403,11 +3409,11 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert "package-owned renderers" in manifest.parameters["source_policy"]
     assert tuple(manifest.parameters["rendered_figures"]) == (
         "compound_50j_56i_unified.png",
+        "bpi_all_pairs.png",
         "single_fish_50l_responsive_identity_donut.png",
         "single_fish_hcr_anatomy_coexpression_summary.png",
     )
     assert tuple(manifest.parameters["legacy_copied_figures"]) == (
-        "bpi_all_pairs.png",
         "per_gene_stimulus_trace_with_hcr_status_56h.png",
     )
 

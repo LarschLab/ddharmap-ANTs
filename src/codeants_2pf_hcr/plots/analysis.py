@@ -15,6 +15,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 from .annotations import place_labels_no_overlap
+from ..activity import SingleFishBpiDiagnosticsConfig, prepare_single_fish_bpi_diagnostics_stage
 from ..single_fish_notebook_stages import (
     run_single_fish_cell_50e_stage,
     run_single_fish_cell_56_stage,
@@ -77,6 +78,238 @@ def _suite2p_stimulus_color_map(stim_types: list[str]) -> dict[str, Any]:
     colors = {label: STIM_PALETTE[label] for label in labels if label in STIM_PALETTE}
     colors.update({label: color for label, color in zip(missing, fallback_colors)})
     return colors
+
+
+def render_single_fish_bpi_all_pairs_diagnostics(
+    *,
+    bpi_cells_csv: str | Path,
+    fish_id: str,
+    master_detail_csv: str | Path | None = None,
+    outdir: str | Path,
+    gene_order: list[str] | tuple[str, ...] | None = None,
+    gene_colors: dict[str, str] | None = None,
+    zero_band: float = 0.50,
+    n_activity_bins: int = 6,
+    dpi: int = 300,
+) -> dict[str, Any]:
+    """Render the single-fish BPI/activity diagnostic figure from staged BPI tables."""
+    bpi_cells_csv_p = Path(bpi_cells_csv)
+    if not bpi_cells_csv_p.exists():
+        raise RuntimeError(f"[single-fish-bpi-all-pairs] Missing BPI cells table: {bpi_cells_csv_p}")
+    bpi_cells_df = pd.read_csv(bpi_cells_csv_p)
+    if "gene" not in bpi_cells_df.columns:
+        if "identity_label" in bpi_cells_df.columns:
+            gene_source = bpi_cells_df["identity_label"]
+        elif master_detail_csv is not None:
+            master_path = Path(master_detail_csv)
+            if not master_path.exists():
+                raise RuntimeError(f"[single-fish-bpi-all-pairs] Missing ROI identity table: {master_path}")
+            master_df = pd.read_csv(master_path)
+            required_master_cols = {"plane_idx", "func_label", "identity_label"}
+            missing_master_cols = sorted(required_master_cols - set(master_df.columns))
+            if missing_master_cols:
+                raise RuntimeError(
+                    f"[single-fish-bpi-all-pairs] ROI identity table missing columns {missing_master_cols}"
+                )
+            if "fish_id" in master_df.columns:
+                master_df = master_df[master_df["fish_id"].astype(str) == str(fish_id)].copy()
+            lookup = master_df[["plane_idx", "func_label", "identity_label"]].copy()
+            lookup["plane_idx_key"] = pd.to_numeric(lookup["plane_idx"], errors="coerce").astype("Int64")
+            lookup["func_label_key"] = pd.to_numeric(lookup["func_label"], errors="coerce").astype("Int64")
+            lookup = (
+                lookup.drop(columns=["plane_idx", "func_label"])
+                .drop_duplicates(subset=["plane_idx_key", "func_label_key"], keep="last")
+                .rename(columns={"identity_label": "_plot_identity_label"})
+            )
+            bpi_cells_df["plane_idx_key"] = pd.to_numeric(bpi_cells_df["plane_idx"], errors="coerce").astype("Int64")
+            bpi_cells_df["func_label_key"] = pd.to_numeric(bpi_cells_df["func_label"], errors="coerce").astype("Int64")
+            bpi_cells_df = bpi_cells_df.merge(lookup, on=["plane_idx_key", "func_label_key"], how="left")
+            gene_source = bpi_cells_df["_plot_identity_label"]
+            bpi_cells_df = bpi_cells_df.drop(
+                columns=[col for col in ("plane_idx_key", "func_label_key", "_plot_identity_label") if col in bpi_cells_df.columns]
+            )
+        else:
+            raise RuntimeError("[single-fish-bpi-all-pairs] BPI cells table missing gene and no ROI identity table was provided")
+        gene_labels = gene_source.astype("object").where(gene_source.notna(), "unidentified")
+        gene_labels = gene_labels.astype(str).str.strip()
+        bpi_cells_df["gene"] = gene_labels.where(~gene_labels.isin({"", "nan", "NaN", "<NA>", "None"}), "unidentified")
+    diag = prepare_single_fish_bpi_diagnostics_stage(
+        bpi_cells_df,
+        fish_id=str(fish_id),
+        master_detail_csv=master_detail_csv,
+        config=SingleFishBpiDiagnosticsConfig(
+            bpi_index_col="bpi",
+            zero_band=float(zero_band),
+            n_activity_bins=int(n_activity_bins),
+        ),
+    )
+
+    df = diag["df"].copy()
+    binned_df = diag["binned_df"].copy()
+    activity_label = str(diag["activity_label"])
+    bout_col = str(diag["bout_col"])
+    cont_col = str(diag["cont_col"])
+    bpi_index_col = str(diag["bpi_index_col"])
+    summary_counts = diag["summary_counts"]
+
+    default_gene_order = ["sst1.1", "sst1.2", "npy", "tac3b", "pth2", "cfos", "cort"]
+    default_gene_colors = {
+        "sst1.1": "#d62728",
+        "sst1.2": "#d61ad2",
+        "npy": "#1f9d55",
+        "tac3b": "#ffd400",
+        "pth2": "#00bcd4",
+        "cfos": "#ff7f0e",
+        "cort": "#8c564b",
+    }
+    colors = dict(default_gene_colors)
+    if gene_colors:
+        colors.update(gene_colors)
+    order_seed = list(gene_order or default_gene_order)
+    genes_present = sorted(df["gene"].dropna().astype(str).unique().tolist())
+    ordered_genes = [gene for gene in order_seed if gene in genes_present]
+    ordered_genes.extend([gene for gene in genes_present if gene not in ordered_genes])
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10.5))
+    ax_plane = axes[0, 0]
+    ax_quad = axes[0, 1]
+    ax_bins = axes[1, 0]
+    ax_group = axes[1, 1]
+
+    point_alpha = 0.70
+    point_size = 18.0
+    sub_nz = df[df["is_bpi_near_zero"]]
+    for gene in ordered_genes:
+        sub = df[df["gene"].astype(str) == str(gene)]
+        if sub.empty:
+            continue
+        ax_plane.scatter(
+            sub[cont_col].to_numpy(dtype=float),
+            sub[bout_col].to_numpy(dtype=float),
+            s=point_size,
+            alpha=point_alpha,
+            color=colors.get(gene, "#777777"),
+            edgecolors="none",
+            label=str(gene),
+        )
+        ax_quad.scatter(
+            sub["activity_mag"].to_numpy(dtype=float),
+            sub["bpi_metric"].to_numpy(dtype=float),
+            s=point_size,
+            alpha=point_alpha,
+            color=colors.get(gene, "#777777"),
+            edgecolors="none",
+        )
+
+    if not sub_nz.empty:
+        ax_plane.scatter(
+            sub_nz[cont_col].to_numpy(dtype=float),
+            sub_nz[bout_col].to_numpy(dtype=float),
+            s=max(14.0, point_size + 8.0),
+            facecolors="none",
+            edgecolors="black",
+            linewidths=0.8,
+            alpha=0.8,
+            label="|BPI| near zero",
+        )
+        ax_quad.scatter(
+            sub_nz["activity_mag"].to_numpy(dtype=float),
+            sub_nz["bpi_metric"].to_numpy(dtype=float),
+            s=max(14.0, point_size + 8.0),
+            facecolors="none",
+            edgecolors="black",
+            linewidths=0.8,
+            alpha=0.8,
+        )
+
+    combo = np.concatenate([np.abs(df[cont_col].to_numpy(dtype=float)), np.abs(df[bout_col].to_numpy(dtype=float))])
+    vmax = float(np.nanpercentile(combo, 99)) if combo.size else 1.0
+    if not np.isfinite(vmax) or vmax <= 0:
+        vmax = 1.0
+    ax_plane.plot([-vmax, vmax], [-vmax, vmax], linestyle="--", color="black", linewidth=1.0, alpha=0.8)
+    ax_plane.axhline(0.0, color="#444444", linewidth=0.8)
+    ax_plane.axvline(0.0, color="#444444", linewidth=0.8)
+    ax_plane.set_xlim(-vmax, vmax)
+    ax_plane.set_ylim(-vmax, vmax)
+    ax_plane.set_xlabel(f"Mean continuous response ({activity_label})")
+    ax_plane.set_ylabel(f"Mean bout response ({activity_label})")
+    ax_plane.set_title("Bout and continuous responses reveal distinct tuning")
+    handles, labels = ax_plane.get_legend_handles_labels()
+    if handles:
+        ax_plane.legend(handles, labels, fontsize=7, ncol=2, loc="lower right")
+
+    ax_quad.axhline(0.0, color="black", linestyle="--", linewidth=1.0)
+    ax_quad.axhline(float(zero_band), color="#444444", linestyle=":", linewidth=1.0)
+    ax_quad.axhline(-float(zero_band), color="#444444", linestyle=":", linewidth=1.0)
+    ax_quad.set_xlabel(f"Activity magnitude = mean(|Bout|, |Continuous|) {activity_label}")
+    ax_quad.set_ylabel(f"BPI ({bpi_index_col})")
+    ax_quad.set_ylim(-1.02, 1.02)
+    ax_quad.set_xlim(left=0)
+    ax_quad.set_title("Strong tuning is not explained by weak activity alone")
+    ax_quad.text(
+        0.02,
+        0.98,
+        "Near-zero BPI: "
+        f"{int(summary_counts['n_near_zero'])}/{int(summary_counts['n_total'])}\n"
+        f"low activity: {int(summary_counts['n_near_zero_low'])}\n"
+        f"responsive: {int(summary_counts['n_near_zero_responsive'])}\n"
+        f"response unavailable: {int(summary_counts['n_near_zero_response_unavailable'])}",
+        transform=ax_quad.transAxes,
+        ha="left",
+        va="top",
+        fontsize=8.5,
+        bbox=dict(facecolor="white", edgecolor="#cccccc", alpha=0.85),
+    )
+
+    if not binned_df.empty:
+        ax_bins.plot(binned_df["activity_mid"], binned_df["median_abs_bpi"], marker="o", linewidth=1.5, color="#1f77b4")
+        for row in binned_df.itertuples(index=False):
+            ax_bins.text(float(row.activity_mid), float(row.median_abs_bpi), f"n={int(row.n)}", fontsize=8, ha="left", va="bottom")
+    ax_bins.set_xlabel(f"Activity magnitude ({activity_label})")
+    ax_bins.set_ylabel("Median |BPI|")
+    ax_bins.set_title("Tuning strength remains visible across activity levels")
+    ax_bins.grid(alpha=0.25)
+
+    interpretation_order = [
+        "near-zero BPI + low activity",
+        "near-zero BPI + responsive",
+        "near-zero BPI + response unavailable",
+        "non-zero BPI",
+    ]
+    grouped = [df.loc[df["interpretation"] == label, "activity_mag"].to_numpy(dtype=float) for label in interpretation_order]
+    valid = [idx for idx, arr in enumerate(grouped) if arr.size]
+    if valid:
+        labels_shown = [interpretation_order[idx] for idx in valid]
+        parts = ax_group.violinplot([grouped[idx] for idx in valid], showmeans=False, showmedians=True, showextrema=False)
+        for body in parts["bodies"]:
+            body.set_facecolor("#9ecae1")
+            body.set_edgecolor("black")
+            body.set_alpha(0.8)
+        ax_group.set_xticks(range(1, len(labels_shown) + 1))
+        ax_group.set_xticklabels(labels_shown, rotation=15, ha="right")
+    ax_group.set_ylabel(f"Activity magnitude ({activity_label})")
+    ax_group.set_title("Low activity and weak tuning occupy different regimes")
+    ax_group.grid(axis="y", alpha=0.25)
+
+    fig.suptitle("Stimulus bias cannot be reduced to activity magnitude alone", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.canvas.draw()
+
+    outdir_p = Path(outdir)
+    outdir_p.mkdir(parents=True, exist_ok=True)
+    out_path = outdir_p / "bpi_all_pairs.png"
+    pdf_path = outdir_p / "bpi_all_pairs.pdf"
+    fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    return {
+        "fig": fig,
+        "out_path": out_path,
+        "pdf_path": pdf_path,
+        "df": df,
+        "binned_df": binned_df,
+        "breakdown_df": diag["breakdown_df"],
+        "log_lines": diag["log_lines"],
+    }
 
 
 def render_suite2p_stimulus_locked_trace_panels(
@@ -4630,6 +4863,7 @@ __all__ = [
     "render_suite2p_stimulus_locked_trace_panels",
     "render_cohort_suite2p_23c_full_session_heatmaps",
     "render_cohort_suite2p_23c_traces",
+    "render_single_fish_bpi_all_pairs_diagnostics",
     "render_single_fish_50l_bpi_panel",
     "render_single_fish_50l_composite",
     "render_single_fish_50l_gene_auc_panel",

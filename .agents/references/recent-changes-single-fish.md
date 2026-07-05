@@ -28,6 +28,33 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-05 - render BPI all-pairs figure in `make-figures`
+
+- Slice goal:
+  - replace `bpi_all_pairs.png` with a package-owned renderer fed by staged canonical BPI/identity tables.
+- Passes completed in this session:
+  - added `plots.analysis.render_single_fish_bpi_all_pairs_diagnostics` around the existing package-owned `[56g]` BPI diagnostics preparation.
+  - wired `make-figures` to render `bpi_all_pairs.png/.pdf` from `functional_roi_activity_bpi_cells.csv` plus `functional_roi_activity_identity.csv`.
+  - added a real-schema guard so the renderer derives plotting `gene` labels from authoritative ROI identity rows when the BPI cells table is ROI-centric and lacks a `gene` column.
+  - updated the make-figures contract so only `per_gene_stimulus_trace_with_hcr_status_56h.png` remains legacy-copied.
+- What changed:
+  - `make-figures` now records four rendered PNGs: `compound_50j_56i_unified.png`, `bpi_all_pairs.png`, `single_fish_50l_responsive_identity_donut.png`, and `single_fish_hcr_anatomy_coexpression_summary.png`.
+  - `bpi_all_pairs.png` no longer requires a legacy source figure.
+- What remains broken:
+  - `per_gene_stimulus_trace_with_hcr_status_56h.png` still depends on heavy `[56h]` trace/event state and remains copied from legacy `04_plots`.
+  - real-data `compare-staged --stage-name make-figures` warns for expected BPI visual/dimension drift because the package-rendered BPI diagnostic layout is not the same PNG geometry as the legacy control.
+- Validation:
+  - focused local tests passed: `PYTHONPATH=src pytest -q tests/test_plots_analysis.py -k 'bpi_all_pairs or 50l_bpi_panel'` and `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'make_figures_writer'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_plots_analysis.py tests/test_package_exports.py` (`131 passed`) and `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`).
+  - real `L395_f11` validation from `/tmp/codeants-bpi-render-uwqf59` on `linnaeus`: `make-figures --strict` wrote all 5 PNG outputs with zero errors and warnings only for BPI visual/dimension drift plus the pre-existing responsive-identity donut thumbnail warning; strict `compare-staged --stage-name make-figures` had zero failed checks and the same three warning checks.
+  - visual verification opened `/tmp/codeants-bpi-render-uwqf59-bpi_all_pairs.png`, confirmed a nonblank 4169x3101 rendered figure with four populated panels, expected labels/legend, and no obvious clipping or panel overlap.
+- Remaining in-slice work:
+  - none for BPI all-pairs render promotion.
+- Next likely breakpoint:
+  - either package the remaining per-gene trace/HCR status figure after staging its trace/event inputs, deepen upstream-root freshness checks, or broaden biologist-facing QA around registration/matching surfaces.
+- Rerun implications:
+  - rerun focused BPI plot tests, make-figures writer tests, broader pipeline/plot/package export tests, docs tests, `py_compile`, `git diff --check`, and `make-figures --strict` plus `compare-staged --stage-name make-figures` on `L395_f11`.
+
 ### 2026-07-05 - downstream staged output freshness warnings
 
 - Slice goal:
