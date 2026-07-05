@@ -28,6 +28,31 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-05 - staged dependency freshness warnings
+
+- Slice goal:
+  - warn when existing upstream staged dependency roots are newer than downstream staged outputs, even when those dependency roots are optional/bootstrap inputs.
+- Passes completed in this session:
+  - added optional staged dependency records for `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables`.
+  - added a `dependency freshness` check beside the existing required input/output freshness check.
+  - avoided duplicate warnings for `make-qa-report` and `make-figures`, where the export-canonical dependency is already a required declared input and covered by output freshness.
+  - added focused coverage where a staged `score-activity-bpi` CSV is newer than `export-canonical-tables` outputs and both `stage-status` and top-level `status` report `warn`.
+- What changed:
+  - downstream stage manifests now include optional staged dependency input records and warning-level checks such as `export-canonical-tables dependency freshness`.
+  - top-level `status` warns when an active downstream stage has a dependency freshness warning.
+- What remains broken:
+  - broader preprocessing/upstream freshness coverage is still not comprehensive across every granular writer root.
+  - the remaining per-gene trace/HCR status figure is still copied from legacy plots.
+- Validation:
+  - focused local freshness/status tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'downstream_stage_manifest or stage_status or status_includes_downstream or outputs_are_older'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` (`104 passed`) and `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`).
+- Remaining in-slice work:
+  - none for the staged dependency freshness warning surface.
+- Next likely breakpoint:
+  - run the broader validation set, then choose either remaining trace-figure packaging, preprocessing/upstream freshness broadening, or richer biologist-facing QA.
+- Rerun implications:
+  - run focused status tests, broader pipeline/package/docs tests, `py_compile`, and `git diff --check`.
+
 ### 2026-07-05 - render BPI all-pairs figure in `make-figures`
 
 - Slice goal:

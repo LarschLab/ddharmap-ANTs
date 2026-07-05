@@ -1220,6 +1220,56 @@ def _stage_input_records(paths: PipelinePaths, stage_name: str) -> tuple[Manifes
     return tuple(records)
 
 
+def _stage_dependency_input_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
+    if stage_name == "assign-hcr-identity":
+        return (
+            describe_glob(
+                _stage_root(paths, "match-roi-to-anatomy") / "registration",
+                "*.csv",
+                required=False,
+                label="upstream match-roi-to-anatomy CSV dependency",
+            ),
+            describe_manifest_path(
+                _stage_root(paths, "register-functional-to-anatomy") / "plane_refs_summary.json",
+                required=False,
+                label="upstream functional-to-anatomy plane refs dependency",
+            ),
+            describe_glob(
+                _stage_root(paths, "register-hcr-to-anatomy") / "confocal" / "aligned",
+                "*",
+                required=False,
+                label="upstream HCR-to-anatomy aligned dependency",
+            ),
+        )
+    if stage_name == "score-activity-bpi":
+        return (
+            describe_glob(
+                _stage_root(paths, "assign-hcr-identity") / "registration",
+                "*.csv",
+                required=False,
+                label="upstream assign-hcr-identity CSV dependency",
+            ),
+        )
+    if stage_name == "export-canonical-tables":
+        return (
+            describe_glob(
+                _stage_root(paths, "score-activity-bpi") / "registration",
+                "*.csv",
+                required=False,
+                label="upstream score-activity-bpi CSV dependency",
+            ),
+            describe_glob(
+                _stage_root(paths, "assign-hcr-identity") / "registration",
+                "*.csv",
+                required=False,
+                label="upstream assign-hcr-identity CSV dependency",
+            ),
+        )
+    if stage_name in {"make-qa-report", "make-figures"}:
+        return ()
+    raise ValueError(f"unsupported downstream stage: {stage_name}")
+
+
 def _stage_output_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
     return tuple(
         describe_manifest_path(spec.path, required=spec.required, label=spec.label)
@@ -1257,6 +1307,40 @@ def _build_stage_output_freshness_check(
         observed=(
             f"oldest_output={oldest_output.label}:{oldest_output.mtime}; "
             f"newest_input={newest_input.label}:{newest_input.mtime}"
+        ),
+    )
+
+
+def _build_stage_dependency_freshness_check(
+    stage_name: str,
+    dependency_inputs: tuple[ManifestPathRecord, ...],
+    outputs: tuple[ManifestPathRecord, ...],
+) -> StageCheckRecord:
+    existing_dependency_inputs = tuple(
+        record for record in dependency_inputs if record.exists and record.mtime is not None
+    )
+    existing_required_outputs = tuple(
+        record for record in outputs if record.required and record.exists and record.mtime is not None
+    )
+    if not existing_dependency_inputs or not existing_required_outputs:
+        return StageCheckRecord(
+            label=f"{stage_name} dependency freshness",
+            status="pass",
+            detail="Upstream dependency freshness is only evaluated when staged dependency and output mtimes are available.",
+            expected="required outputs newer than existing upstream staged dependencies",
+            observed=f"dependencies={len(existing_dependency_inputs)}; outputs={len(existing_required_outputs)}",
+        )
+    newest_dependency = max(existing_dependency_inputs, key=lambda record: float(record.mtime or 0.0))
+    oldest_output = min(existing_required_outputs, key=lambda record: float(record.mtime or 0.0))
+    is_fresh = float(oldest_output.mtime or 0.0) >= float(newest_dependency.mtime or 0.0)
+    return StageCheckRecord(
+        label=f"{stage_name} dependency freshness",
+        status="pass" if is_fresh else "warn",
+        detail="Declared stage outputs should be at least as new as existing upstream staged dependencies.",
+        expected=f"oldest_output_mtime >= newest_dependency_mtime ({newest_dependency.label})",
+        observed=(
+            f"oldest_output={oldest_output.label}:{oldest_output.mtime}; "
+            f"newest_dependency={newest_dependency.label}:{newest_dependency.mtime}"
         ),
     )
 
@@ -4004,11 +4088,13 @@ def build_single_fish_downstream_stage_manifest(
             f"unsupported downstream stage {stage_name!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
         )
     paths = resolve_pipeline_paths(config)
-    inputs = _stage_input_records(paths, stage_name)
+    dependency_inputs = _stage_dependency_input_records(paths, stage_name)
+    inputs = (*_stage_input_records(paths, stage_name), *dependency_inputs)
     outputs = _stage_output_records(paths, stage_name)
     checks = (
         *_build_downstream_stage_checks(paths, stage_name),
         _build_stage_output_freshness_check(stage_name, inputs, outputs),
+        _build_stage_dependency_freshness_check(stage_name, dependency_inputs, outputs),
     )
     missing_required = tuple(record.path for record in outputs if record.required and not record.exists)
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
