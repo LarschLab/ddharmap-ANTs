@@ -3253,6 +3253,16 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
         "hcr_func_candidates.csv",
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
+    figure_dir = output_root / "make-figures" / "04_plots"
+    _copy_file(fish_dir / "04_plots" / "compound_50j_56i_unified.png", figure_dir / "compound_50j_56i_unified.png")
+    qa_overlay = (
+        output_root
+        / "register-functional-to-anatomy"
+        / "qa"
+        / "functional_anatomy_center_overlay_200px.png"
+    )
+    qa_overlay.parent.mkdir(parents=True)
+    qa_overlay.write_bytes(b"png")
 
     manifest = run_single_fish_make_qa_report_stage(
         SingleFishPipelineConfig(
@@ -3270,7 +3280,16 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     assert summary["fish_id"] == fish_dir.name
     assert len(summary["canonical_tables"]) == 8
     assert all(table["exists"] for table in summary["canonical_tables"])
+    assert any(artifact["label"] == "functional/anatomy center overlay" for artifact in summary["review_artifacts"])
+    assert any(
+        artifact["label"] == "50l composite figure" and artifact["exists"]
+        for artifact in summary["review_artifacts"]
+    )
     assert "# Single-Fish QA Report" in markdown
+    assert "## Manual Review Checklist" in markdown
+    assert "## Visual Artifact Preview" in markdown
+    assert "functional-to-anatomy orientation" in markdown
+    assert "![50l composite figure]" in markdown
     assert "functional_roi_activity_identity.csv" in markdown
 
 

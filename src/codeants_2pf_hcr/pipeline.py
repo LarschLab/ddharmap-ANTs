@@ -3789,7 +3789,78 @@ def _make_qa_report_summary(paths: PipelinePaths, *, canonical_root: Path) -> di
         "canonical_root": str(canonical_root),
         "canonical_tables": canonical_tables,
         "stage_outputs": stage_outputs,
+        "review_artifacts": _make_qa_report_review_artifacts(paths, canonical_root=canonical_root),
     }
+
+
+def _qa_review_artifact(label: str, path: Path, *, kind: str, focus: str) -> dict[str, Any]:
+    return {
+        "label": label,
+        "path": str(path),
+        "kind": kind,
+        "exists": path.exists(),
+        "focus": focus,
+    }
+
+
+def _make_qa_report_review_artifacts(paths: PipelinePaths, *, canonical_root: Path) -> list[dict[str, Any]]:
+    figure_dir = _stage_root(paths, "make-figures") / "04_plots"
+    return [
+        _qa_review_artifact(
+            "functional/anatomy center overlay",
+            _stage_root(paths, "register-functional-to-anatomy") / "qa" / "functional_anatomy_center_overlay_200px.png",
+            kind="image",
+            focus="functional-to-anatomy orientation, best-Z placement, and label overlap",
+        ),
+        _qa_review_artifact(
+            "ROI/anatomy geometry table",
+            _stage_root(paths, "match-roi-to-anatomy") / "registration" / "functional_roi_anatomy_matches.csv",
+            kind="table",
+            focus="geometry-only ROI to anatomy assignments before identity is attached",
+        ),
+        _qa_review_artifact(
+            "ROI identity master",
+            canonical_root / "functional_roi_activity_identity.csv",
+            kind="table",
+            focus="ROI-centric identity, response, and BPI fields used for population review",
+        ),
+        _qa_review_artifact(
+            "HCR activity status",
+            canonical_root / "hcr_activity_status.csv",
+            kind="table",
+            focus="HCR-centric accepted labels and selected functional matches",
+        ),
+        _qa_review_artifact(
+            "50l composite figure",
+            figure_dir / "compound_50j_56i_unified.png",
+            kind="image",
+            focus="population response/BPI and identified-cell AUC summary",
+        ),
+        _qa_review_artifact(
+            "BPI all-pairs diagnostic",
+            figure_dir / "bpi_all_pairs.png",
+            kind="image",
+            focus="whether weak activity explains near-zero BPI calls",
+        ),
+        _qa_review_artifact(
+            "responsive identity donut",
+            figure_dir / "single_fish_50l_responsive_identity_donut.png",
+            kind="image",
+            focus="responsive ROI identity fraction and unidentified responsive population",
+        ),
+        _qa_review_artifact(
+            "HCR anatomy coexpression summary",
+            figure_dir / "single_fish_hcr_anatomy_coexpression_summary.png",
+            kind="image",
+            focus="anatomy-label-level HCR coexpression evidence",
+        ),
+        _qa_review_artifact(
+            "per-gene stimulus traces with HCR status",
+            figure_dir / "per_gene_stimulus_trace_with_hcr_status_56h.png",
+            kind="image",
+            focus="trace-level gene/HCR status review; currently copied from legacy plots",
+        ),
+    ]
 
 
 def _make_qa_report_markdown(summary: dict[str, Any]) -> str:
@@ -3819,6 +3890,36 @@ def _make_qa_report_markdown(summary: dict[str, Any]) -> str:
     for table in summary["canonical_tables"]:
         rows = "missing" if table["rows"] is None else str(table["rows"])
         lines.append(f"| `{table['filename']}` | {rows} | {table['exists']} |")
+    lines.extend(
+        [
+            "",
+            "## Manual Review Checklist",
+            "",
+            "| Artifact | Type | Present | Review focus | Path |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for artifact in summary.get("review_artifacts", []):
+        lines.append(
+            f"| {artifact['label']} | {artifact['kind']} | {artifact['exists']} | "
+            f"{artifact['focus']} | `{artifact['path']}` |"
+        )
+    preview_artifacts = [
+        artifact
+        for artifact in summary.get("review_artifacts", [])
+        if artifact.get("kind") == "image" and artifact.get("exists")
+    ]
+    if preview_artifacts:
+        lines.extend(["", "## Visual Artifact Preview", ""])
+        for artifact in preview_artifacts:
+            lines.extend(
+                [
+                    f"### {artifact['label']}",
+                    "",
+                    f"![{artifact['label']}]({artifact['path']})",
+                    "",
+                ]
+            )
     lines.extend(
         [
             "",
@@ -3895,7 +3996,7 @@ def run_single_fish_make_qa_report_stage(
             "canonical_input_root": str(canonical_root),
             "canonical_input_root_is_explicit": canonical_input_root not in (None, "", False),
             "force_recompute": bool(force_recompute),
-            "source_policy": "generated QA report summarizes staged canonical tables and declared post-preprocessing outputs",
+            "source_policy": "generated QA report summarizes staged canonical tables, declared post-preprocessing outputs, and manual review artifacts without recomputing scientific outputs",
         },
         warnings=warnings,
         errors=errors,

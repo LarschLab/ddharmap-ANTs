@@ -28,6 +28,31 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-05 - richer Markdown QA review checklist
+
+- Slice goal:
+  - make the generated `make-qa-report` output more useful for manual biologist QA without moving interpretation logic into the pipeline.
+- Passes completed in this session:
+  - extended `qa_report_summary.json` with `review_artifacts` covering registration overlays, ROI/anatomy geometry, canonical identity/activity tables, and staged figure PNGs.
+  - extended `qa_report.md` with a manual review checklist and inline Markdown image previews for existing QA/figure PNG artifacts.
+  - kept the report read-only with respect to scientific semantics; it lists and previews existing artifacts but does not recompute matching, identity, activity, BPI, or figures.
+  - added focused test coverage for review artifact JSON entries and Markdown preview/checklist sections.
+- What changed:
+  - `make-qa-report` now points reviewers at the functional/anatomy center overlay, geometry table, ROI identity master, HCR activity status, and staged figure outputs in one report.
+- What remains broken:
+  - richer HTML/PDF/notebook-style reports remain later work.
+  - the remaining per-gene trace/HCR status figure is still copied from legacy plots.
+- Validation:
+  - focused local report tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'make_qa_report'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` (`104 passed`) and `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`).
+  - real `L395_f11` validation from `/tmp/codeants-qa-review-F3A65E` on `linnaeus`: `make-qa-report --strict` wrote Markdown/JSON artifacts and `compare-staged --stage-name make-qa-report` passed with zero failed/warning checks. After staging figures in the same temp root and forcing report regeneration, the report summary listed 9 review artifacts, 7 existing artifacts, 5 existing image previews, and Markdown contained both `Manual Review Checklist` and `Visual Artifact Preview`.
+- Remaining in-slice work:
+  - none for this Markdown QA checklist/preview slice.
+- Next likely breakpoint:
+  - run broader validation, then choose either remaining trace-figure packaging, preprocessing/upstream freshness broadening, or a fuller report-rendering surface.
+- Rerun implications:
+  - run focused report tests, broader pipeline/package/docs tests, `py_compile`, `git diff --check`, and real-data `make-qa-report --strict` plus `compare-staged --stage-name make-qa-report`.
+
 ### 2026-07-05 - staged dependency freshness warnings
 
 - Slice goal:
