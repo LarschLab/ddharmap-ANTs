@@ -143,6 +143,13 @@ GRANULAR_PREPROCESSING_STAGE_NAMES: tuple[str, ...] = (
     "segment-ex-vivo-anatomy-cellpose",
 )
 
+UPSTREAM_STAGE_NAMES: tuple[str, ...] = (
+    *GRANULAR_PREPROCESSING_STAGE_NAMES,
+    "register-functional-to-anatomy",
+    "register-hcr-to-anatomy",
+    "match-roi-to-anatomy",
+)
+
 STAGED_REGISTRATION_CSVS: tuple[str, ...] = (
     "functional_roi_activity_identity.csv",
     "functional_roi_activity_bpi_cells.csv",
@@ -685,6 +692,10 @@ def build_single_fish_status(config: SingleFishPipelineConfig) -> dict[str, Any]
     manifest = run_single_fish_audit_inputs_stage(config)
     paths = resolve_pipeline_paths(config)
     persisted_audit_status = compare_persisted_manifest(stage_manifest_path(paths, "audit-inputs"), manifest)
+    upstream_stage_statuses = [
+        build_single_fish_upstream_stage_status(config, stage_name)
+        for stage_name in UPSTREAM_STAGE_NAMES
+    ]
     downstream_stage_statuses = [
         build_single_fish_stage_status(config, stage_name)
         for stage_name in POST_PREPROCESSING_STAGE_NAMES
@@ -700,6 +711,16 @@ def build_single_fish_status(config: SingleFishPipelineConfig) -> dict[str, Any]
         status = "warn"
     if persisted_audit_status.status == "fail":
         status = "fail"
+    active_upstream_failures = [
+        stage
+        for stage in upstream_stage_statuses
+        if stage["status"] == "fail"
+    ]
+    active_upstream_warnings = [
+        stage
+        for stage in upstream_stage_statuses
+        if stage["status"] == "warn"
+    ]
     active_downstream_failures = [
         stage
         for stage in downstream_stage_statuses
@@ -710,9 +731,9 @@ def build_single_fish_status(config: SingleFishPipelineConfig) -> dict[str, Any]
         for stage in downstream_stage_statuses
         if stage["status"] == "warn" and _stage_has_existing_outputs(paths, str(stage["stage_name"]))
     ]
-    if active_downstream_failures:
+    if active_upstream_failures or active_downstream_failures:
         status = "fail"
-    elif status == "pass" and active_downstream_warnings:
+    elif status == "pass" and (active_upstream_warnings or active_downstream_warnings):
         status = "warn"
     return {
         "fish_id": manifest.fish_id,
@@ -725,6 +746,7 @@ def build_single_fish_status(config: SingleFishPipelineConfig) -> dict[str, Any]
         "failed_checks": [check.label for check in failed_checks],
         "persisted_manifests": [persisted_audit_status.to_dict()],
         "stale_records": list(persisted_audit_status.stale_records),
+        "upstream_stages": upstream_stage_statuses,
         "downstream_stages": downstream_stage_statuses,
         "warnings": list(manifest.warnings),
         "errors": list(manifest.errors),
@@ -1268,6 +1290,121 @@ def _stage_dependency_input_records(paths: PipelinePaths, stage_name: str) -> tu
     if stage_name in {"make-qa-report", "make-figures"}:
         return ()
     raise ValueError(f"unsupported downstream stage: {stage_name}")
+
+
+def _upstream_stage_input_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
+    if stage_name == "prepare-functional-reference-stacks":
+        return (
+            describe_glob(
+                paths.functional_preproc_dir / "02_motionCorrected",
+                "*mcorrected*.tif",
+                label="motion-corrected functional stacks",
+            ),
+        )
+    if stage_name == "prepare-in-vivo-anatomy-stack":
+        return (
+            describe_glob(paths.raw_2p_anatomy_dir, "*.tif*", label="raw in vivo anatomy stack candidates"),
+        )
+    if stage_name == "prepare-ex-vivo-anatomy-stack":
+        return (
+            describe_glob(paths.raw_2p_anatomy_dir, "*ex*vivo*", label="raw ex vivo anatomy stack candidates"),
+        )
+    if stage_name == "segment-hcr-cellpose":
+        return (
+            describe_glob(paths.preproc_dir / "rbest", "*", label="HCR rbest intensity inputs"),
+        )
+    if stage_name == "segment-ex-vivo-anatomy-cellpose":
+        return (
+            describe_manifest_path(prepared_ex_vivo_anatomy_path(paths), label="prepared ex vivo anatomy stack"),
+        )
+    if stage_name == "register-functional-to-anatomy":
+        return (
+            describe_glob(functional_reference_output_dir(paths), "*_raw.tif", label="staged functional reference raw TIFFs"),
+            describe_glob(functional_reference_output_dir(paths), "*_norm.tif", label="staged functional reference normalized TIFFs"),
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
+        )
+    if stage_name == "register-hcr-to-anatomy":
+        return (
+            describe_glob(paths.confocal_raw_cp_masks_dir, "*_cp_masks.tif", label="raw HCR Cellpose masks"),
+            describe_glob(paths.preproc_dir / "rbest", "*", required=False, label="HCR rbest intensity/transform inputs"),
+            describe_glob(paths.preproc_dir / "rn", "*", required=False, label="HCR rn intensity/transform inputs"),
+        )
+    if stage_name == "match-roi-to-anatomy":
+        return (
+            describe_manifest_path(
+                functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json",
+                label="staged plane refs summary",
+            ),
+            describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root"),
+            describe_glob(paths.analysis_dir / "structural" / "cp_masks", "*_cp_masks.tif", label="anatomy label stack"),
+        )
+    raise ValueError(f"unsupported upstream stage: {stage_name}")
+
+
+def _upstream_stage_dependency_input_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
+    _ = paths
+    if stage_name in UPSTREAM_STAGE_NAMES:
+        return ()
+    return ()
+
+
+def _upstream_stage_output_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
+    if stage_name == "prepare-functional-reference-stacks":
+        output_dir = functional_reference_output_dir(paths)
+        return (
+            describe_glob(output_dir, "*_raw.tif", label="staged functional reference raw TIFFs"),
+            describe_glob(output_dir, "*_norm.tif", label="staged functional reference normalized TIFFs"),
+        )
+    if stage_name == "prepare-in-vivo-anatomy-stack":
+        out_path = prepared_in_vivo_anatomy_path(paths)
+        return (
+            describe_manifest_path(out_path, label="prepared in vivo anatomy NRRD"),
+            describe_manifest_path(Path(str(out_path) + ".json"), label="prepared in vivo anatomy metadata"),
+        )
+    if stage_name == "prepare-ex-vivo-anatomy-stack":
+        out_path = prepared_ex_vivo_anatomy_path(paths)
+        return (
+            describe_manifest_path(out_path, label="prepared ex vivo anatomy NRRD"),
+            describe_manifest_path(Path(str(out_path) + ".json"), label="prepared ex vivo anatomy metadata"),
+        )
+    if stage_name == "segment-hcr-cellpose":
+        return (
+            describe_glob(paths.confocal_raw_cp_masks_dir, "*_cp_masks.tif", label="HCR Cellpose masks"),
+        )
+    if stage_name == "segment-ex-vivo-anatomy-cellpose":
+        structural_root = ex_vivo_structural_root(paths)
+        return (
+            describe_glob(structural_root / "cp_masks", "*_cp_masks.tif", label="ex vivo anatomy Cellpose masks"),
+        )
+    if stage_name == "register-functional-to-anatomy":
+        stage_root = functional_to_anatomy_registration_root(paths)
+        compare_root = stage_root / "ncc" / "inplane_registration_comparison"
+        return (
+            describe_manifest_path(stage_root / "ncc" / "ncc_scale_by_fish.json", label="staged NCC scale cache"),
+            describe_manifest_path(stage_root / "ncc" / "ncc_bestz_by_plane.json", label="staged NCC best-z cache"),
+            describe_manifest_path(compare_root / "inplane_registration_comparison.csv", label="staged in-plane registration comparison"),
+            describe_manifest_path(compare_root / "inplane_registration_recommendation.csv", label="staged in-plane registration recommendation"),
+            describe_manifest_path(stage_root / "plane_refs_summary.json", label="staged plane refs summary"),
+            describe_manifest_path(stage_root / "registration" / "tforms_by_plane.csv", label="staged functional transform table"),
+            describe_glob(compare_root, "*_ncc_xy_warped.tif", required=False, label="staged NCC warped functional references"),
+        )
+    if stage_name == "register-hcr-to-anatomy":
+        aligned_root = hcr_to_anatomy_registration_root(paths) / "confocal" / "aligned"
+        return (
+            describe_manifest_path(aligned_root, label="staged HCR aligned artifact root"),
+            describe_glob(aligned_root, "*_cp_masks_in_2p_labels_uint16.tif", label="staged HCR aligned label TIFFs"),
+            describe_glob(aligned_root, "*_cp_masks_in_2p_matches.csv", label="staged HCR/anatomy match CSVs"),
+            describe_glob(aligned_root, "*_cp_masks_in_2p_final_pairs.csv", required=False, label="staged HCR final-pair CSVs"),
+            describe_glob(aligned_root, "*_warp_meta.json", required=False, label="staged HCR warp metadata"),
+        )
+    if stage_name == "match-roi-to-anatomy":
+        registration_dir = roi_to_anatomy_match_root(paths) / "registration"
+        return (
+            describe_manifest_path(registration_dir / "functional_roi_anatomy_matches.csv", label="staged ROI/anatomy geometry matches"),
+            describe_manifest_path(registration_dir / "functional_roi_anatomy_match_by_plane.csv", label="staged ROI/anatomy geometry summary"),
+            describe_manifest_path(registration_dir / "functional_roi_anatomy_match_plane_meta.csv", label="staged ROI/anatomy plane metadata"),
+        )
+    raise ValueError(f"unsupported upstream stage: {stage_name}")
 
 
 def _stage_output_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
@@ -4240,7 +4377,105 @@ def build_single_fish_downstream_stage_manifests(
     )
 
 
-def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: PersistedManifestStatus) -> dict[str, Any]:
+def upstream_stage_names() -> tuple[str, ...]:
+    return UPSTREAM_STAGE_NAMES
+
+
+def _build_required_output_inventory_checks(
+    stage_name: str,
+    outputs: tuple[ManifestPathRecord, ...],
+) -> tuple[StageCheckRecord, ...]:
+    checks: list[StageCheckRecord] = []
+    for output in outputs:
+        if not output.required:
+            continue
+        checks.append(
+            StageCheckRecord(
+                label=f"required output exists: {output.label}",
+                status="pass" if output.exists else "fail",
+                detail="Declared stage output should exist once this stage has started.",
+                expected="exists",
+                observed="exists" if output.exists else "missing",
+            )
+        )
+    return tuple(checks)
+
+
+def build_single_fish_upstream_stage_manifest(
+    config: SingleFishPipelineConfig,
+    stage_name: str,
+) -> StageManifest:
+    if stage_name not in UPSTREAM_STAGE_NAMES:
+        raise ValueError(
+            f"unsupported upstream stage {stage_name!r}; expected one of {', '.join(UPSTREAM_STAGE_NAMES)}"
+        )
+    paths = resolve_pipeline_paths(config)
+    dependency_inputs = _upstream_stage_dependency_input_records(paths, stage_name)
+    inputs = (*_upstream_stage_input_records(paths, stage_name), *dependency_inputs)
+    outputs = _upstream_stage_output_records(paths, stage_name)
+    checks = (
+        *_build_required_output_inventory_checks(stage_name, outputs),
+        _build_stage_output_freshness_check(stage_name, inputs, outputs),
+        _build_stage_dependency_freshness_check(stage_name, dependency_inputs, outputs),
+    )
+    missing_required = tuple(record.path for record in outputs if record.required and not record.exists)
+    failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
+    warn_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "warn")
+    warnings = warn_checks
+    errors = missing_required + failed_checks if config.strict else ()
+    if (missing_required or failed_checks) and not config.strict:
+        warnings = warn_checks + tuple(f"missing required output: {path}" for path in missing_required) + tuple(
+            f"failed check: {check}" for check in failed_checks
+        )
+    status = "fail" if errors else ("warn" if warnings else "pass")
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name=stage_name,
+        fish_id=config.fish_id,
+        status=status,
+        dry_run=True,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=inputs,
+        outputs=outputs,
+        checks=checks,
+        parameters={
+            "local_root": str(config.local_root),
+            "owner": config.owner,
+            "data_mode": config.data_mode,
+            "strict": config.strict,
+            "write_manifest": config.write_manifest,
+            "pipeline_root": str(paths.pipeline_root),
+            "read_only_inventory": True,
+            "stage_family": "upstream",
+        },
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def _upstream_stage_manifest_path(paths: PipelinePaths, stage_name: str) -> Path:
+    return cellpose_stage_manifest_path(paths, stage_name)
+
+
+def _upstream_stage_has_tracking_evidence(
+    paths: PipelinePaths,
+    stage_name: str,
+    manifest: StageManifest,
+) -> bool:
+    manifest_path = _upstream_stage_manifest_path(paths, stage_name)
+    if manifest_path.exists():
+        return True
+    stage_root = _stage_root(paths, stage_name)
+    if stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*")):
+        return True
+    output_roots = {Path(record.path) for record in manifest.outputs if record.exists}
+    return any(path.is_relative_to(paths.pipeline_root) for path in output_roots)
+
+
+def _summarize_stage_manifest(
+    manifest: StageManifest,
+    persisted: PersistedManifestStatus,
+) -> dict[str, Any]:
     missing_required_outputs = [
         record.label
         for record in manifest.outputs
@@ -4259,6 +4494,24 @@ def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: Per
         "warning_checks": warning_checks,
         "persisted_manifest": persisted.to_dict(),
     }
+
+
+def build_single_fish_upstream_stage_status(config: SingleFishPipelineConfig, stage_name: str) -> dict[str, Any]:
+    paths = resolve_pipeline_paths(config)
+    manifest = build_single_fish_upstream_stage_manifest(config, stage_name)
+    persisted = compare_persisted_manifest(_upstream_stage_manifest_path(paths, stage_name), manifest)
+    payload = _summarize_stage_manifest(manifest, persisted)
+    if not _upstream_stage_has_tracking_evidence(paths, stage_name, manifest):
+        payload["status"] = "not_started"
+    elif manifest.status == "pass" and persisted.status == "stale":
+        payload["status"] = "warn"
+    elif persisted.status == "fail":
+        payload["status"] = "fail"
+    return payload
+
+
+def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: PersistedManifestStatus) -> dict[str, Any]:
+    return _summarize_stage_manifest(manifest, persisted)
 
 
 def _stage_has_existing_outputs(paths: PipelinePaths, stage_name: str) -> bool:
@@ -6994,6 +7247,7 @@ __all__ = [
     "PIPELINE_STAGE_ORDER",
     "POST_PREPROCESSING_STAGE_NAMES",
     "GRANULAR_PREPROCESSING_STAGE_NAMES",
+    "UPSTREAM_STAGE_NAMES",
     "ManifestPathRecord",
     "PipelinePaths",
     "SingleFishPipelineConfig",
@@ -7010,6 +7264,8 @@ __all__ = [
     "build_single_fish_score_activity_bpi_recompute_manifest",
     "build_single_fish_stage_status",
     "build_single_fish_status",
+    "build_single_fish_upstream_stage_manifest",
+    "build_single_fish_upstream_stage_status",
     "compare_persisted_manifest",
     "compare_single_fish_legacy_baseline",
     "compare_single_fish_staged_outputs",
@@ -7048,6 +7304,7 @@ __all__ = [
     "run_single_fish_score_activity_bpi_stage",
     "stage_manifest_to_json",
     "stage_manifest_path",
+    "upstream_stage_names",
     "write_cellpose_stage_manifest",
     "write_stage_manifest",
 ]

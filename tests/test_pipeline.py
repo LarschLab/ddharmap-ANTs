@@ -21,6 +21,7 @@ from codeants_2pf_hcr.pipeline import (
     build_single_fish_score_activity_bpi_recompute_manifest,
     build_single_fish_stage_status,
     build_single_fish_status,
+    build_single_fish_upstream_stage_manifest,
     cellpose_stage_manifest_path,
     compare_single_fish_legacy_baseline,
     compare_single_fish_staged_outputs,
@@ -54,6 +55,7 @@ from codeants_2pf_hcr.pipeline import (
     run_single_fish_make_qa_report_stage,
     run_single_fish_score_activity_bpi_stage,
     stage_manifest_path,
+    upstream_stage_names,
     write_stage_manifest,
     _overlay_selected_ants_transformlists,
     _plane_refs_from_tforms_csv,
@@ -2085,6 +2087,63 @@ def test_status_includes_downstream_stage_summaries(tmp_path: Path) -> None:
     assert set(stage_summaries) == set(downstream_stage_names())
     assert stage_summaries["export-canonical-tables"]["status"] == "pass"
     assert stage_summaries["export-canonical-tables"]["output_records"] == 8
+
+
+def test_status_includes_upstream_stage_summaries_without_activating_legacy_outputs(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    status = build_single_fish_status(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    )
+
+    upstream_summaries = {stage["stage_name"]: stage for stage in status["upstream_stages"]}
+
+    assert set(upstream_summaries) == set(upstream_stage_names())
+    assert status["status"] == "pass"
+    assert upstream_summaries["prepare-in-vivo-anatomy-stack"]["status"] == "not_started"
+    assert "prepared in vivo anatomy metadata" in upstream_summaries["prepare-in-vivo-anatomy-stack"]["missing_required_outputs"]
+
+
+def test_upstream_stage_status_warns_when_active_outputs_are_older_than_dependencies(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    pipeline_root = fish_dir / "03_analysis" / "functional" / "pipeline_outputs"
+    ref_dir = pipeline_root / "prepare-functional-reference-stacks" / "functional" / "raw"
+    ref_dir.mkdir(parents=True)
+    raw_ref = ref_dir / f"{fish_dir.name}_plane0_ref_raw.tif"
+    norm_ref = ref_dir / f"{fish_dir.name}_plane0_ref_norm.tif"
+    raw_ref.write_bytes(b"raw")
+    norm_ref.write_bytes(b"norm")
+    stage_root = pipeline_root / "register-functional-to-anatomy"
+    required_outputs = (
+        stage_root / "ncc" / "ncc_scale_by_fish.json",
+        stage_root / "ncc" / "ncc_bestz_by_plane.json",
+        stage_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_comparison.csv",
+        stage_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_recommendation.csv",
+        stage_root / "plane_refs_summary.json",
+        stage_root / "registration" / "tforms_by_plane.csv",
+    )
+    for path in required_outputs:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}\n" if path.suffix == ".json" else "col\n")
+    newest_output_mtime = max(path.stat().st_mtime for path in required_outputs)
+    os.utime(raw_ref, (newest_output_mtime + 100.0, newest_output_mtime + 100.0))
+    os.utime(norm_ref, (newest_output_mtime + 100.0, newest_output_mtime + 100.0))
+
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    manifest = build_single_fish_upstream_stage_manifest(config, "register-functional-to-anatomy")
+    freshness_check = next(
+        check for check in manifest.checks if check.label == "register-functional-to-anatomy output freshness"
+    )
+    status = build_single_fish_status(config)
+    upstream_summary = next(
+        stage for stage in status["upstream_stages"] if stage["stage_name"] == "register-functional-to-anatomy"
+    )
+
+    assert manifest.status == "warn"
+    assert freshness_check.status == "warn"
+    assert "newest_input=staged functional reference raw TIFFs" in str(freshness_check.observed)
+    assert upstream_summary["status"] == "warn"
+    assert upstream_summary["warning_checks"] == ["register-functional-to-anatomy output freshness"]
+    assert status["status"] == "warn"
 
 
 def test_status_fails_when_existing_downstream_stage_is_incomplete(tmp_path: Path) -> None:
