@@ -1,5 +1,6 @@
 import json
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -2122,6 +2123,43 @@ def test_single_fish_stage_status_reports_current_after_manifest_write(tmp_path:
     stage_status = build_single_fish_stage_status(config, "make-figures")
     assert stage_status["status"] == "pass"
     assert stage_status["persisted_manifest"]["status"] == "current"
+
+
+def test_stage_status_warns_when_stage_outputs_are_older_than_inputs(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_staged_outputs(fish_dir)
+    input_path = (
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "pipeline_outputs"
+        / "export-canonical-tables"
+        / "registration"
+        / "functional_roi_activity_identity.csv"
+    )
+    newest_output_mtime = max(
+        path.stat().st_mtime
+        for path in (
+            fish_dir
+            / "03_analysis"
+            / "functional"
+            / "pipeline_outputs"
+            / "make-figures"
+            / "04_plots"
+        ).glob("*.png")
+    )
+    os.utime(input_path, (newest_output_mtime + 100.0, newest_output_mtime + 100.0))
+
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    manifest = build_single_fish_downstream_stage_manifest(config, "make-figures")
+    freshness_check = next(check for check in manifest.checks if check.label == "make-figures output freshness")
+    stage_status = build_single_fish_stage_status(config, "make-figures")
+
+    assert manifest.status == "warn"
+    assert freshness_check.status == "warn"
+    assert "newest_input=staged canonical export CSV inputs" in str(freshness_check.observed)
+    assert stage_status["status"] == "warn"
+    assert stage_status["warning_checks"] == ["make-figures output freshness"]
 
 
 def test_compare_staged_is_read_only_and_passes_on_minimal_staged_outputs(tmp_path: Path) -> None:

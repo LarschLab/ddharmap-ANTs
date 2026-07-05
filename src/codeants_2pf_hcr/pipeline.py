@@ -1226,6 +1226,40 @@ def _stage_output_records(paths: PipelinePaths, stage_name: str) -> tuple[Manife
     )
 
 
+def _build_stage_output_freshness_check(
+    stage_name: str,
+    inputs: tuple[ManifestPathRecord, ...],
+    outputs: tuple[ManifestPathRecord, ...],
+) -> StageCheckRecord:
+    existing_required_inputs = tuple(
+        record for record in inputs if record.required and record.exists and record.mtime is not None
+    )
+    existing_required_outputs = tuple(
+        record for record in outputs if record.required and record.exists and record.mtime is not None
+    )
+    if not existing_required_inputs or not existing_required_outputs:
+        return StageCheckRecord(
+            label=f"{stage_name} output freshness",
+            status="pass",
+            detail="Output freshness is only evaluated when required input and output mtimes are available.",
+            expected="required outputs newer than required inputs",
+            observed=f"inputs={len(existing_required_inputs)}; outputs={len(existing_required_outputs)}",
+        )
+    newest_input = max(existing_required_inputs, key=lambda record: float(record.mtime or 0.0))
+    oldest_output = min(existing_required_outputs, key=lambda record: float(record.mtime or 0.0))
+    is_fresh = float(oldest_output.mtime or 0.0) >= float(newest_input.mtime or 0.0)
+    return StageCheckRecord(
+        label=f"{stage_name} output freshness",
+        status="pass" if is_fresh else "warn",
+        detail="Declared stage outputs should be at least as new as the newest declared stage input.",
+        expected=f"oldest_output_mtime >= newest_input_mtime ({newest_input.label})",
+        observed=(
+            f"oldest_output={oldest_output.label}:{oldest_output.mtime}; "
+            f"newest_input={newest_input.label}:{newest_input.mtime}"
+        ),
+    )
+
+
 def _build_downstream_stage_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
     checks: list[StageCheckRecord] = []
     for spec in _stage_output_specs(paths, stage_name):
@@ -3963,13 +3997,17 @@ def build_single_fish_downstream_stage_manifest(
     paths = resolve_pipeline_paths(config)
     inputs = _stage_input_records(paths, stage_name)
     outputs = _stage_output_records(paths, stage_name)
-    checks = _build_downstream_stage_checks(paths, stage_name)
+    checks = (
+        *_build_downstream_stage_checks(paths, stage_name),
+        _build_stage_output_freshness_check(stage_name, inputs, outputs),
+    )
     missing_required = tuple(record.path for record in outputs if record.required and not record.exists)
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
-    warnings = ()
+    warn_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "warn")
+    warnings = warn_checks
     errors = missing_required + failed_checks if config.strict else ()
     if (missing_required or failed_checks) and not config.strict:
-        warnings = tuple(f"missing required output: {path}" for path in missing_required) + tuple(
+        warnings = warn_checks + tuple(f"missing required output: {path}" for path in missing_required) + tuple(
             f"failed check: {check}" for check in failed_checks
         )
     status = "fail" if errors else ("warn" if warnings else "pass")
@@ -4013,6 +4051,7 @@ def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: Per
         if record.required and not record.exists
     ]
     failed_checks = [check.label for check in manifest.checks if check.status == "fail"]
+    warning_checks = [check.label for check in manifest.checks if check.status == "warn"]
     return {
         "stage_name": manifest.stage_name,
         "status": manifest.status,
@@ -4021,6 +4060,7 @@ def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: Per
         "check_records": len(manifest.checks),
         "missing_required_outputs": missing_required_outputs,
         "failed_checks": failed_checks,
+        "warning_checks": warning_checks,
         "persisted_manifest": persisted.to_dict(),
     }
 

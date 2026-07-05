@@ -28,6 +28,31 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-05 - downstream staged output freshness warnings
+
+- Slice goal:
+  - harden staged status reporting so existing downstream outputs can be flagged when their declared inputs have changed.
+- Passes completed in this session:
+  - inspected the two remaining copied `make-figures` artifacts and found `bpi_all_pairs.png` is produced inside the heavy `[56h]` trace/event stage, not from a simple table renderer.
+  - added a shared freshness check that compares required input/output mtimes for downstream staged manifests.
+  - wired the check into `build_single_fish_downstream_stage_manifest`, `stage-status`, and top-level `status`.
+  - added focused coverage that makes a staged canonical input newer than staged figure outputs and verifies `make-figures` reports `warn`.
+- What changed:
+  - `stage-status` now includes a warning check such as `make-figures output freshness` when required outputs are older than required declared inputs.
+  - top-level `status` becomes `warn` when an existing downstream stage has freshness warnings.
+- What remains broken:
+  - deeper cross-stage dependency freshness across all upstream writer roots remains a later expansion.
+  - `bpi_all_pairs.png` and `per_gene_stimulus_trace_with_hcr_status_56h.png` are still copied legacy figure artifacts; promoting them requires packaging more of `[56h]` trace/event rendering.
+- Validation:
+  - focused downstream freshness tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'downstream_stage_manifest or stage_status or status_includes_downstream'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` (`103 passed`), `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`), `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
+- Remaining in-slice work:
+  - none for warning-level downstream staged output freshness.
+- Next likely breakpoint:
+  - either deepen upstream-root freshness checks, broaden biologist-facing QA, or package a bounded part of `[56h]` before replacing the remaining copied trace/BPI figures.
+- Rerun implications:
+  - run focused downstream stage-status tests, pipeline/docs/package export tests, and `git diff --check`.
+
 ### 2026-07-03 - render staged 50l composite in `make-figures`
 
 - Slice goal:
