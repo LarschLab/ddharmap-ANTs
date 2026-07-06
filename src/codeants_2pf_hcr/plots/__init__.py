@@ -17,6 +17,7 @@ _EXPORT_MODULES = {
     "render_single_fish_50l_bpi_panel": "codeants_2pf_hcr.plots.analysis",
     "render_single_fish_50l_gene_auc_panel": "codeants_2pf_hcr.plots.analysis",
     "render_single_fish_50l_global_auc_panel": "codeants_2pf_hcr.plots.analysis",
+    "render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status": "codeants_2pf_hcr.plots.analysis",
     "render_cohort_50l_donut_row": "codeants_2pf_hcr.plots.analysis",
     "render_cohort_50l_responsive_identity_donut_row": "codeants_2pf_hcr.plots.analysis",
     "render_single_fish_50l_responsive_identity_donut": "codeants_2pf_hcr.plots.analysis",

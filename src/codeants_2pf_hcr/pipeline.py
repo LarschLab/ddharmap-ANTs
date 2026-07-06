@@ -231,6 +231,7 @@ STAGED_FIGURE_FILES: tuple[str, ...] = (
 RENDERED_FIGURE_FILES: tuple[str, ...] = (
     "compound_50j_56i_unified.png",
     "bpi_all_pairs.png",
+    "per_gene_stimulus_trace_with_hcr_status_56h.png",
     "single_fish_50l_responsive_identity_donut.png",
     "single_fish_hcr_anatomy_coexpression_summary.png",
 )
@@ -3995,7 +3996,7 @@ def _make_qa_report_review_artifacts(paths: PipelinePaths, *, canonical_root: Pa
             "per-gene stimulus traces with HCR status",
             figure_dir / "per_gene_stimulus_trace_with_hcr_status_56h.png",
             kind="image",
-            focus="trace-level gene/HCR status review; currently copied from legacy plots",
+            focus="gene-level stimulus response and HCR functional-status review",
         ),
     ]
 
@@ -4165,6 +4166,7 @@ def _render_package_owned_single_fish_figures(
     from codeants_2pf_hcr.plots.analysis import render_single_fish_bpi_all_pairs_diagnostics
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_responsive_identity_donut
+    from codeants_2pf_hcr.plots.analysis import render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status
     from codeants_2pf_hcr.plots.hcr import render_single_fish_hcr_anatomy_coexpression_summary
 
     master_csv = canonical_root / "functional_roi_activity_identity.csv"
@@ -4196,6 +4198,13 @@ def _render_package_owned_single_fish_figures(
             fish_id=fish_id,
             master_csv=temp_reg / master_csv.name,
             conf_func_csv=temp_reg / conf_func_csv.name,
+            outdir=output_dir,
+        )
+        render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(
+            fish_id=fish_id,
+            points_csv=temp_reg / "motion_auc_plot_points.csv",
+            counts_csv=temp_reg / "motion_auc_plot_counts.csv",
+            hcr_status_csv=temp_reg / status_csv.name,
             outdir=output_dir,
         )
 
@@ -4310,7 +4319,7 @@ def run_single_fish_make_figures_stage(
             "force_recompute": bool(force_recompute),
             "rendered_figures": RENDERED_FIGURE_FILES,
             "legacy_copied_figures": LEGACY_COPIED_FIGURE_FILES,
-            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs; the remaining declared trace figure is copied from the legacy figure input root until its full render inputs are staged",
+            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, per-gene 56h stimulus/HCR status summary, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs",
         },
         warnings=warnings,
         errors=errors,

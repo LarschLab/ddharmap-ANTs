@@ -2635,6 +2635,229 @@ def render_cohort_56h_fish_average_poster_traces(
     }
 
 
+def _single_fish_56h_gene_order(points_df: pd.DataFrame, gene_order: list[str] | tuple[str, ...] | None) -> list[str]:
+    default_order = ["sst1.1", "sst1.2", "cfos", "pth2", "npy", "tac3b", "cort"]
+    requested = [str(gene) for gene in (gene_order or default_order)]
+    groups = {
+        str(value)
+        for value in points_df.get("group", pd.Series(dtype=object)).dropna().astype(str)
+        if str(value) and str(value).lower() != "all neurons"
+    }
+    return [gene for gene in requested if gene in groups] + sorted(gene for gene in groups if gene not in requested)
+
+
+def _single_fish_56h_auc_summary(points_df: pd.DataFrame, genes: list[str]) -> pd.DataFrame:
+    required = {"group", "laterality", "stim_mode", "auc_dff", "response_is_active"}
+    missing = sorted(required - set(points_df.columns))
+    if missing:
+        raise RuntimeError(f"[single-fish-56h] motion AUC plot points missing columns {missing}; rerun [56i].")
+    work = points_df.copy()
+    work["group"] = work["group"].astype(str)
+    work = work[work["group"].isin(genes)].copy()
+    work = work[work["laterality"].astype(str).isin({"ipsi", "contra"}) & work["stim_mode"].astype(str).isin({"bout", "continuous"})].copy()
+    work["auc_dff"] = pd.to_numeric(work["auc_dff"], errors="coerce")
+    work["response_is_active"] = work["response_is_active"].map(lambda value: str(value).strip().lower() in {"true", "1", "yes"})
+    work = work[np.isfinite(work["auc_dff"])].copy()
+    if work.empty:
+        raise RuntimeError("[single-fish-56h] No finite gene-specific AUC rows available for per-gene stimulus summary.")
+    grouped = work.groupby(["group", "laterality", "stim_mode"], dropna=False)
+    summary = grouped.agg(
+        mean_auc=("auc_dff", "mean"),
+        median_auc=("auc_dff", "median"),
+        sem_auc=("auc_dff", lambda series: float(series.std(ddof=1) / np.sqrt(series.count())) if series.count() > 1 else 0.0),
+        n_points=("auc_dff", "size"),
+        n_responsive=("response_is_active", "sum"),
+    ).reset_index()
+    summary["condition"] = summary["laterality"].astype(str) + "_" + summary["stim_mode"].astype(str)
+    return summary
+
+
+def _single_fish_56h_status_summary(status_df: pd.DataFrame, genes: list[str]) -> pd.DataFrame:
+    if status_df.empty:
+        return pd.DataFrame(columns=["gene", "status_bucket", "n_labels"])
+    work = status_df.copy()
+    if "gene" not in work.columns:
+        return pd.DataFrame(columns=["gene", "status_bucket", "n_labels"])
+    work["gene"] = work["gene"].astype(str)
+    work = work[work["gene"].isin(genes)].copy()
+    if work.empty:
+        return pd.DataFrame(columns=["gene", "status_bucket", "n_labels"])
+    if "functional_status" in work.columns:
+        status_col = work["functional_status"].astype(str).str.strip()
+    elif "response_summary_class" in work.columns:
+        status_col = work["response_summary_class"].astype(str).str.strip()
+    else:
+        status_col = pd.Series("status unavailable", index=work.index)
+    lowered = status_col.str.lower()
+    work["status_bucket"] = np.select(
+        [
+            lowered.str.contains("responsive", na=False),
+            lowered.str.contains("low", na=False),
+            lowered.str.contains("no func|no functional|unmatched", regex=True, na=False),
+            lowered.str.contains("out", na=False),
+        ],
+        ["responsive match", "low activity match", "no functional match", "outside functional planes"],
+        default="status unavailable",
+    )
+    return work.groupby(["gene", "status_bucket"], dropna=False).size().reset_index(name="n_labels")
+
+
+def render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(
+    *,
+    fish_id: str,
+    points_csv: str | Path,
+    hcr_status_csv: str | Path,
+    outdir: str | Path,
+    counts_csv: str | Path | None = None,
+    gene_order: list[str] | tuple[str, ...] | None = None,
+    gene_colors: dict[str, str] | None = None,
+    basename: str = "per_gene_stimulus_trace_with_hcr_status_56h",
+) -> dict[str, Any]:
+    """Render a table-driven [56h] per-gene stimulus/HCR status figure."""
+    points_path = Path(points_csv)
+    status_path = Path(hcr_status_csv)
+    outdir_p = Path(outdir)
+    if not points_path.exists():
+        raise RuntimeError(f"[single-fish-56h] Missing motion AUC points table: {points_path}")
+    if not status_path.exists():
+        raise RuntimeError(f"[single-fish-56h] Missing HCR activity status table: {status_path}")
+    points_df = pd.read_csv(points_path)
+    status_df = pd.read_csv(status_path)
+    genes = _single_fish_56h_gene_order(points_df, gene_order)
+    if not genes:
+        raise RuntimeError("[single-fish-56h] No gene-specific groups found in motion_auc_plot_points.csv.")
+    auc_summary = _single_fish_56h_auc_summary(points_df, genes)
+    status_summary = _single_fish_56h_status_summary(status_df, genes)
+    colors = dict(gene_colors or {})
+    fallback_cmap = plt.get_cmap("tab10")
+    for idx, gene in enumerate(genes):
+        colors.setdefault(gene, fallback_cmap(idx % fallback_cmap.N))
+
+    condition_order = ("contra_bout", "ipsi_bout", "contra_continuous", "ipsi_continuous")
+    condition_labels = {
+        "contra_bout": "Contra\nbout",
+        "ipsi_bout": "Ipsi\nbout",
+        "contra_continuous": "Contra\ncontinuous",
+        "ipsi_continuous": "Ipsi\ncontinuous",
+    }
+    fig_height = max(4.8, 1.25 * len(genes) + 1.8)
+    fig = plt.figure(figsize=(14.0, fig_height))
+    gs = GridSpec(len(genes), 2, figure=fig, width_ratios=[3.6, 1.25], wspace=0.28, hspace=0.5)
+    all_means = auc_summary["mean_auc"].to_numpy(dtype=float)
+    finite_abs = np.abs(all_means[np.isfinite(all_means)])
+    ymax = max(0.1, float(np.nanmax(finite_abs)) * 1.25 if finite_abs.size else 1.0)
+    status_colors = {
+        "responsive match": "#2ca25f",
+        "low activity match": "#bdbdbd",
+        "no functional match": "#fdae6b",
+        "outside functional planes": "#9ecae1",
+        "status unavailable": "#d9d9d9",
+    }
+    summary_rows: list[dict[str, Any]] = []
+
+    for row_idx, gene in enumerate(genes):
+        ax = fig.add_subplot(gs[row_idx, 0])
+        ax_donut = fig.add_subplot(gs[row_idx, 1])
+        sub = auc_summary[auc_summary["group"].astype(str) == gene].copy()
+        heights = []
+        errors = []
+        labels_n = []
+        for condition in condition_order:
+            csub = sub[sub["condition"].astype(str) == condition]
+            if csub.empty:
+                heights.append(np.nan)
+                errors.append(0.0)
+                labels_n.append(0)
+                summary_rows.append({"gene": gene, "condition": condition, "mean_auc": np.nan, "sem_auc": np.nan, "n_points": 0, "n_responsive": 0})
+                continue
+            row = csub.iloc[0]
+            mean_auc = float(row["mean_auc"])
+            sem_auc = float(row["sem_auc"])
+            n_points = int(row["n_points"])
+            n_responsive = int(row["n_responsive"])
+            heights.append(mean_auc)
+            errors.append(sem_auc)
+            labels_n.append(n_points)
+            summary_rows.append({"gene": gene, "condition": condition, "mean_auc": mean_auc, "sem_auc": sem_auc, "n_points": n_points, "n_responsive": n_responsive})
+        x = np.arange(len(condition_order), dtype=float)
+        safe_heights = np.asarray([0.0 if not np.isfinite(value) else value for value in heights], dtype=float)
+        ax.bar(x, safe_heights, yerr=np.asarray(errors, dtype=float), color=colors[gene], alpha=0.72, width=0.68, edgecolor="#2b2b2b", linewidth=0.5)
+        ax.axhline(0.0, color="#222222", linewidth=0.8)
+        ax.set_ylim(-ymax, ymax)
+        ax.set_xticks(x)
+        if row_idx == len(genes) - 1:
+            ax.set_xticklabels([condition_labels[condition] for condition in condition_order], fontsize=8)
+        else:
+            ax.set_xticklabels([])
+            ax.tick_params(axis="x", which="both", bottom=False)
+        ax.set_ylabel("AUC dF/F", fontsize=9)
+        ax.set_title(f"{gene}: stimulus-window response summary", loc="left", fontsize=10, fontstyle="italic")
+        for xpos, ypos, n_points in zip(x, safe_heights, labels_n):
+            offset = 0.04 * ymax if ypos >= 0 else -0.08 * ymax
+            va = "bottom" if ypos >= 0 else "top"
+            ax.text(xpos, ypos + offset, f"n={n_points}", ha="center", va=va, fontsize=7)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        donut_sub = status_summary[status_summary["gene"].astype(str) == gene].copy()
+        if donut_sub.empty or int(donut_sub["n_labels"].sum()) <= 0:
+            ax_donut.text(0.5, 0.5, "No HCR\nstatus rows", ha="center", va="center", transform=ax_donut.transAxes, fontsize=9)
+            ax_donut.axis("off")
+        else:
+            donut_sub = donut_sub.sort_values("status_bucket")
+            sizes = donut_sub["n_labels"].to_numpy(dtype=float)
+            labels = donut_sub["status_bucket"].astype(str).tolist()
+            wedges, _ = ax_donut.pie(
+                sizes,
+                startangle=90,
+                counterclock=False,
+                colors=[status_colors.get(label, "#d9d9d9") for label in labels],
+                wedgeprops={"width": 0.42, "edgecolor": "white", "linewidth": 0.8},
+            )
+            total = int(np.nansum(sizes))
+            ax_donut.text(0, 0, f"HCR\nn={total}", ha="center", va="center", fontsize=9, fontweight="bold")
+            ax_donut.set_title("HCR status", fontsize=9)
+            for wedge, size in zip(wedges, sizes):
+                if size <= 0:
+                    continue
+                theta = 0.5 * (wedge.theta1 + wedge.theta2)
+                ax_donut.text(0.78 * np.cos(np.deg2rad(theta)), 0.78 * np.sin(np.deg2rad(theta)), str(int(size)), ha="center", va="center", fontsize=7)
+            ax_donut.axis("equal")
+
+    legend_handles = [
+        Patch(facecolor=color, edgecolor="none", label=label)
+        for label, color in status_colors.items()
+        if label in set(status_summary.get("status_bucket", pd.Series(dtype=str)).astype(str))
+    ]
+    if legend_handles:
+        fig.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, 0.025), ncol=min(4, len(legend_handles)), frameon=False, fontsize=8)
+        bottom = 0.16
+    else:
+        bottom = 0.045
+    fig.suptitle(
+        f"{fish_id}: gene-specific stimulus responses and HCR functional status",
+        y=0.995,
+        fontsize=13,
+        fontweight="bold",
+    )
+    fig.subplots_adjust(left=0.08, right=0.97, bottom=bottom, top=0.92, wspace=0.28, hspace=0.62)
+    out_path = outdir_p / f"{basename}.png"
+    outdir_p.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(out_path.with_suffix(".pdf"), bbox_inches="tight")
+    summary_df = pd.DataFrame(summary_rows)
+    summary_csv = outdir_p / f"{basename}_summary.csv"
+    summary_df.to_csv(summary_csv, index=False)
+    plt.close(fig)
+    return {
+        "fig": fig,
+        "out_path": out_path,
+        "summary_csv": summary_csv,
+        "summary_df": summary_df,
+        "genes": genes,
+    }
+
+
 def render_cohort_56g_diagnostics(
     *,
     df: pd.DataFrame,
@@ -4869,6 +5092,7 @@ __all__ = [
     "render_single_fish_50l_gene_auc_panel",
     "render_single_fish_50l_global_auc_panel",
     "render_single_fish_50l_population_response_donut_poster",
+    "render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status",
     "run_single_fish_cell_50e_stage",
     "run_single_fish_cell_56_stage",
     "run_single_fish_cell_56d_stage",

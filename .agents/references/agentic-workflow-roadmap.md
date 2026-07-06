@@ -43,7 +43,7 @@ The immediate priority is to harden the durable workflow surface before broad be
 - `score-activity-bpi` is now a package-owned writer stage. It defaults to the staged `assign-hcr-identity` ROI master, accepts an explicit `--identity-input-path` for controlled validation/bootstrap, refuses to overwrite existing staged score CSVs without `--force-recompute`, and hard-codes `precomputed_scored_bpi_df=None`.
 - `export-canonical-tables` is now a package-owned writer stage with focused local and `L395_f11` real-data validation. It assembles the 8 canonical registration CSVs from staged score outputs for ROI/BPI tables and staged or explicit HCR/identity roots for HCR-centric tables, and refuses to overwrite existing staged canonical CSVs without `--force-recompute`.
 - `make-qa-report` is now a package-owned generated report writer stage with focused local and `L395_f11` real-data validation. It requires staged canonical export CSV inputs, writes `qa_report.md` and `qa_report_summary.json` under `make-qa-report/`, includes a manual review checklist plus inline previews for existing QA/figure PNG artifacts, and refuses overwrite without `--force-recompute`.
-- `make-figures` is now a package-owned mixed render/baseline writer stage. It requires staged canonical export CSV inputs plus declared `[56i]` AUC CSV inputs, renders `compound_50j_56i_unified.*`, `bpi_all_pairs.*`, `single_fish_50l_responsive_identity_donut.*`, and `single_fish_hcr_anatomy_coexpression_summary.*`, copies the remaining declared legacy trace figure PNG under `make-figures/04_plots`, and refuses overwrite without `--force-recompute`.
+- `make-figures` is now a package-owned render writer stage. It requires staged canonical export CSV inputs plus declared `[56i]` AUC CSV inputs, renders `compound_50j_56i_unified.*`, `bpi_all_pairs.*`, `per_gene_stimulus_trace_with_hcr_status_56h.*`, `single_fish_50l_responsive_identity_donut.*`, and `single_fish_hcr_anatomy_coexpression_summary.*`, and refuses overwrite without `--force-recompute`.
 - On `L395_f11`, `/tmp/codeants-fig-composite-xjyda6` validated the promoted 50l composite render path: `make-figures --strict` wrote all five PNG outputs with zero errors, `compare-staged --stage-name make-figures` had zero failed checks and zero warning entries, and visual verification confirmed the rendered `compound_50j_56i_unified.png` was nonblank, populated, and no longer had overlapping donut callouts.
 - On `L395_f11`, `/tmp/codeants-bpi-render-uwqf59` validated the promoted `bpi_all_pairs.png` render path from accepted canonical BPI/identity CSV inputs. `make-figures --strict` wrote all five PNG outputs with zero errors; `compare-staged --stage-name make-figures` had zero failed checks and warning-only BPI visual/dimension drift plus the pre-existing responsive-identity donut thumbnail warning. Visual verification confirmed the rendered BPI diagnostic was nonblank, populated, and had readable four-panel layout.
 - On `L395_f11`, `/tmp/codeants-qa-review-F3A65E` validated the richer Markdown QA report: `make-qa-report --strict` and `compare-staged --stage-name make-qa-report` passed, and after staged figures were present the report contained 9 review artifacts, 5 inline image previews, a manual review checklist, and a visual artifact preview section.
@@ -62,7 +62,7 @@ The immediate priority is to harden the durable workflow surface before broad be
 ## Broken Or Missing
 
 - The default `audit-inputs` command does not write manifests to disk by design; `--write-manifest` is the explicit opt-in for persisting the audit manifest.
-- The current post-preprocessing staged folders all have writer surfaces. `assign-hcr-identity` now recomputes the anatomy identity lookup, ROI identity master, HCR activity/status/candidate CSV family, and HCR activity status summary from staged dependencies; `score-activity-bpi` recomputes activity/BPI; `export-canonical-tables` assembles staged canonical CSVs; `make-qa-report` generates a Markdown/JSON review report with a manual review checklist and existing image previews; and `make-figures` renders four package-owned final figures while still copying the declared legacy per-gene trace figure PNG. Upstream preprocessing/registration/matching writers now include focused functional-reference, in vivo/ex vivo anatomy, Cellpose, NCC functional-to-anatomy, direct-HCR-to-anatomy recompute, and ROI/anatomy recompute slices. Remaining gaps include richer HTML/PDF/notebook-style biologist-facing reports, broader preprocessing/upstream freshness reporting, full functional-to-anatomy ANTs parity beyond the current NCC/accepted-transform hybrid, broader positive Cellpose/ex vivo validation, and replacement of the remaining copied trace figure artifact with a package-rendered output.
+- The current post-preprocessing staged folders all have writer surfaces. `assign-hcr-identity` now recomputes the anatomy identity lookup, ROI identity master, HCR activity/status/candidate CSV family, and HCR activity status summary from staged dependencies; `score-activity-bpi` recomputes activity/BPI; `export-canonical-tables` assembles staged canonical CSVs; `make-qa-report` generates a Markdown/JSON review report with a manual review checklist and existing image previews; and `make-figures` renders all declared final figure PNGs from staged canonical CSVs plus declared `[56i]` AUC table inputs. Upstream preprocessing/registration/matching writers now include focused functional-reference, in vivo/ex vivo anatomy, Cellpose, NCC functional-to-anatomy, direct-HCR-to-anatomy recompute, and ROI/anatomy recompute slices. Remaining gaps include richer HTML/PDF/notebook-style biologist-facing reports, full functional-to-anatomy ANTs parity beyond the current NCC/accepted-transform hybrid, and broader positive Cellpose/ex vivo validation.
 - `compare-staged` compares declared existing post-preprocessing staged outputs with CSV shape checks, declared keyed-row/exact-cell/numeric-cell checks, and PNG dimension checks. `freeze-legacy-baseline` and `compare-legacy-baseline` now cover frozen bundles for those declared post-processing outputs; preprocessing comparisons, full biologist-facing visual review reports, and most writer stages remain missing.
 - `audit-score-activity-bpi` remains read-only; `score-activity-bpi` promotes recomputed activity/BPI tables into staged CSV outputs. `export-canonical-tables` promotes staged score/HCR registration CSVs into the canonical export bundle but still depends on explicit HCR/control roots until the upstream identity writer is promoted.
 - `status` summarizes the current dry-run trust state and can report missing/current/stale/invalid persisted `audit-inputs` manifests.
@@ -78,7 +78,7 @@ Continue after the direct-HCR recompute and HCR activity promotion coverage:
 
 1. Keep existing `L395_f11` staged outputs as the first comparison control.
 2. For ex vivo/Cellpose validation, use Helga/NAS for `L765_f02` unless the missing ex vivo/rbest inputs are copied onto the mounted `linnaeus` data root.
-3. With ROI identity recompute, HCR activity replay/promotion, direct-HCR label warp recompute, ROI/anatomy recompute, the 50l composite and BPI all-pairs figure renders, downstream/dependency freshness warnings, and read-only upstream freshness summaries promoted, the next `linnaeus`-validated slice should either replace the remaining copied per-gene trace figure artifact with a package renderer or broaden biologist-facing QA around the validated registration/matching surfaces.
+3. With ROI identity recompute, HCR activity replay/promotion, direct-HCR label warp recompute, ROI/anatomy recompute, the 50l composite, BPI all-pairs, and per-gene 56h stimulus/HCR status figure renders, downstream/dependency freshness warnings, and read-only upstream freshness summaries promoted, the next `linnaeus`-validated slice should broaden biologist-facing QA around the validated registration/matching surfaces.
 4. Add local contract tests first, then validate real data with a temporary `--pipeline-root` and compare/status commands where applicable.
 
 ## Decisions
@@ -240,23 +240,18 @@ failed checks: 0
 warning checks: 2 CSV byte-parity warnings
 ```
 
-Latest real-data mixed-render writer `make-figures` evidence:
+Latest real-data table-driven writer `make-figures` evidence:
 
 ```text
-rsync current worktree to /tmp/codeants-makefig-render-fh3fjg/codeANTs on linnaeus, then run assign/score/export/make chain into /tmp/codeants-makefig-render-fh3fjg/staged-L395:
+rsync current worktree to /tmp/codeants-56h-render-1783319279/codeANTs on linnaeus, then run make-figures into /tmp/codeants-56h-render-1783319279/staged-L395 using staged canonical inputs and declared [56i] AUC inputs:
 
-PYTHONPATH=src /Users/ddharmap/gitRepo/LLM/.venv/bin/python tools/single_fish_pipeline.py make-figures --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-makefig-render-fh3fjg/staged-L395
+PYTHONPATH=src /Users/ddharmap/gitRepo/LLM/.venv/bin/python tools/single_fish_pipeline.py make-figures --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-56h-render-1783319279/staged-L395 --canonical-input-root /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/03_analysis/functional/registration
 status: warn
 errors: []
-warnings: 1 visual thumbnail warning from rendered responsive identity donut
+warnings: 5 expected visual/dimension-drift warnings versus legacy control figures
 outputs: 5 staged figure PNGs
-rendered: single_fish_50l_responsive_identity_donut.png, single_fish_hcr_anatomy_coexpression_summary.png
-legacy-copied: compound_50j_56i_unified.png, bpi_all_pairs.png, per_gene_stimulus_trace_with_hcr_status_56h.png
-
-PYTHONPATH=src /Users/ddharmap/gitRepo/LLM/.venv/bin/python tools/single_fish_pipeline.py compare-staged --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-makefig-render-fh3fjg/staged-L395 --stage-name make-figures
-status: warn
-failed checks: 0
-warning checks: 1 visual thumbnail warning from rendered responsive identity donut
+rendered: compound_50j_56i_unified.png, bpi_all_pairs.png, per_gene_stimulus_trace_with_hcr_status_56h.png, single_fish_50l_responsive_identity_donut.png, single_fish_hcr_anatomy_coexpression_summary.png
+legacy-copied: []
 ```
 
 Latest real-data declared legacy-baseline evidence:

@@ -3516,6 +3516,9 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert (figure_dir / "bpi_all_pairs.png").read_bytes() != (
         fish_dir / "04_plots" / "bpi_all_pairs.png"
     ).read_bytes()
+    assert (figure_dir / "per_gene_stimulus_trace_with_hcr_status_56h.png").read_bytes() != (
+        fish_dir / "04_plots" / "per_gene_stimulus_trace_with_hcr_status_56h.png"
+    ).read_bytes()
     assert (figure_dir / "single_fish_50l_responsive_identity_donut.png").read_bytes() != (
         fish_dir / "04_plots" / "single_fish_50l_responsive_identity_donut.png"
     ).read_bytes()
@@ -3529,12 +3532,11 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert tuple(manifest.parameters["rendered_figures"]) == (
         "compound_50j_56i_unified.png",
         "bpi_all_pairs.png",
+        "per_gene_stimulus_trace_with_hcr_status_56h.png",
         "single_fish_50l_responsive_identity_donut.png",
         "single_fish_hcr_anatomy_coexpression_summary.png",
     )
-    assert tuple(manifest.parameters["legacy_copied_figures"]) == (
-        "per_gene_stimulus_trace_with_hcr_status_56h.png",
-    )
+    assert tuple(manifest.parameters["legacy_copied_figures"]) == ()
 
 
 def test_make_figures_writer_refuses_existing_outputs_without_force(tmp_path: Path) -> None:
