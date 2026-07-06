@@ -14,6 +14,7 @@ import re
 import shutil
 import struct
 import tempfile
+import textwrap
 from typing import Any
 
 
@@ -1152,6 +1153,11 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
             StageOutputSpec(
                 "staged QA report HTML",
                 str(report_dir / "qa_report.html"),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "staged QA report PDF",
+                str(report_dir / "qa_report.pdf"),
                 parity="nonempty_file",
             ),
             StageOutputSpec(
@@ -4372,6 +4378,189 @@ def _make_qa_report_html(summary: dict[str, Any]) -> str:
     return "\n".join(parts) + "\n"
 
 
+def _pdf_text_lines(text: str, *, width: int = 96) -> list[str]:
+    lines: list[str] = []
+    for line in str(text).splitlines() or [""]:
+        wrapped = textwrap.wrap(line, width=width) if line else [""]
+        lines.extend(wrapped)
+    return lines
+
+
+def _pdf_table_page(pdf: Any, plt: Any, title: str, headers: tuple[str, ...], rows: list[tuple[Any, ...]]) -> None:
+    fig, ax = plt.subplots(figsize=(11.0, 8.5))
+    ax.axis("off")
+    ax.set_title(title, loc="left", fontsize=15, fontweight="bold", pad=16)
+    if rows:
+        table = ax.table(
+            cellText=[[str("" if cell is None else cell) for cell in row] for row in rows],
+            colLabels=list(headers),
+            loc="upper left",
+            cellLoc="left",
+            colLoc="left",
+            bbox=[0.02, 0.02, 0.96, 0.88],
+        )
+        table.auto_set_font_size(False)
+        table.set_fontsize(8)
+        table.scale(1, 1.25)
+        for (row_idx, _col_idx), cell in table.get_celld().items():
+            cell.set_edgecolor("#c8d2dc")
+            if row_idx == 0:
+                cell.set_facecolor("#eef3f7")
+                cell.set_text_props(weight="bold")
+    else:
+        ax.text(0.02, 0.92, "No records available.", transform=ax.transAxes, fontsize=11, va="top")
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _pdf_text_page(pdf: Any, plt: Any, title: str, lines: list[str]) -> None:
+    fig, ax = plt.subplots(figsize=(8.5, 11.0))
+    ax.axis("off")
+    ax.text(0.06, 0.96, title, transform=ax.transAxes, fontsize=16, fontweight="bold", va="top")
+    y = 0.90
+    for line in lines:
+        if y < 0.06:
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+            fig, ax = plt.subplots(figsize=(8.5, 11.0))
+            ax.axis("off")
+            y = 0.96
+        ax.text(0.06, y, line, transform=ax.transAxes, fontsize=9.5, va="top")
+        y -= 0.026
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _pdf_image_page(pdf: Any, plt: Any, title: str, image_path: str) -> None:
+    fig, ax = plt.subplots(figsize=(11.0, 8.5))
+    ax.axis("off")
+    ax.set_title(title, loc="left", fontsize=15, fontweight="bold", pad=16)
+    try:
+        img = plt.imread(image_path)
+        ax.imshow(img)
+        ax.text(0.0, -0.05, image_path, transform=ax.transAxes, fontsize=7, color="#52616f", va="top")
+    except Exception as exc:
+        ax.text(
+            0.02,
+            0.90,
+            "\n".join(_pdf_text_lines(f"Image preview unavailable: {image_path}\n{exc}", width=100)),
+            transform=ax.transAxes,
+            fontsize=10,
+            va="top",
+        )
+    pdf.savefig(fig, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _write_qa_report_pdf(summary: dict[str, Any], out_path: Path) -> None:
+    from matplotlib import pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    registration_qc = summary.get("registration_qc", {})
+    matching_qc = summary.get("matching_qc", {})
+    review_artifacts = summary.get("review_artifacts", [])
+    preview_artifacts = [
+        artifact
+        for artifact in review_artifacts
+        if artifact.get("kind") == "image" and artifact.get("exists")
+    ]
+    with PdfPages(out_path) as pdf:
+        _pdf_text_page(
+            pdf,
+            plt,
+            f"Single-Fish QA Report: {summary['fish_id']}",
+            [
+                f"Canonical table root: {summary['canonical_root']}",
+                "",
+                "This PDF summarizes staged pipeline artifacts for review. It does not recompute matching, identity, response, BPI, or figures.",
+                "",
+                "Use compare-staged for detailed table and figure parity checks.",
+            ],
+        )
+        _pdf_table_page(
+            pdf,
+            plt,
+            "Staged Output Status",
+            ("Stage", "Existing / Declared", "Status"),
+            [
+                (
+                    stage.get("stage_name"),
+                    f"{stage.get('existing_outputs')} / {stage.get('declared_outputs')}",
+                    stage.get("status"),
+                )
+                for stage in summary.get("stage_outputs", [])
+            ],
+        )
+        _pdf_table_page(
+            pdf,
+            plt,
+            "Canonical Tables",
+            ("Table", "Rows", "Present"),
+            [
+                (
+                    table.get("filename"),
+                    "missing" if table.get("rows") is None else table.get("rows"),
+                    table.get("exists"),
+                )
+                for table in summary.get("canonical_tables", [])
+            ],
+        )
+        _pdf_table_page(
+            pdf,
+            plt,
+            "Functional/Anatomy Center Overlay",
+            ("Plane", "Best Z", "Label Z", "Crop", "Func labels", "Anat labels", "Func px", "Anat px"),
+            [
+                (
+                    plane.get("plane_idx"),
+                    plane.get("best_z"),
+                    plane.get("label_z"),
+                    plane.get("crop_size_px"),
+                    plane.get("functional_label_count_crop"),
+                    plane.get("anatomy_label_count_crop"),
+                    plane.get("functional_boundary_pixels_crop"),
+                    plane.get("anatomy_label_pixels_crop"),
+                )
+                for plane in registration_qc.get("planes", [])
+            ],
+        )
+        _pdf_table_page(
+            pdf,
+            plt,
+            "ROI/Anatomy Geometry Matches",
+            ("Plane", "ROIs", "Unique anatomy matches", "Unmatched ROIs"),
+            [
+                (
+                    plane.get("plane_idx"),
+                    plane.get("n_rois"),
+                    plane.get("n_unique_anatomy_matches"),
+                    plane.get("n_unmatched_rois"),
+                )
+                for plane in matching_qc.get("planes", [])
+            ],
+        )
+        checklist_lines: list[str] = []
+        for artifact in review_artifacts:
+            checklist_lines.extend(
+                _pdf_text_lines(
+                    f"{artifact.get('label')} ({artifact.get('kind')}, present={artifact.get('exists')}): "
+                    f"{artifact.get('focus')}",
+                    width=96,
+                )
+            )
+            checklist_lines.extend(_pdf_text_lines(f"Path: {artifact.get('path')}", width=96))
+            checklist_lines.append("")
+        _pdf_text_page(
+            pdf,
+            plt,
+            "Manual Review Checklist",
+            checklist_lines,
+        )
+        for artifact in preview_artifacts:
+            _pdf_image_page(pdf, plt, str(artifact.get("label", "image")), str(artifact.get("path", "")))
+
+
 def run_single_fish_make_qa_report_stage(
     config: SingleFishPipelineConfig,
     *,
@@ -4408,6 +4597,7 @@ def run_single_fish_make_qa_report_stage(
         (report_dir / "qa_report_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
         (report_dir / "qa_report.md").write_text(_make_qa_report_markdown(summary))
         (report_dir / "qa_report.html").write_text(_make_qa_report_html(summary))
+        _write_qa_report_pdf(summary, report_dir / "qa_report.pdf")
         checks.extend(_build_staged_comparison_checks(paths, "make-qa-report"))
 
     outputs = _stage_output_records(paths, "make-qa-report")

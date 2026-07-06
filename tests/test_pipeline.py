@@ -281,6 +281,7 @@ def _make_minimal_staged_outputs(fish_dir: Path) -> None:
     qa_report_dir.mkdir(parents=True)
     (qa_report_dir / "qa_report.md").write_text("# Single-Fish QA Report\n")
     (qa_report_dir / "qa_report.html").write_text("<!doctype html><h1>Single-Fish QA Report</h1>\n")
+    (qa_report_dir / "qa_report.pdf").write_bytes(b"%PDF-1.4\n")
     (qa_report_dir / "qa_report_summary.json").write_text("{}\n")
 
     figure_dir = pipeline_outputs / "make-figures" / "04_plots"
@@ -3358,6 +3359,7 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     summary = json.loads((report_dir / "qa_report_summary.json").read_text())
     markdown = (report_dir / "qa_report.md").read_text()
     html = (report_dir / "qa_report.html").read_text()
+    pdf_bytes = (report_dir / "qa_report.pdf").read_bytes()
     assert manifest.status == "pass"
     assert summary["fish_id"] == fish_dir.name
     assert len(summary["canonical_tables"]) == 8
@@ -3385,6 +3387,7 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     assert "Total ROIs: 2; unique anatomy matches: 1; unmatched ROIs: 1." in html
     assert '<img src="' in html
     assert "compound_50j_56i_unified.png" in html
+    assert pdf_bytes.startswith(b"%PDF")
 
 
 def test_make_qa_report_writer_refuses_existing_outputs_without_force(tmp_path: Path) -> None:
@@ -3456,8 +3459,9 @@ def test_single_fish_pipeline_cli_make_qa_report_outputs_manifest(tmp_path: Path
     assert payload["stage_name"] == "make-qa-report"
     assert payload["dry_run"] is False
     assert payload["parameters"]["pipeline_root"] == str(output_root)
-    assert len(payload["outputs"]) == 3
+    assert len(payload["outputs"]) == 4
     assert (output_root / "make-qa-report" / "qa_report.html").exists()
+    assert (output_root / "make-qa-report" / "qa_report.pdf").exists()
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_manifests").exists()
 
 
