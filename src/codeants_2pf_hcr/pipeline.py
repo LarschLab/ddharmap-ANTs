@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+import html
 import importlib.util
 import json
 import math
@@ -1146,6 +1147,11 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
             StageOutputSpec(
                 "staged QA report markdown",
                 str(report_dir / "qa_report.md"),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "staged QA report HTML",
+                str(report_dir / "qa_report.html"),
                 parity="nonempty_file",
             ),
             StageOutputSpec(
@@ -4212,6 +4218,160 @@ def _make_qa_report_markdown(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _html_text(value: Any) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def _html_table(headers: tuple[str, ...], rows: list[tuple[Any, ...]]) -> str:
+    header_html = "".join(f"<th>{_html_text(header)}</th>" for header in headers)
+    row_html = []
+    for row in rows:
+        row_html.append("<tr>" + "".join(f"<td>{_html_text(cell)}</td>" for cell in row) + "</tr>")
+    return "<table><thead><tr>" + header_html + "</tr></thead><tbody>" + "".join(row_html) + "</tbody></table>"
+
+
+def _make_qa_report_html(summary: dict[str, Any]) -> str:
+    registration_qc = summary.get("registration_qc", {})
+    matching_qc = summary.get("matching_qc", {})
+    review_artifacts = summary.get("review_artifacts", [])
+    preview_artifacts = [
+        artifact
+        for artifact in review_artifacts
+        if artifact.get("kind") == "image" and artifact.get("exists")
+    ]
+    registration_rows = [
+        (
+            plane.get("plane_idx"),
+            plane.get("best_z"),
+            plane.get("label_z"),
+            plane.get("crop_size_px"),
+            plane.get("functional_label_count_crop"),
+            plane.get("anatomy_label_count_crop"),
+            plane.get("functional_boundary_pixels_crop"),
+            plane.get("anatomy_label_pixels_crop"),
+        )
+        for plane in registration_qc.get("planes", [])
+    ]
+    matching_rows = [
+        (
+            plane.get("plane_idx"),
+            plane.get("n_rois"),
+            plane.get("n_unique_anatomy_matches"),
+            plane.get("n_unmatched_rois"),
+        )
+        for plane in matching_qc.get("planes", [])
+    ]
+    parts = [
+        "<!doctype html>",
+        "<html><head><meta charset=\"utf-8\">",
+        f"<title>Single-Fish QA Report: {_html_text(summary['fish_id'])}</title>",
+        "<style>",
+        "body{font-family:Arial,sans-serif;margin:24px;line-height:1.4;color:#17202a;background:#fff;}",
+        "h1,h2,h3{margin:24px 0 10px;} table{border-collapse:collapse;width:100%;margin:10px 0 18px;}",
+        "th,td{border:1px solid #d6dde5;padding:6px 8px;text-align:left;vertical-align:top;} th{background:#eef3f7;}",
+        "code{background:#f4f6f8;padding:1px 4px;border-radius:3px;} .path{font-size:12px;color:#52616f;word-break:break-all;}",
+        ".preview img{max-width:100%;height:auto;border:1px solid #ccd5df;} .note{color:#3b4754;}",
+        "</style></head><body>",
+        f"<h1>Single-Fish QA Report: {_html_text(summary['fish_id'])}</h1>",
+        f"<p class=\"path\">Canonical table root: {_html_text(summary['canonical_root'])}</p>",
+        "<h2>Staged Output Status</h2>",
+        _html_table(
+            ("Stage", "Existing / Declared", "Status"),
+            [
+                (
+                    stage.get("stage_name"),
+                    f"{stage.get('existing_outputs')} / {stage.get('declared_outputs')}",
+                    stage.get("status"),
+                )
+                for stage in summary.get("stage_outputs", [])
+            ],
+        ),
+        "<h2>Canonical Tables</h2>",
+        _html_table(
+            ("Table", "Rows", "Present"),
+            [
+                (
+                    table.get("filename"),
+                    "missing" if table.get("rows") is None else table.get("rows"),
+                    table.get("exists"),
+                )
+                for table in summary.get("canonical_tables", [])
+            ],
+        ),
+        "<h2>Registration And Matching QA</h2>",
+        "<h3>Functional/Anatomy Center Overlay</h3>",
+        f"<p class=\"path\">Source: {_html_text(registration_qc.get('source_path', ''))}</p>",
+    ]
+    if registration_rows:
+        parts.append(
+            _html_table(
+                (
+                    "Plane",
+                    "Best Z",
+                    "Label Z",
+                    "Crop",
+                    "Functional labels",
+                    "Anatomy labels",
+                    "Functional pixels",
+                    "Anatomy pixels",
+                ),
+                registration_rows,
+            )
+        )
+    else:
+        parts.append("<p>No staged functional/anatomy overlay CSV was found.</p>")
+    parts.extend(
+        [
+            "<h3>ROI/Anatomy Geometry Matches</h3>",
+            f"<p class=\"path\">Source: {_html_text(matching_qc.get('source_path', ''))}</p>",
+        ]
+    )
+    if matching_rows:
+        parts.append(
+            "<p>"
+            f"Total ROIs: {_html_text(matching_qc.get('total_rois', 0))}; "
+            f"unique anatomy matches: {_html_text(matching_qc.get('total_unique_anatomy_matches', 0))}; "
+            f"unmatched ROIs: {_html_text(matching_qc.get('total_unmatched_rois', 0))}."
+            "</p>"
+        )
+        parts.append(_html_table(("Plane", "ROIs", "Unique anatomy matches", "Unmatched ROIs"), matching_rows))
+    else:
+        parts.append("<p>No staged ROI/anatomy geometry table was found.</p>")
+    parts.extend(
+        [
+            "<h2>Manual Review Checklist</h2>",
+            _html_table(
+                ("Artifact", "Type", "Present", "Review focus", "Path"),
+                [
+                    (
+                        artifact.get("label"),
+                        artifact.get("kind"),
+                        artifact.get("exists"),
+                        artifact.get("focus"),
+                        artifact.get("path"),
+                    )
+                    for artifact in review_artifacts
+                ],
+            ),
+        ]
+    )
+    if preview_artifacts:
+        parts.append("<h2>Visual Artifact Preview</h2>")
+        for artifact in preview_artifacts:
+            label = _html_text(artifact.get("label", "image"))
+            path = _html_text(artifact.get("path", ""))
+            parts.append(f"<section class=\"preview\"><h3>{label}</h3><img src=\"{path}\" alt=\"{label}\"></section>")
+    parts.extend(
+        [
+            "<h2>Notes</h2>",
+            "<p class=\"note\">This report summarizes staged pipeline artifacts for review; it does not recompute matching, identity, response, BPI, or figures.</p>",
+            "<p class=\"note\">Use <code>compare-staged</code> for detailed table and figure parity checks.</p>",
+            "</body></html>",
+        ]
+    )
+    return "\n".join(parts) + "\n"
+
+
 def run_single_fish_make_qa_report_stage(
     config: SingleFishPipelineConfig,
     *,
@@ -4247,6 +4407,7 @@ def run_single_fish_make_qa_report_stage(
         summary = _make_qa_report_summary(paths, canonical_root=canonical_root)
         (report_dir / "qa_report_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
         (report_dir / "qa_report.md").write_text(_make_qa_report_markdown(summary))
+        (report_dir / "qa_report.html").write_text(_make_qa_report_html(summary))
         checks.extend(_build_staged_comparison_checks(paths, "make-qa-report"))
 
     outputs = _stage_output_records(paths, "make-qa-report")
