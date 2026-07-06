@@ -3322,6 +3322,27 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     )
     qa_overlay.parent.mkdir(parents=True)
     qa_overlay.write_bytes(b"png")
+    qa_overlay.with_suffix(".csv").write_text(
+        "\n".join(
+            [
+                "plane_idx,plane_label,best_z,label_z,crop_size_px,functional_label_count_crop,anatomy_label_count_crop,functional_boundary_pixels_crop,anatomy_label_pixels_crop",
+                f"0,{fish_dir.name}_plane0_mcorrected_flipX,12,12,200,3,4,55,80",
+            ]
+        )
+        + "\n"
+    )
+    match_root = output_root / "match-roi-to-anatomy" / "registration"
+    match_root.mkdir(parents=True)
+    (match_root / "functional_roi_anatomy_matches.csv").write_text(
+        "\n".join(
+            [
+                "fish_id,plane_idx,func_label,roi_idx,selected_anat_label,has_unique_anat_match",
+                f"{fish_dir.name},0,1,1,7,True",
+                f"{fish_dir.name},0,2,2,,False",
+            ]
+        )
+        + "\n"
+    )
 
     manifest = run_single_fish_make_qa_report_stage(
         SingleFishPipelineConfig(
@@ -3339,6 +3360,10 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     assert summary["fish_id"] == fish_dir.name
     assert len(summary["canonical_tables"]) == 8
     assert all(table["exists"] for table in summary["canonical_tables"])
+    assert summary["registration_qc"]["planes"][0]["best_z"] == 12
+    assert summary["matching_qc"]["total_rois"] == 2
+    assert summary["matching_qc"]["total_unique_anatomy_matches"] == 1
+    assert summary["matching_qc"]["total_unmatched_rois"] == 1
     assert any(artifact["label"] == "functional/anatomy center overlay" for artifact in summary["review_artifacts"])
     assert any(
         artifact["label"] == "50l composite figure" and artifact["exists"]
@@ -3347,6 +3372,9 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     assert "# Single-Fish QA Report" in markdown
     assert "## Manual Review Checklist" in markdown
     assert "## Visual Artifact Preview" in markdown
+    assert "## Registration And Matching QA" in markdown
+    assert "Total ROIs: 2; unique anatomy matches: 1; unmatched ROIs: 1." in markdown
+    assert "| 0 | 12 | 12 | 200 | 3 | 4 | 55 | 80 |" in markdown
     assert "functional-to-anatomy orientation" in markdown
     assert "![50l composite figure]" in markdown
     assert "functional_roi_activity_identity.csv" in markdown

@@ -3927,7 +3927,90 @@ def _make_qa_report_summary(paths: PipelinePaths, *, canonical_root: Path) -> di
         "canonical_root": str(canonical_root),
         "canonical_tables": canonical_tables,
         "stage_outputs": stage_outputs,
+        "registration_qc": _make_qa_registration_qc_summary(paths),
+        "matching_qc": _make_qa_matching_qc_summary(paths),
         "review_artifacts": _make_qa_report_review_artifacts(paths, canonical_root=canonical_root),
+    }
+
+
+def _qa_int_cell(row: dict[str, str], column: str) -> int | None:
+    value = str(row.get(column, "")).strip()
+    if value == "":
+        return None
+    try:
+        return int(float(value))
+    except ValueError:
+        return None
+
+
+def _qa_bool_cell(row: dict[str, str], column: str) -> bool:
+    return _bool_value(str(row.get(column, ""))) is True
+
+
+def _make_qa_registration_qc_summary(paths: PipelinePaths) -> dict[str, Any]:
+    overlay_csv = (
+        _stage_root(paths, "register-functional-to-anatomy")
+        / "qa"
+        / "functional_anatomy_center_overlay_200px.csv"
+    )
+    rows = _csv_dict_rows(overlay_csv) or ()
+    planes = []
+    for row in rows:
+        planes.append(
+            {
+                "plane_idx": _qa_int_cell(row, "plane_idx"),
+                "plane_label": row.get("plane_label", ""),
+                "best_z": _qa_int_cell(row, "best_z"),
+                "label_z": _qa_int_cell(row, "label_z"),
+                "crop_size_px": _qa_int_cell(row, "crop_size_px"),
+                "functional_label_count_crop": _qa_int_cell(row, "functional_label_count_crop"),
+                "anatomy_label_count_crop": _qa_int_cell(row, "anatomy_label_count_crop"),
+                "functional_boundary_pixels_crop": _qa_int_cell(row, "functional_boundary_pixels_crop"),
+                "anatomy_label_pixels_crop": _qa_int_cell(row, "anatomy_label_pixels_crop"),
+            }
+        )
+    return {
+        "source_path": str(overlay_csv),
+        "exists": overlay_csv.exists(),
+        "plane_count": len(planes),
+        "planes": planes,
+    }
+
+
+def _make_qa_matching_qc_summary(paths: PipelinePaths) -> dict[str, Any]:
+    detail_path = _stage_root(paths, "match-roi-to-anatomy") / "registration" / "functional_roi_anatomy_matches.csv"
+    detail_rows = _csv_dict_rows(detail_path) or ()
+    by_plane: dict[str, dict[str, Any]] = {}
+    for row in detail_rows:
+        plane_idx = str(row.get("plane_idx", row.get("plane_index", ""))).strip()
+        if plane_idx == "":
+            plane_idx = "unknown"
+        plane = by_plane.setdefault(
+            plane_idx,
+            {
+                "plane_idx": None if plane_idx == "unknown" else _qa_int_cell({"plane_idx": plane_idx}, "plane_idx"),
+                "n_rois": 0,
+                "n_unique_anatomy_matches": 0,
+                "n_unmatched_rois": 0,
+            },
+        )
+        plane["n_rois"] += 1
+        if _qa_bool_cell(row, "has_unique_anat_match"):
+            plane["n_unique_anatomy_matches"] += 1
+        else:
+            plane["n_unmatched_rois"] += 1
+    planes = sorted(
+        by_plane.values(),
+        key=lambda item: (999999 if item["plane_idx"] is None else int(item["plane_idx"])),
+    )
+    return {
+        "source_path": str(detail_path),
+        "exists": detail_path.exists(),
+        "plane_count": len(planes),
+        "total_rois": sum(int(plane["n_rois"]) for plane in planes),
+        "total_unique_anatomy_matches": sum(int(plane["n_unique_anatomy_matches"]) for plane in planes),
+        "total_unmatched_rois": sum(int(plane["n_unmatched_rois"]) for plane in planes),
+        "planes": planes,
     }
 
 
@@ -4028,6 +4111,64 @@ def _make_qa_report_markdown(summary: dict[str, Any]) -> str:
     for table in summary["canonical_tables"]:
         rows = "missing" if table["rows"] is None else str(table["rows"])
         lines.append(f"| `{table['filename']}` | {rows} | {table['exists']} |")
+    registration_qc = summary.get("registration_qc", {})
+    matching_qc = summary.get("matching_qc", {})
+    lines.extend(
+        [
+            "",
+            "## Registration And Matching QA",
+            "",
+            "### Functional/Anatomy Center Overlay",
+            "",
+            f"Source: `{registration_qc.get('source_path', '')}`",
+            "",
+        ]
+    )
+    registration_planes = registration_qc.get("planes", [])
+    if registration_planes:
+        lines.extend(
+            [
+                "| Plane | Best Z | Label Z | Crop | Functional labels | Anatomy labels | Functional pixels | Anatomy pixels |",
+                "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for plane in registration_planes:
+            lines.append(
+                f"| {plane.get('plane_idx')} | {plane.get('best_z')} | {plane.get('label_z')} | "
+                f"{plane.get('crop_size_px')} | {plane.get('functional_label_count_crop')} | "
+                f"{plane.get('anatomy_label_count_crop')} | {plane.get('functional_boundary_pixels_crop')} | "
+                f"{plane.get('anatomy_label_pixels_crop')} |"
+            )
+    else:
+        lines.append("No staged functional/anatomy overlay CSV was found.")
+    lines.extend(
+        [
+            "",
+            "### ROI/Anatomy Geometry Matches",
+            "",
+            f"Source: `{matching_qc.get('source_path', '')}`",
+            "",
+        ]
+    )
+    matching_planes = matching_qc.get("planes", [])
+    if matching_planes:
+        lines.extend(
+            [
+                f"Total ROIs: {matching_qc.get('total_rois', 0)}; "
+                f"unique anatomy matches: {matching_qc.get('total_unique_anatomy_matches', 0)}; "
+                f"unmatched ROIs: {matching_qc.get('total_unmatched_rois', 0)}.",
+                "",
+                "| Plane | ROIs | Unique anatomy matches | Unmatched ROIs |",
+                "| ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for plane in matching_planes:
+            lines.append(
+                f"| {plane.get('plane_idx')} | {plane.get('n_rois')} | "
+                f"{plane.get('n_unique_anatomy_matches')} | {plane.get('n_unmatched_rois')} |"
+            )
+    else:
+        lines.append("No staged ROI/anatomy geometry table was found.")
     lines.extend(
         [
             "",
