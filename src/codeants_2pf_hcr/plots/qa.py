@@ -64,7 +64,7 @@ from ..single_fish_notebook_stages import (
 from ..runtime import default_local_root
 from .annotations import place_labels_no_overlap
 from ..segmentation import resolve_functional_labels_for_plane
-from ..spatial import ncc_xy, norm01
+from ..spatial import imread_any, ncc_xy, norm01
 
 try:
     import SimpleITK as sitk
@@ -79,9 +79,7 @@ def _require_skimage_module(module: Any, module_name: str) -> Any:
 
 
 def _read_tiff(path: str | Path) -> np.ndarray:
-    if tifffile is None:
-        raise RuntimeError("tifffile is required for this QA plotting operation.")
-    return np.asarray(tifffile.imread(str(path)))
+    return np.asarray(imread_any(path))
 
 
 def _normalize_for_display(image: Any) -> np.ndarray:

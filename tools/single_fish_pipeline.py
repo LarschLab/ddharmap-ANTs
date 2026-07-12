@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 from pathlib import Path
 import sys
@@ -37,6 +39,7 @@ from codeants_2pf_hcr.pipeline import (
     run_single_fish_audit_inputs_stage,
     run_single_fish_score_activity_bpi_stage,
     stage_manifest_to_json,
+    staged_comparison_stage_names,
     write_cellpose_stage_manifest,
     write_stage_manifest,
 )
@@ -94,17 +97,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     compare = subparsers.add_parser(
         "compare-staged",
-        help="Read-only comparison of existing post-preprocessing staged outputs to control outputs.",
+        help="Read-only comparison of existing staged outputs to control outputs.",
     )
     _add_common_fish_args(compare)
-    compare.add_argument("--stage-name", choices=downstream_stage_names())
+    compare.add_argument("--stage-name", choices=staged_comparison_stage_names())
 
     freeze_legacy = subparsers.add_parser(
         "freeze-legacy-baseline",
         help="Writer stage: freeze declared legacy/control outputs into a fish-scoped baseline bundle.",
     )
     _add_common_fish_args(freeze_legacy)
-    freeze_legacy.add_argument("--stage-name", choices=downstream_stage_names())
+    freeze_legacy.add_argument("--stage-name", choices=staged_comparison_stage_names())
     freeze_legacy.add_argument("--overwrite", action="store_true")
 
     compare_legacy = subparsers.add_parser(
@@ -112,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read-only comparison of staged outputs against a frozen legacy baseline bundle.",
     )
     _add_common_fish_args(compare_legacy)
-    compare_legacy.add_argument("--stage-name", choices=downstream_stage_names())
+    compare_legacy.add_argument("--stage-name", choices=staged_comparison_stage_names())
 
     score_audit = subparsers.add_parser(
         "audit-score-activity-bpi",
@@ -235,10 +238,23 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_fish_args(register_func)
     register_func.add_argument("--reference-dir", type=Path)
     register_func.add_argument("--functional-reference-dir", dest="reference_dir", type=Path)
+    register_func.add_argument(
+        "--reference-plane-index",
+        dest="reference_plane_indices",
+        action="append",
+        type=int,
+        default=None,
+        help="Limit registration to a discovered functional reference plane index. Repeat for multiple planes.",
+    )
     register_func.add_argument("--anatomy-stack-path", type=Path)
     register_func.add_argument("--anatomy-labels-path", type=Path)
     register_func.add_argument("--functional-labels-anatomy-dir", type=Path)
     register_func.add_argument("--output-root", type=Path)
+    register_func.add_argument("--ants-fixed-mask-json", type=Path)
+    register_func.add_argument("--no-ants-fixed-mask-required", dest="ants_require_fixed_mask", action="store_false")
+    register_func.set_defaults(ants_require_fixed_mask=True)
+    register_func.add_argument("--ants-deterministic-seed", type=int, default=None)
+    register_func.add_argument("--no-ants-deterministic", dest="ants_deterministic_seed", action="store_const", const=None)
     register_func.add_argument("--skip-inplane-comparison", action="store_true")
     register_func.add_argument("--inplane-method", action="append", default=None)
     register_func.add_argument("--active-inplane-method", default="ncc_xy")
@@ -364,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = compare_single_fish_staged_outputs(config, args.stage_name)
         if args.write_manifest:
             paths = resolve_pipeline_paths(config)
-            stage_names = (args.stage_name,) if args.stage_name else downstream_stage_names()
+            stage_names = (args.stage_name,) if args.stage_name else staged_comparison_stage_names()
             for stage_name in stage_names:
                 manifest = build_single_fish_compare_staged_manifest(config, stage_name)
                 write_stage_manifest(manifest, paths)
@@ -402,7 +418,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = compare_single_fish_legacy_baseline(config, args.stage_name)
         if args.write_manifest:
             paths = resolve_pipeline_paths(config)
-            stage_names = (args.stage_name,) if args.stage_name else downstream_stage_names()
+            stage_names = (args.stage_name,) if args.stage_name else staged_comparison_stage_names()
             for stage_name in stage_names:
                 manifest = build_single_fish_compare_legacy_baseline_manifest(config, stage_name)
                 write_stage_manifest(manifest, paths)
@@ -576,14 +592,18 @@ def main(argv: list[str] | None = None) -> int:
         manifest = run_register_functional_to_anatomy_stage(
             config,
             reference_dir=args.reference_dir,
+            reference_plane_indices=tuple(args.reference_plane_indices or ()),
             anatomy_stack_path=args.anatomy_stack_path,
             anatomy_labels_path=args.anatomy_labels_path,
             functional_labels_anatomy_dir=args.functional_labels_anatomy_dir,
             output_root=args.output_root,
+            ants_fixed_mask_json=args.ants_fixed_mask_json,
+            ants_require_fixed_mask=args.ants_require_fixed_mask,
             force_recompute=args.force_recompute,
             run_inplane_comparison=not args.skip_inplane_comparison,
             inplane_methods=tuple(args.inplane_method or ("ncc_xy",)),
             active_inplane_method=args.active_inplane_method,
+            ants_deterministic_seed=args.ants_deterministic_seed,
             use_cv2=args.use_cv2,
             emit_visual_qa=not args.skip_visual_qa,
             visual_qa_crop_size_px=args.visual_qa_crop_size_px,
@@ -685,14 +705,15 @@ def main(argv: list[str] | None = None) -> int:
             write_manifest=args.write_manifest,
             pipeline_root=args.pipeline_root,
         )
-        manifest = run_segment_ex_vivo_anatomy_cellpose_stage(
-            config,
-            anatomy_stack_path=args.anatomy_stack_path,
-            anat_cp_model_path=args.anat_cp_model_path,
-            use_gpu=args.use_gpu,
-            compute_device=args.compute_device,
-            force_recompute=args.force_recompute,
-        )
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            manifest = run_segment_ex_vivo_anatomy_cellpose_stage(
+                config,
+                anatomy_stack_path=args.anatomy_stack_path,
+                anat_cp_model_path=args.anat_cp_model_path,
+                use_gpu=args.use_gpu,
+                compute_device=args.compute_device,
+                force_recompute=args.force_recompute,
+            )
         if args.write_manifest:
             write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))
         sys.stdout.write(stage_manifest_to_json(manifest))
@@ -707,13 +728,14 @@ def main(argv: list[str] | None = None) -> int:
             write_manifest=args.write_manifest,
             pipeline_root=args.pipeline_root,
         )
-        manifest = run_segment_hcr_cellpose_stage(
-            config,
-            hcr_source=args.hcr_source,
-            cp_hcr_model_path=args.cp_hcr_model_path,
-            use_gpu=args.use_gpu,
-            force_recompute=args.force_recompute,
-        )
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            manifest = run_segment_hcr_cellpose_stage(
+                config,
+                hcr_source=args.hcr_source,
+                cp_hcr_model_path=args.cp_hcr_model_path,
+                use_gpu=args.use_gpu,
+                force_recompute=args.force_recompute,
+            )
         if args.write_manifest:
             write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))
         sys.stdout.write(stage_manifest_to_json(manifest))

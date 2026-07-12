@@ -1,3 +1,4 @@
+import csv
 import json
 import importlib.util
 import os
@@ -22,6 +23,7 @@ from codeants_2pf_hcr.pipeline import (
     build_single_fish_stage_status,
     build_single_fish_status,
     build_single_fish_upstream_stage_manifest,
+    build_single_fish_upstream_stage_status,
     cellpose_stage_manifest_path,
     compare_single_fish_legacy_baseline,
     compare_single_fish_staged_outputs,
@@ -55,6 +57,7 @@ from codeants_2pf_hcr.pipeline import (
     run_single_fish_make_qa_report_stage,
     run_single_fish_score_activity_bpi_stage,
     stage_manifest_path,
+    staged_comparison_stage_names,
     upstream_stage_names,
     write_stage_manifest,
     _overlay_selected_ants_transformlists,
@@ -282,7 +285,19 @@ def _make_minimal_staged_outputs(fish_dir: Path) -> None:
     (qa_report_dir / "qa_report.md").write_text("# Single-Fish QA Report\n")
     (qa_report_dir / "qa_report.html").write_text("<!doctype html><h1>Single-Fish QA Report</h1>\n")
     (qa_report_dir / "qa_report.pdf").write_bytes(b"%PDF-1.4\n")
-    (qa_report_dir / "qa_report_summary.json").write_text("{}\n")
+    (qa_report_dir / "qa_report_summary.json").write_text(
+        json.dumps(
+            {
+                "canonical_tables": [],
+                "stage_outputs": [],
+                "registration_qc": {},
+                "matching_qc": {},
+                "review_artifacts": [],
+                "review_guidance": {"status": "pass"},
+            }
+        )
+        + "\n"
+    )
 
     figure_dir = pipeline_outputs / "make-figures" / "04_plots"
     for filename in (
@@ -293,6 +308,66 @@ def _make_minimal_staged_outputs(fish_dir: Path) -> None:
         "single_fish_hcr_anatomy_coexpression_summary.png",
     ):
         _copy_file(plots_dir / filename, figure_dir / filename)
+
+
+def _make_minimal_upstream_staged_outputs(fish_dir: Path) -> None:
+    functional_dir = fish_dir / "03_analysis" / "functional"
+    registration_dir = functional_dir / "registration"
+    ncc_dir = functional_dir / "ncc"
+    pipeline_outputs = functional_dir / "pipeline_outputs"
+
+    accepted_compare_dir = ncc_dir / "inplane_registration_comparison"
+    accepted_compare_dir.mkdir(parents=True, exist_ok=True)
+    (ncc_dir / "ncc_scale_by_fish.json").write_text('{"scale": 1.0}\n')
+    (ncc_dir / "ncc_bestz_by_plane.json").write_text('{"0": 3}\n')
+    (accepted_compare_dir / "inplane_registration_comparison.csv").write_text(
+        "fish_id,plane_idx,plane,method,selected,best_z,scale\n"
+        f"{fish_dir.name},0,{fish_dir.name}_plane0,ncc_xy,True,3,1.0\n"
+    )
+    (accepted_compare_dir / "inplane_registration_recommendation.csv").write_text(
+        "fish_id,plane_idx,plane,method,best_z,scale\n"
+        f"{fish_dir.name},0,{fish_dir.name}_plane0,ncc_xy,3,1.0\n"
+    )
+
+    staged_register = pipeline_outputs / "register-functional-to-anatomy"
+    staged_compare_dir = staged_register / "ncc" / "inplane_registration_comparison"
+    _copy_file(ncc_dir / "ncc_scale_by_fish.json", staged_register / "ncc" / "ncc_scale_by_fish.json")
+    _copy_file(ncc_dir / "ncc_bestz_by_plane.json", staged_register / "ncc" / "ncc_bestz_by_plane.json")
+    _copy_file(
+        accepted_compare_dir / "inplane_registration_comparison.csv",
+        staged_compare_dir / "inplane_registration_comparison.csv",
+    )
+    _copy_file(
+        accepted_compare_dir / "inplane_registration_recommendation.csv",
+        staged_compare_dir / "inplane_registration_recommendation.csv",
+    )
+    _copy_file(registration_dir / "tforms_by_plane.csv", staged_register / "registration" / "tforms_by_plane.csv")
+    (staged_register / "plane_refs_summary.json").write_text(
+        json.dumps(
+            [
+                {
+                    "label": f"{fish_dir.name}_plane0",
+                    "index": 0,
+                    "best_z": 3,
+                    "scale": 1.0,
+                }
+            ]
+        )
+        + "\n"
+    )
+
+    match_root = pipeline_outputs / "match-roi-to-anatomy" / "registration"
+    (match_root / "functional_roi_anatomy_matches.csv").parent.mkdir(parents=True, exist_ok=True)
+    (match_root / "functional_roi_anatomy_matches.csv").write_text(
+        "fish_id,plane_idx,func_label,selected_anat_label,has_unique_anat_match,anat_label\n"
+        f"{fish_dir.name},0,1,7,True,7\n"
+    )
+    (match_root / "functional_roi_anatomy_match_by_plane.csv").write_text(
+        "fish_id,plane_idx,n_rois\n" f"{fish_dir.name},0,1\n"
+    )
+    (match_root / "functional_roi_anatomy_match_plane_meta.csv").write_text(
+        "fish_id,plane_idx,n_rois\n" f"{fish_dir.name},0,1\n"
+    )
 
 
 def _write_roi_identity_csv(path: Path, rows: list[dict[str, str]]) -> None:
@@ -853,6 +928,7 @@ def test_prepare_functional_reference_stacks_stage_writes_manifest_outputs(tmp_p
     assert norm_ref.exists()
     assert manifest.inputs[0].path == str(source)
     assert {record.path for record in manifest.outputs} == {str(raw_ref), str(norm_ref)}
+    assert manifest.parameters["pipeline_root"] == str(resolve_pipeline_paths(SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path)).pipeline_root)
     assert any(check.label == "functional reference raw TIFFs" and check.status == "pass" for check in manifest.checks)
 
 
@@ -878,6 +954,7 @@ def test_prepare_functional_reference_stacks_stage_discovers_motion_corrected_in
 
     assert manifest.status == "pass"
     assert manifest.inputs[0].path == str(source)
+    assert manifest.parameters["pipeline_root"] == str(paths.pipeline_root)
     assert all(record.path.startswith(str(functional_reference_output_dir(paths))) for record in manifest.outputs)
 
 
@@ -928,6 +1005,8 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     _write_tiny_functional_tiff(source)
     anatomy = tmp_path / "registration-anatomy.tif"
     _write_tiny_registration_anatomy_tiff(anatomy)
+    ants_mask = tmp_path / "ants_registration_region_square.json"
+    ants_mask.write_text(json.dumps({"bounds_xyxy": [1, 1, 10, 10]}))
     import numpy as np
     import tifffile
 
@@ -952,6 +1031,7 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
         config,
         anatomy_stack_path=anatomy,
         anatomy_labels_path=anatomy_labels,
+        ants_fixed_mask_json=ants_mask,
         force_recompute=True,
     )
 
@@ -969,6 +1049,9 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     assert summary[0]["label"] == f"{fish_dir.name}_plane0_mcorrected_flipX"
     assert summary[0]["ncc_scores_count"] > 0
     assert summary[0]["anat_label_z_mode"] == "direct"
+    assert manifest.parameters["ants_fixed_mask_json"] == str(ants_mask)
+    assert manifest.parameters["ants_require_fixed_mask"] is True
+    assert any(record.label == "ANTs fixed-region mask JSON" and record.path == str(ants_mask) for record in manifest.inputs)
     assert (stage_root / "ncc" / "ncc_bestz_by_plane.json").exists()
     assert (stage_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_comparison.csv").exists()
     assert discover_functional_reference_pairs(functional_reference_output_dir(resolve_pipeline_paths(config)))
@@ -976,7 +1059,54 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     assert any(check.label == "functional/anatomy center overlay QA" and check.status == "pass" for check in manifest.checks)
 
 
-def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest(tmp_path: Path) -> None:
+def test_register_functional_to_anatomy_stage_can_limit_reference_planes(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,bottom-left\n"
+    )
+    motion_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "02_motionCorrected"
+    source0 = motion_dir / f"{fish_dir.name}_plane0_mcorrected.tif"
+    source1 = motion_dir / f"{fish_dir.name}_plane1_mcorrected.tif"
+    _write_tiny_functional_tiff(source0)
+    _write_tiny_functional_tiff(source1)
+    anatomy = tmp_path / "registration-anatomy.tif"
+    _write_tiny_registration_anatomy_tiff(anatomy)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    refs_manifest = run_prepare_functional_reference_stacks_stage(
+        config,
+        functional_stack_paths=[source0, source1],
+        force_recompute=True,
+    )
+    assert refs_manifest.status == "pass"
+
+    manifest = run_register_functional_to_anatomy_stage(
+        config,
+        anatomy_stack_path=anatomy,
+        reference_plane_indices=(1,),
+        force_recompute=True,
+        emit_visual_qa=False,
+    )
+
+    stage_root = functional_to_anatomy_registration_root(resolve_pipeline_paths(config))
+    tforms_path = stage_root / "registration" / "tforms_by_plane.csv"
+    summary_path = stage_root / "plane_refs_summary.json"
+    rows = tuple(csv.DictReader(tforms_path.open()))
+    summary = json.loads(summary_path.read_text())
+    checks_by_label = {check.label: check for check in manifest.checks}
+    assert manifest.status == "pass"
+    assert manifest.parameters["reference_plane_indices"] == (1,)
+    assert manifest.parameters["reference_pair_count"] == 2
+    assert manifest.parameters["selected_reference_pair_count"] == 1
+    assert manifest.parameters["selected_reference_labels"] == (f"{fish_dir.name}_plane1_mcorrected_flipX",)
+    assert checks_by_label["functional reference inputs"].observed == "1"
+    assert checks_by_label["functional transform table"].expected == "1"
+    assert len(rows) == 1
+    assert rows[0]["plane_index"] == "1"
+    assert rows[0]["label"] == f"{fish_dir.name}_plane1_mcorrected_flipX"
+    assert [row["index"] for row in summary] == [1]
+
+
+def test_register_functional_to_anatomy_stage_fails_for_missing_reference_plane(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
         "parameter,value\nfish_orientation,bottom-left\n"
@@ -985,12 +1115,202 @@ def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifes
     _write_tiny_functional_tiff(source)
     anatomy = tmp_path / "registration-anatomy.tif"
     _write_tiny_registration_anatomy_tiff(anatomy)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    refs_manifest = run_prepare_functional_reference_stacks_stage(
+        config,
+        functional_stack_paths=[source],
+        force_recompute=True,
+    )
+    assert refs_manifest.status == "pass"
+
+    manifest = run_register_functional_to_anatomy_stage(
+        config,
+        anatomy_stack_path=anatomy,
+        reference_plane_indices=(99,),
+        force_recompute=True,
+        emit_visual_qa=False,
+    )
+
+    assert manifest.status == "fail"
+    assert manifest.parameters["reference_plane_indices"] == (99,)
+    assert manifest.parameters["reference_pair_count"] == 1
+    assert manifest.parameters["selected_reference_pair_count"] == 0
+    assert "Requested functional reference plane indices were not found" in manifest.errors[0]
+
+
+def test_register_functional_to_anatomy_stage_uses_notebook_scale_search_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import numpy as np
+
+    import codeants_2pf_hcr.spatial as spatial_module
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    analysis_dir = fish_dir / "03_analysis"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    (analysis_dir / "voxel_sizes.json").write_text(
+        json.dumps({"by_path": {str(tmp_path / "registration-anatomy.tif"): {"X": 0.6, "Y": 0.7, "Z": 2.0}}})
+    )
+    source = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "02_motionCorrected" / f"{fish_dir.name}_plane0_mcorrected.tif"
+    _write_tiny_functional_tiff(source)
+    anatomy = tmp_path / "registration-anatomy.tif"
+    _write_tiny_registration_anatomy_tiff(anatomy)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    refs_manifest = run_prepare_functional_reference_stacks_stage(
+        config,
+        functional_stack_paths=[source],
+        force_recompute=True,
+    )
+    assert refs_manifest.status == "pass"
+
+    captured: dict[str, object] = {}
+
+    def fake_registration_search_stage(**kwargs):
+        search_config = kwargs["config"]
+        captured["scale_coarse"] = search_config.scale_coarse
+        captured["scale_fine"] = search_config.scale_fine
+        captured["scale_xfine"] = search_config.scale_xfine
+        captured["scale_ufine"] = search_config.scale_ufine
+        captured["scale_workers"] = search_config.scale_workers
+        out_ncc = Path(kwargs["out_ncc"])
+        out_ncc.mkdir(parents=True, exist_ok=True)
+        (out_ncc / "ncc_scale_by_fish.json").write_text("{}\n")
+        (out_ncc / "ncc_bestz_by_plane.json").write_text("{}\n")
+        plane_ref = dict(kwargs["plane_refs"][0])
+        plane_ref.update(
+            {
+                "scale": 1.037,
+                "ref_match": np.zeros((5, 5), dtype=np.float32),
+                "ncc_scores": np.asarray([0.1, 0.9], dtype=np.float32),
+                "best_z": 1,
+                "ref_shape": (4, 4),
+                "ref_scaled_shape": (5, 5),
+                "tform_src": "ncc_xy",
+                "ncc_xy": {"x0": 1, "y0": 2, "score": 0.9},
+            }
+        )
+        return {
+            "plane_refs": [plane_ref],
+            "anat_f": np.zeros((2, 8, 8), dtype=np.float32),
+            "best_z": 1,
+            "bestz_cache_path": out_ncc / "ncc_bestz_by_plane.json",
+            "log_lines": (),
+        }
+
+    def fake_inplane_comparison_stage(**kwargs):
+        captured["vox_anat"] = kwargs.get("vox_anat")
+        captured["ants_deterministic_seed"] = kwargs["config"].ants_deterministic_seed
+        out_dir = Path(kwargs["out_ncc"]) / "inplane_registration_comparison"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        comparison_path = out_dir / "inplane_registration_comparison.csv"
+        recommendation_path = out_dir / "inplane_registration_recommendation.csv"
+        comparison_path.write_text("plane_idx,plane,method\n0,plane0,ncc_xy\n")
+        recommendation_path.write_text("plane_idx,plane,selected_method\n0,plane0,ncc_xy\n")
+        return {
+            "plane_refs": kwargs["plane_refs"],
+            "comparison_path": comparison_path,
+            "recommendation_path": recommendation_path,
+            "log_lines": (),
+        }
+
+    monkeypatch.setattr(spatial_module, "run_registration_search_stage", fake_registration_search_stage)
+    monkeypatch.setattr(spatial_module, "run_in_plane_registration_comparison_stage", fake_inplane_comparison_stage)
+
+    manifest = run_register_functional_to_anatomy_stage(
+        config,
+        anatomy_stack_path=anatomy,
+        ants_deterministic_seed=123,
+        force_recompute=True,
+        emit_visual_qa=False,
+    )
+
+    assert manifest.status == "pass"
+    assert captured["scale_coarse"] == (0.50, 1.50, 0.05)
+    assert captured["scale_fine"] == (0.05, 0.01)
+    assert captured["scale_xfine"] == (0.005, 0.001)
+    assert captured["scale_ufine"] == (0.0005, 0.0001)
+    assert captured["scale_workers"] is None
+    assert captured["vox_anat"] == {"X": 0.6, "Y": 0.7}
+    assert captured["ants_deterministic_seed"] == 123
+
+
+def test_functional_anatomy_center_overlay_accepts_nrrd_anatomy_stack(tmp_path: Path) -> None:
+    nrrd_spec = importlib.util.find_spec("nrrd")
+    if nrrd_spec is None:
+        pytest.skip("NRRD overlay regression requires pynrrd")
+    import numpy as np
+    import nrrd
+    import tifffile
+
+    from codeants_2pf_hcr.plots.qa import render_functional_anatomy_center_overlay_qc_png
+
+    fish_id = "L000_f00"
+    anatomy_stack = np.zeros((3, 16, 16), dtype=np.uint8)
+    anatomy_stack[1, 4:12, 4:12] = 80
+    anatomy_path = tmp_path / "anatomy.nrrd"
+    nrrd.write(str(anatomy_path), anatomy_stack)
+
+    anatomy_labels = np.zeros((3, 16, 16), dtype=np.uint16)
+    anatomy_labels[1, 5:11, 5:11] = 3
+    anatomy_labels_path = tmp_path / "anatomy-labels.tif"
+    tifffile.imwrite(anatomy_labels_path, anatomy_labels)
+
+    labels_dir = tmp_path / "derived"
+    labels_dir.mkdir()
+    functional_labels = np.zeros((16, 16), dtype=np.uint16)
+    functional_labels[6:10, 6:10] = 11
+    tifffile.imwrite(labels_dir / f"{fish_id}_plane0_mcorrected_flipX_func_mask_in_2p.tif", functional_labels)
+
+    plane_refs_path = tmp_path / "plane_refs_summary.json"
+    plane_refs_path.write_text(
+        json.dumps(
+            [
+                {
+                    "index": 0,
+                    "label": f"{fish_id}_plane0_mcorrected_flipX",
+                    "best_z": 1,
+                    "anat_label_z": 1,
+                }
+            ]
+        )
+    )
+    out_path = tmp_path / "functional_anatomy_center_overlay_200px.png"
+
+    result = render_functional_anatomy_center_overlay_qc_png(
+        fish_id=fish_id,
+        plane_refs_summary_path=plane_refs_path,
+        anatomy_stack_path=anatomy_path,
+        anatomy_labels_path=anatomy_labels_path,
+        functional_labels_anatomy_dir=labels_dir,
+        out_path=out_path,
+        crop_size_px=12,
+    )
+
+    assert out_path.exists()
+    assert out_path.with_suffix(".csv").exists()
+    assert result["n_planes"] == 1
+
+
+def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,bottom-left\n"
+    )
+    motion_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "02_motionCorrected"
+    source0 = motion_dir / f"{fish_dir.name}_plane0_mcorrected.tif"
+    source1 = motion_dir / f"{fish_dir.name}_plane1_mcorrected.tif"
+    _write_tiny_functional_tiff(source0)
+    _write_tiny_functional_tiff(source1)
+    anatomy = tmp_path / "registration-anatomy.tif"
+    _write_tiny_registration_anatomy_tiff(anatomy)
+    ants_mask = tmp_path / "ants_registration_region_square.json"
+    ants_mask.write_text(json.dumps({"bounds_xyxy": [1, 1, 10, 10]}))
     pipeline_root = tmp_path / "staged"
     config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=pipeline_root)
     assert (
         run_prepare_functional_reference_stacks_stage(
             config,
-            functional_stack_paths=[source],
+            functional_stack_paths=[source0, source1],
             force_recompute=True,
         ).status
         == "pass"
@@ -1010,6 +1330,12 @@ def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifes
             str(pipeline_root),
             "--anatomy-stack-path",
             str(anatomy),
+            "--ants-fixed-mask-json",
+            str(ants_mask),
+            "--ants-deterministic-seed",
+            "456",
+            "--reference-plane-index",
+            "1",
             "--no-cv2",
             "--force-recompute",
         ],
@@ -1023,6 +1349,13 @@ def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifes
     assert result.returncode == 0
     assert payload["stage_name"] == "register-functional-to-anatomy"
     assert payload["status"] == "pass"
+    assert payload["parameters"]["ants_fixed_mask_json"] == str(ants_mask)
+    assert payload["parameters"]["ants_require_fixed_mask"] is True
+    assert payload["parameters"]["ants_deterministic_seed"] == 456
+    assert payload["parameters"]["reference_plane_indices"] == [1]
+    assert payload["parameters"]["reference_pair_count"] == 2
+    assert payload["parameters"]["selected_reference_pair_count"] == 1
+    assert payload["parameters"]["selected_reference_labels"] == [f"{fish_dir.name}_plane1_mcorrected_flipX"]
     assert any(output["label"] == "staged plane refs summary" for output in payload["outputs"])
     assert any(output["label"] == "staged functional transform table" for output in payload["outputs"])
 
@@ -1490,6 +1823,162 @@ def test_match_roi_to_anatomy_stage_threads_selected_ants_and_orientation(tmp_pa
     assert manifest.parameters["anatomy_xy_spacing_um"] == (0.5, 0.75)
 
 
+def test_match_roi_to_anatomy_stage_prefers_staged_ants_transformlist(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    import numpy as np
+    import pandas as pd
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    _write_minimal_suite2p_plane(fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0")
+    anatomy_labels = tmp_path / "anat_labels.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_labels)
+    staged_transform = tmp_path / "staged_ants_0.mat"
+    staged_transform.write_text("#Insight Transform File V1.0\n")
+    accepted_transform = tmp_path / "accepted_ants_0.mat"
+    accepted_transform.write_text("#Insight Transform File V1.0\n")
+    plane_summary = tmp_path / "plane_refs_summary.json"
+    plane_summary.write_text(
+        json.dumps(
+            [
+                {
+                    "label": f"{fish_dir.name}_plane0_mcorrected_flipX",
+                    "index": 0,
+                    "best_z": 0,
+                    "scale": 1.0,
+                    "ref_shape": [4, 5],
+                    "ref_scaled_shape": [4, 5],
+                    "tform_src": "ants_rigid_affine",
+                    "ants_transformlist": [str(staged_transform)],
+                }
+            ]
+        )
+    )
+    comparison_dir = fish_dir / "03_analysis" / "functional" / "ncc" / "inplane_registration_comparison"
+    comparison_dir.mkdir(parents=True, exist_ok=True)
+    (comparison_dir / "inplane_registration_comparison.csv").write_text(
+        "\n".join(
+            [
+                "plane_idx,plane,method,selected,best_z,scale,ref_shape,ref_scaled_shape,transformlist",
+                f"0,{fish_dir.name}_plane0_mcorrected_flipX,ants_rigid_affine,True,0,1.0,\"(4, 5)\",\"(4, 5)\",{accepted_transform}",
+            ]
+        )
+        + "\n"
+    )
+    captured: dict[str, object] = {}
+
+    def fake_build_functional_roi_master_df(suite2p_by_ref_idx, plane_refs, anat_labels, **kwargs):
+        captured["plane_refs"] = plane_refs
+        return (
+            pd.DataFrame(
+                [
+                    {
+                        "fish_id": fish_dir.name,
+                        "plane": f"{fish_dir.name}_plane0_mcorrected_flipX",
+                        "plane_idx": 0,
+                        "best_z": 0,
+                        "func_label": 1,
+                        "roi_idx": 0,
+                        "selected_anat_label": 7,
+                        "has_unique_anat_match": True,
+                        "anat_label": 7,
+                    }
+                ]
+            ),
+            pd.DataFrame([{"plane_idx": 0, "status": "ok"}]),
+        )
+
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    with patch("codeants_2pf_hcr.matching.build_functional_roi_master_df", side_effect=fake_build_functional_roi_master_df):
+        manifest = run_match_roi_to_anatomy_stage(
+            config,
+            plane_refs_summary_path=plane_summary,
+            anatomy_labels_path=anatomy_labels,
+            force_recompute=True,
+        )
+
+    passed_refs = captured["plane_refs"]
+    assert manifest.status == "pass"
+    assert passed_refs[0]["ants_transform"]["transformlist"] == [str(staged_transform)]
+    assert passed_refs[0]["ants_transformlist"] == [str(staged_transform)]
+    assert manifest.parameters["staged_ants_transformlist_count"] == 1
+    assert manifest.parameters["selected_ants_overlay_count"] == 0
+    assert manifest.parameters["selected_ants_missing_transform_files"] == 0
+
+
+def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tmp_path: Path) -> None:
+    from unittest.mock import patch
+
+    import pandas as pd
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    _write_minimal_suite2p_plane(fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0")
+    anatomy_labels = tmp_path / "anat_labels.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_labels)
+    staged_transform = tmp_path / "staged_ants_0.mat"
+    staged_transform.write_text("#Insight Transform File V1.0\n")
+    plane_summary = tmp_path / "plane_refs_summary.json"
+    plane_summary.write_text(
+        json.dumps(
+            [
+                {
+                    "label": f"{fish_dir.name}_plane0_mcorrected_flipX",
+                    "index": 0,
+                    "best_z": 0,
+                    "scale": 1.0,
+                    "ref_shape": [4, 5],
+                    "ref_scaled_shape": [4, 5],
+                    "tform_src": "ants_rigid_affine",
+                    "ants_transformlist": [str(staged_transform)],
+                }
+            ]
+        )
+    )
+    accepted_path = fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_activity_identity.csv"
+    accepted_path.parent.mkdir(parents=True, exist_ok=True)
+    accepted_rows = ["fish_id,plane_idx,func_label,selected_anat_label,has_unique_anat_match,anat_label"]
+    for idx in range(1000):
+        accepted_rows.append(f"{fish_dir.name},0,{idx},{7 + idx},True,{7 + idx}")
+    accepted_path.write_text("\n".join(accepted_rows) + "\n")
+
+    detail_rows = []
+    for idx in range(1000):
+        label = 10000 + idx if idx < 2 else 7 + idx
+        detail_rows.append(
+            {
+                "fish_id": fish_dir.name,
+                "plane": f"{fish_dir.name}_plane0_mcorrected_flipX",
+                "plane_idx": 0,
+                "best_z": 0,
+                "func_label": idx,
+                "roi_idx": idx,
+                "selected_anat_label": label,
+                "has_unique_anat_match": True,
+                "anat_label": label,
+            }
+        )
+
+    def fake_build_functional_roi_master_df(*args, **kwargs):
+        return (
+            pd.DataFrame(detail_rows),
+            pd.DataFrame([{"plane_idx": 0, "status": "ok"}]),
+        )
+
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged")
+    with patch("codeants_2pf_hcr.matching.build_functional_roi_master_df", side_effect=fake_build_functional_roi_master_df):
+        manifest = run_match_roi_to_anatomy_stage(
+            config,
+            plane_refs_summary_path=plane_summary,
+            anatomy_labels_path=anatomy_labels,
+            force_recompute=True,
+        )
+
+    assert manifest.status == "pass"
+    assert manifest.parameters["staged_ants_transformlist_count"] == 1
+    assert any(check.label == "accepted ROI/anatomy label parity" and check.status == "warn" for check in manifest.checks)
+    assert manifest.warnings == ("accepted ROI/anatomy label parity: anat_label=998/1000,selected_anat_label=998/1000",)
+
+
 def test_match_roi_to_anatomy_stage_stages_control_geometry_only(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     source_root = tmp_path / "control-registration"
@@ -1600,6 +2089,7 @@ def test_prepare_in_vivo_anatomy_stack_stage_writes_manifest_outputs(tmp_path: P
     assert Path(str(output) + ".json").exists()
     assert manifest.inputs[0].path == str(source)
     assert manifest.outputs[0].path == str(output)
+    assert manifest.parameters["pipeline_root"] == str(resolve_pipeline_paths(SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path)).pipeline_root)
     assert any(check.label == "in vivo anatomy output Y/X" and check.status == "pass" for check in manifest.checks)
 
 
@@ -1623,6 +2113,7 @@ def test_prepare_in_vivo_anatomy_stack_stage_default_discovery_ignores_ex_vivo_s
 
     assert manifest.status == "pass"
     assert manifest.inputs[0].path == str(in_vivo_source)
+    assert manifest.parameters["pipeline_root"] == str(resolve_pipeline_paths(SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path)).pipeline_root)
 
 
 def test_single_fish_pipeline_cli_prepare_in_vivo_outputs_manifest(tmp_path: Path) -> None:
@@ -1841,6 +2332,8 @@ def test_segment_hcr_cellpose_stage_can_reuse_cached_masks_without_model(tmp_pat
     assert manifest.inputs[1].path == str(missing_model)
     assert manifest.inputs[1].exists is False
     assert any(output.exists for output in manifest.outputs)
+    assert manifest.parameters["runtime_provenance"]["model_sha256"] is None
+    assert manifest.parameters["runtime_provenance"]["cuda_available"] is None
 
 
 def test_segment_hcr_cellpose_stage_reports_missing_model_without_cached_masks(tmp_path: Path) -> None:
@@ -2277,8 +2770,651 @@ def test_compare_staged_is_read_only_and_passes_on_minimal_staged_outputs(tmp_pa
     after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
     assert before == after
     assert payload["status"] == "pass"
-    assert [item["stage_name"] for item in payload["comparisons"]] == list(downstream_stage_names())
+    assert [item["stage_name"] for item in payload["comparisons"]] == list(staged_comparison_stage_names())
     assert all(item["failed_checks"] == [] for item in payload["comparisons"])
+
+
+def test_compare_staged_supports_upstream_registration_and_matching_outputs(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_upstream_staged_outputs(fish_dir)
+    before = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(
+            fish_id=fish_dir.name,
+            local_root=tmp_path,
+            strict=True,
+        ),
+        "register-functional-to-anatomy",
+    )
+    after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
+
+    assert before == after
+    assert payload["status"] == "pass"
+    assert payload["comparisons"][0]["stage_name"] == "register-functional-to-anatomy"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    assert any(
+        check["label"] == "comparison CSV shape: staged functional transform table"
+        for check in payload["comparisons"][0]["manifest"]["checks"]
+    )
+
+    match_payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "match-roi-to-anatomy",
+    )
+    assert match_payload["status"] == "pass"
+    assert match_payload["comparisons"][0]["failed_checks"] == []
+
+
+def test_compare_staged_reports_upstream_registration_shape_mismatch(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_upstream_staged_outputs(fish_dir)
+    staged_tforms = (
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "pipeline_outputs"
+        / "register-functional-to-anatomy"
+        / "registration"
+        / "tforms_by_plane.csv"
+    )
+    staged_tforms.write_text("unexpected\n1\n")
+
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "register-functional-to-anatomy",
+    )
+
+    assert payload["status"] == "warn"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    assert payload["comparisons"][0]["warning_checks"] == [
+        "comparison CSV shape: staged functional transform table"
+    ]
+
+
+def test_compare_staged_warns_when_upstream_controls_are_absent(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_upstream_staged_outputs(fish_dir)
+    for control_path in (
+        fish_dir / "03_analysis" / "functional" / "ncc" / "ncc_scale_by_fish.json",
+        fish_dir / "03_analysis" / "functional" / "ncc" / "ncc_bestz_by_plane.json",
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "ncc"
+        / "inplane_registration_comparison"
+        / "inplane_registration_comparison.csv",
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "ncc"
+        / "inplane_registration_comparison"
+        / "inplane_registration_recommendation.csv",
+        fish_dir / "03_analysis" / "functional" / "registration" / "tforms_by_plane.csv",
+    ):
+        control_path.unlink()
+
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "register-functional-to-anatomy",
+    )
+
+    assert payload["status"] == "warn"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    assert set(payload["comparisons"][0]["warning_checks"]) == {
+        "comparison control missing: staged NCC scale cache",
+        "comparison control missing: staged NCC best-z cache",
+        "comparison control missing: staged in-plane registration comparison",
+        "comparison control missing: staged in-plane registration recommendation",
+        "comparison control missing: staged functional transform table",
+    }
+
+
+def test_compare_staged_reports_upstream_geometry_shape_mismatch_as_failure(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_upstream_staged_outputs(fish_dir)
+    staged_matches = (
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "pipeline_outputs"
+        / "match-roi-to-anatomy"
+        / "registration"
+        / "functional_roi_anatomy_matches.csv"
+    )
+    staged_matches.write_text("unexpected\n1\n")
+
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "match-roi-to-anatomy",
+    )
+
+    assert payload["status"] == "fail"
+    assert payload["comparisons"][0]["failed_checks"] == [
+        "comparison CSV semantic columns: staged ROI/anatomy geometry matches"
+    ]
+
+
+def test_compare_staged_warns_when_upstream_semantic_control_is_absent(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_upstream_staged_outputs(fish_dir)
+    (fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_activity_identity.csv").unlink()
+
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "match-roi-to-anatomy",
+    )
+
+    assert payload["status"] == "warn"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    assert payload["comparisons"][0]["warning_checks"] == [
+        "comparison control missing: staged ROI/anatomy geometry matches"
+    ]
+
+
+def test_compare_staged_warns_for_small_roi_anatomy_geometry_drift(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_upstream_staged_outputs(fish_dir)
+    control_path = fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_activity_identity.csv"
+    staged_path = (
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "pipeline_outputs"
+        / "match-roi-to-anatomy"
+        / "registration"
+        / "functional_roi_anatomy_matches.csv"
+    )
+    header = "fish_id,plane_idx,func_label,selected_anat_label,has_unique_anat_match,anat_label\n"
+    control_lines = [header.rstrip()]
+    staged_lines = [header.rstrip()]
+    for idx in range(1000):
+        accepted_label = 7 + idx
+        staged_label = accepted_label + 10000 if idx < 3 else accepted_label
+        control_lines.append(f"{fish_dir.name},0,{idx},{accepted_label},True,{accepted_label}")
+        staged_lines.append(f"{fish_dir.name},0,{idx},{staged_label},True,{staged_label}")
+    control_path.write_text("\n".join(control_lines) + "\n")
+    staged_path.write_text("\n".join(staged_lines) + "\n")
+
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "match-roi-to-anatomy",
+    )
+
+    assert payload["status"] == "warn"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    assert payload["comparisons"][0]["warning_checks"] == [
+        "comparison CSV exact cells: staged ROI/anatomy geometry matches"
+    ]
+
+    for idx in range(3, 4):
+        staged_lines[idx + 1] = f"{fish_dir.name},0,{idx},{70000 + idx},True,{70000 + idx}"
+    staged_path.write_text("\n".join(staged_lines) + "\n")
+
+    fail_payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "match-roi-to-anatomy",
+    )
+
+    assert fail_payload["status"] == "fail"
+    assert fail_payload["comparisons"][0]["failed_checks"] == [
+        "comparison CSV exact cells: staged ROI/anatomy geometry matches"
+    ]
+
+
+def test_compare_staged_ignores_upstream_manifest_from_different_pipeline_root(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    paths = resolve_pipeline_paths(config)
+    manifest_path = cellpose_stage_manifest_path(paths, "register-hcr-to-anatomy")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_name": "register-hcr-to-anatomy",
+                "parameters": {"pipeline_root": str(tmp_path / "other-pipeline-root")},
+                "inputs": [],
+                "outputs": [],
+            }
+        )
+        + "\n"
+    )
+
+    payload = compare_single_fish_staged_outputs(config, "register-hcr-to-anatomy")
+
+    assert payload["status"] == "not_started"
+    assert payload["comparisons"][0]["status"] == "not_started"
+    assert payload["comparisons"][0]["manifest"] is None
+
+
+def test_compare_staged_requires_nonempty_upstream_directory_outputs(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    ref_dir = (
+        fish_dir
+        / "03_analysis"
+        / "functional"
+        / "pipeline_outputs"
+        / "prepare-functional-reference-stacks"
+        / "functional"
+        / "raw"
+    )
+    ref_dir.mkdir(parents=True)
+    (ref_dir / ".DS_Store").write_text("ignored\n")
+
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "prepare-functional-reference-stacks",
+    )
+
+    assert payload["status"] == "fail"
+    assert payload["comparisons"][0]["failed_checks"] == [
+        "comparison nonempty file: staged functional reference directory"
+    ]
+    assert payload["comparisons"][0]["manifest"]["checks"][0]["observed"] == "file_count=0"
+
+    (ref_dir / f"{fish_dir.name}_plane0_ref_raw.tif").write_bytes(b"tif")
+    payload = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "prepare-functional-reference-stacks",
+    )
+    assert payload["status"] == "pass"
+    assert payload["comparisons"][0]["failed_checks"] == []
+
+
+def test_compare_staged_requires_cellpose_mask_pattern_for_segmentation_outputs(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    paths = resolve_pipeline_paths(config)
+    mask_dir = fish_dir / "03_analysis" / "confocal" / "raw" / "cp_masks"
+    mask_dir.mkdir(parents=True, exist_ok=True)
+    for existing_mask in mask_dir.glob("*"):
+        existing_mask.unlink()
+    (mask_dir / "not_a_mask.tif").write_bytes(b"tif")
+    manifest_path = cellpose_stage_manifest_path(paths, "segment-hcr-cellpose")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_name": "segment-hcr-cellpose",
+                "parameters": {"pipeline_root": str(paths.pipeline_root)},
+                "inputs": [],
+                "outputs": [
+                    {
+                        "label": "HCR Cellpose mask directory",
+                        "path": str(mask_dir),
+                        "exists": True,
+                        "kind": "directory",
+                        "required": True,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    payload = compare_single_fish_staged_outputs(config, "segment-hcr-cellpose")
+
+    assert payload["status"] == "fail"
+    assert payload["comparisons"][0]["failed_checks"] == [
+        "comparison nonempty file: HCR Cellpose mask directory"
+    ]
+    assert payload["comparisons"][0]["manifest"]["checks"][0]["observed"] == (
+        "pattern=*_cp_masks.tif; file_count=0"
+    )
+
+    (mask_dir / f"{fish_dir.name}_probe_cp_masks.tif").write_bytes(b"tif")
+    payload = compare_single_fish_staged_outputs(config, "segment-hcr-cellpose")
+
+    assert payload["status"] == "pass"
+    assert payload["comparisons"][0]["failed_checks"] == []
+
+
+def test_compare_staged_uses_same_root_manifest_output_paths(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(
+        fish_id=fish_dir.name,
+        local_root=tmp_path,
+        strict=True,
+        pipeline_root=tmp_path / "staged",
+    )
+    paths = resolve_pipeline_paths(config)
+    explicit_output = tmp_path / "explicit" / f"{fish_dir.name}_anatomy_2P_GCaMP.nrrd"
+    explicit_output.parent.mkdir(parents=True)
+    explicit_output.write_bytes(b"NRRD\n")
+    explicit_meta = Path(str(explicit_output) + ".json")
+    explicit_meta.write_text("{}\n")
+    manifest_path = cellpose_stage_manifest_path(paths, "prepare-in-vivo-anatomy-stack")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_name": "prepare-in-vivo-anatomy-stack",
+                "parameters": {"pipeline_root": str(paths.pipeline_root)},
+                "inputs": [],
+                "outputs": [
+                    {
+                        "label": "prepared in vivo anatomy NRRD",
+                        "path": str(explicit_output),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                    },
+                    {
+                        "label": "prepared in vivo anatomy metadata",
+                        "path": str(explicit_meta),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    payload = compare_single_fish_staged_outputs(config, "prepare-in-vivo-anatomy-stack")
+    status = build_single_fish_upstream_stage_status(config, "prepare-in-vivo-anatomy-stack")
+
+    assert payload["status"] == "pass"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    output_paths = {record["path"] for record in payload["comparisons"][0]["manifest"]["outputs"]}
+    assert str(explicit_output) in output_paths
+    assert str(prepared_in_vivo_anatomy_path(paths)) not in output_paths
+    assert status["status"] in {"pass", "warn"}
+    assert status["missing_required_outputs"] == []
+
+
+def test_upstream_status_treats_same_root_writer_manifest_as_current(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,bottom-left\n"
+    )
+    source = fish_dir / "01_raw" / "2p" / "anatomy" / f"{fish_dir.name}_anatomy_00001.tif"
+    _write_tiny_ex_vivo_tiff(source)
+    config = SingleFishPipelineConfig(
+        fish_id=fish_dir.name,
+        local_root=tmp_path,
+        strict=True,
+        pipeline_root=tmp_path / "staged",
+    )
+    paths = resolve_pipeline_paths(config)
+    output = tmp_path / "explicit" / f"{fish_dir.name}_anatomy_2P_GCaMP.nrrd"
+
+    writer_manifest = run_prepare_in_vivo_anatomy_stack_stage(
+        config,
+        anatomy_stack_path=source,
+        output_path=output,
+        force_recompute=True,
+    )
+    write_stage_manifest(writer_manifest, paths)
+    status = build_single_fish_upstream_stage_status(config, "prepare-in-vivo-anatomy-stack")
+    comparison = compare_single_fish_staged_outputs(config, "prepare-in-vivo-anatomy-stack")
+
+    assert writer_manifest.status == "pass"
+    assert writer_manifest.parameters["pipeline_root"] == str(paths.pipeline_root)
+    assert status["status"] == "pass"
+    assert status["persisted_manifest"]["status"] == "current"
+    assert status["missing_required_outputs"] == []
+    assert comparison["status"] == "pass"
+
+
+def test_compare_staged_uses_manifest_functional_reference_output_dir(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(
+        fish_id=fish_dir.name,
+        local_root=tmp_path,
+        strict=True,
+        pipeline_root=tmp_path / "staged",
+    )
+    paths = resolve_pipeline_paths(config)
+    explicit_dir = tmp_path / "explicit-functional-refs"
+    explicit_dir.mkdir()
+    raw_ref = explicit_dir / f"{fish_dir.name}_plane0_ref_raw.tif"
+    norm_ref = explicit_dir / f"{fish_dir.name}_plane0_ref_norm.tif"
+    raw_ref.write_bytes(b"tif")
+    norm_ref.write_bytes(b"tif")
+    manifest_path = cellpose_stage_manifest_path(paths, "prepare-functional-reference-stacks")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_name": "prepare-functional-reference-stacks",
+                "parameters": {"pipeline_root": str(paths.pipeline_root)},
+                "inputs": [],
+                "outputs": [
+                    {
+                        "label": "functional reference raw TIFF",
+                        "path": str(raw_ref),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                    },
+                    {
+                        "label": "functional reference normalized TIFF",
+                        "path": str(norm_ref),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    payload = compare_single_fish_staged_outputs(config, "prepare-functional-reference-stacks")
+
+    assert payload["status"] == "pass"
+    assert payload["comparisons"][0]["failed_checks"] == []
+    assert payload["comparisons"][0]["manifest"]["outputs"][0]["path"] == str(explicit_dir)
+
+
+def test_upstream_status_treats_same_root_functional_reference_manifest_as_current(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(
+        fish_id=fish_dir.name,
+        local_root=tmp_path,
+        strict=True,
+        pipeline_root=tmp_path / "staged",
+    )
+    paths = resolve_pipeline_paths(config)
+    explicit_dir = tmp_path / "explicit-functional-refs"
+    explicit_dir.mkdir()
+    source = tmp_path / "source" / f"{fish_dir.name}_plane0_mcorrected.tif"
+    source.parent.mkdir()
+    source.write_bytes(b"tif")
+    raw_ref = explicit_dir / f"{fish_dir.name}_plane0_ref_raw.tif"
+    norm_ref = explicit_dir / f"{fish_dir.name}_plane0_ref_norm.tif"
+    raw_ref.write_bytes(b"tif")
+    norm_ref.write_bytes(b"tif")
+    manifest_path = cellpose_stage_manifest_path(paths, "prepare-functional-reference-stacks")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_name": "prepare-functional-reference-stacks",
+                "parameters": {"pipeline_root": str(paths.pipeline_root)},
+                "inputs": [
+                    {
+                        "label": "motion-corrected functional stack",
+                        "path": str(source),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": source.stat().st_size,
+                        "mtime": source.stat().st_mtime,
+                    },
+                ],
+                "outputs": [
+                    {
+                        "label": "functional reference raw TIFF",
+                        "path": str(raw_ref),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": raw_ref.stat().st_size,
+                        "mtime": raw_ref.stat().st_mtime,
+                    },
+                    {
+                        "label": "functional reference normalized TIFF",
+                        "path": str(norm_ref),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": norm_ref.stat().st_size,
+                        "mtime": norm_ref.stat().st_mtime,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    status = build_single_fish_upstream_stage_status(config, "prepare-functional-reference-stacks")
+    comparison = compare_single_fish_staged_outputs(config, "prepare-functional-reference-stacks")
+
+    assert status["status"] == "pass"
+    assert status["persisted_manifest"]["status"] == "current"
+    assert status["missing_required_outputs"] == []
+    assert {record["path"] for record in comparison["comparisons"][0]["manifest"]["outputs"]} == {str(explicit_dir)}
+
+
+def test_upstream_status_preserves_pathless_optional_manifest_records(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(
+        fish_id=fish_dir.name,
+        local_root=tmp_path,
+        strict=True,
+        pipeline_root=tmp_path / "staged",
+    )
+    paths = resolve_pipeline_paths(config)
+    ref_dir = tmp_path / "refs"
+    ref_dir.mkdir()
+    anatomy = tmp_path / f"{fish_dir.name}_anatomy_2P_GCaMP.nrrd"
+    raw_ref = ref_dir / f"{fish_dir.name}_plane0_ref_raw.tif"
+    norm_ref = ref_dir / f"{fish_dir.name}_plane0_ref_norm.tif"
+    for path in (anatomy, raw_ref, norm_ref):
+        path.write_bytes(b"data")
+    output_root = paths.pipeline_root / "register-functional-to-anatomy"
+    outputs = (
+        output_root / "ncc" / "ncc_scale_by_fish.json",
+        output_root / "ncc" / "ncc_bestz_by_plane.json",
+        output_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_comparison.csv",
+        output_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_recommendation.csv",
+        output_root / "plane_refs_summary.json",
+        output_root / "registration" / "tforms_by_plane.csv",
+    )
+    for output in outputs:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text("data\n")
+
+    manifest_path = cellpose_stage_manifest_path(paths, "register-functional-to-anatomy")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "stage_name": "register-functional-to-anatomy",
+                "parameters": {"pipeline_root": str(paths.pipeline_root)},
+                "inputs": [
+                    {
+                        "label": "functional reference directory",
+                        "path": str(ref_dir),
+                        "exists": True,
+                        "kind": "directory",
+                        "required": True,
+                        "mtime": ref_dir.stat().st_mtime,
+                    },
+                    {
+                        "label": "prepared in vivo anatomy stack",
+                        "path": str(anatomy),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": anatomy.stat().st_size,
+                        "mtime": anatomy.stat().st_mtime,
+                    },
+                    {
+                        "label": "ANTs fixed-region mask JSON",
+                        "path": "",
+                        "exists": False,
+                        "kind": "missing",
+                        "required": False,
+                    },
+                    {
+                        "label": "functional reference raw TIFF",
+                        "path": str(raw_ref),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": raw_ref.stat().st_size,
+                        "mtime": raw_ref.stat().st_mtime,
+                    },
+                ],
+                "outputs": [
+                    {
+                        "label": "staged NCC scale cache",
+                        "path": str(outputs[0]),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": outputs[0].stat().st_size,
+                        "mtime": outputs[0].stat().st_mtime,
+                    },
+                    {
+                        "label": "staged NCC best-z cache",
+                        "path": str(outputs[1]),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": outputs[1].stat().st_size,
+                        "mtime": outputs[1].stat().st_mtime,
+                    },
+                    {
+                        "label": "staged in-plane registration comparison",
+                        "path": str(outputs[2]),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": outputs[2].stat().st_size,
+                        "mtime": outputs[2].stat().st_mtime,
+                    },
+                    {
+                        "label": "staged in-plane registration recommendation",
+                        "path": str(outputs[3]),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": outputs[3].stat().st_size,
+                        "mtime": outputs[3].stat().st_mtime,
+                    },
+                    {
+                        "label": "staged plane refs summary",
+                        "path": str(outputs[4]),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": outputs[4].stat().st_size,
+                        "mtime": outputs[4].stat().st_mtime,
+                    },
+                    {
+                        "label": "staged functional transform table",
+                        "path": str(outputs[5]),
+                        "exists": True,
+                        "kind": "file",
+                        "required": True,
+                        "size_bytes": outputs[5].stat().st_size,
+                        "mtime": outputs[5].stat().st_mtime,
+                    },
+                ],
+            }
+        )
+        + "\n"
+    )
+
+    status = build_single_fish_upstream_stage_status(config, "register-functional-to-anatomy")
+
+    assert status["persisted_manifest"]["status"] == "current"
+    assert status["status"] in {"pass", "warn"}
+    assert not any("ANTs fixed-region mask JSON" in item for item in status["persisted_manifest"]["stale_records"])
 
 
 def test_compare_staged_reports_csv_shape_mismatch(tmp_path: Path) -> None:
@@ -3360,7 +4496,8 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     markdown = (report_dir / "qa_report.md").read_text()
     html = (report_dir / "qa_report.html").read_text()
     pdf_bytes = (report_dir / "qa_report.pdf").read_bytes()
-    assert manifest.status == "pass"
+    assert manifest.status == "warn"
+    assert any("comparison QA report image metadata" in warning for warning in manifest.warnings)
     assert summary["fish_id"] == fish_dir.name
     assert len(summary["canonical_tables"]) == 8
     assert all(table["exists"] for table in summary["canonical_tables"])
@@ -3368,22 +4505,44 @@ def test_make_qa_report_writer_generates_markdown_and_json_summary(tmp_path: Pat
     assert summary["matching_qc"]["total_rois"] == 2
     assert summary["matching_qc"]["total_unique_anatomy_matches"] == 1
     assert summary["matching_qc"]["total_unmatched_rois"] == 1
-    assert any(artifact["label"] == "functional/anatomy center overlay" for artifact in summary["review_artifacts"])
+    assert summary["review_guidance"]["status"] == "warn"
+    review_items = {item["question"]: item for item in summary["review_guidance"]["items"]}
+    assert review_items["Are all canonical staged tables present and non-empty?"]["status"] == "pass"
+    assert review_items["Do unmatched ROIs need biological review?"]["status"] == "warn"
+    assert "1 unmatched ROIs" in review_items["Do unmatched ROIs need biological review?"]["evidence"]
+    assert review_items["Are generated visual summaries available?"]["status"] == "warn"
+    assert "unreadable images:" in review_items["Are generated visual summaries available?"]["evidence"]
+    assert "regenerate unreadable previews" in review_items["Are generated visual summaries available?"]["action"]
+    overlay_artifact = next(
+        artifact for artifact in summary["review_artifacts"] if artifact["label"] == "functional/anatomy center overlay"
+    )
+    assert overlay_artifact["image_readable"] is False
+    assert overlay_artifact["image_dimensions"] is None
+    assert overlay_artifact["byte_size"] == 3
     assert any(
         artifact["label"] == "50l composite figure" and artifact["exists"]
         for artifact in summary["review_artifacts"]
     )
     assert "# Single-Fish QA Report" in markdown
     assert "## Manual Review Checklist" in markdown
+    assert "## Biologist Review Guide" in markdown
+    assert "Overall review status: **warn**" in markdown
+    assert "Do unmatched ROIs need biological review?" in markdown
     assert "## Visual Artifact Preview" in markdown
     assert "## Registration And Matching QA" in markdown
+    assert "| Artifact | Type | Present | Visual check | Review focus | Path |" in markdown
+    assert "functional/anatomy center overlay | image | True | unreadable" in markdown
     assert "Total ROIs: 2; unique anatomy matches: 1; unmatched ROIs: 1." in markdown
     assert "| 0 | 12 | 12 | 200 | 3 | 4 | 55 | 80 |" in markdown
     assert "functional-to-anatomy orientation" in markdown
     assert "![50l composite figure]" in markdown
     assert "functional_roi_activity_identity.csv" in markdown
     assert "<h1>Single-Fish QA Report:" in html
+    assert "Biologist Review Guide" in html
+    assert "Overall review status: <strong>warn</strong>" in html
     assert "Registration And Matching QA" in html
+    assert "Visual check" in html
+    assert "<td>unreadable</td>" in html
     assert "Total ROIs: 2; unique anatomy matches: 1; unmatched ROIs: 1." in html
     assert '<img src="' in html
     assert "compound_50j_56i_unified.png" in html
@@ -3498,6 +4657,12 @@ def test_compare_staged_make_qa_report_outputs_json(tmp_path: Path) -> None:
     assert comparison["status"] == "pass"
     assert comparison["comparisons"][0]["stage_name"] == "make-qa-report"
     assert comparison["comparisons"][0]["failed_checks"] == []
+    checks = comparison["comparisons"][0]["manifest"]["checks"]
+    check_by_label = {check["label"]: check for check in checks}
+    assert check_by_label["comparison QA report summary JSON parse"]["status"] == "pass"
+    assert check_by_label["comparison QA report summary sections"]["status"] == "pass"
+    assert check_by_label["comparison QA report review status"]["status"] == "pass"
+    assert check_by_label["comparison QA report image metadata"]["status"] == "pass"
 
 
 def test_make_figures_writer_requires_staged_canonical_exports_by_default(tmp_path: Path) -> None:

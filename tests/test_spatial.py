@@ -1,8 +1,10 @@
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 import builtins
 import importlib.util
 import json
+import types
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +14,7 @@ import tifffile
 from codeants_2pf_hcr.spatial import (
     InPlaneRegistrationComparisonConfig,
     RegistrationSearchConfig,
+    _ants_rigid_affine_in_plane_result,
     _select_square_region_spec_for_plane,
     apply_func_orientation,
     apply_square_region_mask,
@@ -81,6 +84,54 @@ class SpatialTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "no region"):
             _select_square_region_spec_for_plane(payload, plane_idx=2, label="plane2")
+
+    def test_ants_rigid_affine_sets_deterministic_seed(self) -> None:
+        calls: list[tuple[bool, int | None]] = []
+
+        class FakeImage:
+            def __init__(self, array: np.ndarray):
+                self._array = np.asarray(array, dtype=np.float32)
+
+            def set_spacing(self, value):
+                self.spacing = value
+
+            def set_origin(self, value):
+                self.origin = value
+
+            def set_direction(self, value):
+                self.direction = value
+
+            def numpy(self):
+                return self._array
+
+        def fake_registration(*, fixed, moving, **kwargs):
+            return {"fwdtransforms": ["fake.mat"], "warpedmovout": fixed}
+
+        fake_ants = types.SimpleNamespace(
+            config=types.SimpleNamespace(
+                set_ants_deterministic=lambda on=True, seed_value=123: calls.append((bool(on), seed_value))
+            ),
+            from_numpy=lambda array: FakeImage(array),
+            registration=fake_registration,
+            apply_transforms=lambda **kwargs: kwargs["moving"],
+        )
+
+        with patch.dict(sys.modules, {"ants": fake_ants}):
+            result = _ants_rigid_affine_in_plane_result(
+                ref_scaled=np.eye(5, dtype=np.float32),
+                fixed_slice=np.eye(5, dtype=np.float32),
+                plane_idx=0,
+                label="plane0",
+                output_dir=None,
+                spacing=(0.6, 0.7),
+                config=InPlaneRegistrationComparisonConfig(
+                    ants_require_fixed_mask=False,
+                    ants_deterministic_seed=456,
+                ),
+            )
+
+        self.assertEqual(calls, [(True, 456)])
+        self.assertEqual(result["status"], "ok")
 
     def test_run_registration_search_stage_updates_plane_refs_and_caches(self) -> None:
         with TemporaryDirectory() as tmpdir:

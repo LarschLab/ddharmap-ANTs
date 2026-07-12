@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import html
 import importlib.util
@@ -19,6 +19,7 @@ from typing import Any
 
 
 PIPELINE_MANIFEST_VERSION = "0.1"
+ROI_ANATOMY_ACCEPTED_DRIFT_WARN_FRACTION = 0.002
 
 PIPELINE_STAGE_ORDER: tuple[str, ...] = (
     "audit-inputs",
@@ -150,6 +151,11 @@ UPSTREAM_STAGE_NAMES: tuple[str, ...] = (
     "register-functional-to-anatomy",
     "register-hcr-to-anatomy",
     "match-roi-to-anatomy",
+)
+
+STAGED_COMPARISON_STAGE_NAMES: tuple[str, ...] = (
+    *UPSTREAM_STAGE_NAMES,
+    *POST_PREPROCESSING_STAGE_NAMES,
 )
 
 STAGED_REGISTRATION_CSVS: tuple[str, ...] = (
@@ -429,10 +435,12 @@ class StageOutputSpec:
     control_path: str | None = None
     kind: str = "file"
     parity: str | None = None
+    artifact_pattern: str | None = None
     key_columns: tuple[str, ...] = ()
     exact_columns: tuple[str, ...] = ()
     numeric_columns: tuple[str, ...] = ()
     numeric_atol: float = 1e-5
+    exact_warn_max_fraction: float = 0.0
     visual_thumbnail_size: int = 64
     visual_rms_warn_threshold: float = 0.02
 
@@ -451,7 +459,14 @@ def _legacy_baseline_stage_root(paths: PipelinePaths, stage_name: str) -> Path:
 
 def _legacy_baseline_path(paths: PipelinePaths, stage_name: str, spec: StageOutputSpec) -> Path:
     stage_root = _stage_root(paths, stage_name)
-    relative = Path(spec.path).relative_to(stage_root)
+    spec_path = Path(spec.path)
+    try:
+        relative = spec_path.relative_to(stage_root)
+    except ValueError:
+        try:
+            relative = spec_path.relative_to(paths.pipeline_root)
+        except ValueError:
+            relative = Path(spec_path.name)
     return _legacy_baseline_stage_root(paths, stage_name) / relative
 
 
@@ -580,6 +595,28 @@ def describe_glob(
 def _is_real_match(path: Path) -> bool:
     ignored_names = {".DS_Store"}
     return not any(part.startswith("._") or part in ignored_names for part in path.parts)
+
+
+def _nonempty_artifact(path: Path) -> tuple[bool, str]:
+    if path.is_file():
+        size = path.stat().st_size
+        return size > 0, f"file_size={size}"
+    if path.is_dir():
+        count = sum(1 for child in path.rglob("*") if child.is_file() and _is_real_match(child))
+        return count > 0, f"file_count={count}"
+    return False, "missing"
+
+
+def _nonempty_artifact_matching(path: Path, pattern: str | None) -> tuple[bool, str]:
+    if not pattern:
+        return _nonempty_artifact(path)
+    if path.is_file():
+        matches = path.match(pattern) and path.stat().st_size > 0 and _is_real_match(path)
+        return bool(matches), f"pattern={pattern}; file_match={bool(matches)}"
+    if path.is_dir():
+        matches = tuple(child for child in sorted(path.rglob(pattern)) if child.is_file() and _is_real_match(child))
+        return bool(matches), f"pattern={pattern}; file_count={len(matches)}"
+    return False, f"pattern={pattern}; missing"
 
 
 def stage_manifest_to_json(manifest: StageManifest) -> str:
@@ -1055,6 +1092,133 @@ def _csv_comparison_kwargs(filename: str) -> dict[str, Any]:
 
 def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOutputSpec, ...]:
     stage_root = _stage_root(paths, stage_name)
+    if stage_name == "prepare-functional-reference-stacks":
+        return (
+            StageOutputSpec(
+                "staged functional reference directory",
+                str(functional_reference_output_dir(paths)),
+                parity="nonempty_file",
+            ),
+        )
+    if stage_name == "prepare-in-vivo-anatomy-stack":
+        out_path = prepared_in_vivo_anatomy_path(paths)
+        return (
+            StageOutputSpec(
+                "prepared in vivo anatomy NRRD",
+                str(out_path),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "prepared in vivo anatomy metadata",
+                str(Path(str(out_path) + ".json")),
+                parity="nonempty_file",
+            ),
+        )
+    if stage_name == "prepare-ex-vivo-anatomy-stack":
+        out_path = prepared_ex_vivo_anatomy_path(paths)
+        return (
+            StageOutputSpec(
+                "prepared ex vivo anatomy NRRD",
+                str(out_path),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "prepared ex vivo anatomy metadata",
+                str(Path(str(out_path) + ".json")),
+                parity="nonempty_file",
+            ),
+        )
+    if stage_name == "segment-hcr-cellpose":
+        return (
+            StageOutputSpec(
+                "HCR Cellpose mask directory",
+                str(paths.confocal_raw_cp_masks_dir),
+                parity="nonempty_file",
+                artifact_pattern="*_cp_masks.tif",
+            ),
+        )
+    if stage_name == "segment-ex-vivo-anatomy-cellpose":
+        return (
+            StageOutputSpec(
+                "ex vivo anatomy Cellpose mask directory",
+                str(ex_vivo_structural_root(paths) / "cp_masks"),
+                parity="nonempty_file",
+                artifact_pattern="*_cp_masks.tif",
+            ),
+        )
+    if stage_name == "register-functional-to-anatomy":
+        compare_dir = stage_root / "ncc" / "inplane_registration_comparison"
+        control_compare_dir = paths.functional_ncc_dir / "inplane_registration_comparison"
+        return (
+            StageOutputSpec(
+                "staged NCC scale cache",
+                str(stage_root / "ncc" / "ncc_scale_by_fish.json"),
+                control_path=str(paths.functional_ncc_dir / "ncc_scale_by_fish.json"),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "staged NCC best-z cache",
+                str(stage_root / "ncc" / "ncc_bestz_by_plane.json"),
+                control_path=str(paths.functional_ncc_dir / "ncc_bestz_by_plane.json"),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "staged in-plane registration comparison",
+                str(compare_dir / "inplane_registration_comparison.csv"),
+                control_path=str(control_compare_dir / "inplane_registration_comparison.csv"),
+                parity="csv_shape_warn",
+            ),
+            StageOutputSpec(
+                "staged in-plane registration recommendation",
+                str(compare_dir / "inplane_registration_recommendation.csv"),
+                control_path=str(control_compare_dir / "inplane_registration_recommendation.csv"),
+                parity="csv_shape_warn",
+            ),
+            StageOutputSpec(
+                "staged plane refs summary",
+                str(stage_root / "plane_refs_summary.json"),
+                parity="nonempty_file",
+            ),
+            StageOutputSpec(
+                "staged functional transform table",
+                str(stage_root / "registration" / "tforms_by_plane.csv"),
+                control_path=str(paths.functional_registration_dir / "tforms_by_plane.csv"),
+                parity="csv_shape_warn",
+                **_csv_comparison_kwargs("tforms_by_plane.csv"),
+            ),
+        )
+    if stage_name == "register-hcr-to-anatomy":
+        return (
+            StageOutputSpec(
+                "staged HCR aligned artifact root",
+                str(stage_root / "confocal" / "aligned"),
+                parity="nonempty_file",
+            ),
+        )
+    if stage_name == "match-roi-to-anatomy":
+        registration_dir = stage_root / "registration"
+        control_dir = paths.functional_registration_dir
+        return (
+            StageOutputSpec(
+                "staged ROI/anatomy geometry matches",
+                str(registration_dir / "functional_roi_anatomy_matches.csv"),
+                control_path=str(control_dir / "functional_roi_activity_identity.csv"),
+                parity="csv_semantic",
+                key_columns=("plane_idx", "func_label"),
+                exact_columns=("selected_anat_label", "has_unique_anat_match", "anat_label"),
+                exact_warn_max_fraction=ROI_ANATOMY_ACCEPTED_DRIFT_WARN_FRACTION,
+            ),
+            StageOutputSpec(
+                "staged ROI/anatomy geometry summary",
+                str(registration_dir / "functional_roi_anatomy_match_by_plane.csv"),
+                parity="nonempty_csv",
+            ),
+            StageOutputSpec(
+                "staged ROI/anatomy plane metadata",
+                str(registration_dir / "functional_roi_anatomy_match_plane_meta.csv"),
+                parity="nonempty_csv",
+            ),
+        )
     if stage_name == "assign-hcr-identity":
         registration_dir = stage_root / "registration"
         return (
@@ -1177,11 +1341,96 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
             )
             for filename in STAGED_FIGURE_FILES
         )
-    raise ValueError(f"unsupported downstream stage: {stage_name}")
+    raise ValueError(f"unsupported staged output stage: {stage_name}")
+
+
+def _load_same_pipeline_root_stage_manifest(paths: PipelinePaths, stage_name: str) -> dict[str, Any] | None:
+    if stage_name not in UPSTREAM_STAGE_NAMES:
+        return None
+    manifest_path = cellpose_stage_manifest_path(paths, stage_name)
+    if not manifest_path.exists():
+        return None
+    try:
+        manifest_data = json.loads(manifest_path.read_text())
+    except Exception:
+        return None
+    if manifest_data.get("stage_name") != stage_name:
+        return None
+    manifest_pipeline_root = (manifest_data.get("parameters") or {}).get("pipeline_root")
+    if manifest_pipeline_root != str(paths.pipeline_root):
+        return None
+    return manifest_data
+
+
+def _manifest_output_specs(
+    paths: PipelinePaths,
+    stage_name: str,
+    specs: tuple[StageOutputSpec, ...],
+) -> tuple[StageOutputSpec, ...]:
+    manifest_data = _load_same_pipeline_root_stage_manifest(paths, stage_name)
+    if manifest_data is None:
+        return specs
+    manifest_outputs = tuple(record for record in manifest_data.get("outputs", ()) if isinstance(record, dict))
+    outputs_by_label = {str(record.get("label", "")): record for record in manifest_outputs if record.get("path")}
+    resolved: list[StageOutputSpec] = []
+    for spec in specs:
+        record = outputs_by_label.get(spec.label)
+        if record is None:
+            resolved.append(spec)
+            continue
+        resolved.append(
+            replace(
+                spec,
+                path=str(record["path"]),
+                required=bool(record.get("required", spec.required)),
+                kind=str(record.get("kind", spec.kind)),
+            )
+        )
+    if stage_name == "prepare-functional-reference-stacks" and len(specs) == 1:
+        output_paths = tuple(Path(str(record["path"])) for record in manifest_outputs if record.get("path"))
+        output_parents = tuple(dict.fromkeys(path.parent for path in output_paths))
+        if len(output_parents) == 1:
+            resolved = [replace(specs[0], path=str(output_parents[0]), kind="directory")]
+    return tuple(resolved)
+
+
+def _stage_output_specs_for_inventory(paths: PipelinePaths, stage_name: str) -> tuple[StageOutputSpec, ...]:
+    return _manifest_output_specs(paths, stage_name, _stage_output_specs(paths, stage_name))
+
+
+def _manifest_records_for_inventory(
+    paths: PipelinePaths,
+    stage_name: str,
+    key: str,
+) -> tuple[ManifestPathRecord, ...]:
+    manifest_data = _load_same_pipeline_root_stage_manifest(paths, stage_name)
+    if manifest_data is None:
+        return ()
+    records: list[ManifestPathRecord] = []
+    for payload in manifest_data.get(key, ()):
+        if not isinstance(payload, dict):
+            continue
+        if not payload.get("path"):
+            if payload.get("label"):
+                records.append(_manifest_record_from_dict(payload))
+            continue
+        path = Path(str(payload["path"]))
+        label = str(payload.get("label") or path.name)
+        required = bool(payload.get("required", True))
+        pattern = payload.get("pattern")
+        if pattern:
+            records.append(describe_glob(path, str(pattern), required=required, label=label))
+        else:
+            records.append(describe_manifest_path(path, required=required, label=label))
+    return tuple(records)
 
 
 def downstream_stage_names() -> tuple[str, ...]:
     return POST_PREPROCESSING_STAGE_NAMES
+
+
+def staged_comparison_stage_names() -> tuple[str, ...]:
+    return STAGED_COMPARISON_STAGE_NAMES
 
 
 def _stage_input_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
@@ -1306,6 +1555,9 @@ def _stage_dependency_input_records(paths: PipelinePaths, stage_name: str) -> tu
 
 
 def _upstream_stage_input_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
+    manifest_records = _manifest_records_for_inventory(paths, stage_name, "inputs")
+    if manifest_records:
+        return manifest_records
     if stage_name == "prepare-functional-reference-stacks":
         return (
             describe_glob(
@@ -1362,6 +1614,15 @@ def _upstream_stage_dependency_input_records(paths: PipelinePaths, stage_name: s
 
 
 def _upstream_stage_output_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
+    manifest_records = _manifest_records_for_inventory(paths, stage_name, "outputs")
+    if manifest_records:
+        return manifest_records
+    inventory_specs = _stage_output_specs_for_inventory(paths, stage_name)
+    if inventory_specs != _stage_output_specs(paths, stage_name):
+        return tuple(
+            describe_manifest_path(spec.path, required=spec.required, label=spec.label)
+            for spec in inventory_specs
+        )
     if stage_name == "prepare-functional-reference-stacks":
         output_dir = functional_reference_output_dir(paths)
         return (
@@ -1423,7 +1684,7 @@ def _upstream_stage_output_records(paths: PipelinePaths, stage_name: str) -> tup
 def _stage_output_records(paths: PipelinePaths, stage_name: str) -> tuple[ManifestPathRecord, ...]:
     return tuple(
         describe_manifest_path(spec.path, required=spec.required, label=spec.label)
-        for spec in _stage_output_specs(paths, stage_name)
+        for spec in _stage_output_specs_for_inventory(paths, stage_name)
     )
 
 
@@ -1497,7 +1758,7 @@ def _build_stage_dependency_freshness_check(
 
 def _build_downstream_stage_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
     checks: list[StageCheckRecord] = []
-    for spec in _stage_output_specs(paths, stage_name):
+    for spec in _stage_output_specs_for_inventory(paths, stage_name):
         output_path = Path(spec.path)
         output_exists = output_path.exists()
         checks.append(
@@ -1539,14 +1800,14 @@ def _build_downstream_stage_checks(paths: PipelinePaths, stage_name: str) -> tup
             )
         elif spec.parity == "nonempty_file":
             control_path = Path(spec.control_path or "")
-            output_size = output_path.stat().st_size if output_path.is_file() else 0
+            output_nonempty, output_observed = _nonempty_artifact(output_path)
             checks.append(
                 StageCheckRecord(
                     label=f"control file presence: {spec.label}",
-                    status="pass" if control_path.exists() and output_size > 0 else "fail",
-                    detail="Read-only staged baseline figure should be non-empty when the control figure exists.",
+                    status="pass" if control_path.exists() and output_nonempty else "fail",
+                    detail="Read-only staged baseline file or directory should be non-empty when the control exists.",
                     expected="control exists and staged non-empty",
-                    observed=f"control_exists={control_path.exists()}; staged_size={output_size}",
+                    observed=f"control_exists={control_path.exists()}; staged={output_observed}",
                 )
             )
     return tuple(checks)
@@ -1620,6 +1881,27 @@ def _numeric_cell_difference(control_value: str, staged_value: str, *, atol: flo
     return diff > float(atol), diff
 
 
+def _semantic_exact_cell_equal(control_value: Any, staged_value: Any) -> bool:
+    control_text = str(control_value if control_value is not None else "").strip()
+    staged_text = str(staged_value if staged_value is not None else "").strip()
+    missing_values = {"", "nan", "none", "null", "<na>"}
+    if control_text.lower() in missing_values and staged_text.lower() in missing_values:
+        return True
+    bool_values = {"true": True, "1": True, "yes": True, "false": False, "0": False, "no": False}
+    control_bool = bool_values.get(control_text.lower())
+    staged_bool = bool_values.get(staged_text.lower())
+    if control_bool is not None and staged_bool is not None:
+        return bool(control_bool) == bool(staged_bool)
+    try:
+        control_number = float(control_text)
+        staged_number = float(staged_text)
+    except Exception:
+        return control_text == staged_text
+    if math.isfinite(control_number) and math.isfinite(staged_number):
+        return control_number == staged_number
+    return control_text.lower() == staged_text.lower()
+
+
 def _append_keyed_csv_comparison_checks(
     checks: list[StageCheckRecord],
     *,
@@ -1682,15 +1964,21 @@ def _append_keyed_csv_comparison_checks(
         control_row = control_by_key[key]
         staged_row = staged_by_key[key]
         for column in spec.exact_columns:
-            if str(control_row.get(column, "")) != str(staged_row.get(column, "")):
+            if not _semantic_exact_cell_equal(control_row.get(column, ""), staged_row.get(column, "")):
                 exact_mismatches += 1
     if spec.exact_columns:
+        max_warn_cells = int(math.ceil(len(shared_keys) * len(spec.exact_columns) * float(spec.exact_warn_max_fraction)))
+        exact_status = "pass" if exact_mismatches == 0 else ("warn" if max_warn_cells > 0 and exact_mismatches <= max_warn_cells else "fail")
         checks.append(
             StageCheckRecord(
                 label=f"comparison CSV exact cells: {spec.label}",
-                status="pass" if exact_mismatches == 0 else "fail",
+                status=exact_status,
                 detail="Declared exact-match columns should match for shared keyed rows.",
-                expected=f"0 mismatched cells across {len(spec.exact_columns)} columns",
+                expected=(
+                    f"0 mismatched cells across {len(spec.exact_columns)} columns"
+                    if max_warn_cells <= 0
+                    else f"0 exact preferred; warn <= {max_warn_cells} cells ({spec.exact_warn_max_fraction:g} fraction)"
+                ),
                 observed=str(exact_mismatches),
             )
         )
@@ -1786,7 +2074,7 @@ def _append_keyed_row_comparison_checks(
         control_row = control_by_key[key]
         computed_row = computed_by_key[key]
         for column in spec.exact_columns:
-            if str(control_row.get(column, "")) != str(computed_row.get(column, "")):
+            if not _semantic_exact_cell_equal(control_row.get(column, ""), computed_row.get(column, "")):
                 exact_mismatches += 1
                 exact_mismatches_by_column[column] += 1
     if spec.exact_columns:
@@ -1941,9 +2229,137 @@ def _append_visual_thumbnail_comparison_checks(
     )
 
 
+def _append_semantic_csv_comparison_checks(
+    checks: list[StageCheckRecord],
+    *,
+    spec: StageOutputSpec,
+    control_path: Path,
+    staged_path: Path,
+    label_prefix: str,
+) -> None:
+    control_rows = _csv_dict_rows(control_path)
+    staged_rows = _csv_dict_rows(staged_path)
+    declared_columns = tuple(dict.fromkeys((*spec.key_columns, *spec.exact_columns, *spec.numeric_columns)))
+    control_columns = set(control_rows[0]) if control_rows else set(_csv_rows(control_path)[0] if _csv_rows(control_path) else ())
+    staged_columns = set(staged_rows[0]) if staged_rows else set(_csv_rows(staged_path)[0] if _csv_rows(staged_path) else ())
+    missing_control = tuple(column for column in declared_columns if column not in control_columns)
+    missing_staged = tuple(column for column in declared_columns if column not in staged_columns)
+    row_match = len(control_rows) == len(staged_rows)
+    checks.append(
+        StageCheckRecord(
+            label=f"{label_prefix} CSV semantic columns: {spec.label}",
+            status="pass" if not missing_control and not missing_staged else "fail",
+            detail="Declared semantic comparison columns should exist in both control and staged CSVs.",
+            expected="declared columns present",
+            observed=(
+                f"missing_control={list(missing_control)}; missing_staged={list(missing_staged)}"
+            ),
+        )
+    )
+    checks.append(
+        StageCheckRecord(
+            label=f"{label_prefix} CSV row count: {spec.label}",
+            status="pass" if row_match else "fail",
+            detail="Semantic comparison requires the staged and control CSVs to have the same row count.",
+            expected=str(len(control_rows)),
+            observed=str(len(staged_rows)),
+        )
+    )
+    if not missing_control and not missing_staged and row_match:
+        _append_keyed_csv_comparison_checks(
+            checks,
+            spec=spec,
+            control_path=control_path,
+            staged_path=staged_path,
+        )
+
+
+def _append_qa_report_summary_comparison_checks(checks: list[StageCheckRecord], summary_path: Path) -> None:
+    try:
+        payload = json.loads(summary_path.read_text())
+    except Exception as exc:
+        checks.append(
+            StageCheckRecord(
+                label="comparison QA report summary JSON parse",
+                status="fail",
+                detail="qa_report_summary.json should be parseable JSON.",
+                expected="valid JSON object",
+                observed=str(exc),
+            )
+        )
+        return
+    is_mapping = isinstance(payload, dict)
+    checks.append(
+        StageCheckRecord(
+            label="comparison QA report summary JSON parse",
+            status="pass" if is_mapping else "fail",
+            detail="qa_report_summary.json should be a JSON object.",
+            expected="JSON object",
+            observed=type(payload).__name__,
+        )
+    )
+    if not is_mapping:
+        return
+    required_sections = (
+        "canonical_tables",
+        "stage_outputs",
+        "registration_qc",
+        "matching_qc",
+        "review_artifacts",
+        "review_guidance",
+    )
+    missing_sections = tuple(section for section in required_sections if section not in payload)
+    checks.append(
+        StageCheckRecord(
+            label="comparison QA report summary sections",
+            status="pass" if not missing_sections else "fail",
+            detail="Generated QA summaries should include all review sections used by Markdown/HTML/PDF outputs.",
+            expected="all required sections present",
+            observed="none" if not missing_sections else ",".join(missing_sections),
+        )
+    )
+    review_status = str((payload.get("review_guidance") or {}).get("status", ""))
+    checks.append(
+        StageCheckRecord(
+            label="comparison QA report review status",
+            status="pass" if review_status in {"pass", "warn", "fail"} else "fail",
+            detail="Biologist review guidance should expose a valid aggregate status.",
+            expected="pass|warn|fail",
+            observed=review_status or "missing",
+        )
+    )
+    image_artifacts = [
+        artifact
+        for artifact in payload.get("review_artifacts", ())
+        if isinstance(artifact, dict) and artifact.get("kind") == "image" and artifact.get("exists")
+    ]
+    unreadable = tuple(
+        str(artifact.get("label", "image"))
+        for artifact in image_artifacts
+        if artifact.get("image_readable") is False
+    )
+    missing_metadata = tuple(
+        str(artifact.get("label", "image"))
+        for artifact in image_artifacts
+        if "image_readable" not in artifact or "image_dimensions" not in artifact
+    )
+    checks.append(
+        StageCheckRecord(
+            label="comparison QA report image metadata",
+            status="fail" if missing_metadata else ("warn" if unreadable else "pass"),
+            detail="Existing image review artifacts should include readability metadata and should be readable for final visual review.",
+            expected="metadata present; unreadable=0",
+            observed=(
+                f"image_artifacts={len(image_artifacts)}; "
+                f"missing_metadata={list(missing_metadata)}; unreadable={list(unreadable)}"
+            ),
+        )
+    )
+
+
 def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
     checks: list[StageCheckRecord] = []
-    for spec in _stage_output_specs(paths, stage_name):
+    for spec in _stage_output_specs_for_inventory(paths, stage_name):
         staged_path = Path(spec.path)
         control_path = Path(spec.control_path or "")
         if spec.control_path is None:
@@ -1958,6 +2374,19 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
                         observed="missing" if rows is None else str(rows),
                     )
                 )
+            elif spec.parity == "nonempty_file":
+                staged_nonempty, staged_observed = _nonempty_artifact_matching(staged_path, spec.artifact_pattern)
+                checks.append(
+                    StageCheckRecord(
+                        label=f"comparison nonempty file: {spec.label}",
+                        status="pass" if staged_nonempty else "fail",
+                        detail="No control path is declared for this output; compare non-empty staged file or directory only.",
+                        expected="staged non-empty",
+                        observed=staged_observed,
+                    )
+                )
+                if staged_nonempty and staged_path.name == "qa_report_summary.json":
+                    _append_qa_report_summary_comparison_checks(checks, staged_path)
             else:
                 checks.append(
                     StageCheckRecord(
@@ -1970,6 +2399,30 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
                 )
             continue
         if not staged_path.exists() or not control_path.exists():
+            if stage_name in UPSTREAM_STAGE_NAMES and staged_path.exists() and not control_path.exists():
+                if spec.parity == "nonempty_csv":
+                    rows = _csv_row_count(staged_path)
+                    staged_ok = rows is not None and rows > 0
+                    staged_observed = "missing" if rows is None else f"rows={rows}"
+                elif spec.parity in {"csv_shape", "csv_shape_warn", "csv_semantic"}:
+                    rows = _csv_row_count(staged_path)
+                    staged_ok = rows is not None
+                    staged_observed = "missing" if rows is None else f"rows={rows}"
+                elif spec.parity == "nonempty_file":
+                    staged_ok, staged_observed = _nonempty_artifact_matching(staged_path, spec.artifact_pattern)
+                else:
+                    staged_ok = staged_path.exists()
+                    staged_observed = "exists" if staged_ok else "missing"
+                checks.append(
+                    StageCheckRecord(
+                        label=f"comparison control missing: {spec.label}",
+                        status="warn" if staged_ok else "fail",
+                        detail="No accepted/control output exists for this upstream fish; parity cannot be evaluated, so staged output presence is checked instead.",
+                        expected="control optional for cross-fish upstream comparison; staged output present",
+                        observed=f"control=False; staged={staged_observed}",
+                    )
+                )
+                continue
             checks.append(
                 StageCheckRecord(
                     label=f"comparison inputs exist: {spec.label}",
@@ -1980,7 +2433,7 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
                 )
             )
             continue
-        if spec.parity == "csv_shape":
+        if spec.parity in {"csv_shape", "csv_shape_warn"}:
             staged_rows = _csv_rows(staged_path)
             control_rows = _csv_rows(control_path)
             staged_header = staged_rows[0] if staged_rows else ()
@@ -1988,10 +2441,11 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
             staged_count = max(len(staged_rows or ()) - 1, 0)
             control_count = max(len(control_rows or ()) - 1, 0)
             shape_match = staged_header == control_header and staged_count == control_count
+            shape_status = "pass" if shape_match else ("warn" if spec.parity == "csv_shape_warn" else "fail")
             checks.append(
                 StageCheckRecord(
                     label=f"comparison CSV shape: {spec.label}",
-                    status="pass" if shape_match else "fail",
+                    status=shape_status,
                     detail="Current compare-staged contract requires matching CSV header and row count.",
                     expected=f"rows={control_count}; header={len(control_header)}",
                     observed=f"rows={staged_count}; header={len(staged_header)}",
@@ -2014,18 +2468,26 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
                         observed="match" if bytes_match else "different",
                     )
                 )
+        elif spec.parity == "csv_semantic":
+            _append_semantic_csv_comparison_checks(
+                checks,
+                spec=spec,
+                control_path=control_path,
+                staged_path=staged_path,
+                label_prefix="comparison",
+            )
         elif spec.parity == "nonempty_file":
-            staged_size = staged_path.stat().st_size if staged_path.is_file() else 0
+            staged_nonempty, staged_observed = _nonempty_artifact_matching(staged_path, spec.artifact_pattern)
             checks.append(
                 StageCheckRecord(
-                    label=f"comparison figure presence: {spec.label}",
-                    status="pass" if control_path.exists() and staged_size > 0 else "fail",
-                    detail="Current figure comparison checks staged non-empty presence against an existing control figure.",
+                    label=f"comparison file presence: {spec.label}",
+                    status="pass" if control_path.exists() and staged_nonempty else "fail",
+                    detail="Current file comparison checks staged non-empty presence against an existing control file.",
                     expected="control exists and staged non-empty",
-                    observed=f"control_exists={control_path.exists()}; staged_size={staged_size}",
+                    observed=f"control_exists={control_path.exists()}; staged={staged_observed}",
                 )
             )
-            if control_path.exists() and staged_size > 0:
+            if control_path.exists() and staged_nonempty and staged_path.is_file() and control_path.is_file():
                 _append_visual_thumbnail_comparison_checks(
                     checks,
                     spec=spec,
@@ -2039,14 +2501,14 @@ def build_single_fish_compare_staged_manifest(
     config: SingleFishPipelineConfig,
     stage_name: str,
 ) -> StageManifest:
-    if stage_name not in POST_PREPROCESSING_STAGE_NAMES:
+    if stage_name not in STAGED_COMPARISON_STAGE_NAMES:
         raise ValueError(
-            f"unsupported staged comparison {stage_name!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
+            f"unsupported staged comparison {stage_name!r}; expected one of {', '.join(STAGED_COMPARISON_STAGE_NAMES)}"
         )
     paths = resolve_pipeline_paths(config)
     inputs = tuple(
         describe_manifest_path(spec.control_path, label=f"control for {spec.label}")
-        for spec in _stage_output_specs(paths, stage_name)
+        for spec in _stage_output_specs_for_inventory(paths, stage_name)
         if spec.control_path is not None
     )
     outputs = _stage_output_records(paths, stage_name)
@@ -2078,6 +2540,7 @@ def build_single_fish_compare_staged_manifest(
             "compared_stage": stage_name,
             "read_only_comparison": True,
             "csv_contract": "header_and_row_count_required; declared_key_exact_numeric_checks_required; byte_parity_warn_only",
+            "file_contract": "control_exists_and_staged_nonempty_when_control_declared; otherwise_staged_presence",
             "figure_contract": "control_exists_and_staged_nonempty",
         },
         warnings=warnings,
@@ -2090,12 +2553,12 @@ def compare_single_fish_staged_outputs(
     stage_name: str | None = None,
 ) -> dict[str, Any]:
     paths = resolve_pipeline_paths(config)
-    stage_names = (stage_name,) if stage_name else POST_PREPROCESSING_STAGE_NAMES
+    stage_names = (stage_name,) if stage_name else STAGED_COMPARISON_STAGE_NAMES
     comparisons: list[dict[str, Any]] = []
     for name in stage_names:
-        if name not in POST_PREPROCESSING_STAGE_NAMES:
+        if name not in STAGED_COMPARISON_STAGE_NAMES:
             raise ValueError(
-                f"unsupported staged comparison {name!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
+                f"unsupported staged comparison {name!r}; expected one of {', '.join(STAGED_COMPARISON_STAGE_NAMES)}"
             )
         if not _stage_has_existing_outputs(paths, name):
             comparisons.append(
@@ -2146,11 +2609,11 @@ def run_single_fish_freeze_legacy_baseline_stage(
     overwrite: bool = False,
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
-    stage_names = (stage_name,) if stage_name else POST_PREPROCESSING_STAGE_NAMES
-    invalid = tuple(name for name in stage_names if name not in POST_PREPROCESSING_STAGE_NAMES)
+    stage_names = (stage_name,) if stage_name else STAGED_COMPARISON_STAGE_NAMES
+    invalid = tuple(name for name in stage_names if name not in STAGED_COMPARISON_STAGE_NAMES)
     if invalid:
         raise ValueError(
-            f"unsupported legacy baseline stage {invalid[0]!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
+            f"unsupported legacy baseline stage {invalid[0]!r}; expected one of {', '.join(STAGED_COMPARISON_STAGE_NAMES)}"
         )
 
     inputs: list[ManifestPathRecord] = []
@@ -2159,7 +2622,7 @@ def run_single_fish_freeze_legacy_baseline_stage(
     copied = 0
     skipped = 0
     for name in stage_names:
-        for spec in _stage_output_specs(paths, name):
+        for spec in _stage_output_specs_for_inventory(paths, name):
             if spec.control_path is None:
                 skipped += 1
                 checks.append(
@@ -2244,7 +2707,7 @@ def _append_legacy_baseline_comparison_checks(
             )
         )
         return
-    if spec.parity == "csv_shape":
+    if spec.parity in {"csv_shape", "csv_shape_warn"}:
         staged_rows = _csv_rows(staged_path)
         baseline_rows = _csv_rows(baseline_path)
         staged_header = staged_rows[0] if staged_rows else ()
@@ -2252,10 +2715,11 @@ def _append_legacy_baseline_comparison_checks(
         staged_count = max(len(staged_rows or ()) - 1, 0)
         baseline_count = max(len(baseline_rows or ()) - 1, 0)
         shape_match = staged_header == baseline_header and staged_count == baseline_count
+        shape_status = "pass" if shape_match else ("warn" if spec.parity == "csv_shape_warn" else "fail")
         checks.append(
             StageCheckRecord(
                 label=f"legacy baseline CSV shape: {spec.label}",
-                status="pass" if shape_match else "fail",
+                status=shape_status,
                 detail="Frozen legacy baseline and staged CSV should match header and row count.",
                 expected=f"rows={baseline_count}; header={len(baseline_header)}",
                 observed=f"rows={staged_count}; header={len(staged_header)}",
@@ -2278,19 +2742,27 @@ def _append_legacy_baseline_comparison_checks(
                     observed="match" if bytes_match else "different",
                 )
             )
+    elif spec.parity == "csv_semantic":
+        _append_semantic_csv_comparison_checks(
+            checks,
+            spec=spec,
+            control_path=baseline_path,
+            staged_path=staged_path,
+            label_prefix="legacy baseline",
+        )
     elif spec.parity == "nonempty_file":
-        staged_size = staged_path.stat().st_size if staged_path.is_file() else 0
-        baseline_size = baseline_path.stat().st_size if baseline_path.is_file() else 0
+        staged_nonempty, staged_observed = _nonempty_artifact_matching(staged_path, spec.artifact_pattern)
+        baseline_nonempty, baseline_observed = _nonempty_artifact_matching(baseline_path, spec.artifact_pattern)
         checks.append(
             StageCheckRecord(
-                label=f"legacy baseline figure presence: {spec.label}",
-                status="pass" if baseline_size > 0 and staged_size > 0 else "fail",
-                detail="Frozen legacy baseline and staged figure should both be non-empty.",
+                label=f"legacy baseline file presence: {spec.label}",
+                status="pass" if baseline_nonempty and staged_nonempty else "fail",
+                detail="Frozen legacy baseline and staged file should both be non-empty.",
                 expected="baseline and staged non-empty",
-                observed=f"baseline_size={baseline_size}; staged_size={staged_size}",
+                observed=f"baseline={baseline_observed}; staged={staged_observed}",
             )
         )
-        if baseline_size > 0 and staged_size > 0:
+        if baseline_nonempty and staged_nonempty and baseline_path.is_file() and staged_path.is_file():
             _append_visual_thumbnail_comparison_checks(
                 checks,
                 spec=spec,
@@ -2303,15 +2775,15 @@ def build_single_fish_compare_legacy_baseline_manifest(
     config: SingleFishPipelineConfig,
     stage_name: str,
 ) -> StageManifest:
-    if stage_name not in POST_PREPROCESSING_STAGE_NAMES:
+    if stage_name not in STAGED_COMPARISON_STAGE_NAMES:
         raise ValueError(
-            f"unsupported legacy baseline comparison {stage_name!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
+            f"unsupported legacy baseline comparison {stage_name!r}; expected one of {', '.join(STAGED_COMPARISON_STAGE_NAMES)}"
         )
     paths = resolve_pipeline_paths(config)
     inputs: list[ManifestPathRecord] = []
     checks: list[StageCheckRecord] = []
     skipped = 0
-    for spec in _stage_output_specs(paths, stage_name):
+    for spec in _stage_output_specs_for_inventory(paths, stage_name):
         if spec.control_path is None:
             skipped += 1
             checks.append(
@@ -2375,12 +2847,12 @@ def compare_single_fish_legacy_baseline(
     stage_name: str | None = None,
 ) -> dict[str, Any]:
     paths = resolve_pipeline_paths(config)
-    stage_names = (stage_name,) if stage_name else POST_PREPROCESSING_STAGE_NAMES
+    stage_names = (stage_name,) if stage_name else STAGED_COMPARISON_STAGE_NAMES
     comparisons: list[dict[str, Any]] = []
     for name in stage_names:
-        if name not in POST_PREPROCESSING_STAGE_NAMES:
+        if name not in STAGED_COMPARISON_STAGE_NAMES:
             raise ValueError(
-                f"unsupported legacy baseline comparison {name!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
+                f"unsupported legacy baseline comparison {name!r}; expected one of {', '.join(STAGED_COMPARISON_STAGE_NAMES)}"
             )
         if not _stage_has_existing_outputs(paths, name):
             comparisons.append(
@@ -3934,7 +4406,7 @@ def _make_qa_report_summary(paths: PipelinePaths, *, canonical_root: Path) -> di
                 "status": "complete" if existing == len(specs) else ("not_started" if existing == 0 else "partial"),
             }
         )
-    return {
+    summary = {
         "fish_id": paths.fish_dir.name,
         "canonical_root": str(canonical_root),
         "canonical_tables": canonical_tables,
@@ -3943,6 +4415,8 @@ def _make_qa_report_summary(paths: PipelinePaths, *, canonical_root: Path) -> di
         "matching_qc": _make_qa_matching_qc_summary(paths),
         "review_artifacts": _make_qa_report_review_artifacts(paths, canonical_root=canonical_root),
     }
+    summary["review_guidance"] = _make_qa_report_review_guidance(summary)
+    return summary
 
 
 def _qa_int_cell(row: dict[str, str], column: str) -> int | None:
@@ -4026,14 +4500,30 @@ def _make_qa_matching_qc_summary(paths: PipelinePaths) -> dict[str, Any]:
     }
 
 
-def _qa_review_artifact(label: str, path: Path, *, kind: str, focus: str) -> dict[str, Any]:
+def _image_review_metadata(path: Path) -> dict[str, Any]:
+    dimensions = _image_dimensions(path) if path.exists() else None
+    pixels = _thumbnail_rgb_pixels(path, size=16) if path.exists() else None
+    color_count = None if pixels is None else len(set(pixels))
     return {
+        "byte_size": path.stat().st_size if path.exists() else None,
+        "image_dimensions": None if dimensions is None else {"width": dimensions[0], "height": dimensions[1]},
+        "image_readable": dimensions is not None,
+        "thumbnail_color_count": color_count,
+        "thumbnail_has_variation": None if color_count is None else color_count > 1,
+    }
+
+
+def _qa_review_artifact(label: str, path: Path, *, kind: str, focus: str) -> dict[str, Any]:
+    artifact = {
         "label": label,
         "path": str(path),
         "kind": kind,
         "exists": path.exists(),
         "focus": focus,
     }
+    if kind == "image":
+        artifact.update(_image_review_metadata(path))
+    return artifact
 
 
 def _make_qa_report_review_artifacts(paths: PipelinePaths, *, canonical_root: Path) -> list[dict[str, Any]]:
@@ -4094,6 +4584,157 @@ def _make_qa_report_review_artifacts(paths: PipelinePaths, *, canonical_root: Pa
             focus="gene-level stimulus response and HCR functional-status review",
         ),
     ]
+
+
+def _qa_review_item(section: str, question: str, status: str, evidence: str, action: str) -> dict[str, str]:
+    return {
+        "section": section,
+        "question": question,
+        "status": status,
+        "evidence": evidence,
+        "action": action,
+    }
+
+
+def _make_qa_report_review_guidance(summary: dict[str, Any]) -> dict[str, Any]:
+    tables = {table.get("filename"): table for table in summary.get("canonical_tables", [])}
+    stages = {stage.get("stage_name"): stage for stage in summary.get("stage_outputs", [])}
+    artifacts = {artifact.get("label"): artifact for artifact in summary.get("review_artifacts", [])}
+    registration_qc = summary.get("registration_qc", {})
+    matching_qc = summary.get("matching_qc", {})
+
+    canonical_missing = sorted(
+        str(name)
+        for name, table in tables.items()
+        if not table.get("exists") or table.get("rows") in (None, 0)
+    )
+    incomplete_stages = sorted(
+        str(name)
+        for name, stage in stages.items()
+        if stage.get("status") != "complete"
+    )
+    image_artifacts = [
+        artifact
+        for artifact in summary.get("review_artifacts", [])
+        if artifact.get("kind") == "image"
+    ]
+    missing_images = sorted(str(artifact.get("label")) for artifact in image_artifacts if not artifact.get("exists"))
+    unreadable_images = sorted(
+        str(artifact.get("label"))
+        for artifact in image_artifacts
+        if artifact.get("exists") and artifact.get("image_readable") is False
+    )
+    total_unmatched = int(matching_qc.get("total_unmatched_rois", 0) or 0)
+    total_rois = int(matching_qc.get("total_rois", 0) or 0)
+    roi_activity_tables_ready = all(
+        tables.get(name, {}).get("exists") and tables.get(name, {}).get("rows") not in (None, 0)
+        for name in (
+            "functional_roi_activity_identity.csv",
+            "functional_roi_activity_bpi_cells.csv",
+            "functional_roi_activity_bpi_summary.csv",
+        )
+    )
+    hcr_activity_tables_ready = all(
+        tables.get(name, {}).get("exists") and tables.get(name, {}).get("rows") not in (None, 0)
+        for name in ("hcr_activity_status.csv", "conf_to_func_pairs.csv", "hcr_func_candidates.csv")
+    )
+
+    items = [
+        _qa_review_item(
+            "input-readiness",
+            "Are all canonical staged tables present and non-empty?",
+            "pass" if not canonical_missing else "fail",
+            "all declared canonical tables are present" if not canonical_missing else "missing/empty: " + ", ".join(canonical_missing),
+            "Proceed to registration and matching review." if not canonical_missing else "Rerun or inspect export-canonical-tables before biological interpretation.",
+        ),
+        _qa_review_item(
+            "input-readiness",
+            "Are upstream staged outputs available for review?",
+            "pass" if not incomplete_stages else "warn",
+            "all declared review stages are complete" if not incomplete_stages else "incomplete stages: " + ", ".join(incomplete_stages),
+            "Proceed." if not incomplete_stages else "Missing optional figures can be reviewed later; missing tables should be regenerated before signoff.",
+        ),
+        _qa_review_item(
+            "registration",
+            "Is there a functional/anatomy overlay for plane-level registration review?",
+            "pass" if registration_qc.get("exists") and int(registration_qc.get("plane_count", 0) or 0) > 0 else "warn",
+            f"{registration_qc.get('plane_count', 0)} overlay plane records from {registration_qc.get('source_path', '')}",
+            "Inspect overlay planes for orientation, best-Z placement, and label overlap." if registration_qc.get("exists") else "Generate register-functional-to-anatomy visual QA before final signoff.",
+        ),
+        _qa_review_item(
+            "matching",
+            "Is ROI/anatomy geometry available before identity and response interpretation?",
+            "pass" if matching_qc.get("exists") and total_rois > 0 else "warn",
+            f"{total_rois} ROI geometry rows from {matching_qc.get('source_path', '')}",
+            "Review per-plane match counts and ambiguous/unmatched ROIs." if total_rois > 0 else "Run match-roi-to-anatomy before reviewing identity or activity summaries.",
+        ),
+        _qa_review_item(
+            "matching",
+            "Do unmatched ROIs need biological review?",
+            "pass" if total_unmatched == 0 else "warn",
+            f"{total_unmatched} unmatched ROIs",
+            "No unmatched ROI review is needed." if total_unmatched == 0 else "Inspect unmatched ROI distribution before treating missing identities as biological absence.",
+        ),
+        _qa_review_item(
+            "activity-identity",
+            "Are ROI-centric identity and response/BPI tables ready?",
+            "pass" if roi_activity_tables_ready else "fail",
+            "ROI master, BPI cells, and BPI summary are present"
+            if roi_activity_tables_ready
+            else "one or more ROI-centric activity tables are missing or empty",
+            "Review response classes and BPI categories from ROI-centric tables only.",
+        ),
+        _qa_review_item(
+            "activity-identity",
+            "Are HCR-centric identified-cell activity tables ready?",
+            "pass" if hcr_activity_tables_ready else "fail",
+            "HCR status, responsive pairs, and candidate tables are present"
+            if hcr_activity_tables_ready
+            else "one or more HCR-centric activity tables are missing or empty",
+            "Use these tables for identified-cell activity review, not whole-population inference.",
+        ),
+        _qa_review_item(
+            "figures",
+            "Are generated visual summaries available?",
+            "pass" if not missing_images and not unreadable_images else "warn",
+            "all declared preview images are present and readable"
+            if not missing_images and not unreadable_images
+            else "; ".join(
+                part
+                for part in (
+                    "missing images: " + ", ".join(missing_images) if missing_images else "",
+                    "unreadable images: " + ", ".join(unreadable_images) if unreadable_images else "",
+                )
+                if part
+            ),
+            "Inspect each preview image for obvious rendering or biological-review issues."
+            if not missing_images and not unreadable_images
+            else "Run make-figures or regenerate unreadable previews before final visual review.",
+        ),
+    ]
+    statuses = {item["status"] for item in items}
+    aggregate_status = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
+    sections = []
+    for section in ("input-readiness", "registration", "matching", "activity-identity", "figures"):
+        section_items = [item for item in items if item["section"] == section]
+        section_statuses = {item["status"] for item in section_items}
+        sections.append(
+            {
+                "section": section,
+                "status": "fail" if "fail" in section_statuses else ("warn" if "warn" in section_statuses else "pass"),
+                "items": section_items,
+            }
+        )
+    return {
+        "status": aggregate_status,
+        "sections": sections,
+        "items": items,
+        "primary_artifact_paths": {
+            label: str(artifact.get("path", ""))
+            for label, artifact in artifacts.items()
+            if artifact.get("exists")
+        },
+    }
 
 
 def _make_qa_report_markdown(summary: dict[str, Any]) -> str:
@@ -4181,18 +4822,36 @@ def _make_qa_report_markdown(summary: dict[str, Any]) -> str:
             )
     else:
         lines.append("No staged ROI/anatomy geometry table was found.")
+    review_guidance = summary.get("review_guidance", {})
+    lines.extend(
+        [
+            "",
+            "## Biologist Review Guide",
+            "",
+            f"Overall review status: **{review_guidance.get('status', 'unknown')}**",
+            "",
+            "| Section | Status | Question | Evidence | Action |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for item in review_guidance.get("items", []):
+        lines.append(
+            f"| {item.get('section')} | {item.get('status')} | {item.get('question')} | "
+            f"{item.get('evidence')} | {item.get('action')} |"
+        )
     lines.extend(
         [
             "",
             "## Manual Review Checklist",
             "",
-            "| Artifact | Type | Present | Review focus | Path |",
-            "| --- | --- | --- | --- | --- |",
+            "| Artifact | Type | Present | Visual check | Review focus | Path |",
+            "| --- | --- | --- | --- | --- | --- |",
         ]
     )
     for artifact in summary.get("review_artifacts", []):
         lines.append(
             f"| {artifact['label']} | {artifact['kind']} | {artifact['exists']} | "
+            f"{_qa_artifact_visual_check(artifact)} | "
             f"{artifact['focus']} | `{artifact['path']}` |"
         )
     preview_artifacts = [
@@ -4236,9 +4895,24 @@ def _html_table(headers: tuple[str, ...], rows: list[tuple[Any, ...]]) -> str:
     return "<table><thead><tr>" + header_html + "</tr></thead><tbody>" + "".join(row_html) + "</tbody></table>"
 
 
+def _qa_artifact_visual_check(artifact: dict[str, Any]) -> str:
+    if artifact.get("kind") != "image":
+        return "not applicable"
+    if not artifact.get("exists"):
+        return "missing"
+    dimensions = artifact.get("image_dimensions")
+    if not dimensions:
+        return "unreadable"
+    status = f"{dimensions.get('width')}x{dimensions.get('height')}"
+    if artifact.get("thumbnail_has_variation") is False:
+        status += "; single-color thumbnail"
+    return status
+
+
 def _make_qa_report_html(summary: dict[str, Any]) -> str:
     registration_qc = summary.get("registration_qc", {})
     matching_qc = summary.get("matching_qc", {})
+    review_guidance = summary.get("review_guidance", {})
     review_artifacts = summary.get("review_artifacts", [])
     preview_artifacts = [
         artifact
@@ -4345,14 +5019,34 @@ def _make_qa_report_html(summary: dict[str, Any]) -> str:
         parts.append("<p>No staged ROI/anatomy geometry table was found.</p>")
     parts.extend(
         [
+            "<h2>Biologist Review Guide</h2>",
+            f"<p>Overall review status: <strong>{_html_text(review_guidance.get('status', 'unknown'))}</strong></p>",
+            _html_table(
+                ("Section", "Status", "Question", "Evidence", "Action"),
+                [
+                    (
+                        item.get("section"),
+                        item.get("status"),
+                        item.get("question"),
+                        item.get("evidence"),
+                        item.get("action"),
+                    )
+                    for item in review_guidance.get("items", [])
+                ],
+            ),
+        ]
+    )
+    parts.extend(
+        [
             "<h2>Manual Review Checklist</h2>",
             _html_table(
-                ("Artifact", "Type", "Present", "Review focus", "Path"),
+                ("Artifact", "Type", "Present", "Visual check", "Review focus", "Path"),
                 [
                     (
                         artifact.get("label"),
                         artifact.get("kind"),
                         artifact.get("exists"),
+                        _qa_artifact_visual_check(artifact),
                         artifact.get("focus"),
                         artifact.get("path"),
                     )
@@ -4459,6 +5153,7 @@ def _write_qa_report_pdf(summary: dict[str, Any], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     registration_qc = summary.get("registration_qc", {})
     matching_qc = summary.get("matching_qc", {})
+    review_guidance = summary.get("review_guidance", {})
     review_artifacts = summary.get("review_artifacts", [])
     preview_artifacts = [
         artifact
@@ -4540,12 +5235,29 @@ def _write_qa_report_pdf(summary: dict[str, Any], out_path: Path) -> None:
                 for plane in matching_qc.get("planes", [])
             ],
         )
+        guide_lines: list[str] = [f"Overall review status: {review_guidance.get('status', 'unknown')}", ""]
+        for item in review_guidance.get("items", []):
+            guide_lines.extend(
+                _pdf_text_lines(
+                    f"{item.get('section')} [{item.get('status')}]: {item.get('question')}",
+                    width=96,
+                )
+            )
+            guide_lines.extend(_pdf_text_lines(f"Evidence: {item.get('evidence')}", width=96))
+            guide_lines.extend(_pdf_text_lines(f"Action: {item.get('action')}", width=96))
+            guide_lines.append("")
+        _pdf_text_page(
+            pdf,
+            plt,
+            f"Biologist Review Guide ({review_guidance.get('status', 'unknown')})",
+            guide_lines,
+        )
         checklist_lines: list[str] = []
         for artifact in review_artifacts:
             checklist_lines.extend(
                 _pdf_text_lines(
                     f"{artifact.get('label')} ({artifact.get('kind')}, present={artifact.get('exists')}): "
-                    f"{artifact.get('focus')}",
+                    f"{_qa_artifact_visual_check(artifact)}; {artifact.get('focus')}",
                     width=96,
                 )
             )
@@ -5017,7 +5729,26 @@ def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: Per
 
 def _stage_has_existing_outputs(paths: PipelinePaths, stage_name: str) -> bool:
     stage_root = _stage_root(paths, stage_name)
-    return stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*"))
+    if stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*")):
+        return True
+    manifest_path = _upstream_stage_manifest_path(paths, stage_name) if stage_name in UPSTREAM_STAGE_NAMES else None
+    if manifest_path is not None and manifest_path.exists():
+        try:
+            manifest_data = json.loads(manifest_path.read_text())
+            manifest_pipeline_root = (manifest_data.get("parameters") or {}).get("pipeline_root")
+        except Exception:
+            manifest_pipeline_root = None
+        if manifest_pipeline_root == str(paths.pipeline_root):
+            return True
+    output_paths = tuple(Path(spec.path) for spec in _stage_output_specs_for_inventory(paths, stage_name))
+    for path in output_paths:
+        if not path.is_relative_to(paths.pipeline_root):
+            continue
+        if path.is_file() and _is_real_match(path):
+            return True
+        if path.is_dir() and any(_is_real_match(child) for child in path.rglob("*")):
+            return True
+    return False
 
 
 def build_single_fish_stage_status(config: SingleFishPipelineConfig, stage_name: str) -> dict[str, Any]:
@@ -5745,6 +6476,7 @@ def _overlay_selected_ants_transformlists(
     comparison_path: Path,
     *,
     xy_spacing: tuple[float, float] = (1.0, 1.0),
+    preserve_existing: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     selected_by_plane: dict[int, dict[str, Any]] = {}
     if comparison_path.exists():
@@ -5769,10 +6501,31 @@ def _overlay_selected_ants_transformlists(
 
     out: list[dict[str, Any]] = []
     overlay_count = 0
+    preserved_existing_count = 0
     missing_transform_files = 0
     for default_idx, plane_ref in enumerate(plane_refs):
         ref = dict(plane_ref)
         plane_idx = int(ref.get("index", default_idx))
+        existing_transformlist = list(ref.get("ants_transformlist") or ())
+        if preserve_existing and str(ref.get("tform_src", "")) == "ants_rigid_affine" and existing_transformlist:
+            spacing = (float(xy_spacing[0]), float(xy_spacing[1]))
+            ref["ants_transform"] = {
+                "type": "ants_transformlist",
+                "method": "ants_rigid_affine",
+                "transformlist": existing_transformlist,
+                "fixed_spacing": spacing,
+                "moving_spacing": spacing,
+                "fixed_origin": (0.0, 0.0),
+                "moving_origin": (0.0, 0.0),
+                "fixed_direction": [[1.0, 0.0], [0.0, 1.0]],
+                "moving_direction": [[1.0, 0.0], [0.0, 1.0]],
+                "moving_shape": tuple(ref.get("ref_scaled_shape", ())),
+                "fixed_shape": tuple(ref.get("ref_scaled_shape", ())),
+            }
+            preserved_existing_count += 1
+            missing_transform_files += sum(1 for path in existing_transformlist if not Path(path).exists())
+            out.append(ref)
+            continue
         selected = selected_by_plane.get(plane_idx)
         if selected is not None:
             spacing = (float(xy_spacing[0]), float(xy_spacing[1]))
@@ -5812,6 +6565,7 @@ def _overlay_selected_ants_transformlists(
         "comparison_exists": comparison_path.exists(),
         "selected_ants_rows": int(len(selected_by_plane)),
         "overlay_applied_planes": int(overlay_count),
+        "preserved_existing_ants_planes": int(preserved_existing_count),
         "plane_count": int(len(out)),
         "backend_counts": backend_counts,
         "missing_transform_files": int(missing_transform_files),
@@ -6102,6 +6856,7 @@ def run_prepare_in_vivo_anatomy_stack_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "output_root": str(out_path.parent),
             "log_lines": tuple(result.get("log_lines", ())),
@@ -6212,6 +6967,7 @@ def run_prepare_functional_reference_stacks_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "output_dir": str(out_dir),
             "polarity": polarity,
@@ -6238,11 +6994,12 @@ def _write_tforms_by_plane_csv(path: Path, plane_refs: list[dict[str, Any]]) -> 
     with path.open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        for plane_idx, plane_ref in enumerate(plane_refs):
+        for default_plane_idx, plane_ref in enumerate(plane_refs):
+            plane_idx = int(plane_ref.get("index", default_plane_idx))
             ncc_xy_record = plane_ref.get("ncc_xy", {}) if isinstance(plane_ref.get("ncc_xy"), dict) else {}
             writer.writerow(
                 {
-                    "plane_index": int(plane_idx),
+                    "plane_index": plane_idx,
                     "label": str(plane_ref.get("label", f"plane{plane_idx}")),
                     "best_z": int(plane_ref.get("best_z", 0)),
                     "scale": plane_ref.get("scale"),
@@ -6258,14 +7015,18 @@ def run_register_functional_to_anatomy_stage(
     config: SingleFishPipelineConfig,
     *,
     reference_dir: str | Path | None = None,
+    reference_plane_indices: tuple[int, ...] | list[int] | None = None,
     anatomy_stack_path: str | Path | None = None,
     anatomy_labels_path: str | Path | None = None,
     functional_labels_anatomy_dir: str | Path | None = None,
     output_root: str | Path | None = None,
+    ants_fixed_mask_json: str | Path | None = None,
+    ants_require_fixed_mask: bool = True,
     force_recompute: bool = False,
     run_inplane_comparison: bool = True,
     inplane_methods: tuple[str, ...] = ("ncc_xy",),
     active_inplane_method: str = "ncc_xy",
+    ants_deterministic_seed: int | None = None,
     use_cv2: bool = False,
     emit_visual_qa: bool = True,
     visual_qa_crop_size_px: int = 200,
@@ -6304,6 +7065,10 @@ def run_register_functional_to_anatomy_stage(
     )
     if run_inplane_comparison:
         required_output_paths = required_output_paths + (comparison_path, recommendation_path)
+    requested_reference_plane_indices = tuple(dict.fromkeys(int(value) for value in (reference_plane_indices or ())))
+    discovered_reference_pairs: tuple[tuple[str, Path, Path], ...] = ()
+    reference_pairs: tuple[tuple[str, Path, Path], ...] = ()
+    selected_reference_labels: tuple[str, ...] = ()
     try:
         existing_outputs = tuple(path for path in required_output_paths if path.exists())
         if existing_outputs and not force_recompute:
@@ -6311,17 +7076,39 @@ def run_register_functional_to_anatomy_stage(
                 "register-functional-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
                 + ", ".join(str(path) for path in existing_outputs)
             )
-        reference_pairs = discover_functional_reference_pairs(ref_dir)
+        discovered_reference_pairs = discover_functional_reference_pairs(ref_dir)
+        annotated_reference_pairs = tuple(
+            (label, raw_path, norm_path, _parse_plane_index(label, default_idx))
+            for default_idx, (label, raw_path, norm_path) in enumerate(discovered_reference_pairs)
+        )
+        if requested_reference_plane_indices:
+            available_plane_indices = {plane_idx for _, _, _, plane_idx in annotated_reference_pairs}
+            missing_plane_indices = tuple(
+                plane_idx for plane_idx in requested_reference_plane_indices if plane_idx not in available_plane_indices
+            )
+            if missing_plane_indices:
+                available_detail = ", ".join(str(plane_idx) for plane_idx in sorted(available_plane_indices)) or "none"
+                missing_detail = ", ".join(str(plane_idx) for plane_idx in missing_plane_indices)
+                raise FileNotFoundError(
+                    "Requested functional reference plane indices were not found under "
+                    f"{ref_dir}: {missing_detail}; available plane indices: {available_detail}"
+                )
+            requested_plane_index_set = set(requested_reference_plane_indices)
+            annotated_reference_pairs = tuple(
+                record for record in annotated_reference_pairs if record[3] in requested_plane_index_set
+            )
+        reference_pairs = tuple((label, raw_path, norm_path) for label, raw_path, norm_path, _ in annotated_reference_pairs)
+        selected_reference_labels = tuple(label for label, _, _, _ in annotated_reference_pairs)
         plane_refs = [
             {
                 "label": label,
-                "index": _parse_plane_index(label, idx),
+                "index": plane_idx,
                 "ref2d_raw": np.asarray(imread_any(raw_path), dtype=np.float32),
                 "ref2d": norm01(imread_any(norm_path)),
                 "reference_raw_path": str(raw_path),
                 "reference_norm_path": str(norm_path),
             }
-            for idx, (label, raw_path, norm_path) in enumerate(reference_pairs)
+            for label, raw_path, norm_path, plane_idx in annotated_reference_pairs
         ]
         search_result = run_registration_search_stage(
             anat_stack_path=anat_path,
@@ -6330,31 +7117,37 @@ def run_register_functional_to_anatomy_stage(
             out_ncc=out_ncc,
             config=RegistrationSearchConfig(
                 force_recompute=force_recompute,
-                scale_coarse=(0.9, 1.0, 0.1),
-                scale_fine=(0.0, 1.0),
-                scale_xfine=(0.0, 1.0),
-                scale_ufine=(0.0, 1.0),
-                scale_workers=1,
+                scale_coarse=(0.50, 1.50, 0.05),
+                scale_fine=(0.05, 0.01),
+                scale_xfine=(0.005, 0.001),
+                scale_ufine=(0.0005, 0.0001),
+                scale_workers=None,
                 use_cv2=use_cv2,
             ),
         )
         if run_inplane_comparison:
+            anatomy_xy_spacing = _anatomy_xy_spacing_from_voxel_cache(paths)
             comparison_result = run_in_plane_registration_comparison_stage(
                 plane_refs=search_result["plane_refs"],
                 anat_f=search_result["anat_f"],
                 fish_id=config.fish_id,
                 out_ncc=out_ncc,
                 best_z=int(search_result.get("best_z", 0)),
+                vox_anat={"X": float(anatomy_xy_spacing[0]), "Y": float(anatomy_xy_spacing[1])},
                 config=InPlaneRegistrationComparisonConfig(
                     methods=tuple(inplane_methods),
                     active_method=str(active_inplane_method),
                     fallback_method=None,
                     fail_on_active_method_error=True,
+                    ants_fixed_mask_json=ants_fixed_mask_json,
+                    ants_require_fixed_mask=bool(ants_require_fixed_mask),
+                    ants_deterministic_seed=ants_deterministic_seed,
                     use_cv2=use_cv2,
                 ),
             )
             final_plane_refs = comparison_result["plane_refs"]
         else:
+            anatomy_xy_spacing = _anatomy_xy_spacing_from_voxel_cache(paths)
             comparison_result = {"log_lines": (), "comparison_path": comparison_path, "recommendation_path": recommendation_path}
             final_plane_refs = search_result["plane_refs"]
         _write_tforms_by_plane_csv(tforms_path, final_plane_refs)
@@ -6456,7 +7249,6 @@ def run_register_functional_to_anatomy_stage(
             errors = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
         log_lines = tuple(search_result.get("log_lines", ())) + tuple(comparison_result.get("log_lines", ()))
     except Exception as exc:
-        reference_pairs = ()
         checks = ()
         status = "fail"
         errors = (str(exc),)
@@ -6504,6 +7296,11 @@ def run_register_functional_to_anatomy_stage(
         inputs=(
             describe_manifest_path(ref_dir, label="functional reference directory"),
             describe_manifest_path(anat_path, label="prepared in vivo anatomy stack"),
+            _optional_manifest_path(
+                Path(ants_fixed_mask_json) if ants_fixed_mask_json not in (None, "", False) else None,
+                required=bool(ants_require_fixed_mask) and "ants_rigid_affine" in tuple(inplane_methods),
+                label="ANTs fixed-region mask JSON",
+            ),
         )
         + tuple(
             describe_manifest_path(raw_path, label="functional reference raw TIFF")
@@ -6513,13 +7310,22 @@ def run_register_functional_to_anatomy_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "functional_reference_dir": str(ref_dir),
+            "reference_plane_indices": requested_reference_plane_indices,
+            "reference_pair_count": len(discovered_reference_pairs),
+            "selected_reference_pair_count": len(reference_pairs),
+            "selected_reference_labels": selected_reference_labels,
             "anatomy_stack_path": str(anat_path),
             "output_root": str(stage_root),
             "registration_backend": str(active_inplane_method),
             "run_inplane_comparison": bool(run_inplane_comparison),
             "inplane_methods": tuple(inplane_methods),
+            "anatomy_xy_spacing_um": tuple(float(v) for v in anatomy_xy_spacing) if "anatomy_xy_spacing" in locals() else None,
+            "ants_fixed_mask_json": str(ants_fixed_mask_json) if ants_fixed_mask_json not in (None, "", False) else None,
+            "ants_require_fixed_mask": bool(ants_require_fixed_mask),
+            "ants_deterministic_seed": ants_deterministic_seed,
             "use_cv2": bool(use_cv2),
             "emit_visual_qa": bool(emit_visual_qa),
             "visual_qa_crop_size_px": int(visual_qa_crop_size_px),
@@ -7138,6 +7944,7 @@ def run_register_hcr_to_anatomy_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "source_root": str(source_root_path),
             "output_root": str(stage_root),
             "force_recompute": bool(force_recompute),
@@ -7248,6 +8055,7 @@ def run_match_roi_to_anatomy_stage(
                 plane_refs,
                 _selected_ants_inplane_comparison_path(paths),
                 xy_spacing=anatomy_xy_spacing,
+                preserve_existing=True,
             )
             polarity, polarity_source = resolve_func_polarity(
                 config.fish_id,
@@ -7328,6 +8136,27 @@ def run_match_roi_to_anatomy_stage(
                     staged_unique = merged["has_unique_anat_match_staged"].astype("boolean")
                     accepted_unique = merged["has_unique_anat_match_accepted"].astype("boolean")
                     unique_equal = int(((staged_unique.isna() & accepted_unique.isna()) | (staged_unique == accepted_unique)).sum())
+                    staged_ants_count = int((transform_report or {}).get("preserved_existing_ants_planes", 0)) if "transform_report" in locals() else 0
+                    max_warn_rows = (
+                        int(math.ceil(len(merged) * ROI_ANATOMY_ACCEPTED_DRIFT_WARN_FRACTION))
+                        if staged_ants_count > 0
+                        else 0
+                    )
+                    label_mismatches = max(len(merged) - anat_label_equal, len(merged) - selected_label_equal)
+                    unique_mismatches = len(merged) - unique_equal
+
+                    def _parity_status(mismatches: int) -> str:
+                        if mismatches == 0:
+                            return "pass"
+                        if max_warn_rows > 0 and int(mismatches) <= max_warn_rows:
+                            return "warn"
+                        return "fail"
+
+                    exact_or_warn_expected = (
+                        f"{len(merged)}/{len(merged)} exact preferred; warn <= {max_warn_rows} regenerated-ANTs drift rows"
+                        if max_warn_rows > 0
+                        else f"{len(merged)}/{len(merged)}"
+                    )
                     accepted_parity_checks = (
                         StageCheckRecord(
                             label="accepted ROI/anatomy key parity",
@@ -7338,17 +8167,17 @@ def run_match_roi_to_anatomy_stage(
                         ),
                         StageCheckRecord(
                             label="accepted ROI/anatomy label parity",
-                            status="pass" if anat_label_equal == len(merged) and selected_label_equal == len(merged) else "fail",
+                            status=_parity_status(label_mismatches),
                             detail="recomputed anatomy labels match accepted control when present",
                             observed=f"anat_label={anat_label_equal}/{len(merged)},selected_anat_label={selected_label_equal}/{len(merged)}",
-                            expected=f"{len(merged)}/{len(merged)}",
+                            expected=exact_or_warn_expected,
                         ),
                         StageCheckRecord(
                             label="accepted ROI/anatomy unique-match parity",
-                            status="pass" if unique_equal == len(merged) else "fail",
+                            status=_parity_status(unique_mismatches),
                             detail="recomputed unique-match flags match accepted control when present",
                             observed=f"{unique_equal}/{len(merged)}",
-                            expected=f"{len(merged)}/{len(merged)}",
+                            expected=exact_or_warn_expected,
                         ),
                     )
                 else:
@@ -7435,6 +8264,7 @@ def run_match_roi_to_anatomy_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "source_root": str(source_root_path) if source_root_path is not None else None,
             "plane_refs_summary_path": str(plane_summary_path),
@@ -7446,6 +8276,7 @@ def run_match_roi_to_anatomy_stage(
             "functional_polarity": polarity if "polarity" in locals() else None,
             "functional_polarity_source": polarity_source if "polarity_source" in locals() else None,
             "anatomy_xy_spacing_um": tuple(float(v) for v in anatomy_xy_spacing) if "anatomy_xy_spacing" in locals() else None,
+            "staged_ants_transformlist_count": int((transform_report or {}).get("preserved_existing_ants_planes", 0)) if "transform_report" in locals() else 0,
             "selected_ants_overlay_count": int((transform_report or {}).get("overlay_applied_planes", 0)) if "transform_report" in locals() else 0,
             "selected_ants_missing_transform_files": int((transform_report or {}).get("missing_transform_files", 0)) if "transform_report" in locals() else 0,
         },
@@ -7509,6 +8340,7 @@ def run_prepare_ex_vivo_anatomy_stack_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "output_root": str(ex_vivo_structural_root(paths)),
             "log_lines": tuple(result.get("log_lines", ())),
@@ -7552,6 +8384,7 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
             checks=(),
             parameters={
                 "local_root": str(config.local_root),
+                "pipeline_root": str(paths.pipeline_root),
                 "force_recompute": bool(force_recompute),
                 "use_gpu": use_gpu,
                 "compute_device": compute_device,
@@ -7622,11 +8455,13 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "use_gpu": use_gpu,
             "compute_device": compute_device,
             "output_root": str(structural_root),
             "log_lines": tuple(result.get("log_lines", ())),
+            "runtime_provenance": result.get("runtime_provenance"),
         },
         warnings=warnings,
         errors=errors,
@@ -7661,6 +8496,7 @@ def run_segment_hcr_cellpose_stage(
             checks=(),
             parameters={
                 "local_root": str(config.local_root),
+                "pipeline_root": str(paths.pipeline_root),
                 "hcr_source": source_key,
                 "force_recompute": bool(force_recompute),
                 "use_gpu": bool(use_gpu),
@@ -7733,10 +8569,12 @@ def run_segment_hcr_cellpose_stage(
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
             "hcr_source": source_key,
             "force_recompute": bool(force_recompute),
             "use_gpu": bool(use_gpu),
             "log_lines": tuple(result.get("log_lines", ())),
+            "runtime_provenance": result.get("runtime_provenance"),
         },
         warnings=warnings,
         errors=errors,
@@ -7749,6 +8587,7 @@ __all__ = [
     "POST_PREPROCESSING_STAGE_NAMES",
     "GRANULAR_PREPROCESSING_STAGE_NAMES",
     "UPSTREAM_STAGE_NAMES",
+    "STAGED_COMPARISON_STAGE_NAMES",
     "ManifestPathRecord",
     "PipelinePaths",
     "SingleFishPipelineConfig",
@@ -7805,6 +8644,7 @@ __all__ = [
     "run_single_fish_score_activity_bpi_stage",
     "stage_manifest_to_json",
     "stage_manifest_path",
+    "staged_comparison_stage_names",
     "upstream_stage_names",
     "write_cellpose_stage_manifest",
     "write_stage_manifest",
