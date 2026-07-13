@@ -43,6 +43,10 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
   - whole-population response/BPI panels source ROI-centric `[50ia]` outputs
   - gene-specific AUC panels source HCR-centric identified-cell rows from package-owned `[56i]` motion-AUC plot tables
   - plotting code lives in `plots.analysis.render_single_fish_50l_composite`; the notebook cell should only provide knobs, paths, display, and legacy bindings
+- `[56h]` staged `make-figures` trace/status artifact is package-rendered as a table-driven per-gene stimulus/HCR status summary:
+  - source per-gene response magnitudes from package-owned `[56i]` `motion_auc_plot_points.csv`
+  - source HCR functional-status counts from `hcr_activity_status.csv`
+  - do not depend on notebook-local `results`, `results_per_cell`, or unpersisted trace payloads
 - `[57a-responsive-identity-donut]` is explicitly hybrid-scoped:
   - denominator is ROI-centric and responsive-only from `functional_roi_activity_identity.csv` (`response_is_active == True` and responsive `bpi_category` classes)
   - identity assignment for the identified fraction comes from selected `conf_to_func_pairs.csv` rows collapsed to exact per-ROI gene combinations

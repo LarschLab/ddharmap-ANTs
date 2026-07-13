@@ -16,6 +16,7 @@
 - Includes all segmented ROIs (including `suite2p_is_cell=False`).
 - Carries geometry match status, identity annotation, and post-`[50ia]` response/BPI fields.
 - This is the default source for whole-population analyses and figure filtering.
+- It is not the candidate universe for HCR-centric identified-cell recovery; label-first HCR exports may intentionally evaluate local candidates outside the ROI-centric one-to-one competition outcome.
 
 Representative column groups:
 
@@ -55,6 +56,7 @@ Representative column groups:
 - Authority:
   - identified-cell activity status written by `[50]`
 - Identified-label activity/status view for HCR-centric analyses.
+- Starts from accepted HCR/anatomy labels and then evaluates local functional ROI candidates; it is not a whole-population ROI inventory.
 
 ### `conf_to_func_pairs.csv`
 

@@ -77,6 +77,7 @@ Use repo/vault routing only when the request requires local files, durable updat
 - `.agents/references/figure-rules.md` - figure sourcing and plotting constraints.
 - `.agents/references/cache-rerun-policy.md` - stale outputs and minimum rerun sequence.
 - `.agents/references/current-state.md` - current mixed migration status and practical warnings.
+- `.agents/references/agentic-workflow-roadmap.md` - living status board for staged pipeline/agentic workflow migration.
 - `.agents/references/recent-changes.md` - index/compat pointer for workflow-specific rolling logs.
 - `.agents/references/recent-changes-single-fish.md` - single-fish rolling handoff log.
 - `.agents/references/recent-changes-cohort.md` - cohort rolling handoff log.

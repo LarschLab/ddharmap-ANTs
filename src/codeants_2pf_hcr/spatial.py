@@ -301,6 +301,7 @@ class InPlaneRegistrationComparisonConfig:
     clip_percentiles: tuple[float, float] = (5.0, 95.0)
     ants_fixed_mask_json: str | Path | None = None
     ants_require_fixed_mask: bool = True
+    ants_deterministic_seed: int | None = None
     fail_on_active_method_error: bool = True
 
 
@@ -799,6 +800,10 @@ def _ants_rigid_affine_in_plane_result(
         import ants
     except Exception as exc:  # pragma: no cover - depends on optional native package
         raise ImportError("ANTsPy is required for ants_rigid_affine in-plane registration") from exc
+    if config.ants_deterministic_seed is not None:
+        set_deterministic = getattr(getattr(ants, "config", None), "set_ants_deterministic", None)
+        if callable(set_deterministic):
+            set_deterministic(True, seed_value=int(config.ants_deterministic_seed))
 
     pmin, pmax = config.clip_percentiles
     moving_np = _clip_norm01(ref_scaled, pmin=pmin, pmax=pmax).astype(np.float32)

@@ -28,6 +28,1645 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-07-09 - add QA report image readability metadata
+
+- Slice goal:
+  - strengthen broader visual/report review coverage so generated QA reports distinguish present/readable images from missing or unreadable preview artifacts.
+- Passes completed in this session:
+  - added image artifact metadata to `qa_report_summary.json`: byte size, image readability, dimensions, thumbnail color count, and thumbnail variation when readable.
+  - added a visual-check column to the Markdown/HTML/PDF manual review checklist.
+  - changed figure review guidance so visual summaries pass only when declared image previews are present and readable; missing and unreadable images are reported separately.
+  - added semantic `compare-staged --stage-name make-qa-report` checks for QA summary JSON parseability, required sections, aggregate review status, and image metadata/readability.
+  - reran real `L395_f11` `make-qa-report --force-recompute` in `/tmp/codeants-review-guide-xgY9jvF7` with the accepted registration CSV root and existing staged figures/overlay.
+- What changed:
+  - `make-qa-report` now provides direct visual-readiness evidence in both JSON and rendered report artifacts instead of reporting only image existence.
+- Validation:
+  - focused local QA report test passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k make_qa_report_writer_generates_markdown_and_json_summary`.
+  - real `L395_f11` report rerun: manifest `status=pass`, zero errors/warnings.
+  - real `compare-staged --stage-name make-qa-report --strict`: `status=pass`, zero failed/warning checks.
+  - real semantic QA summary checks passed: JSON parse, required sections, review status, and image metadata (`image_artifacts=6`, `missing_metadata=[]`, `unreadable=[]`).
+  - real `qa_report_summary.json` reported all six preview images readable with dimensions: functional/anatomy center overlay plus five staged figure PNGs.
+- What remains broken:
+  - fresh model-running Cellpose and positive ex vivo validation still require the Helga/NAS workflow or missing inputs staged onto `linnaeus`.
+  - notebook-style read-only review notebooks remain optional if generated reports are not sufficient.
+- Remaining in-slice work:
+  - none for QA report image-readiness metadata.
+- Next likely breakpoint:
+  - continue with fresh positive Cellpose/ex vivo validation when NAS inputs are available, or collect stronger cross-fish/downstream-control evidence.
+- Rerun implications:
+  - rerun `make-qa-report --force-recompute` for report roots generated before this change if visual-readiness metadata is needed.
+
+### 2026-07-09 - validate L765_f04 temp-root chain
+
+- Slice goal:
+  - add another independent mounted-fish validation from preprocessing through bounded registration and ROI/anatomy matching, without writing canonical fish outputs.
+- Passes completed in this session:
+  - verified `L765_f04` prerequisites on `linnaeus`: raw anatomy, 10 motion-corrected functional stacks, 10 Suite2p planes, and structural Cellpose labels.
+  - created `/tmp/codeants-crossfish-L765f04-1783597878` with a current-worktree copy plus temp local-root symlinks to canonical raw/preprocessed/Suite2p inputs.
+  - ran `prepare-in-vivo-anatomy-stack --write-manifest --output-path`, `prepare-functional-reference-stacks --write-manifest`, bounded `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1 --write-manifest --skip-visual-qa`, and `match-roi-to-anatomy --write-manifest`.
+  - ran stage-specific `compare-staged --strict` for the two preprocessing writers, registration, and matching, plus top-level `status`.
+- What changed:
+  - no package behavior changed in this slice; it adds broader real-data writer/status evidence for the staged temp-root chain.
+- Validation:
+  - real `L765_f04` preprocessing writers: both `status=pass`, zero errors/warnings; preprocessing compare-staged commands passed.
+  - real `L765_f04` bounded registration: `status=pass`, zero errors/warnings, 10 references discovered, 2 selected, selected labels `L765_f04_plane0_mcorrected_flipX` and `L765_f04_plane1_mcorrected_flipX`, and a 2-row transform table preserving plane indices 0/1.
+  - real `L765_f04` ROI/anatomy matching: `status=pass`, zero errors/warnings, 721 geometry rows, 479 nonzero anatomy-label assignments, and 406 unique nonzero anatomy labels.
+  - registration/matching compare-staged commands returned `status=warn` only because accepted/control outputs are absent for `L765_f04`; staged outputs were present/nonempty with zero failed checks.
+- What remains broken:
+  - aggregate `status` for the temp root is overall `fail` because unrelated downstream controls/outputs are intentionally absent.
+  - this slice does not create accepted ROI/anatomy parity controls for `L765_f04`; it is writer/status evidence only.
+  - fresh model-running Cellpose and positive ex vivo validation still require the Helga/NAS workflow or missing inputs staged onto `linnaeus`.
+- Remaining in-slice work:
+  - none for `L765_f04` temp-root chain evidence.
+- Next likely breakpoint:
+  - continue with fresh positive Cellpose/ex vivo validation, broader visual report review, notebook-style read-only review surfaces if still desired, or cross-fish promotion evidence with accepted downstream controls.
+- Rerun implications:
+  - rerun the `L765_f04` temp-root preprocessing, registration, matching, compare-staged, and status sequence if upstream writer manifests, plane-index registration, ROI/anatomy matching, or warning-only upstream compare behavior changes.
+
+### 2026-07-09 - validate L758_f07 temp-root chain
+
+- Slice goal:
+  - add another independent mounted-fish validation from preprocessing through bounded registration and ROI/anatomy matching, without writing canonical fish outputs.
+- Passes completed in this session:
+  - verified `L758_f07` prerequisites on `linnaeus`: raw anatomy, 10 motion-corrected functional stacks, 10 Suite2p planes, and structural Cellpose labels.
+  - created `/tmp/codeants-crossfish-L758f07-1783597131` with a current-worktree copy plus temp local-root symlinks to canonical raw/preprocessed/Suite2p inputs.
+  - ran `prepare-in-vivo-anatomy-stack --write-manifest --output-path`, `prepare-functional-reference-stacks --write-manifest`, bounded `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1 --write-manifest --skip-visual-qa`, and `match-roi-to-anatomy --write-manifest`.
+  - ran stage-specific `compare-staged --strict` for the two preprocessing writers, registration, and matching, plus top-level `status`.
+- What changed:
+  - no package behavior changed in this slice; it adds broader real-data writer/status evidence for the staged temp-root chain.
+- Validation:
+  - real `L758_f07` preprocessing writers: both `status=pass`, zero errors/warnings; preprocessing compare-staged commands passed.
+  - real `L758_f07` bounded registration: `status=pass`, zero errors/warnings, 10 references discovered, 2 selected, selected labels `L758_f07_plane0_mcorrected_flipX` and `L758_f07_plane1_mcorrected_flipX`, and a 2-row transform table preserving plane indices 0/1.
+  - real `L758_f07` ROI/anatomy matching: `status=pass`, zero errors/warnings, 1,064 geometry rows, 498 nonzero anatomy-label assignments, and 377 unique nonzero anatomy labels.
+  - registration/matching compare-staged commands returned `status=warn` only because accepted/control outputs are absent for `L758_f07`; staged outputs were present/nonempty with zero failed checks.
+- What remains broken:
+  - aggregate `status` for the temp root is overall `fail` because unrelated downstream controls/outputs are intentionally absent.
+  - this slice does not create accepted ROI/anatomy parity controls for `L758_f07`; it is writer/status evidence only.
+  - fresh model-running Cellpose and positive ex vivo validation still require the Helga/NAS workflow or missing inputs staged onto `linnaeus`.
+- Remaining in-slice work:
+  - none for `L758_f07` temp-root chain evidence.
+- Next likely breakpoint:
+  - continue with fresh positive Cellpose/ex vivo validation, broader visual report review, notebook-style read-only review surfaces if still desired, or another cross-fish promotion slice with accepted downstream controls.
+- Rerun implications:
+  - rerun the `L758_f07` temp-root preprocessing, registration, matching, compare-staged, and status sequence if upstream writer manifests, plane-index registration, ROI/anatomy matching, or warning-only upstream compare behavior changes.
+
+### 2026-07-09 - validate L758_f06 temp-root chain
+
+- Slice goal:
+  - add another independent mounted-fish validation from preprocessing through bounded registration and ROI/anatomy matching, without writing canonical fish outputs.
+- Passes completed in this session:
+  - inventoried `L758_f06`, `L758_f07`, and `L765_f04`; all had raw anatomy, 10 motion-corrected functional stacks, 10 Suite2p planes, and structural Cellpose labels.
+  - selected `L758_f06` and created `/tmp/codeants-crossfish-L758f06-1783596306` with a current-worktree copy plus temp local-root symlinks to canonical raw/preprocessed/Suite2p inputs.
+  - fixed an initial temp symlink quoting mistake that had pointed `01_raw`, `02_reg`, and `suite2P` at root-level paths.
+  - ran `prepare-in-vivo-anatomy-stack --write-manifest --output-path`, `prepare-functional-reference-stacks --write-manifest`, bounded `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1 --write-manifest --skip-visual-qa`, and `match-roi-to-anatomy --write-manifest`.
+  - ran stage-specific `compare-staged --strict` for the two preprocessing writers, registration, and matching, plus top-level `status`.
+- What changed:
+  - no package behavior changed in this slice; it adds broader real-data writer/status evidence for the staged temp-root chain.
+- Validation:
+  - real `L758_f06` preprocessing writers: both `status=pass`, zero errors/warnings; preprocessing compare-staged commands passed.
+  - real `L758_f06` bounded registration: `status=pass`, zero errors/warnings, 10 references discovered, 2 selected, selected labels `L758_f06_plane0_mcorrected_flipX` and `L758_f06_plane1_mcorrected_flipX`, and a 2-row transform table preserving plane indices 0/1.
+  - real `L758_f06` ROI/anatomy matching: `status=pass`, zero errors/warnings, 947 geometry rows, 443 nonzero anatomy-label assignments, and 372 unique nonzero anatomy labels.
+  - registration/matching compare-staged commands returned `status=warn` only because accepted/control outputs are absent for `L758_f06`; staged outputs were present/nonempty with zero failed checks.
+- What remains broken:
+  - aggregate `status` for the temp root is overall `fail` because unrelated downstream controls/outputs are intentionally absent.
+  - this slice does not create accepted ROI/anatomy parity controls for `L758_f06`; it is writer/status evidence only.
+  - fresh model-running Cellpose and positive ex vivo validation still require the Helga/NAS workflow or missing inputs staged onto `linnaeus`.
+- Remaining in-slice work:
+  - none for `L758_f06` temp-root chain evidence.
+- Next likely breakpoint:
+  - continue with fresh positive Cellpose/ex vivo validation, broader visual report review, notebook-style read-only review surfaces if still desired, or another cross-fish promotion slice with accepted downstream controls.
+- Rerun implications:
+  - rerun the `L758_f06` temp-root preprocessing, registration, matching, compare-staged, and status sequence if upstream writer manifests, plane-index registration, ROI/anatomy matching, or warning-only upstream compare behavior changes.
+
+### 2026-07-09 - extend L765_f03 through bounded registration and matching
+
+- Slice goal:
+  - extend the `L765_f03` cross-fish evidence from preprocessing-only into bounded functional/anatomy registration and ROI/anatomy geometry matching without writing canonical fish outputs.
+- Passes completed in this session:
+  - verified mounted `L765_f03` prerequisites on `linnaeus`: 10 Suite2p planes and structural Cellpose labels at `03_analysis/structural/cp_masks/L765_f03_anatomy_00001_uint8_8bit_cp_masks.tif`.
+  - resynced the current worktree to `/tmp/codeants-preprocess-crossfish-1783591488/codeANTs`.
+  - added a temp-root Suite2p symlink under `/tmp/codeants-preprocess-crossfish-1783591488/local-root/L765_f03/03_analysis/functional/suite2P`.
+  - ran bounded `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1 --write-manifest --skip-visual-qa` against the existing staged functional references and explicit prepared anatomy NRRD.
+  - ran `match-roi-to-anatomy --write-manifest` against the completed registration summary, Suite2p symlink, and structural labels.
+  - ran stage-specific `compare-staged --strict` for registration and matching plus top-level `status`.
+- What changed:
+  - no package behavior changed in this slice; it adds second non-baseline fish evidence for the first-class two-plane registration/matching path.
+- Validation:
+  - real `L765_f03` bounded registration: `status=pass`, zero errors/warnings, 10 references discovered, 2 references selected, selected labels `L765_f03_plane0_mcorrected_flipX` and `L765_f03_plane1_mcorrected_flipX`, and a 2-row transform table preserving plane indices 0/1.
+  - real `L765_f03` ROI/anatomy matching: `status=pass`, zero errors/warnings, 480 geometry rows, 288 nonzero anatomy-label assignments, and 215 unique nonzero anatomy labels.
+  - `compare-staged --stage-name register-functional-to-anatomy --strict` and `compare-staged --stage-name match-roi-to-anatomy --strict` returned `status=warn` only because no accepted/control outputs exist for `L765_f03`; staged outputs were present/nonempty.
+- What remains broken:
+  - aggregate `status` for the temp root is overall `fail` because unrelated downstream controls/outputs are intentionally absent.
+  - this slice does not create accepted ROI/anatomy parity controls for `L765_f03`; it is writer/status evidence only.
+  - fresh model-running Cellpose and positive ex vivo validation still require the Helga/NAS workflow or missing inputs staged onto `linnaeus`.
+- Remaining in-slice work:
+  - none for `L765_f03` bounded registration/matching evidence.
+- Next likely breakpoint:
+  - continue with fresh positive Cellpose/ex vivo validation, broader visual report review, notebook-style read-only review surfaces if still desired, or another cross-fish promotion slice with accepted downstream controls.
+- Rerun implications:
+  - rerun the `L765_f03` temp-root registration, matching, compare-staged, and status sequence if plane-index registration, ROI/anatomy matching, or upstream warning-only compare behavior changes.
+
+### 2026-07-09 - broaden preprocessing validation to L765_f03
+
+- Slice goal:
+  - broaden upstream preprocessing writer/status/compare evidence beyond `L758_f03` and `L765_f02` using another mounted fish with both raw anatomy and motion-corrected functional inputs.
+- Passes completed in this session:
+  - inventoried mounted `linnaeus` fish and selected `L765_f03` because it has raw in vivo anatomy, metadata, and 10 motion-corrected functional planes.
+  - synced the current dirty worktree to `/tmp/codeants-preprocess-crossfish-1783591488/codeANTs`.
+  - staged a temp local root with symlinks to canonical `L765_f03/01_raw` and `02_reg`.
+  - ran `prepare-in-vivo-anatomy-stack --write-manifest --output-path /tmp/codeants-preprocess-crossfish-1783591488/explicit-L765_f03/L765_f03_anatomy_2P_GCaMP.nrrd`.
+  - ran `prepare-functional-reference-stacks --write-manifest`.
+  - ran stage-specific `compare-staged --strict` for both preprocessing writers and top-level `status`.
+- What changed:
+  - no package behavior changed in this slice; it adds broader real-data evidence for upstream preprocessing surfaces.
+- Validation:
+  - real `L765_f03` in vivo anatomy writer: `status=pass`, zero errors/warnings, output dtype `uint8`, output Y/X `(750, 750)`, and explicit NRRD/JSON written under `/tmp`.
+  - real `L765_f03` functional-reference writer: `status=pass`, zero errors/warnings, 10 functional reference planes, 10 raw TIFFs, and 10 normalized TIFFs.
+  - `compare-staged --stage-name prepare-in-vivo-anatomy-stack --strict` exited 0 with `status=pass`.
+  - `compare-staged --stage-name prepare-functional-reference-stacks --strict` exited 0 with `status=pass`.
+  - upstream status reports both persisted manifests `current`.
+- What remains broken:
+  - aggregate `status` for the temp root is overall `fail` because unrelated downstream controls/outputs are intentionally absent.
+  - this slice does not address fresh model-running Cellpose or ex vivo validation, which still require Helga/NAS credentials or missing inputs staged onto `linnaeus`.
+- Remaining in-slice work:
+  - none for `L765_f03` preprocessing writer/status/compare evidence.
+- Next likely breakpoint:
+  - continue broader cross-fish promotion evidence on another mounted fish, or run the Helga NAS Cellpose job with user-entered credentials.
+- Rerun implications:
+  - rerun this temp-root sequence if in vivo anatomy prep, functional-reference prep, manifest-aware comparison, or upstream status inventory changes.
+
+### 2026-07-09 - validate cached HCR Cellpose and ignore sidecars
+
+- Slice goal:
+  - advance the remaining Cellpose validation roadmap by proving the HCR segmentation writer can pass on real cached masks without requiring a GPU/model rerun.
+- Passes completed in this session:
+  - checked `linnaeus` for mounted ex vivo/Cellpose prerequisites; no ex vivo TIFF/manual-oriented ex vivo NRRD was found under the mounted data root, and Helga/NAS remains required for fresh positive `L765_f02` ex vivo/HCR Cellpose validation.
+  - found real `L395_f11` rbest HCR NRRDs plus four existing raw HCR Cellpose mask TIFFs.
+  - attempted `segment-hcr-cellpose` in a temp local root with a missing model; it failed because AppleDouble `._*.nrrd` sidecars were discovered as real HCR intensity stacks and created false pending mask targets.
+  - updated `collect_hcr_intensity_stack_paths` to ignore dot/AppleDouble sidecar files for both discovered and explicit HCR intensity inputs.
+  - reran the same real cached-mask validation in `/tmp/codeants-hcr-cellpose-real-1783580508`.
+- What changed:
+  - HCR Cellpose intensity discovery no longer treats `._*.nrrd` sidecars as segmentation inputs.
+  - the staged HCR Cellpose writer now has real cached-mask evidence on `L395_f11`.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_segmentation.py -k 'collect_hcr_intensity_stack_paths or run_hcr_cellpose_stage_skips_import_when_outputs_exist'` -> `4 passed, 10 deselected`.
+  - real `L395_f11` cached HCR Cellpose writer: `segment-hcr-cellpose --hcr-source rbest --cp-hcr-model-path /tmp/codeants-hcr-cellpose-real-1783580508/missing-hcr-model --no-gpu --write-manifest` passed with zero errors/warnings, 2 real rbest channel2/3 candidate stacks, and 2 existing mask outputs.
+  - real run log lines show the stage skipped both existing mask outputs and skipped Cellpose import/model loading.
+  - `compare-staged --stage-name segment-hcr-cellpose --strict` exited 0 with `status=pass`, zero failed checks, and zero warning checks.
+  - upstream status for `segment-hcr-cellpose` had a current persisted manifest and `status=warn` only for output freshness because the temp root uses symlinked canonical cached masks.
+- What remains broken:
+  - fresh positive HCR Cellpose model execution and ex vivo anatomy Cellpose validation still require the Helga/NAS workflow or staging the missing `L765_f02` ex vivo/rbest inputs onto `linnaeus`.
+- Remaining in-slice work:
+  - none for cached HCR Cellpose validation and sidecar filtering.
+- Next likely breakpoint:
+  - either run the Helga NAS Cellpose job with user-entered credentials, or continue broader preprocessing/cross-fish promotion evidence that does not require NAS credentials.
+- Rerun implications:
+  - rerun HCR Cellpose writer validation if HCR intensity discovery patterns or sidecar filtering change.
+
+### 2026-07-08 - add bounded registration plane subset CLI
+
+- Slice goal:
+  - make bounded non-L395 registration validation repeatable without manually copying a plane subset of functional reference TIFFs.
+- Passes completed in this session:
+  - added package-level `reference_plane_indices` support to `run_register_functional_to_anatomy_stage`.
+  - added repeatable CLI flag `register-functional-to-anatomy --reference-plane-index`.
+  - preserved discovered plane indices in `registration/tforms_by_plane.csv` so a selected plane 1 remains `plane_index=1` for downstream Suite2p lookup.
+  - recorded discovered versus selected reference counts and selected labels in the registration manifest parameters.
+- What changed:
+  - bounded representative-plane registration can now run directly against a full staged reference directory, e.g. `--reference-plane-index 0 --reference-plane-index 1`.
+  - requesting a missing plane index now returns an explicit failed manifest instead of silently falling back to all references.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'prepare_functional_reference_stacks_stage_writes_manifest_outputs or single_fish_pipeline_cli_prepare_functional_reference_outputs_manifest or register_functional_to_anatomy_stage_writes_ncc_outputs or register_functional_to_anatomy_stage_can_limit_reference_planes or register_functional_to_anatomy_stage_fails_for_missing_reference_plane or single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest or register_functional_to_anatomy_stage_uses_notebook_scale_search_defaults'` -> `7 passed, 118 deselected`.
+  - real `L758_f03` first-class plane-index registration: `/tmp/codeants-planeidx-real-1783544725` ran `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1 --write-manifest --skip-visual-qa`; manifest `status=pass`, zero errors/warnings, `reference_pair_count=10`, `selected_reference_pair_count=2`, selected labels `plane0/plane1`, and `registration/tforms_by_plane.csv` has two rows preserving `plane_index` 0 and 1.
+  - real `L758_f03` downstream match from the same root: `match-roi-to-anatomy --write-manifest` passed with zero errors/warnings, loaded 2 Suite2p planes, wrote 687 ROI/anatomy geometry rows, and found 225 unique anatomy matches.
+  - real `L758_f03` status/compare evidence: upstream status lists `prepare-functional-reference-stacks`, `prepare-in-vivo-anatomy-stack`, `register-functional-to-anatomy`, and `match-roi-to-anatomy` as `pass`; stage-specific `compare-staged` for registration and matching both exited 0 with zero failed checks.
+- What remains broken:
+  - the aggregate `status` payload for `/tmp/codeants-planeidx-real-1783544725` is overall `fail` because that temp local root intentionally lacks unrelated legacy downstream/control files; the relevant upstream stage statuses are `pass`.
+- Remaining in-slice work:
+  - none for the first-class bounded plane-subset registration support/evidence slice.
+- Next likely breakpoint:
+  - continue broader cross-fish promotion evidence or switch to positive ex vivo/Cellpose validation.
+- Rerun implications:
+  - future bounded registration validation should use the new CLI flag and keep the full staged functional reference directory intact.
+
+### 2026-07-08 - broaden L758 registration matching to two planes
+
+- Slice goal:
+  - broaden the non-L395 registration/matching evidence from one plane to a bounded multi-plane run without committing to the slow full 10-plane search.
+- Passes completed in this session:
+  - created `/tmp/codeants-crossfish-1783541775/L758_f03-planes01-ref` from staged plane 0 and plane 1 raw/norm functional references.
+  - ran `register-functional-to-anatomy --write-manifest --skip-visual-qa` into `/tmp/codeants-crossfish-1783541775/staged-L758_f03-planes01`.
+  - the two-plane registration passed with 2 reference inputs, NCC best-z cache, in-plane comparison CSV, 2-row transform table, and plane refs summary.
+  - ran `match-roi-to-anatomy --write-manifest` from that two-plane registration summary and the canonical anatomy label TIFF.
+  - the two-plane match passed with 2 Suite2p planes loaded, 687 geometry rows, 225 unique anatomy matches, geometry-only columns, and zero warnings/errors.
+  - upstream status reports both `register-functional-to-anatomy pass/current` and `match-roi-to-anatomy pass/current`.
+  - strict `compare-staged` for both stages is warning-only with zero failed checks because accepted controls are absent for `L758_f03`.
+- What changed:
+  - no package behavior changed in this slice; it adds real cross-fish evidence over the already updated upstream status/compare behavior.
+- Validation:
+  - real `L758_f03` two-plane registration writer evidence: `status=pass`, zero errors/warnings, transform table row count `2/2`.
+  - real `L758_f03` two-plane matching writer evidence: `status=pass`, zero errors/warnings, 687 rows, 225 unique matches.
+  - real `L758_f03` status/compare evidence: both upstream stages `pass/current`; strict compare-staged warning-only with no failed checks.
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_agent_docs.py tests/test_package_exports.py tests/test_pipeline.py -k 'upstream_semantic_control_is_absent or upstream_controls_are_absent or pathless_optional_manifest_records'` -> `3 passed, 134 deselected`.
+  - compile/checks: `PYTHONPATH=src python -m compileall -q src tools` and `git diff --check` passed.
+- What remains broken:
+  - full 10-plane L758 registration/matching remains unvalidated because the full NCC search was too slow for this slice.
+  - accepted geometry parity still cannot be measured for `L758_f03` without a control geometry table.
+- Remaining in-slice work:
+  - none for the bounded two-plane non-L395 registration/matching evidence slice.
+- Next likely breakpoint:
+  - add a bounded plane-subset option to the CLI or choose a smaller representative fish if broader non-L395 validation is needed without manual reference-directory staging.
+- Rerun implications:
+  - for future cross-fish temp-root matching, include Suite2p and structural anatomy labels in the temp local root, and expect warning-only compare-staged results unless accepted controls exist.
+
+### 2026-07-08 - non-L395 one-plane ROI anatomy geometry evidence
+
+- Slice goal:
+  - test whether the bounded `L758_f03` one-plane registration can feed ROI/anatomy geometry matching on a second fish.
+- Passes completed in this session:
+  - inventoried non-L395 prerequisites on `linnaeus`: `L758_f03` and related fish have Suite2p planes plus structural anatomy Cellpose labels, but no accepted functional registration/ROI geometry controls.
+  - first `match-roi-to-anatomy` attempt failed because the temp `local-root` exposed only `01_raw` and `02_reg`, so Suite2p was not visible to the staged writer.
+  - added a temp-root symlink to canonical `L758_f03/03_analysis/functional/suite2P` and reran the one-plane match from `/tmp/codeants-crossfish-1783541775/staged-L758_f03-plane0/register-functional-to-anatomy/plane_refs_summary.json`.
+  - `match-roi-to-anatomy --write-manifest` passed with zero errors/warnings, 1 Suite2p plane loaded, 299 ROI/anatomy geometry rows, 102 unique anatomy matches, geometry-only columns, and summary output present.
+  - upstream status reports `match-roi-to-anatomy pass/current`.
+  - `compare-staged --stage-name match-roi-to-anatomy --strict` reports `status=warn`, zero failed checks, and one warning-only missing-control check because accepted ROI/anatomy controls are absent for `L758_f03`.
+- What changed:
+  - added local coverage for warning-only missing controls on semantic upstream CSV outputs, not only registration shape/file outputs.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'upstream_semantic_control_is_absent or upstream_controls_are_absent or pathless_optional_manifest_records or supports_upstream_registration_and_matching_outputs or small_roi_anatomy_geometry_drift'` -> `5 passed, 118 deselected`.
+  - broader local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` -> `137 passed, 54 warnings`.
+  - compile/checks: `PYTHONPATH=src python -m compileall -q src tools` and `git diff --check` passed.
+  - real `L758_f03` writer evidence: `match-roi-to-anatomy status=pass`, zero errors, zero warnings, 299 rows, 102 unique matches.
+  - real `L758_f03` status/compare evidence: `match-roi-to-anatomy pass/current`; strict `compare-staged` is warning-only with no failed checks.
+- What remains broken:
+  - this is one-plane ROI/anatomy geometry writer/status evidence only; full 10-plane L758 registration/matching was not completed.
+  - accepted geometry parity cannot be measured for `L758_f03` without a control geometry table.
+- Remaining in-slice work:
+  - none for the bounded non-L395 ROI/anatomy geometry evidence slice.
+- Next likely breakpoint:
+  - either broaden non-L395 registration/matching to more planes with bounded runtime, define a cross-fish baseline/control strategy, or resume positive Cellpose validation on Helga/NAS.
+- Rerun implications:
+  - any future temp-root matching validation must expose Suite2p under the temp local root, not just raw/preprocessing inputs.
+
+### 2026-07-08 - non-L395 one-plane functional registration evidence
+
+- Slice goal:
+  - extend cross-fish evidence beyond preprocessing into the first bounded non-L395 functional-to-anatomy registration writer/status/compare path.
+- Passes completed in this session:
+  - attempted a full 10-plane `L758_f03` `register-functional-to-anatomy` run under `/tmp/codeants-crossfish-1783541775`; stopped it after it remained active for several minutes because full NCC scale search across 10 planes was too slow for a first cross-fish check.
+  - created a separate one-plane temp pipeline root `/tmp/codeants-crossfish-1783541775/staged-L758_f03-plane0` and a reference directory containing only the staged plane 0 raw/norm reference pair.
+  - ran `register-functional-to-anatomy --write-manifest --skip-visual-qa` from that plane 0 reference and the explicit prepared anatomy NRRD. The writer passed with 1 reference input, NCC best-z cache, in-plane comparison CSV, 1-row transform table, and plane refs summary.
+  - fixed upstream status for pathless optional manifest records, after the writer manifest's absent optional `ANTs fixed-region mask JSON` input was incorrectly dropped and reported as stale.
+  - changed upstream `compare-staged` behavior for missing accepted controls: if staged upstream output exists but the control path is absent, the check is warning-only instead of a strict failure.
+- What changed:
+  - same-root upstream manifests now preserve labeled pathless optional records during status inventory.
+  - upstream cross-fish comparisons can now report "staged output present, no accepted control available" as an explicit warning rather than blocking validation.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'upstream_controls_are_absent or pathless_optional_manifest_records or same_root_functional_reference_manifest or supports_upstream_registration_and_matching_outputs'` -> `4 passed, 118 deselected`.
+  - broader local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` -> `136 passed, 54 warnings`.
+  - compile/checks: `PYTHONPATH=src python -m compileall -q src tools` and `git diff --check` passed.
+  - real `L758_f03` writer evidence: `register-functional-to-anatomy status=pass`, zero errors, zero warnings, 1 reference input, NCC best-z cache pass, in-plane comparison CSV pass, transform table row count `1/1`, and plane refs summary pass.
+  - real `L758_f03` upstream status after the pathless-record fix: `register-functional-to-anatomy pass/current`.
+  - real `L758_f03` `compare-staged --stage-name register-functional-to-anatomy --strict` after the missing-control policy fix: `status=warn`, zero failed checks, warnings only for missing NCC/tforms accepted controls.
+- What remains broken:
+  - this is bounded one-plane NCC registration writer/status evidence only; full 10-plane `L758_f03` registration was not completed in this slice.
+  - no downstream ROI/anatomy geometry, identity, or activity promotion exists for `L758_f03` because accepted controls/labels are absent in the temp-root path.
+- Remaining in-slice work:
+  - none for the bounded non-L395 functional registration evidence slice.
+- Next likely breakpoint:
+  - either optimize/bound full non-L395 functional registration validation, add first non-L395 ROI/anatomy prerequisite discovery, or resume Helga/NAS Cellpose validation when credentials/data are available.
+- Rerun implications:
+  - after upstream compare/status changes, rerun the missing-control comparison test and one real same-root upstream writer manifest with an optional absent input.
+
+### 2026-07-08 - cross-fish upstream preprocessing status validation
+
+- Slice goal:
+  - add non-L395 real-data evidence for upstream preprocessing writer/status/compare behavior without requiring Helga/NAS Cellpose access.
+- Passes completed in this session:
+  - synced the current dirty worktree to `linnaeus` under `/tmp/codeants-crossfish-1783541775/codeANTs`.
+  - created a temp `local-root` for `L758_f03` that symlinked canonical `01_raw` and `02_reg` inputs but kept `03_analysis/functional/pipeline_manifests`, explicit outputs, and `--pipeline-root` under `/tmp`.
+  - ran `prepare-in-vivo-anatomy-stack --write-manifest` to an explicit NRRD/JSON output, then `compare-staged --stage-name prepare-in-vivo-anatomy-stack`; both passed.
+  - ran `prepare-functional-reference-stacks --write-manifest`; it wrote 20 raw/norm reference outputs from 10 motion-corrected stacks, then `compare-staged --stage-name prepare-functional-reference-stacks` passed.
+  - found and fixed an upstream status bug: same-root functional-reference writer manifests listed exact raw/norm TIFF outputs, but read-only status replaced those outputs with one summarized directory record and incorrectly reported the persisted manifest as stale.
+- What changed:
+  - upstream status now re-describes output records from same-root writer manifests when present, matching the explicit-output behavior already used for inputs and compare.
+  - added local regression coverage for same-root functional-reference manifests reporting `pass/current`.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'same_root_functional_reference_manifest or uses_manifest_functional_reference_output_dir or upstream_status_treats_same_root_writer_manifest or uses_same_root_manifest_output_paths'` -> `4 passed, 116 deselected`.
+  - broader local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` -> `134 passed, 54 warnings`.
+  - compile/checks: `PYTHONPATH=src python -m compileall -q src tools` and `git diff --check` passed.
+  - real `L758_f03` status after the fix: `prepare-functional-reference-stacks pass/current` and `prepare-in-vivo-anatomy-stack pass/current`; top-level temp-root status still fails because the partial temp local root intentionally does not stage full downstream Suite2p/registration inputs.
+- What remains broken:
+  - this is upstream preprocessing evidence only; it does not promote full downstream geometry/identity/activity on `L758_f03`.
+  - positive ex vivo/HCR Cellpose execution still needs Helga/NAS or staged inputs.
+- Remaining in-slice work:
+  - none for the upstream preprocessing status fix and `L758_f03` evidence slice.
+- Next likely breakpoint:
+  - either run the same upstream preprocessing pattern on another fish, move to first non-L395 functional registration evidence, or resume Helga/NAS Cellpose validation when credentials/data are available.
+- Rerun implications:
+  - after changes to upstream manifest inventory, rerun same-root explicit-output status tests and at least one temp-root real-data `status` check for a writer with multiple file outputs.
+
+### 2026-07-08 - tighten Cellpose staged comparison masks
+
+- Slice goal:
+  - move broader preprocessing comparison coverage forward without requiring Helga/NAS positive Cellpose execution.
+- Passes completed in this session:
+  - added a stage-owned artifact pattern to upstream staged output specs.
+  - tightened `compare-staged` and legacy-baseline nonempty artifact checks so HCR and ex vivo Cellpose segmentation directories must contain at least one real `*_cp_masks.tif`, not just any unrelated file.
+  - added focused local coverage proving unrelated TIFF files fail and a valid mask-pattern TIFF passes for `segment-hcr-cellpose` when activated by a same-pipeline-root writer manifest.
+- What changed:
+  - generic directory outputs still ignore `.DS_Store`/AppleDouble sidecars and require at least one real file.
+  - Cellpose segmentation comparison is now mask-aware while still respecting the existing upstream activation rule: staged pipeline outputs or same-root persisted manifests only.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'cellpose_mask_pattern or nonempty_upstream_directory_outputs or uses_same_root_manifest_output_paths or uses_manifest_functional_reference_output_dir'` -> `4 passed, 115 deselected`.
+  - broader local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` -> `133 passed, 54 warnings`.
+  - compile/checks: `PYTHONPATH=src python -m compileall -q src tools` and `git diff --check` passed.
+- What remains broken:
+  - positive ex vivo/HCR Cellpose execution on real `L765_f02` remains blocked on the mounted `linnaeus` data root by missing ex vivo/manual-oriented/rbest inputs and still points to Helga/NAS or staged inputs.
+- Remaining in-slice work:
+  - none for the local Cellpose comparison hardening slice.
+- Next likely breakpoint:
+  - positive Cellpose validation on Helga/NAS, broader real preprocessing comparison evidence on another fish, or cross-fish staged promotion evidence.
+- Rerun implications:
+  - rerun `compare-staged --stage-name segment-hcr-cellpose` or `segment-ex-vivo-anatomy-cellpose` after any segmentation writer output-path change; a directory with non-mask files should now fail.
+
+### 2026-07-07 - promote regenerated ANTs ROI geometry with bounded drift warnings
+
+- Slice goal:
+  - turn the residual regenerated-ANTs ROI/anatomy mismatch into an explicit promotion policy instead of an unclassified hard failure.
+- Passes completed in this session:
+  - tested ANTs full affine metric sampling (`aff_random_sampling_rate=1.0`) as a diagnostic; it still produced 8 label mismatches against accepted geometry, so it did not close exact parity.
+  - added a tight accepted-control drift ceiling for regenerated staged ANTs geometry: keys must still match exactly, while accepted label/unique-match drift up to `0.2%` is reported as `warn` instead of `fail`.
+  - added the same warning ceiling to `compare-staged` exact-cell checks for the ROI/anatomy geometry table.
+  - fixed semantic exact-cell comparison to normalize numeric and boolean representations before counting mismatches, avoiding false failures such as `7` vs `7.0`.
+- What changed:
+  - accepted-transform fallback remains the exact legacy reproduction path.
+  - regenerated staged ANTs transforms can now pass promotion checks only when row keys are exact and label drift stays under the documented boundary-drift ceiling.
+  - larger ANTs drift still fails; the seed `123` diagnostic remains a negative control.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'small_roi_anatomy_geometry_drift or small_staged_ants_control_drift or compare_staged_supports_upstream_registration_and_matching_outputs'` -> `3 passed, 115 deselected`.
+  - real unseeded staged ANTs validation from `/tmp/codeants-ants-spacing-real-1783412010`: `match-roi-to-anatomy --strict --force-recompute` now exits `0` with `status=pass`, key parity exact, and warnings for label parity `4522/4530` plus unique-match parity `4523/4530`.
+  - real `compare-staged --stage-name match-roi-to-anatomy --strict` on the same root exits `0` with `status=warn`, zero failed checks, and one warning: `23` exact-cell differences under the `28`-cell warning ceiling.
+  - real seed `123` negative control from `/tmp/codeants-ants-seed-real-1783412998` still fails `compare-staged` with `37` exact-cell differences, above the `28`-cell ceiling.
+- What remains broken:
+  - no known L395 blocker remains for regenerated ANTs geometry promotion under the bounded-drift policy; broader cross-fish evidence is still required.
+- Remaining in-slice work:
+  - none for the L395 regenerated-ANTs geometry promotion policy.
+- Next likely breakpoint:
+  - run the upstream ANTs/matching promotion checks on another fish, or move to positive ex vivo/Cellpose validation.
+- Rerun implications:
+  - after any ANTs registration change, rerun `match-roi-to-anatomy --strict --force-recompute` and `compare-staged --stage-name match-roi-to-anatomy --strict`; exact key parity is still mandatory and drift over `0.2%` remains a failure.
+
+### 2026-07-07 - add opt-in ANTs deterministic seed diagnostic
+
+- Slice goal:
+  - test whether ANTs registration randomness explains the remaining staged functional-to-anatomy geometry parity gap.
+- Passes completed in this session:
+  - reconstructed the 8 residual `L395_f11` ROI/anatomy mismatches from `/tmp/codeants-ants-spacing-real-1783412010` and inspected local candidate competition around each disputed ROI/anatomy label.
+  - confirmed the residual rows are not Hungarian/tie-break artifacts: the staged transform changes the overlap graph itself, including missing accepted overlaps and alternate overlap winners.
+  - added `ants_deterministic_seed` to `InPlaneRegistrationComparisonConfig`, plumbed it through `run_register_functional_to_anatomy_stage`, exposed `--ants-deterministic-seed` on `tools/single_fish_pipeline.py register-functional-to-anatomy`, and records the seed in the stage manifest.
+  - kept the seed opt-in because real validation showed seed `123` worsened accepted geometry parity rather than fixing it.
+- What changed:
+  - ANTs deterministic mode can now be enabled deliberately for diagnostics without changing the default unseeded validated path.
+  - the next parity work is narrowed away from matching assignment logic and away from seed-only determinism as a fix.
+- Validation:
+  - focused local helper test: `PYTHONPATH=src pytest -q tests/test_spatial.py -k deterministic_seed` -> `1 passed, 13 deselected`.
+  - focused local pipeline/CLI tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'register_functional_to_anatomy_stage_uses_notebook_scale_search_defaults or register_functional_to_anatomy_stage_writes_ncc_outputs or single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest'` -> `3 passed, 113 deselected, 7 warnings`.
+  - real seeded targeted root: `/tmp/codeants-ants-seed-real-1783412998`.
+  - targeted seeded ANTs rerun reused corrected scale caches, wrote five staged ANTs transformlists with scales/shapes `1.0365/531`, `1.0365/531`, `1.0385/532`, `1.0459/536`, and `1.0459/536`.
+  - downstream seeded `match-roi-to-anatomy --strict --force-recompute` consumed staged transforms (`staged_ants_transformlist_count=5`, `selected_ants_overlay_count=0`, `selected_ants_missing_transform_files=0`) but failed accepted parity at `anat_label=4516/4530`, `selected_anat_label=4516/4530`, and unique-match parity `4521/4530`.
+- What remains broken:
+  - exact accepted ROI/anatomy parity remains incomplete for newly generated ANTs transforms. The best current unseeded evidence is still the 8-row residual from `/tmp/codeants-ants-spacing-real-1783412010`; seed `123` is worse.
+- Remaining in-slice work:
+  - none for deterministic seed plumbing/diagnosis.
+- Next likely breakpoint:
+  - compare accepted vs staged ANTs `.mat` affine parameters and transform application more directly, or define a documented tolerance/promotion policy for boundary assignment drift.
+- Rerun implications:
+  - use `--ants-deterministic-seed SEED` only for diagnostics. Do not assume seeded ANTs improves accepted parity without rerunning downstream `match-roi-to-anatomy`.
+
+### 2026-07-07 - propagate anatomy voxel spacing into staged ANTs in-plane registration
+
+- Slice goal:
+  - fix the remaining systematic transform metadata mismatch after scale-search restoration by passing anatomy XY spacing into the package-owned ANTs in-plane registration path.
+- Passes completed in this session:
+  - compared accepted vs newly generated ANTs `.mat` files and found accepted fixed parameters were in physical anatomy coordinates (`pixel * 0.5964024861653645`), while the staged writer produced unit-spacing fixed parameters.
+  - changed `run_register_functional_to_anatomy_stage` to read anatomy XY spacing from `03_analysis/voxel_sizes.json` and pass `vox_anat={"X": ..., "Y": ...}` to `run_in_plane_registration_comparison_stage`.
+  - extended the focused registration writer regression test to prove both notebook-scale search defaults and anatomy-spacing propagation reach the owned in-plane comparison call.
+  - ran a targeted real-data validation on `linnaeus` that reused corrected scale caches, reran only in-plane ANTs with voxel spacing, wrote a staged `plane_refs_summary.json`, and ran downstream matching from that root.
+- What changed:
+  - staged ANTs `.mat` fixed parameters now match accepted fixed parameters exactly for all five `L395_f11` planes when using the canonical per-plane fixed-region mask and accepted-like scale search.
+  - accepted geometry parity improved from the previous `666/4530` label matches to `4522/4530`; the remaining exact-parity gap is 8 boundary/assignment-sensitive ROIs.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'register_functional_to_anatomy_stage_uses_notebook_scale_search_defaults or register_functional_to_anatomy_stage_writes_ncc_outputs or single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest'` -> `3 passed, 113 deselected, 7 warnings`.
+  - real targeted root: `/tmp/codeants-ants-spacing-real-1783412010`.
+  - staged registration summary in that root reported scales `1.0365/1.0365/1.0385/1.0459/1.0459`, scaled shapes `531/531/532/536/536`, and five staged ANTs transformlists.
+  - accepted vs staged ANTs `.mat` fixed-parameter max absolute delta was `0.0` for all five planes; residual affine parameter deltas remained small (`0.0505`, `0.0321`, `0.0082`, `0.0048`, `0.0052` max abs by plane).
+  - downstream `match-roi-to-anatomy --strict --force-recompute` consumed staged transforms (`staged_ants_transformlist_count=5`, `selected_ants_overlay_count=0`, `selected_ants_missing_transform_files=0`) and produced `4530` ROI rows, `3723` unique matches, key parity pass, label parity `4522/4530`, and unique-match parity `4523/4530`.
+  - the 8 remaining mismatches are localized to planes `0`, `1`, `2`, and `4`; most are duplicate-claim or one-pixel-overlap boundary cases, with one alternate anatomy-label assignment on plane `0`.
+- What remains broken:
+  - exact accepted ROI/anatomy parity is still not complete for newly generated ANTs transforms. The remaining gap is no longer a systematic metadata error; it is residual transform optimizer/determinism or boundary assignment drift.
+- Remaining in-slice work:
+  - none for voxel-spacing propagation.
+- Next likely breakpoint:
+  - decide whether exact label parity is required for newly regenerated ANTs transforms. If yes, investigate deterministic ANTs registration settings or transform-parameter reproducibility against accepted `.mat` files; if no, define an explicit geometry tolerance/QA policy for the residual 8/4530 boundary drift before promotion.
+- Rerun implications:
+  - rerun full `register-functional-to-anatomy` only when the broad NCC sweep runtime is acceptable; for targeted ANTs transform debugging, reuse the corrected scale caches and rerun `[20]` in-plane comparison with anatomy XY spacing.
+
+### 2026-07-07 - restore notebook-scale search for staged ANTs registration
+
+- Slice goal:
+  - close the registration-scale part of the ANTs geometry parity gap by making the package writer use the notebook `[16]` NCC scale-search defaults.
+- Passes completed in this session:
+  - verified that the earlier full-field ANTs validation used a temp full-field mask, then reran full five-plane ANTs registration on `linnaeus` with the canonical per-plane `ants_registration_region_square.json`.
+  - compared staged and accepted in-plane comparison rows and found mask bounds/post-NCC were close, but staged `ref_scaled_shape` was `512x512` for every plane because the package writer constrained the scale sweep to `0.9-1.0`.
+  - changed `run_register_functional_to_anatomy_stage` to pass notebook-equivalent scale search defaults into `RegistrationSearchConfig`: coarse `(0.50, 1.50, 0.05)`, fine `(0.05, 0.01)`, extra-fine `(0.005, 0.001)`, ultra-fine `(0.0005, 0.0001)`, and default worker resolution.
+  - added focused local regression coverage proving the writer passes those scale-search defaults.
+- What changed:
+  - staged functional registration can now recover accepted-like scaled reference shapes for real `L395_f11` (`531/531/532/536/536`) instead of being capped at unscaled `512x512`.
+  - the ANTs backend gap is now narrower: canonical mask, scale, best-Z, and post-NCC metrics align closely with accepted outputs, while downstream ROI/anatomy geometry still does not.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'register_functional_to_anatomy_stage_uses_notebook_scale_search_defaults or register_functional_to_anatomy_stage_writes_ncc_outputs or single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest'` -> `3 passed, 113 deselected, 7 warnings`.
+  - real full five-plane `L395_f11` validation on `linnaeus` from `/tmp/codeants-ants-mask-real-1783407795/codeANTs`: `register-functional-to-anatomy --strict --active-inplane-method ants_rigid_affine --ants-fixed-mask-json /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/03_analysis/functional/registration/ants_registration_region_square.json --reference-dir /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/03_analysis/functional/raw --force-recompute` passed with five staged ANTs transformlists.
+  - corrected staged registration summary reported scales `1.0365/1.0365/1.0385/1.0459/1.0459`, scaled shapes `531/531/532/536/536`, and `tform_src=ants_rigid_affine` for all five planes.
+  - `compare-staged --stage-name register-functional-to-anatomy --strict` on that root reported `status=warn`, zero failed checks, warning-only CSV byte/header drift.
+  - downstream `match-roi-to-anatomy --strict --force-recompute` consumed staged transforms (`staged_ants_transformlist_count=5`, `selected_ants_overlay_count=0`, `selected_ants_missing_transform_files=0`) but still failed accepted geometry parity: `anat_label=666/4530`, unique-match parity `2442/4530`.
+- What remains broken:
+  - generated ANTs transformlists are now created from accepted-like mask/scale inputs, but applying those newly generated transforms through matching still does not reproduce accepted ROI/anatomy labels. The remaining gap is transform persistence/application parity, not scale search, fixed-region masks, or CLI plumbing.
+- Remaining in-slice work:
+  - none for scale-search restoration.
+- Next likely breakpoint:
+  - compare accepted vs newly generated ANTs `.mat` transform application directly: fixed/moving image metadata, ANTs `fwdtransforms` order, `whichtoinvert`, output shape/spacing/origin/direction, and functional-label resampling into anatomy space.
+- Rerun implications:
+  - any future full ANTs parity run should use the canonical per-plane fixed-region mask JSON and the package writer after this scale-search change; older `/tmp/codeants-ants-full-real-1783346100` evidence used a full-field mask and the constrained scale sweep.
+
+### 2026-07-06 - staged ANTs transform consumption in ROI matching
+
+- Slice goal:
+  - complete the next ANTs parity plumbing slice by making ROI/anatomy matching consume newly staged ANTs transformlists instead of silently replacing them with accepted-control overlays.
+- Passes completed in this session:
+  - inspected `register-functional-to-anatomy` and `match-roi-to-anatomy` ownership in `src/codeants_2pf_hcr/pipeline.py`.
+  - changed selected-ANTs overlay behavior so staged `ants_rigid_affine` transformlists are preserved when present, while selected accepted transformlists remain the fallback path.
+  - added local regression coverage for both accepted-overlay fallback and staged-transform preference.
+  - validated the one-plane and full five-plane real-data ANTs paths on `linnaeus`.
+- What changed:
+  - `_overlay_selected_ants_transformlists(..., preserve_existing=True)` now materializes existing staged `ants_transformlist` entries into `ants_transform` records and counts `preserved_existing_ants_planes`.
+  - `run_match_roi_to_anatomy_stage` calls that path in recompute mode and records `staged_ants_transformlist_count`, so manifests can distinguish true staged-transform consumption from accepted-control overlay.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'match_roi_to_anatomy_stage_threads_selected_ants_and_orientation or match_roi_to_anatomy_stage_prefers_staged_ants_transformlist'` -> `2 passed, 113 deselected`.
+  - real one-plane validation from `/tmp/codeants-ants-active-real-1783346100`: `match-roi-to-anatomy` consumed the staged one-plane ANTs transform (`staged_ants_transformlist_count=1`, `selected_ants_overlay_count=0`, `selected_ants_missing_transform_files=0`) and failed only because the accepted-control parity compares a one-plane staged output against the full five-plane control.
+  - real full five-plane registration validation from `/tmp/codeants-ants-full-real-1783346100`: `register-functional-to-anatomy` passed with `5/5` plane refs using `tform_src=ants_rigid_affine` and transformlists; `compare-staged --stage-name register-functional-to-anatomy --strict` reported `status=warn`, zero failed checks, and warning-only CSV drift.
+  - real full five-plane matching validation from the same root reached matching with `staged_ants_transformlist_count=5`, `selected_ants_overlay_count=0`, and `selected_ants_missing_transform_files=0`; accepted geometry parity still failed (`anat_label=666/4530`, unique matches `2434/4530`).
+- What remains broken:
+  - the ANTs backend and staged-transform handoff now run, but the resulting full five-plane geometry does not match accepted ROI/anatomy geometry closely enough for promotion.
+- Remaining in-slice work:
+  - none for CLI plumbing; the remaining ANTs work is a parity diagnosis, not another handoff bug.
+- Next likely breakpoint:
+  - compare staged ANTs parameters, fixed mask, image spacing/origin/direction, transform ordering, and warped-label outputs against the accepted selected `[20]` transform path to explain the `666/4530` label parity.
+- Rerun implications:
+  - rerun `register-functional-to-anatomy --active-inplane-method ants_rigid_affine --ants-fixed-mask-json MASK --force-recompute`, then `match-roi-to-anatomy --force-recompute`, before checking whether an ANTs parity fix changes ROI/anatomy labels.
+
+### 2026-07-06 - ANTs-active functional registration CLI plumbing
+
+- Slice goal:
+  - move the full functional-to-anatomy ANTs parity gap forward by making the package-owned writer accept the notebook `[20]` fixed-region mask input and by validating the ANTs backend from the CLI on real data.
+- Passes completed in this session:
+  - added `ants_fixed_mask_json` and `ants_require_fixed_mask` parameters to `run_register_functional_to_anatomy_stage`.
+  - exposed `--ants-fixed-mask-json` and `--no-ants-fixed-mask-required` on `tools/single_fish_pipeline.py register-functional-to-anatomy`.
+  - recorded the ANTs fixed-region mask as a manifest input and stage parameter.
+  - added focused package/CLI tests that verify mask provenance reaches the manifest without relying on notebook globals.
+- What changed:
+  - `register-functional-to-anatomy` can now be run as `--inplane-method ncc_xy --inplane-method ants_rigid_affine --active-inplane-method ants_rigid_affine --ants-fixed-mask-json MASK.json`.
+  - the staged `plane_refs_summary.json` records `tform_src=ants_rigid_affine` and `ants_transformlist` when the ANTs backend is selected.
+- Validation:
+  - focused local tests: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'register_functional_to_anatomy_stage_writes_ncc_outputs or single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifest'` -> `2 passed, 112 deselected, 5 warnings`.
+  - real `L395_f11` validation on `linnaeus` from `/tmp/codeants-ants-active-real-1783346100/codeANTs`: one-plane temp reference directory from existing staged functional refs, temp full-field fixed mask JSON, `register-functional-to-anatomy --strict --active-inplane-method ants_rigid_affine --inplane-method ncc_xy --inplane-method ants_rigid_affine --ants-fixed-mask-json /tmp/codeants-ants-active-real-1783346100/ants_fixed_fullfield.json --skip-visual-qa --force-recompute` passed with zero errors/warnings; output `plane_refs_summary.json` had `tform_src=ants_rigid_affine` and a copied transformlist path.
+  - real comparison on that one-plane root: `compare-staged --stage-name register-functional-to-anatomy --strict` -> `status=warn`, zero failed checks, warning-only one-plane CSV shape drift for in-plane comparison, recommendation, and transform table.
+- What remains broken:
+  - full five-plane ANTs parity/promotion and downstream ROI/anatomy matching from newly recomputed ANTs transforms remain roadmap targets.
+- Next likely breakpoint:
+  - run full five-plane ANTs-active `register-functional-to-anatomy` with the intended fixed-region mask JSON, then run `match-roi-to-anatomy` and compare accepted-control geometry.
+- Rerun implications:
+  - ANTs-active functional registration now needs an explicit fixed-region mask JSON unless `--no-ants-fixed-mask-required` is deliberately used for diagnostics.
+
+### 2026-07-06 - manifest-aware upstream comparison paths
+
+- Slice goal:
+  - move broader preprocessing comparison forward by making upstream status/compare follow explicitly written stage outputs recorded in same-pipeline-root manifests.
+- Passes completed in this session:
+  - added a package-owned inventory/comparison spec view that overlays same-pipeline-root upstream manifest outputs onto declared stage specs.
+  - added `pipeline_root` to upstream writer manifests so actual CLI-produced manifests satisfy the same-root activation contract.
+  - taught upstream status to re-describe same-root manifest input paths instead of comparing a selected writer input against broader read-only candidate globs.
+  - kept writer stages on the raw declared `_stage_output_specs` path so canonical writer behavior and filenames do not change.
+  - made functional-reference explicit output directories compare as the common parent directory from manifest raw/norm TIFF outputs.
+  - made legacy-baseline path derivation tolerate manifest output paths outside the default stage root.
+- What changed:
+  - `compare-staged --stage-name prepare-in-vivo-anatomy-stack` and upstream status now check explicit `--output-path` NRRD/JSON outputs when the persisted manifest records the same `pipeline_root`.
+  - `compare-staged --stage-name prepare-functional-reference-stacks` now checks an explicit `--output-dir` recorded in the same-root manifest rather than only the default `pipeline_outputs/prepare-functional-reference-stacks/functional/raw` directory.
+  - upstream writer manifests can report persisted status `current` after status recomputes the same selected input/output paths from the current filesystem.
+  - same-root persisted manifests remain required; unrelated manifests with a different `pipeline_root` still do not activate comparison.
+- Validation:
+  - focused local regression tests after the writer-manifest fix: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'upstream_status_treats_same_root_writer_manifest_as_current or prepare_in_vivo_anatomy_stack_stage or prepare_functional_reference_stacks_stage or compare_staged_uses_same_root_manifest_output_paths or compare_staged_uses_manifest_functional_reference_output_dir'` -> `7 passed, 107 deselected, 3 warnings`.
+  - broader local suite after the writer-manifest fix: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` -> `128 passed, 52 warnings`.
+  - real `L765_f02` validation on `linnaeus` from `/tmp/codeants-manifest-output-real-1783345403/codeANTs`: temp `local-root` symlinked canonical raw/preprocessing inputs but kept manifests under `/tmp`; `prepare-in-vivo-anatomy-stack --strict --pipeline-root /tmp/codeants-manifest-output-real-1783345403/staged-L765 --output-path /tmp/codeants-manifest-output-real-1783345403/explicit-in-vivo/L765_f02_anatomy_2P_GCaMP.nrrd --force-recompute --write-manifest` passed; `compare-staged --stage-name prepare-in-vivo-anatomy-stack --strict` passed with zero failed checks and explicit NRRD/JSON output paths; upstream status reported `pass` with persisted manifest `current`.
+- What remains broken:
+  - full functional-to-anatomy ANTs parity, positive ex vivo/Cellpose validation, broader real preprocessing baseline evidence, and cross-fish promotion evidence remain roadmap targets.
+- Next likely breakpoint:
+  - validate the manifest-aware explicit-output comparison against real upstream temp-root manifests on `linnaeus`, or switch to the next larger roadmap gap: full functional ANTs parity or Helga/NAS ex vivo/Cellpose validation.
+- Rerun implications:
+  - after running upstream stages with explicit output overrides, persist manifests with the same `--pipeline-root` before using `status` or `compare-staged` to audit those non-default outputs.
+
+### 2026-07-06 - upstream staged comparison surface
+
+- Slice goal:
+  - move the roadmap's preprocessing/upstream comparison gap forward without depending on unavailable Helga/NAS ex vivo inputs.
+- Passes completed in this session:
+  - extended the package-owned staged output spec layer so comparison/baseline commands accept upstream writer surfaces as well as post-processing stages.
+  - kept `stage-status` downstream-only; upstream status remains owned by the upstream manifest/status path.
+  - narrowed upstream comparison activation so legacy preprocessing files outside `pipeline_outputs` do not accidentally count as active staged outputs; persisted upstream manifests activate comparison only when their recorded `pipeline_root` matches the current run.
+  - tightened `nonempty_file` parity so directory outputs must contain at least one real file; `.DS_Store`/AppleDouble sidecars no longer satisfy upstream artifact checks.
+  - added warning-level CSV shape parity for known partial `register-functional-to-anatomy` outputs until full ANTs parity is implemented.
+  - added semantic CSV comparison for narrowed geometry tables, so staged `match-roi-to-anatomy/functional_roi_anatomy_matches.csv` compares declared geometry keys/columns against the wider accepted ROI master.
+  - added focused local coverage for read-only `prepare-functional-reference-stacks`, `register-functional-to-anatomy` comparison, `match-roi-to-anatomy` comparison, nonempty directory checks, warning-level functional-registration shape drift, strict ROI/anatomy geometry failures, and unrelated-manifest non-activation.
+- What changed:
+  - `compare-staged --stage-name register-functional-to-anatomy` can now compare declared NCC cache files, in-plane comparison/recommendation CSVs, `plane_refs_summary.json`, and staged `registration/tforms_by_plane.csv` against declared controls where available. Current NCC-only functional-registration differences from fuller accepted ANTs controls are warnings, not failures.
+  - `compare-staged --stage-name match-roi-to-anatomy` can now compare declared ROI/anatomy geometry CSVs against accepted ROI-master geometry fields, while summary/meta CSVs get nonempty staged-output checks.
+  - `compare-staged --stage-name prepare-functional-reference-stacks` now fails empty/noise-only staged reference directories and passes only when real reference artifacts exist.
+  - `freeze-legacy-baseline` and `compare-legacy-baseline` share the same declared comparison-stage list; upstream outputs without declared control paths remain presence/nonempty checks until stronger baseline sources are defined.
+- Validation:
+  - focused local comparison tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'nonempty_upstream_directory or compare_staged_supports_upstream or upstream_registration or upstream_geometry or ignores_upstream_manifest'` -> `5 passed, 106 deselected`.
+  - CLI smoke on synthetic upstream staged outputs: `compare-staged --stage-name register-functional-to-anatomy --strict` exited 0 with `status=pass` and 9 checks.
+  - Real `L395_f11` validation from synced worktree `/tmp/codeants-upstream-compare-real-1783329439/codeANTs` against staged root `/tmp/codeants-review-guide-xgY9jvF7/staged-L395`: aggregate `compare-staged --strict` exited 0 with `status=warn`, zero failed checks; `register-functional-to-anatomy` warned for expected partial NCC-only parity and CSV byte drift, `match-roi-to-anatomy` passed all 7 checks, `make-qa-report` passed, and `make-figures` had known dimension warnings only.
+  - Real `L395_f11` functional-reference comparison against `/tmp/codeants-hcr-replay-abzbAl/staged-L395`: `compare-staged --stage-name prepare-functional-reference-stacks --strict` exited 0 with `status=pass`; the staged reference directory contained 10 real TIFF files.
+- What remains broken:
+  - full functional-to-anatomy ANTs parity, positive ex vivo/Cellpose validation, broader preprocessing comparison baselines/real-data evidence, and cross-fish promotion evidence remain roadmap targets.
+- Next likely breakpoint:
+  - switch to full functional-to-anatomy ANTs parity, Helga/NAS Cellpose validation, broader preprocessing baselines, or cross-fish promotion evidence.
+- Rerun implications:
+  - existing staged upstream roots can now be checked directly with `compare-staged --stage-name register-functional-to-anatomy` or `compare-staged --stage-name match-roi-to-anatomy`; canonical preprocessing files alone should not activate default staged comparisons.
+
+### 2026-07-06 - biologist review guide in generated QA report
+
+- Slice goal:
+  - move the generated `make-qa-report` surface closer to the roadmap's biologist-facing review goal without adding notebook-local logic.
+- Passes completed in this session:
+  - extended `qa_report_summary.json` with `review_guidance`: grouped review questions, pass/warn/fail status, evidence strings, and concrete recommended actions.
+  - rendered the same review guide into `qa_report.md`, `qa_report.html`, and `qa_report.pdf`.
+  - fixed functional/anatomy overlay QA rendering to read the canonical prepared anatomy NRRD through package NRRD-aware image IO instead of treating it as TIFF.
+  - wrapped the PDF review guide as text instead of a wide table so long evidence/action cells do not clip.
+  - kept the report read-only with respect to scientific outputs; it summarizes staged artifacts and does not recompute matching, identity, response, BPI, or figures.
+  - added focused local test coverage for review guidance JSON, Markdown, HTML output, and NRRD anatomy-stack overlay rendering.
+- What changed:
+  - `make-qa-report` now reports whether canonical tables are present, review-stage outputs are complete, registration overlay QA exists, ROI/anatomy geometry is available, unmatched ROIs need review, ROI/HCR activity tables are ready, and generated visual summaries are present.
+- Validation:
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py::test_make_qa_report_writer_generates_markdown_and_json_summary` passed.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py::test_functional_anatomy_center_overlay_accepts_nrrd_anatomy_stack` passed.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "make_qa_report or compare_staged_make_qa_report"` passed with `5 passed, 100 deselected`.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py` passed with `106 passed, 52 warnings`.
+  - `PYTHONPATH=src pytest -q tests/test_agent_docs.py` passed with `13 passed`.
+  - `PYTHONPATH=src python -m compileall -q src tools` passed.
+  - `git diff --check` passed.
+  - Real `L395_f11` validation from `/tmp/codeants-review-guide-xgY9jvF7` on `linnaeus`: `register-functional-to-anatomy` rendered `functional_anatomy_center_overlay_200px.{png,csv}` from the prepared anatomy NRRD with zero warnings after the IO fix; `make-qa-report --strict` and `compare-staged --stage-name make-qa-report` passed with zero warnings/errors.
+  - Visual verification artifacts copied to `/tmp/codeants-review-guide-final`: `qa_report_summary.json` reports 8 canonical tables, 5 registration overlay planes, 4,530 ROI geometry rows, 3,724 unique anatomy matches, 806 unmatched ROIs, and no missing review artifacts. Rendered PDF pages in `/tmp/codeants-review-guide-pages-final` showed the review guide, checklist, and overlay preview readable without clipping; the overlay PNG was nonblank and populated across five planes.
+- What remains broken:
+  - notebook-style read-only review notebooks remain later work if generated reports are not sufficient.
+  - full functional-to-anatomy ANTs parity, positive ex vivo/Cellpose validation, preprocessing comparisons, and cross-fish promotion evidence remain roadmap targets.
+- Next likely breakpoint:
+  - choose between notebook-style read-only review notebooks, full functional-to-anatomy ANTs parity, Helga/NAS Cellpose validation, preprocessing comparisons, or cross-fish promotion evidence.
+- Rerun implications:
+  - existing generated report outputs need `--force-recompute` to pick up the new review-guide content.
+  - existing `register-functional-to-anatomy` report roots created before this fix may need rerun if their visual QA skipped the anatomy NRRD with `not a TIFF file b'NRRD'`.
+
+### 2026-07-05 - richer Markdown QA review checklist
+
+- Slice goal:
+  - make the generated `make-qa-report` output more useful for manual biologist QA without moving interpretation logic into the pipeline.
+- Passes completed in this session:
+  - extended `qa_report_summary.json` with `review_artifacts` covering registration overlays, ROI/anatomy geometry, canonical identity/activity tables, and staged figure PNGs.
+  - extended `qa_report.md` with a manual review checklist and inline Markdown image previews for existing QA/figure PNG artifacts.
+  - kept the report read-only with respect to scientific semantics; it lists and previews existing artifacts but does not recompute matching, identity, activity, BPI, or figures.
+  - added focused test coverage for review artifact JSON entries and Markdown preview/checklist sections.
+- What changed:
+  - `make-qa-report` now points reviewers at the functional/anatomy center overlay, geometry table, ROI identity master, HCR activity status, and staged figure outputs in one report.
+- What remains broken:
+  - richer HTML/PDF/notebook-style reports remain later work.
+  - the remaining per-gene trace/HCR status figure is still copied from legacy plots.
+- Validation:
+  - focused local report tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'make_qa_report'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` (`104 passed`) and `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`).
+  - real `L395_f11` validation from `/tmp/codeants-qa-review-F3A65E` on `linnaeus`: `make-qa-report --strict` wrote Markdown/JSON artifacts and `compare-staged --stage-name make-qa-report` passed with zero failed/warning checks. After staging figures in the same temp root and forcing report regeneration, the report summary listed 9 review artifacts, 7 existing artifacts, 5 existing image previews, and Markdown contained both `Manual Review Checklist` and `Visual Artifact Preview`.
+- Remaining in-slice work:
+  - none for this Markdown QA checklist/preview slice.
+- Next likely breakpoint:
+  - run broader validation, then choose either remaining trace-figure packaging, preprocessing/upstream freshness broadening, or a fuller report-rendering surface.
+- Rerun implications:
+  - run focused report tests, broader pipeline/package/docs tests, `py_compile`, `git diff --check`, and real-data `make-qa-report --strict` plus `compare-staged --stage-name make-qa-report`.
+
+### 2026-07-05 - staged dependency freshness warnings
+
+- Slice goal:
+  - warn when existing upstream staged dependency roots are newer than downstream staged outputs, even when those dependency roots are optional/bootstrap inputs.
+- Passes completed in this session:
+  - added optional staged dependency records for `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables`.
+  - added a `dependency freshness` check beside the existing required input/output freshness check.
+  - avoided duplicate warnings for `make-qa-report` and `make-figures`, where the export-canonical dependency is already a required declared input and covered by output freshness.
+  - added focused coverage where a staged `score-activity-bpi` CSV is newer than `export-canonical-tables` outputs and both `stage-status` and top-level `status` report `warn`.
+- What changed:
+  - downstream stage manifests now include optional staged dependency input records and warning-level checks such as `export-canonical-tables dependency freshness`.
+  - top-level `status` warns when an active downstream stage has a dependency freshness warning.
+- What remains broken:
+  - broader preprocessing/upstream freshness coverage is still not comprehensive across every granular writer root.
+  - the remaining per-gene trace/HCR status figure is still copied from legacy plots.
+- Validation:
+  - focused local freshness/status tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'downstream_stage_manifest or stage_status or status_includes_downstream or outputs_are_older'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` (`104 passed`) and `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`).
+- Remaining in-slice work:
+  - none for the staged dependency freshness warning surface.
+- Next likely breakpoint:
+  - run the broader validation set, then choose either remaining trace-figure packaging, preprocessing/upstream freshness broadening, or richer biologist-facing QA.
+- Rerun implications:
+  - run focused status tests, broader pipeline/package/docs tests, `py_compile`, and `git diff --check`.
+
+### 2026-07-05 - render BPI all-pairs figure in `make-figures`
+
+- Slice goal:
+  - replace `bpi_all_pairs.png` with a package-owned renderer fed by staged canonical BPI/identity tables.
+- Passes completed in this session:
+  - added `plots.analysis.render_single_fish_bpi_all_pairs_diagnostics` around the existing package-owned `[56g]` BPI diagnostics preparation.
+  - wired `make-figures` to render `bpi_all_pairs.png/.pdf` from `functional_roi_activity_bpi_cells.csv` plus `functional_roi_activity_identity.csv`.
+  - added a real-schema guard so the renderer derives plotting `gene` labels from authoritative ROI identity rows when the BPI cells table is ROI-centric and lacks a `gene` column.
+  - updated the make-figures contract so only `per_gene_stimulus_trace_with_hcr_status_56h.png` remains legacy-copied.
+- What changed:
+  - `make-figures` now records four rendered PNGs: `compound_50j_56i_unified.png`, `bpi_all_pairs.png`, `single_fish_50l_responsive_identity_donut.png`, and `single_fish_hcr_anatomy_coexpression_summary.png`.
+  - `bpi_all_pairs.png` no longer requires a legacy source figure.
+- What remains broken:
+  - `per_gene_stimulus_trace_with_hcr_status_56h.png` still depends on heavy `[56h]` trace/event state and remains copied from legacy `04_plots`.
+  - real-data `compare-staged --stage-name make-figures` warns for expected BPI visual/dimension drift because the package-rendered BPI diagnostic layout is not the same PNG geometry as the legacy control.
+- Validation:
+  - focused local tests passed: `PYTHONPATH=src pytest -q tests/test_plots_analysis.py -k 'bpi_all_pairs or 50l_bpi_panel'` and `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'make_figures_writer'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_plots_analysis.py tests/test_package_exports.py` (`131 passed`) and `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`).
+  - real `L395_f11` validation from `/tmp/codeants-bpi-render-uwqf59` on `linnaeus`: `make-figures --strict` wrote all 5 PNG outputs with zero errors and warnings only for BPI visual/dimension drift plus the pre-existing responsive-identity donut thumbnail warning; strict `compare-staged --stage-name make-figures` had zero failed checks and the same three warning checks.
+  - visual verification opened `/tmp/codeants-bpi-render-uwqf59-bpi_all_pairs.png`, confirmed a nonblank 4169x3101 rendered figure with four populated panels, expected labels/legend, and no obvious clipping or panel overlap.
+- Remaining in-slice work:
+  - none for BPI all-pairs render promotion.
+- Next likely breakpoint:
+  - either package the remaining per-gene trace/HCR status figure after staging its trace/event inputs, deepen upstream-root freshness checks, or broaden biologist-facing QA around registration/matching surfaces.
+- Rerun implications:
+  - rerun focused BPI plot tests, make-figures writer tests, broader pipeline/plot/package export tests, docs tests, `py_compile`, `git diff --check`, and `make-figures --strict` plus `compare-staged --stage-name make-figures` on `L395_f11`.
+
+### 2026-07-05 - downstream staged output freshness warnings
+
+- Slice goal:
+  - harden staged status reporting so existing downstream outputs can be flagged when their declared inputs have changed.
+- Passes completed in this session:
+  - inspected the two remaining copied `make-figures` artifacts and found `bpi_all_pairs.png` is produced inside the heavy `[56h]` trace/event stage, not from a simple table renderer.
+  - added a shared freshness check that compares required input/output mtimes for downstream staged manifests.
+  - wired the check into `build_single_fish_downstream_stage_manifest`, `stage-status`, and top-level `status`.
+  - added focused coverage that makes a staged canonical input newer than staged figure outputs and verifies `make-figures` reports `warn`.
+- What changed:
+  - `stage-status` now includes a warning check such as `make-figures output freshness` when required outputs are older than required declared inputs.
+  - top-level `status` becomes `warn` when an existing downstream stage has freshness warnings.
+- What remains broken:
+  - deeper cross-stage dependency freshness across all upstream writer roots remains a later expansion.
+  - `bpi_all_pairs.png` and `per_gene_stimulus_trace_with_hcr_status_56h.png` are still copied legacy figure artifacts; promoting them requires packaging more of `[56h]` trace/event rendering.
+- Validation:
+  - focused downstream freshness tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'downstream_stage_manifest or stage_status or status_includes_downstream'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` (`103 passed`), `PYTHONPATH=src pytest -q tests/test_agent_docs.py` (`13 passed`), `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
+- Remaining in-slice work:
+  - none for warning-level downstream staged output freshness.
+- Next likely breakpoint:
+  - either deepen upstream-root freshness checks, broaden biologist-facing QA, or package a bounded part of `[56h]` before replacing the remaining copied trace/BPI figures.
+- Rerun implications:
+  - run focused downstream stage-status tests, pipeline/docs/package export tests, and `git diff --check`.
+
+### 2026-07-03 - render staged 50l composite in `make-figures`
+
+- Slice goal:
+  - replace one remaining copied `make-figures` artifact with an existing package-owned renderer.
+- Passes completed in this session:
+  - changed `make-figures` so `compound_50j_56i_unified.png` is rendered by `plots.analysis.render_single_fish_50l_composite`.
+  - declared `motion_auc_plot_points.csv` and `motion_auc_plot_counts.csv` as composite render inputs from the functional registration root.
+  - kept the stage as figure rendering only by copying canonical and `[56i]` CSV inputs into a temporary self-consistent registration bundle instead of rebuilding AUC tables.
+  - updated local make-figures tests so the synthetic fixture includes the required AUC and BPI render columns.
+- What changed:
+  - `make-figures` now records three rendered figures: `compound_50j_56i_unified.png`, `single_fish_50l_responsive_identity_donut.png`, and `single_fish_hcr_anatomy_coexpression_summary.png`.
+  - only `bpi_all_pairs.png` and `per_gene_stimulus_trace_with_hcr_status_56h.png` remain copied from the legacy plot root.
+- What remains broken:
+  - `bpi_all_pairs.png` and `per_gene_stimulus_trace_with_hcr_status_56h.png` still need package-owned render promotion.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_plots_analysis.py -k '50l_composite'` and `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'make_figures'`.
+  - broader local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_plots_analysis.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, and `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`.
+  - real `L395_f11` validation on `linnaeus` used `/tmp/codeants-fig-composite-xjyda6` with an explicit accepted canonical input root. `make-figures --strict` wrote all 5 PNG outputs with zero errors; the only warning was the pre-existing responsive-identity donut thumbnail warning.
+  - strict `compare-staged --stage-name make-figures` against that root reported zero failed checks and zero warning entries.
+  - visual verification opened `/tmp/codeants-fig-composite-xjyda6/compound_50j_56i_unified.png`, confirmed nonblank 3150x3456 output, separated donut callouts after label-stacking repair, populated panels, and visible legends.
+- Remaining in-slice work:
+  - none for the 50l composite make-figures promotion.
+- Next likely breakpoint:
+  - after validation, update the stage comparison/roadmap evidence and choose the next copied figure or QA/freshness slice.
+- Rerun implications:
+  - run focused make-figures tests, plot tests for 50l composite, docs tests, and `make-figures --strict` plus `compare-staged --stage-name make-figures` on `L395_f11`.
+
+### 2026-07-03 - reconcile staged roadmap after HCR replay/direct-warp promotion
+
+- Slice goal:
+  - remove stale roadmap blockers after HCR activity replay/promotion and direct HCR/anatomy recompute parity were validated.
+- Passes completed in this session:
+  - compared `current-state.md`, `single-fish-pipeline-roadmap.md`, `agentic-workflow-roadmap.md`, `notebook-stage-map.md`, and `symbol-index.md`.
+  - replaced stale `assign-hcr-identity` wording that still described copied HCR activity tables and unpromoted replay.
+  - replaced stale direct-HCR wording that still described accepted filter-stat overlays or missing match/final-pair recompute.
+  - updated the next-slice pointer away from solved HCR replay parity and toward remaining roadmap gaps.
+- What changed:
+  - `agentic-workflow-roadmap.md` now says `assign-hcr-identity` recomputes the HCR-centric activity/status/candidate CSV family and that selected-ANTs replay has exact accepted-control row/key parity on `L395_f11`.
+  - `notebook-stage-map.md` now treats downstream staged writers as implemented writer surfaces, not declarative contracts only.
+  - `symbol-index.md` now describes direct-HCR recompute, ROI/anatomy recompute, and remaining CLI roadmap targets consistently with the current code.
+- What remains broken:
+  - remaining roadmap work is now figure render replacement, richer biologist-facing QA, dependency/output freshness reporting, full functional-to-anatomy ANTs parity, and broader positive upstream validation.
+- Remaining in-slice work:
+  - none for this documentation reconciliation.
+- Next likely breakpoint:
+  - choose and implement one remaining roadmap slice from the reconciled status board.
+- Rerun implications:
+  - run `PYTHONPATH=src pytest -q tests/test_agent_docs.py` and grep for stale HCR replay/direct-warp claims before committing.
+
+### 2026-07-03 - restore HCR prewarp label filtering in direct recompute
+
+- Slice goal:
+  - fix the direct HCR/anatomy final-pair parity failure by restoring the notebook prewarp HCR label filter before direct ANTs warping.
+- Passes completed in this session:
+  - diagnosed `/tmp/codeants-hcr-match-V8VB55`: missing accepted pairs had identical overlap/distance metrics in recomputed matches but lost to tiny competing labels absent from accepted label TIFFs.
+  - confirmed accepted label TIFFs are strict subsets of direct recomputed labels; missing accepted labels are retained in accepted TIFFs, while extra/conflicting labels are absent.
+  - added package-owned direct-warp filtering that drops HCR labels below the notebook `label_voxel_floor_v3` default of 200 voxels before ANTs warping.
+  - added focused unit coverage for the prewarp small-label filter.
+- What changed:
+  - `run_direct_ants_hcr_label_warp` now filters small raw HCR labels before warping and writes notebook-style filter stats into warp metadata.
+  - on `L395_f11`, `/tmp/codeants-hcr-filter-nooverlay-w1yksx` produced 4 filtered label TIFFs, 4 metadata JSONs, and 12 recomputed match/review/final-pair CSVs with `register-hcr-to-anatomy status=pass`, zero errors, zero warnings, recomputed filter stats `4/4`, and accepted filter-stat overlay count `0`.
+  - strict final-pair key parity passed for all four masks: sst1_1 `73/73`, pth2 `18/18`, sst1_2 `9/9`, tac3b `62/62`.
+- What remains broken:
+  - downstream assign/score/export still report expected byte-parity warnings for recomputed CSVs; no semantic/key failures were observed in this validation.
+- Remaining in-slice work:
+  - none for the direct HCR label-filter parity fix.
+- Next likely breakpoint:
+  - continue the roadmap past HCR registration by deciding whether to promote the remaining byte-level CSV differences, broaden visual QA/report surfaces, or move to the next unimplemented writer stage.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_hcr_warp.py tests/test_pipeline.py tests/test_matching.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/hcr_warp.py tests/test_hcr_warp.py src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
+  - real validation root for no-overlay register stage: `/tmp/codeants-hcr-filter-nooverlay-w1yksx`.
+  - downstream validation root: `/tmp/codeants-hcr-filter-t86kC0`; after staging functional registration and ROI/anatomy geometry in that same root, `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` completed with zero errors and expected byte-parity warnings only.
+
+### 2026-07-03 - wire direct HCR/anatomy match recompute
+
+- Slice goal:
+  - stop copying accepted HCR/anatomy match tables in `register-hcr-to-anatomy --recompute-direct-ants` and make the direct path expose real match/final-pair parity.
+- Passes completed in this session:
+  - wired `matching.build_hcr_anatomy_match_tables` into the direct HCR label-warp path.
+  - skipped accepted match/review/final-pair CSV copies when direct recompute is requested.
+  - added final-pair `(conf_label, twoP_label)` parity checks against accepted controls.
+  - updated the focused pipeline test to require recomputed match, review, and final-pair CSVs.
+- What changed:
+  - direct mode now reports `hcr_recompute_mode=direct_ants_label_warp_and_match_tables`.
+  - direct mode writes recomputed label TIFFs, warp metadata JSONs, and 3 recomputed HCR/anatomy CSVs per warped mask.
+  - on `L395_f11`, `/tmp/codeants-hcr-match-V8VB55` produced 4 direct label TIFFs, 4 metadata JSONs, and 12 recomputed match/review/final-pair CSVs.
+- What remains broken:
+  - fixed in the follow-up 2026-07-03 prewarp-filter slice; the mismatch was caused by missing small-label filtering before direct ANTs warping.
+  - before that fix, strict final-pair key parity failed on real `L395_f11`: sst1_1 missing 3 extra 5, pth2 missing 1 extra 3, sst1_2 missing 0 extra 1, tac3b missing 7 extra 9.
+- Remaining in-slice work:
+  - none for exposing the recompute and parity gate.
+- Next likely breakpoint:
+  - see the follow-up prewarp-filter slice for the resolved cause and validation evidence.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_matching.py tests/test_package_exports.py`, `PYTHONPATH=src pytest -q tests/test_agent_docs.py`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`, and `git diff --check -- . ':(exclude)**/__pycache__/**'`.
+
+### 2026-07-03 - extract HCR/anatomy match table builder
+
+- Slice goal:
+  - move the notebook `[44]` HCR/anatomy matching rules toward package-owned code before wiring final-pair recomputation into `register-hcr-to-anatomy`.
+- Passes completed in this session:
+  - added `matching.build_hcr_anatomy_match_tables`.
+  - reused package-owned centroid and overlap helpers to produce HCR/anatomy `matches`, `final_pairs`, `review`, and QC summary outputs from warped HCR labels and anatomy labels.
+  - preserved notebook-compatible overlap gating, nearest-neighbor or Hungarian pair selection, twoP/conf deduplication, IoU/overlap-fraction quality rules, pair-type labels, and final 1-to-1 good pair selection.
+  - added a focused unit test covering a good final pair and an in-gate low-IoU review pair.
+- What changed:
+  - HCR/anatomy match table semantics are now available as reusable package logic rather than only embedded in migrated notebook source.
+- What remains broken:
+  - `register-hcr-to-anatomy --recompute-direct-ants` still stages accepted HCR/anatomy match/review/final-pair CSVs; it does not yet call the new matcher.
+  - HCR warp filter stats are still overlaid from accepted metadata in the direct label-warp path.
+- Remaining in-slice work:
+  - none for matcher extraction.
+- Next likely breakpoint:
+  - wire `build_hcr_anatomy_match_tables` into `register-hcr-to-anatomy --recompute-direct-ants`, compare recomputed match/final-pair CSVs against accepted controls on `L395_f11`, and decide whether mismatches come from label filtering or matching policy.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_matching.py` plus package export/docs checks.
+
+### 2026-07-03 - add opt-in direct ANTs HCR label warp
+
+- Slice goal:
+  - replace the accepted HCR label TIFF copy path with a package-owned direct ANTs label warp while preserving downstream parity gates.
+- Passes completed in this session:
+  - added `hcr_warp.HcrDirectWarpResult`, `build_direct_ants_hcr_transform_chain`, and `run_direct_ants_hcr_label_warp`.
+  - implemented notebook-equivalent direct label-warp mechanics: raw HCR mask TIFF ZYX -> ANTs XYZ image, clone moving-intensity geometry, apply best-round rbest-to-2p warp/affine plus rn-to-rbest warp/affine for non-best rounds, all with `whichtoinvert=False`, then write 2P-space uint16 label TIFFs and warp metadata.
+  - added `register-hcr-to-anatomy --recompute-direct-ants`; in this opt-in mode the stage recomputes HCR label TIFFs/warp metadata, copies accepted match/review/final-pair CSVs, and overlays accepted filter stats into recomputed metadata until filter-stat recomputation is promoted.
+  - added focused local tests for transform-chain order, ZYX/XYZ transposition with a fake `ants` module, and pipeline-level direct-recompute wiring.
+- What changed:
+  - `register-hcr-to-anatomy` can now run in `hcr_recompute_mode=direct_ants_label_warp_with_accepted_match_tables`.
+  - On real `L395_f11`, `/tmp/codeants-hcr-direct-Cjks9D` ran `register-hcr-to-anatomy --recompute-direct-ants --force-recompute` with `status=pass`, zero errors, zero warnings, `direct_ants_warp_result_count=4`, `direct_ants_filter_stats_overlay_count=4`, `recomputed_label_artifact_count=8`, and `copied_artifact_count=32`.
+  - The same temp root fed dependency-aware `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` with zero failed checks; remaining warnings were byte-parity only.
+- What remains broken:
+  - HCR/anatomy match/review/final-pair CSVs are still accepted controls, not recomputed from recomputed label TIFFs.
+  - HCR warp filter statistics are still overlaid from accepted metadata; the notebook filter policy has not yet been promoted.
+- Remaining in-slice work:
+  - none for opt-in direct label warp promotion.
+- Next likely breakpoint:
+  - promote HCR filter-stat recomputation and/or HCR/anatomy match/final-pair recomputation so `register-hcr-to-anatomy` no longer depends on accepted HCR metadata/CSV controls.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_hcr_warp.py tests/test_pipeline.py -k "register_hcr_to_anatomy"` plus full pipeline/doc checks before commit.
+  - real validation: rerun `register-hcr-to-anatomy --recompute-direct-ants`, then first downstream `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` in one temporary `--pipeline-root`.
+
+### 2026-07-03 - add HCR direct-ANTs recompute readiness checks
+
+- Slice goal:
+  - make the remaining `register-hcr-to-anatomy` recompute boundary explicit before extracting true HCR warp recomputation from notebook-derived code.
+- Passes completed in this session:
+  - added package-owned manifest provenance for the current fish matching metadata row, `bigwarp` route, raw HCR Cellpose masks, rbest/rn HCR NRRDs, rbest-to-2p transform files, and rn-to-rbest transform files.
+  - added warning-level readiness checks to `run_register_hcr_to_anatomy_stage` without changing the accepted-artifact staging copy policy or making missing recompute prerequisites fail the existing staging mode.
+  - added focused tests for the minimal accepted-artifact staging path and the fully present direct-ANTs prerequisite path.
+- What changed:
+  - `register-hcr-to-anatomy` manifests now report `hcr_recompute_mode=accepted_artifact_staging_with_direct_ants_readiness` plus direct-ANTs prerequisite counts/route fields.
+  - On real `L395_f11`, a temporary `linnaeus` run at `/tmp/codeants-hcr-readiness-YUhSnp` passed with zero warnings: metadata `best_round=r2`, `num_rounds=2`, `bigwarp=False`; raw HCR masks `4`; rbest HCR NRRDs `2`; rn HCR NRRDs `2`; rbest-to-2p affine/warp `1/1`; rn-to-rbest affine/warp `1/1`; staged accepted artifacts `46`; aligned intensity NRRD inputs `6`.
+  - The stage still stages accepted aligned HCR artifacts; it does not yet warp raw HCR masks or intensity volumes.
+- What remains broken:
+  - true HCR warp recomputation remains unimplemented in the staged writer.
+- Remaining in-slice work:
+  - none for readiness instrumentation.
+- Next likely breakpoint:
+  - extract a minimal direct-ANTs HCR mask warp implementation from the notebook-derived HCR warp cells into package-owned code, using the readiness fields as the prerequisite gate.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py` plus docs/package export checks before commit.
+  - real validation is complete for `L395_f11`; rerun `register-hcr-to-anatomy --strict --force-recompute` in a temporary `--pipeline-root` if the mounted fish inputs or matching metadata change.
+
+### 2026-07-02 - promote match-roi-to-anatomy recompute parity
+
+- Slice goal:
+  - retire the accepted-control geometry copy as the validated `match-roi-to-anatomy` path by making the stage recompute ROI/anatomy geometry from staged functional/anatomy registration.
+- Passes completed in this session:
+  - wired `run_match_roi_to_anatomy_stage` recompute mode to overlay selected accepted `ants_rigid_affine` transformlists from the in-plane comparison CSV.
+  - passed anatomy XY spacing from the voxel cache into `matching.build_functional_roi_master_df`.
+  - passed notebook-equivalent functional orientation into Suite2p-label reconstruction before ROI/anatomy matching.
+  - added manifest checks for accepted-control key, anatomy-label, selected-label, and unique-match parity when `functional_roi_activity_identity.csv` exists.
+  - added a focused regression test proving the stage threads selected ANTs refs, anatomy spacing, and the orientation callback into the matcher.
+- What changed:
+  - `match-roi-to-anatomy` recompute mode now writes geometry-only ROI/anatomy outputs with accepted-control parity on real `L395_f11`.
+  - Remote evidence from `/tmp/codeants-match-recompute-promote-RrFHvB`: `match-roi-to-anatomy --strict --force-recompute` reported `status=pass`, `mode=recompute_from_staged_registration`, `selected_ants_overlay_count=5`, `selected_ants_missing_transform_files=0`, anatomy XY spacing `0.5964024861653645`, 4,530 ROI rows, 3,724 unique anatomy matches, accepted key parity `both=4530,left_only=0,right_only=0`, label parity `4530/4530`, and unique-match parity `4530/4530`.
+  - The same temp root ran `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` from the recomputed geometry with zero failed checks; remaining warnings were expected byte-parity warnings for recomputed CSVs.
+- What remains broken:
+  - `register-hcr-to-anatomy` still stages accepted aligned HCR artifacts rather than rerunning the HCR warp.
+  - `compare-staged` still declares only downstream post-processing stages; it does not yet expose `match-roi-to-anatomy` as a compare target.
+- Remaining in-slice work:
+  - none for ROI/anatomy recompute promotion.
+- Next likely breakpoint:
+  - continue upstream by deciding whether to promote true `register-hcr-to-anatomy` HCR warp recomputation or broaden comparison surfaces for geometry-stage outputs.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py`, `PYTHONPATH=src pytest -q tests/test_matching.py tests/test_package_exports.py`, and `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py`.
+  - real validation: rerun `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` in one temp `--pipeline-root` seeded with staged `register-functional-to-anatomy` and `register-hcr-to-anatomy`.
+
+### 2026-07-02 - promote HCR activity replay into assign-hcr-identity
+
+- Slice goal:
+  - replace `assign-hcr-identity` HCR activity CSV copy-through with the now-validated label-first HCR replay while preserving ROI-centric table authority.
+- Passes completed in this session:
+  - changed `run_single_fish_assign_hcr_identity_stage` to require staged functional/anatomy `plane_refs_summary.json`, Suite2p, and anatomy labels in addition to staged ROI/anatomy geometry and HCR/anatomy final pairs.
+  - wired the writer to recompute `hcr_activity_status.csv`, `conf_to_func_pairs_raw.csv`, `conf_to_func_pairs.csv`, and `hcr_func_candidates.csv` through `matching.build_hcr_activity_tables` plus `matching.finalize_hcr_activity_export_tables`, using the recomputed staged ROI identity master as the response lookup.
+  - regenerated `hcr_activity_status_summary.csv` from recomputed status rows plus HCR warp metadata high-quality mask counts (`n_labels_after - low_conf_labels`).
+  - added keyed/numeric comparison coverage for `hcr_activity_status_summary.csv`.
+  - adjusted the HCR finalizer column order so raw/candidate exports keep legacy `candidate_rank_for_anat` placement before temporary key columns.
+- What changed:
+  - `assign-hcr-identity` now writes all 7 staged identity/HCR CSVs from package-owned recomputation, except accepted source CSVs remain as comparison controls and ROI response/BPI passthrough sources.
+  - On real `L395_f11`, a temp-root run on `linnaeus` recomputed HCR activity outputs with `status_rows=162`, `raw_rows=254`, `analysis_rows=40`, `candidate_rows=148`, `summary_rows=19`, and `selected_ants_planes=5`.
+  - Real downstream `score-activity-bpi` and `export-canonical-tables` consumed the recomputed assign output with zero failed checks; remaining warnings were byte-parity only.
+- What remains broken:
+  - `match-roi-to-anatomy` still stages control geometry rather than recomputing full NCC/ANTs ROI/anatomy matching from first principles.
+  - `register-hcr-to-anatomy` still stages accepted aligned HCR artifacts rather than rerunning the HCR warp.
+- Remaining in-slice work:
+  - none for HCR activity promotion.
+- Next likely breakpoint:
+  - continue upstream from the remaining staged-control dependencies: true ROI/anatomy matching recompute parity or true HCR warp recomputation, depending on which roadmap dependency should be retired first.
+- Rerun implications:
+  - local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py`, `PYTHONPATH=src pytest -q tests/test_matching.py tests/test_package_exports.py`, and `git diff --check`.
+  - real validation: run `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, and `export-canonical-tables` in one temp `--pipeline-root`; expect zero failed checks and byte-parity warnings for recomputed CSVs.
+
+### 2026-07-02 - restore notebook-equivalent orientation in HCR replay audit
+
+- Slice goal:
+  - close the current `audit-hcr-activity-replay` parity gap after visual QA showed functional/anatomy geometry, best-Z, and segmented labels were coherent.
+- Passes completed in this session:
+  - compared accepted `hcr_func_candidates.csv` against historical recompute-audit artifacts on `linnaeus` and confirmed `hcr_func_candidates_recomputed.csv` has exact `148/148` candidate-key parity.
+  - reproduced the current audit gap and found that current warped Suite2p label images did not match the historical replay labels because the audit rebuilt labels from raw Suite2p stats without passing the notebook-equivalent functional orientation callback.
+  - wired `audit-hcr-activity-replay` to pass `spatial.apply_func_orientation(..., flip_x=True)` into `matching.build_hcr_activity_tables` for the primary selected-ANTs replay and all transform variants.
+  - added a focused regression test asserting the pipeline audit supplies a callable functional-orientation callback to the HCR activity builder.
+- What changed:
+  - On `L395_f11`, the remote read-only audit now completes with status `pass`, zero errors, and zero warnings from `/tmp/codeants-plane-qc/codeANTs` against `/tmp/codeants-hcr-replay-abzbAl/staged-L395`.
+  - Primary selected-ANTs replay now matches accepted HCR outputs exactly: `hcr_activity_status.csv=162/162`, `conf_to_func_pairs_raw.csv=254/254`, `conf_to_func_pairs.csv=40/40`, `hcr_func_candidates.csv=148/148`, and candidate-key parity is missing `0`, extra `0`.
+  - Promotion remains intentionally disabled; this is still a read-only audit proving replay parity before a later writer-stage promotion.
+- What remains broken:
+  - `assign-hcr-identity` still stages HCR activity CSVs from accepted outputs; replacing that copy step with recomputed HCR activity exports is the next promotion slice.
+- Remaining in-slice work:
+  - none for the replay-audit parity fix.
+- Next likely breakpoint:
+  - promote HCR activity recomputation into `assign-hcr-identity` behind strict parity checks, then rerun `export-canonical-tables` and downstream comparisons.
+- Rerun implications:
+  - focused local validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "hcr_activity_replay"`.
+  - real-data validation: rerun `audit-hcr-activity-replay --strict` on `linnaeus` after staged functional registration and HCR aligned artifacts exist in the same `--pipeline-root`.
+
+### 2026-07-02 - AntsPyx instrumentation for HCR activity replay audit
+
+- Slice goal:
+  - answer whether the new read-only HCR activity replay audit is transforming functional labels through AntsPyx/ANTs transformlists or silently falling back to NCC-only plane summaries, then expose whether current persisted affine variants can reproduce the historical replay audit.
+- Passes completed in this session:
+  - confirmed the current staged `L395_f11` replay initially used `tform_src=ncc_xy` for all five planes, while accepted/control `[20]` in-plane registration selected `ants_rigid_affine` for all five planes and has `.mat` transform files under `03_analysis/functional/ncc/inplane_registration_comparison/transforms/`.
+  - added selected-ANTs overlay/reporting to `audit-hcr-activity-replay`: when the accepted in-plane comparison CSV is present, replay plane refs are overlaid with selected `ants_rigid_affine` transformlists, anatomy XY spacing from `voxel_sizes.json`, and manifest checks for AntsPyx availability, transform backend coverage, and missing transform files.
+  - added an in-memory `replay_variant_summaries` scoreboard to the same read-only manifest. It evaluates selected ANTs transformlists plus accepted `registration/tforms_by_plane.csv`, accepted `ncc/tforms_by_plane.csv`, selected-best-Z variants, and p4 `dx=-1,dy=+1` offset variants without writing HCR CSV outputs.
+  - added shape-aware `skimage_affine` transform dictionaries so affine CSV replay can resize functional labels to the selected scaled reference frame before applying persisted affine matrices.
+  - left HCR candidate construction and finalization logic unchanged; this patch only changes the replay registration input layer and audit reporting.
+  - added focused tests for NCC-only backend warnings, selected ANTs transformlist overlay, and affine CSV reconstruction with selected metadata/offsets.
+- Validation:
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "hcr_activity_replay"` passed (`4 passed, 94 deselected`).
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_matching.py tests/test_activity.py tests/test_package_exports.py tests/test_agent_docs.py` passed (`123 passed, 50 warnings`).
+  - `python3 -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/matching.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py tests/test_pipeline.py tests/test_package_exports.py` passed.
+  - `git diff --check` passed.
+  - Remote `linnaeus` audit from `/tmp/codeants-hcr-replay-abzbAl/codeANTs` with `--pipeline-root /tmp/codeants-hcr-replay-abzbAl/staged-L395` completed with status `warn`, zero errors, and ANTs checks passing: `ants_available=True`, `backend_counts={"ants_rigid_affine": 5}`, `overlay_applied_planes=5`, `missing_transform_files=0`, `ants_xy_spacing=[0.5964024861653645, 0.5964024861653645]`.
+  - The same remote manifest now reports `replay_variant_summaries` for 7 current variants. The primary selected-ANTs path remains `64/148` candidate rows with `140` missing and `56` extra candidate keys. Current persisted affine variants remain far from historical parity: accepted `registration/tforms_by_plane.csv` gives `73` candidate rows, selected-best-Z accepted registration gives `69`, accepted `ncc/tforms_by_plane.csv` selected-best-Z gives `77`, and p4 offset variants do not recover historical row counts.
+- What remains broken:
+  - AntsPyx use is now verified and current transform variants are reported, but HCR candidate parity is still not solved. The remote audit still reports `hcr_activity_status.csv=162/162`, `hcr_func_candidates.csv=64/148`, `conf_to_func_pairs_raw.csv=191/254`, `conf_to_func_pairs.csv=22/40`, and candidate-key parity with `140` missing control keys and `56` extra replay keys.
+  - Historical `recompute-audit/hcr_transform_replay_variants.csv` on `linnaeus` shows a prior `selected_inplane_registration_comparison_ants_transformlist` replay achieved exact candidate-key parity (`148/148`, missing `0`, extra `0`), while the current selected-ANTs replay does not. Therefore the remaining gap is not just transform backend choice or affine scaling; the exact legacy plane-ref/warped-label/functional-label construction state is still missing from the current staged audit.
+  - Plain-English blocker: the audit can now run and compare the intended label-first HCR replay through multiple persisted transform inputs, but it still cannot prove those reconstructed plane refs/warped labels are the exact legacy state that produced the accepted `[50]` candidate tables. Promotion stays disabled until that geometry replay gap is closed or the accepted legacy source is explicitly staged as the source of truth.
+- Next likely breakpoint:
+  - recover the older recompute-audit label construction path. Start from historical files under `/Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/03_analysis/functional/pipeline_outputs/assign-hcr-identity/recompute-audit/`, especially `best_replay_recomputed_func_labels_plane*.tif`, `hcr_func_candidates_recomputed.csv`, and `hcr_transform_replay_variants.csv`, then compare those warped labels against labels generated by current `matching.build_hcr_activity_tables`.
+
+### 2026-07-02 - clarified ROI-centric versus HCR-centric activity paths
+
+- Slice goal:
+  - encode the user clarification that global ROI activity and HCR-matched identified-cell activity are separate analysis paths, not competing derivations of one candidate universe.
+- Passes completed in this session:
+  - used a subagent to audit the `[50]` HCR-centric candidate source and confirm that `functional_roi_activity_identity.csv` is only a response lookup for this path.
+- What changed:
+  - updated policy/current-state/roadmap docs to state that the ROI-centric master starts from all Suite2p ROIs, including `iscell=0` rows with no extractable cellular response information, then separates low-activity and responsive rows after thresholds.
+  - updated HCR-centric wording so `[50]` candidate replay starts from accepted HCR/anatomy labels and local functional candidates, and must not be inferred from the ROI-centric one-to-one competition table.
+- What remains broken:
+  - full HCR activity table recomputation still needs staged replay of the label-first `[50]` inputs: Suite2p plane data, `plane_refs`/transforms, anatomy labels, and accepted HCR/anatomy matches.
+  - `[50e]` summary generation remains embedded legacy wrapper logic in the active worktree.
+- Remaining in-slice work:
+  - none for the policy clarification.
+- Next likely breakpoint:
+  - recover the exact staged replay/source for the HCR-centric label-first candidate population before promoting recomputed `hcr_activity_status.csv`, `conf_to_func_pairs*.csv`, and `hcr_func_candidates.csv`.
+- Rerun implications:
+  - run `PYTHONPATH=src pytest -q tests/test_agent_docs.py` after doc edits; run HCR real-data commands only after code behavior changes.
+
+### 2026-07-02 - add functional/anatomy plane-row visual QA renderer
+
+- Added `plots.qa.render_functional_anatomy_plane_qc_row_png` to produce one row per functional plane with five panels: functional reference, native Suite2p ROI boundaries on the reference, best-Z in vivo anatomy, anatomy-label boundaries on the best-Z anatomy slice, and the positioned functional reference in anatomy space.
+- Added `plots.qa.render_functional_anatomy_center_overlay_qc_png` for the cleaner manual QA view: one center crop per functional plane with transformed functional ROI outlines in cyan, anatomy-label outlines in red, and shared outline pixels in yellow. The default crop is now 200x200 px.
+- Wired `register-functional-to-anatomy` to automatically emit the 200 px center-overlay QA PNG/CSV under the stage `qa/` folder when anatomy labels and anatomy-space functional labels are available; missing QA prerequisites warn but do not fail registration.
+- Rendered real `L395_f11` QA output on `linnaeus` from staged `plane_refs_summary.json`, accepted Suite2p native label TIFFs, the in vivo anatomy TIFF, and structural anatomy Cellpose labels.
+- Local visual-verification artifacts: `/tmp/L395_f11_functional_anatomy_plane_qc_5col.png` and `/tmp/L395_f11_center200_func_anat_label_overlay.png`; per-plane review CSVs use the same basename with `.csv`.
+- Manual interpretation from the 200 px overlay: functional-to-anatomy orientation, best-Z selection, and segmented anatomy labels look coherent for this checkpoint; the current HCR replay blocker is less likely to be gross functional/anatomy transform failure.
+- Validation: `PYTHONPATH=src pytest -q tests/test_plots_qa.py -k functional_anatomy_center_overlay`, `PYTHONPATH=src pytest -q tests/test_plots_qa.py -k functional_anatomy_plane_qc`, `PYTHONPATH=src python3 -m py_compile src/codeants_2pf_hcr/plots/qa.py tests/test_plots_qa.py`, visual-verification image sanity checks, and manual image inspection.
+
+### 2026-07-02 - add HCR activity replay QA recall notebook
+
+- Added `notebooks/hcr_activity_replay_qa.ipynb` as a thin interpretation/QA surface for the read-only HCR-centric replay audit.
+- The notebook keeps explicit path knobs for `L395_f11`, loads persisted audit manifests and historical recompute artifacts, summarizes replay variant scoreboard rows, compares accepted versus historical candidate keys, and displays historical warped functional label TIFFs when present.
+- Updated `notebook-stage-map.md` to mark the notebook as a recall/QA artifact, not a stage owner.
+- Reusable replay and table-generation logic remains in `src/codeants_2pf_hcr/`; the notebook is for evidence recall and manual interpretation.
+
+### 2026-07-02 - add read-only HCR activity replay audit
+
+- Slice goal:
+  - make the HCR-centric `[50]` replay gap measurable from staged artifacts without promoting recomputed HCR activity tables.
+- Passes completed in this session:
+  - added `pipeline.build_single_fish_hcr_activity_replay_manifest`.
+  - exposed `tools/single_fish_pipeline.py audit-hcr-activity-replay`.
+  - made `matching._decorate_hcr_candidates` accept response lookups normalized with `plane_idx_key`/`func_label_key`.
+  - persisted `anat_label_z_mode` in `plane_refs_summary.json` so replay does not silently assume direct anatomy-label Z indexing.
+- What changed:
+  - the audit loads staged `plane_refs_summary.json`, Suite2p, anatomy labels, staged HCR final pairs, and a response-aware ROI master used only as lookup.
+  - it runs `matching.build_hcr_activity_tables` plus `matching.finalize_hcr_activity_export_tables` in memory, compares row/key counts to accepted HCR outputs when available, writes no staged HCR CSVs, and records `promotion_enabled=False`.
+- What remains broken:
+  - HCR activity CSV promotion is still disabled until replay parity is proven on real data.
+  - `[50e]` status-summary generation remains a separate summary-ownership slice.
+- Remaining in-slice work:
+  - none for the read-only audit surface.
+- Next likely breakpoint:
+  - if real-data replay still misses accepted candidate keys, inspect persisted `plane_refs_summary.json`/ANTs transform fidelity versus notebook in-memory `plane_refs`.
+- Rerun implications:
+  - local: `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "hcr_activity_replay or register_functional_to_anatomy_stage_writes_ncc_outputs"` plus package export/docs tests.
+  - real data: run `audit-hcr-activity-replay` on `L395_f11` after `register-functional-to-anatomy` and `register-hcr-to-anatomy` staged outputs exist in the same temporary `--pipeline-root`.
+- Validation:
+  - local focused suite: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_activity.py tests/test_package_exports.py tests/test_agent_docs.py` passed with `114 passed, 50 warnings`; `git diff --check` passed.
+  - `linnaeus` real-data run from `/tmp/codeants-hcr-replay-abzbAl/codeANTs` into `/tmp/codeants-hcr-replay-abzbAl/staged-L395`: staged functional references, functional registration metadata, and HCR aligned artifacts all passed; `audit-hcr-activity-replay` completed with status `warn`, zero errors, and four warnings for expected HCR replay parity gaps.
+  - real-data replay counts: `hcr_activity_status.csv` `162/162`, `conf_to_func_pairs_raw.csv` `197/254`, `conf_to_func_pairs.csv` `21/40`, `hcr_func_candidates.csv` `71/148`; candidate key gap was `142` missing control keys and `65` extra replay keys.
+
+### 2026-06-30 - package HCR activity export finalizer
+
+- Slice goal:
+  - move the response-aware HCR activity export finalization logic out of notebook-local `[50]` code and into package-owned matching helpers as a prerequisite for HCR activity table recomputation.
+- Passes completed in this session:
+  - used a subagent to audit the narrow recompute path and blockers.
+  - added `matching.hcr_response_lookup_from_roi_master_df` for response-aware ROI lookup normalization.
+  - added `matching.finalize_hcr_activity_export_tables` to produce finalized HCR status, raw candidate, responsive analysis, and candidate tables from legacy/core HCR candidate geometry plus ROI response lookup.
+  - added focused synthetic coverage for selected responsive candidate choice, `selected_for_trace_export`, `candidate_response_bucket`, and analysis-row construction.
+- What changed:
+  - HCR activity finalization is now package-owned and testable without executing notebook cell `[50]`.
+  - `assign-hcr-identity` is not yet wired to recompute these HCR CSVs; it still stages HCR activity/status/pair/candidate CSVs from accepted registration outputs.
+- What remains broken:
+  - full HCR activity table recomputation still needs a validated staged source for candidate geometry equivalent to `[50]`/`build_hcr_activity_tables`.
+  - `hcr_activity_status_summary.csv` includes unmatched/out-of-plane mask-fate counts beyond accepted final pairs and still needs a separate package-owned summary builder before copy-through can be removed.
+  - current staged functional-to-anatomy `plane_refs_summary.json` is NCC-only and may not reproduce accepted affine/ANTs geometry; do not wire full HCR recompute until geometry parity is established or the intended difference is documented.
+- Remaining in-slice work:
+  - none for package finalizer extraction.
+- Next likely breakpoint:
+  - either add a staged candidate-geometry source that can feed `finalize_hcr_activity_export_tables`, or implement read-only dependency/freshness status hardening before the next scientific recompute.
+- Rerun implications:
+  - `python3 -m py_compile src/codeants_2pf_hcr/matching.py tests/test_pipeline.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "finalize_hcr_activity or attach_identity or assign_hcr_identity"` passed locally with `6 passed, 88 deselected`.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_activity.py tests/test_package_exports.py tests/test_agent_docs.py` passed locally with `112 passed, 50 warnings`.
+  - Remote evidence from `/tmp/codeants-hcr-finalizer-F46NGZ`: after rsyncing the current worktree to `linnaeus`, a real-data finalizer probe using accepted `L395_f11` status/raw/candidate/ROI-master tables reproduced row counts for status/raw/analysis/candidates (`162/254/40/148`) and semantic parity for status, responsive analysis pairs, and candidates. Raw candidate output had equivalent rows but numeric key formatting drift (`349` vs `349.0` style), so raw byte/key parity remains non-authoritative for this prerequisite slice.
+
+### 2026-06-30 - promote ROI identity master recompute
+
+- Slice goal:
+  - promote ROI identity assignment behind the validated staged geometry gates while leaving HCR activity exports for a later slice.
+- Passes completed in this session:
+  - added `matching.attach_identity_to_functional_roi_geometry_df` to attach a staged anatomy identity lookup to geometry-only ROI/anatomy rows.
+  - changed `assign-hcr-identity` to recompute `functional_roi_activity_identity.csv` from staged ROI/anatomy geometry plus the recomputed `anatomy_identity_lookup.csv`.
+  - preserved pass-through trace-quality/response/BPI columns from the accepted ROI master schema so `score-activity-bpi` can still consume the staged assign output by default.
+  - used subagents to audit the next scientific slice and the separate dependency/freshness hardening option.
+- What changed:
+  - `assign-hcr-identity` now writes recomputed `anatomy_identity_lookup.csv` and recomputed `functional_roi_activity_identity.csv`; HCR activity/status/pair/candidate CSVs are still staged from accepted registration outputs.
+  - the stage records explicit checks for recomputed ROI identity master row presence and accepted-control `plane_idx,func_label -> geometry/identity` parity.
+- What remains broken:
+  - HCR activity tables (`hcr_activity_status.csv`, `hcr_activity_status_summary.csv`, `conf_to_func_pairs_raw.csv`, `conf_to_func_pairs.csv`, `hcr_func_candidates.csv`) are still staged from accepted registration outputs.
+  - true HCR warp recomputation, full NCC/ANTs geometry parity, and dependency/freshness status hardening remain later work.
+- Remaining in-slice work:
+  - none for ROI identity master recompute promotion.
+- Next likely breakpoint:
+  - either promote HCR activity table recomputation as a separate higher-blast-radius slice, or implement read-only dependency/freshness status hardening for validated upstream roots.
+- Rerun implications:
+  - `python3 -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/matching.py tests/test_pipeline.py tools/single_fish_pipeline.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "assign_hcr_identity or attach_identity"` passed locally with `5 passed, 88 deselected`.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_activity.py tests/test_package_exports.py tests/test_agent_docs.py` passed locally with `111 passed, 50 warnings`.
+  - Remote evidence from `/tmp/codeants-roi-identity-U3kd0T`: after rsyncing the current worktree to `linnaeus`, `match-roi-to-anatomy --source-root`, `register-hcr-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, `compare-staged --stage-name assign-hcr-identity`, and `compare-staged --stage-name score-activity-bpi` all completed without errors. `assign-hcr-identity` reported `warn` only for expected ROI master CSV byte-parity drift, with 4,530 recomputed ROI identity rows, accepted keyed/exact/numeric parity, 137 recomputed anatomy lookup rows, 4 HCR label TIFFs, and 162 accepted HCR final-pair rows. `score-activity-bpi` reported expected score CSV byte-parity warnings only.
+
+### 2026-06-30 - promote anatomy identity lookup recompute
+
+- Slice goal:
+  - promote the smallest true identity recompute step behind the validated staged geometry gates.
+- Passes completed in this session:
+  - changed `assign-hcr-identity` to recompute `anatomy_identity_lookup.csv` from staged HCR final-pair CSVs instead of copying that file from the accepted registration root.
+  - preserved the dependency gates on staged ROI/anatomy geometry and staged HCR/anatomy aligned artifacts.
+  - kept ROI identity and HCR activity CSVs as accepted baseline-staged artifacts for later promotion.
+  - fixed gene ordering by passing `FunctionalRoiIdentityConfig.default_gene_order` into `build_anat_identity_lookup_df`, matching accepted control labels such as `sst1.1/pth2`.
+- What changed:
+  - `assign-hcr-identity` now writes a hybrid bundle: recomputed `anatomy_identity_lookup.csv` plus copied/staged ROI identity and HCR activity CSVs.
+  - the stage records explicit checks for recomputed lookup row presence and accepted-control `anat_label -> identity_label` parity.
+- What remains broken:
+  - `functional_roi_activity_identity.csv`, `hcr_activity_status.csv`, `hcr_activity_status_summary.csv`, `conf_to_func_pairs_raw.csv`, `conf_to_func_pairs.csv`, and `hcr_func_candidates.csv` are still staged from accepted registration outputs.
+  - true HCR warp recomputation and true ROI/anatomy recompute parity remain later work.
+- Remaining in-slice work:
+  - none for lookup-only identity recompute promotion.
+- Next likely breakpoint:
+  - promote ROI identity/HCR activity table recomputation from staged ROI/anatomy geometry plus staged anatomy identity lookup, or harden dependency/freshness reporting for the new upstream roots.
+- Rerun implications:
+  - `python3 -m py_compile src/codeants_2pf_hcr/pipeline.py tests/test_pipeline.py tools/single_fish_pipeline.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -k "assign_hcr_identity"` passed locally with `4 passed, 88 deselected`.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py tests/test_agent_docs.py tests/test_activity.py` passed locally with `110 passed, 50 warnings`.
+  - Remote evidence from `/tmp/codeants-identity-lookup-heGiyt`: after rsyncing the current worktree to `linnaeus`, `match-roi-to-anatomy --source-root`, `register-hcr-to-anatomy`, `assign-hcr-identity`, and `compare-staged --stage-name assign-hcr-identity` all reported `status=pass`, `errors=0`, `warnings=0`. The assign manifest saw 4,530 staged ROI/anatomy geometry rows, geometry-only status `complete`, 4 staged HCR/anatomy labels, 162 accepted staged final-pair rows, 137 recomputed anatomy identity lookup rows, and accepted-control lookup parity `complete`.
+
+### 2026-06-30 - validate full staged post-geometry chain
+
+- Slice goal:
+  - prove the newly staged ROI/anatomy and HCR/anatomy roots feed the downstream writer chain through figures in one temporary real-data pipeline root.
+- Passes completed in this session:
+  - rsynced the current worktree to `linnaeus`.
+  - ran `match-roi-to-anatomy`, `register-hcr-to-anatomy`, dependency-aware `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, and `make-figures` against `L395_f11` in one temp `--pipeline-root`.
+  - ran `audit-score-activity-bpi` and `compare-staged` for `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, and `make-figures`.
+  - used a subagent to confirm the appropriate validation surface for the chain.
+- What changed:
+  - no code changes were needed for this validation slice.
+  - roadmap docs now record that the full staged post-geometry chain is runnable from one temp root.
+- What remains broken:
+  - true identity recomputation is still not promoted.
+  - true HCR warp recomputation and full ANTs functional registration parity remain later work.
+  - dependency/freshness reporting for the new upstream staged roots is still limited compared with the downstream `compare-staged` surfaces.
+- Remaining in-slice work:
+  - none for full-chain validation.
+- Next likely breakpoint:
+  - start true identity recompute promotion behind the validated geometry gates, or harden freshness/status reporting for upstream staged roots.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py tests/test_pipeline.py tests/test_package_exports.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py tests/test_agent_docs.py tests/test_activity.py` passed locally with `110 passed, 50 warnings`.
+  - `git diff --check` passed locally.
+  - Remote evidence from `/tmp/codeants-full-chain-2ftcXn`: all writer commands exited 0 with empty stderr. `match-roi-to-anatomy`, `register-hcr-to-anatomy`, `assign-hcr-identity`, and `make-qa-report` reported `pass`; `score-activity-bpi` and `export-canonical-tables` reported `warn` only for expected CSV byte-parity differences; `make-figures` reported `warn` only for the rendered responsive-identity donut thumbnail. `assign-hcr-identity` used the default staged dependency roots and saw 4,530 ROI/anatomy rows, geometry-only status `complete`, 4 HCR label TIFFs, and 162 accepted final-pair rows. `audit-score-activity-bpi` passed with the real experiment log. `compare-staged` results: assign `pass`, score `warn` with 0 failed/2 warning checks, export `warn` with 0 failed/2 warning checks, report `pass`, figures `warn` with 0 failed/1 thumbnail warning.
+
+### 2026-06-30 - gate assign-hcr-identity on staged geometry dependencies
+
+- Slice goal:
+  - connect staged ROI/anatomy geometry plus staged HCR/anatomy artifacts into the `assign-hcr-identity` boundary without letting activity/BPI influence matching.
+- Passes completed in this session:
+  - changed `run_single_fish_assign_hcr_identity_stage` to require staged `match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv`.
+  - changed the same stage to require staged `register-hcr-to-anatomy/confocal/aligned/` HCR label TIFFs and accepted final-pair CSVs.
+  - added `--roi-anatomy-root` and `--hcr-anatomy-root` CLI overrides for controlled validation.
+  - added focused tests for dependency pass/fail behavior and updated direct assign/export tests to seed staged geometry dependencies.
+  - used a subagent blast-radius audit to confirm the affected tests and downstream risks.
+  - ran the staged `match-roi-to-anatomy` -> `register-hcr-to-anatomy` -> `assign-hcr-identity` chain on `linnaeus`.
+- What changed:
+  - `assign-hcr-identity` still stages the accepted baseline identity/HCR CSV bundle, but only after upstream staged geometry checks pass.
+  - ROI/anatomy dependency checks require a non-empty geometry table and reject identity, response, BPI, and gene columns.
+  - HCR/anatomy dependency checks require aligned label TIFFs, accepted final-pair rows, the 12-column pair schema, and `quality=good`/`pair_type=1-1`/`within_gate=True` semantics.
+- What remains broken:
+  - true identity recomputation is still not promoted; the stage still copies the accepted identity/HCR registration CSV bundle after dependency checks.
+  - full end-to-end staged chain through score/export/report/figures from the new upstream roots remains a follow-up validation slice.
+- Remaining in-slice work:
+  - none for the dependency-aware baseline identity boundary.
+- Next likely breakpoint:
+  - run the full staged chain from `match-roi-to-anatomy` and `register-hcr-to-anatomy` through `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, and `make-figures` in one temp root, then decide whether to start true identity recompute promotion.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py tests/test_pipeline.py tests/test_package_exports.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py tests/test_agent_docs.py tests/test_activity.py` passed locally with `110 passed, 50 warnings`.
+  - `git diff --check` passed locally.
+  - Remote evidence from `/tmp/codeants-assign-boundary-cWGOKi`: staged `match-roi-to-anatomy`, staged `register-hcr-to-anatomy`, then `assign-hcr-identity --force-recompute` all exited 0 with empty stderr. The assign manifest reported `status=pass`, default `roi_anatomy_root=/tmp/codeants-assign-boundary-cWGOKi/staged-L395/match-roi-to-anatomy/registration`, default `hcr_anatomy_root=/tmp/codeants-assign-boundary-cWGOKi/staged-L395/register-hcr-to-anatomy/confocal/aligned`, 4,530 ROI/anatomy geometry rows, geometry-only status `complete`, 4 HCR/anatomy label TIFFs, 162 accepted final-pair rows, passing final-pair schema/acceptance checks, and 7 staged identity/HCR CSV outputs.
+
+### 2026-06-30 - add aligned-artifact register-hcr-to-anatomy writer
+
+- Slice goal:
+  - promote the smallest HCR-to-anatomy registration writer before identity promotion, without rerunning BigWarp/ANTs or copying multi-GB intensity volumes into every staged root.
+- Passes completed in this session:
+  - added package-owned `register-hcr-to-anatomy` staging from an explicit or default accepted `03_analysis/confocal/aligned/` source root.
+  - exposed `--source-root`, `--output-root`, and `--force-recompute` through `tools/single_fish_pipeline.py`.
+  - exported `hcr_to_anatomy_registration_root` and `run_register_hcr_to_anatomy_stage` through the package surface.
+  - added focused package, overwrite, missing-artifact, CLI, schema/acceptance, and package-export coverage.
+  - used a subagent to audit real `L395_f11` aligned artifacts and transform provenance on `linnaeus`.
+  - rsynced the current worktree to `linnaeus` and validated real accepted HCR aligned artifacts.
+- What changed:
+  - the stage copies small accepted aligned TIFF/CSV/JSON artifacts into `register-hcr-to-anatomy/confocal/aligned/`.
+  - copied artifacts include aligned HCR label/QC TIFFs, match/review/final-pair CSVs, and warp metadata JSONs.
+  - large aligned intensity NRRDs are recorded as inputs but not copied.
+  - final-pair CSVs are checked for the 12-column HCR/anatomy pair schema and accepted-row semantics: `quality=good`, `pair_type=1-1`, and `within_gate=True`.
+- What remains broken:
+  - true HCR warp recomputation is not yet implemented as a staged writer.
+  - `assign-hcr-identity` still stages accepted identity/HCR CSVs rather than recomputing identity from staged `match-roi-to-anatomy` and `register-hcr-to-anatomy` outputs.
+  - downstream status/compare surfaces do not yet treat the new upstream staged geometry roots as freshness dependencies.
+- Remaining in-slice work:
+  - none for the first aligned-artifact writer validation slice.
+- Next likely breakpoint:
+  - connect staged ROI/anatomy geometry plus staged HCR/anatomy artifacts into the `assign-hcr-identity` boundary without letting activity/BPI influence matching.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py tests/test_pipeline.py tests/test_package_exports.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py tests/test_agent_docs.py tests/test_activity.py` passed locally with `109 passed, 50 warnings`.
+  - `git diff --check` passed locally.
+  - Remote evidence from `/tmp/codeants-register-hcr-Atb5Hl`: `register-hcr-to-anatomy --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-register-hcr-Atb5Hl/staged-L395 --source-root /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/03_analysis/confocal/aligned --force-recompute` exited 0 with `status=pass`, empty stderr, `copy_policy=csv_json_tif_only`, 46 copied small artifacts, 6 aligned intensity NRRD inputs, 0 copied NRRDs, 4 label TIFFs, 4 match CSVs, 4 final-pair CSVs, 162 accepted final-pair rows, 10 warp metadata JSONs, and passing final-pair schema/acceptance checks.
+
+### 2026-06-30 - add control-geometry match-roi-to-anatomy writer
+
+- Slice goal:
+  - promote the smallest ROI/anatomy geometry writer after NCC-only functional-to-anatomy registration while preserving geometry-before-identity semantics.
+- Passes completed in this session:
+  - added package-owned `match-roi-to-anatomy` control-geometry staging from an explicit accepted registration `--source-root`.
+  - exposed `--source-root`, explicit plane/anatomy recompute inputs, `--output-root`, and `--force-recompute` through `tools/single_fish_pipeline.py`.
+  - exported `roi_to_anatomy_match_root`, `load_plane_refs_summary`, and `run_match_roi_to_anatomy_stage` through the package surface.
+  - added focused package, overwrite, missing-column, CLI, recompute-smoke, and package-export coverage.
+  - used a subagent audit to identify `register-hcr-to-anatomy` as the next smallest writer after this slice.
+  - rsynced the current worktree to `linnaeus` and validated real `L395_f11` accepted registration geometry.
+- What changed:
+  - control mode stages `functional_roi_anatomy_matches.csv`, `functional_roi_anatomy_match_by_plane.csv`, and `functional_roi_anatomy_match_plane_meta.csv` under `match-roi-to-anatomy/registration`.
+  - staged detail output is geometry-only and excludes identity, HCR, response, BPI, and gene columns.
+  - the stage refuses to overwrite existing outputs unless `--force-recompute` is set.
+- What remains broken:
+  - true NCC-derived ROI/anatomy recompute parity is not yet the accepted path.
+  - HCR-to-anatomy registration/matching is still missing as a staged writer.
+  - identity recomputation remains downstream of both ROI/anatomy geometry and HCR/anatomy registration.
+- Remaining in-slice work:
+  - none for the first control-geometry writer validation slice.
+- Next likely breakpoint:
+  - implement the smallest `register-hcr-to-anatomy` writer that stages/audits accepted HCR aligned artifacts before identity promotion.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py tests/test_pipeline.py tests/test_package_exports.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py tests/test_agent_docs.py tests/test_activity.py` passed locally with `105 passed, 50 warnings`.
+  - `git diff --check` passed locally.
+  - Remote evidence from `/tmp/codeants-match-roi-rXBNLP`: `match-roi-to-anatomy --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-match-roi-rXBNLP/staged-L395 --source-root /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/03_analysis/functional/registration --force-recompute` exited 0 with `status=pass`, empty stderr, `mode=control_geometry`, 5 planes, 4,530 geometry rows, 3,724 unique anatomy matches, and geometry-only columns.
+
+### 2026-06-28 - add NCC-only register-functional-to-anatomy writer
+
+- Slice goal:
+  - promote the first functional-to-anatomy registration writer after staged functional references and in vivo anatomy preparation became available.
+- Passes completed in this session:
+  - added staged registration helpers for functional reference pair discovery and registration output root resolution.
+  - added package-owned `register-functional-to-anatomy` wrapping `[16]` NCC best-z/scale search and NCC-only `[20]` in-plane comparison.
+  - exposed the stage through `tools/single_fish_pipeline.py` with explicit reference/anatomy/output roots, in-plane method controls, `--no-cv2`, and `--force-recompute`.
+  - added focused package, CLI, help, and package-export regression coverage.
+  - used a subagent audit to tighten durable output scope around `plane_refs_summary.json` instead of serializing array-bearing plane refs.
+  - rsynced the current worktree to `linnaeus` and validated real `L395_f11` functional reference plus anatomy inputs.
+- What changed:
+  - `register-functional-to-anatomy` reconstructs in-memory `plane_refs` from staged functional reference TIFFs, consumes the prepared anatomy stack, writes `ncc_scale_by_fish.json`, `ncc_bestz_by_plane.json`, in-plane comparison/recommendation CSVs, NCC warped reference TIFFs, `plane_refs_summary.json`, and a staged `registration/tforms_by_plane.csv`.
+  - the first writer is intentionally NCC-only by default; it does not claim ANTs parity and does not promote ROI/anatomy matching.
+- What remains broken:
+  - full multi-plane `L395_f11` registration parity against accepted notebook/ANTs outputs is not yet validated.
+  - ROI/anatomy matching remains the next staged writer target.
+  - HCR-to-anatomy registration and HCR matching remain later roadmap work.
+- Remaining in-slice work:
+  - none for the first NCC-only registration writer validation slice.
+- Next likely breakpoint:
+  - implement the smallest `match-roi-to-anatomy` writer that consumes staged `register-functional-to-anatomy` outputs and preserves geometry-before-identity semantics.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` passed locally with `83 passed, 50 warnings`.
+  - Remote evidence from `/tmp/codeants-register-func-lki3lJ`: after preparing one real `L395_f11` functional reference in the same temp pipeline root, `register-functional-to-anatomy --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-register-func-lki3lJ/staged-L395 --anatomy-stack-path /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/02_reg/00_preprocessing/2p_anatomy/L395_f11_anatomy_2P_GCaMP.nrrd --no-cv2 --force-recompute` exited 0 with `status=pass`, empty stderr, one reference input, NCC caches, comparison/recommendation CSVs, warped reference output, `plane_refs_summary.json`, and one-row `tforms_by_plane.csv`; the summary recorded label `L395_f11_plane0_mcorrected_flipX`, index `0`, scale `1.0`, best_z `124`, `216` NCC scores, and active method `ncc_xy`.
+
+### 2026-06-28 - add prepare-functional-reference-stacks writer
+
+- Slice goal:
+  - promote the next upstream preprocessing writer needed before functional-to-anatomy registration.
+- Passes completed in this session:
+  - added package-owned `prepare-functional-reference-stacks` wrapping `[12]` functional reference preparation.
+  - exposed the stage through `tools/single_fish_pipeline.py` with repeatable `--functional-stack-path`, optional `--output-dir`, and `--force-recompute`.
+  - added focused package, source-discovery, CLI, and package-export regression coverage.
+  - used subagent audits to confirm functional references should precede `register-functional-to-anatomy`, and that `L395_f11`/`L765_f02` have usable mounted source data.
+  - rsynced the current worktree to `linnaeus` and validated a real `L395_f11` motion-corrected stack against `/Volumes/dataDrive/dataProcessing/2p_processing`.
+- What changed:
+  - `prepare-functional-reference-stacks` now discovers `02_reg/00_preprocessing/2p_functional/02_motionCorrected/*mcorrected*.tif`, resolves polarity, calls `spatial.build_functional_references_stage`, and records raw/norm reference TIFF pairs in a stage manifest.
+  - default outputs are staged under `--pipeline-root/prepare-functional-reference-stacks/functional/raw/`, preserving legacy-compatible filenames while avoiding default writes to the fish `03_analysis/functional/raw/` folder.
+- What remains broken:
+  - full multi-plane real-data rebuild/parity is not yet run; the remote validation used one explicit `L395_f11` motion-corrected stack.
+  - functional-to-anatomy registration is still not a staged writer and remains the next dependency-aware target.
+- Remaining in-slice work:
+  - none for the first functional-reference writer validation slice.
+- Next likely breakpoint:
+  - implement `register-functional-to-anatomy` around staged functional references, prepared in vivo anatomy, NCC/ANTs registration helpers, and temp-root outputs.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py` passed locally with `81 passed, 46 warnings`.
+  - Remote evidence from `/tmp/codeants-func-refs-n5H1wp`: `prepare-functional-reference-stacks --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-func-refs-n5H1wp/staged-L395 --functional-stack-path /Volumes/dataDrive/dataProcessing/2p_processing/L395_f11/02_reg/00_preprocessing/2p_functional/02_motionCorrected/L395_f11_plane0_mcorrected.tif --force-recompute` exited 0 with `status=pass`, empty stderr, one raw reference TIFF, one normalized reference TIFF, and polarity `south` from `matchingMetadata.csv:polarity`.
+
+### 2026-06-28 - add prepare-in-vivo-anatomy-stack writer
+
+- Slice goal:
+  - promote a concrete canonical in vivo anatomy preparation writer that can be validated from available mounted `linnaeus` data after ex vivo/Cellpose positive validation proved input-blocked there.
+- Passes completed in this session:
+  - added package-owned `prepare-in-vivo-anatomy-stack` wrapping `[14a]` signed-anatomy uint8/NRRD preprocessing.
+  - exposed the stage through `tools/single_fish_pipeline.py` with explicit source/output paths and `--force-recompute`.
+  - added focused package, CLI, default-discovery, and package-export regression coverage.
+  - patched default raw anatomy discovery to exclude ex vivo-looking candidates.
+  - rsynced the current worktree to `linnaeus` and validated `L765_f02` against `/Volumes/dataDrive/dataProcessing/2p_processing`.
+- What changed:
+  - `prepare-in-vivo-anatomy-stack` now writes/checks the canonical registration-ready in vivo anatomy NRRD and JSON provenance through the staged manifest surface.
+  - default source discovery selected `/Volumes/dataDrive/dataProcessing/2p_processing/L765_f02/01_raw/2p/anatomy/L765_f02_anatomy_00001.tif` instead of any bridge/ex vivo candidate.
+  - remote stdout remains valid JSON; the observed `tifffile` reshape warning is confined to stderr.
+- What remains broken:
+  - the generic roadmap `contracts` surface is still the post-preprocessing stage order; granular preprocessing writer names are tracked separately.
+  - broader preprocessing comparison/freshness coverage is not implemented.
+  - positive ex vivo anatomy/HCR Cellpose validation remains blocked on `linnaeus` by missing ex vivo/rbest inputs and still points to Helga/NAS or staged inputs.
+- Remaining in-slice work:
+  - none for the in vivo anatomy writer validation slice.
+- Next likely breakpoint:
+  - if staying on `linnaeus`, audit and promote the next package-owned upstream writer that can be validated from mounted data, likely functional reference stack preparation.
+- Rerun implications:
+  - `python -m py_compile src/codeants_2pf_hcr/pipeline.py src/codeants_2pf_hcr/context.py src/codeants_2pf_hcr/__init__.py tools/single_fish_pipeline.py` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_package_exports.py tests/test_agent_docs.py tests/test_activity.py` passed locally with `95 passed, 42 warnings`.
+  - Remote evidence from `/tmp/codeants-stream-check-sUzWQC`: `prepare-in-vivo-anatomy-stack --fish-id L765_f02 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --pipeline-root /tmp/codeants-stream-check-sUzWQC/staged-L765 --output-path /tmp/codeants-stream-check-sUzWQC/staged-L765/prepare-in-vivo-anatomy-stack/2p_anatomy/L765_f02_anatomy_2P_GCaMP.nrrd --force-recompute` exited 0 with `status=pass`, output shape `[76, 750, 750]`, source shape `[76, 512, 512]`, and polarity `north` from `2026-05-12-1329_fL765_f02_metadata.csv:fish_orientation`.
+
+### 2026-06-27 - harden L765_f02 ex vivo validation failure manifests
+
+- Slice goal:
+  - make the next upstream ex vivo/Cellpose validation attempt produce structured evidence on `linnaeus` even when the needed real-data inputs are absent.
+- Passes completed in this session:
+  - added explicit `--no-gpu` CLI support for Cellpose writer commands while keeping GPU as the default for Helga runs.
+  - changed granular ex vivo/HCR writer wrappers so missing ex vivo/rbest prerequisites return JSON stage manifests instead of tracebacks or dependency-import failures.
+  - added local CLI regression coverage for missing `prepare-ex-vivo-anatomy-stack` source data and `segment-hcr-cellpose --no-gpu` manifest parameters.
+  - rsynced the current worktree to `/tmp/codeants-roadmap-yuuF1Y/codeANTs` on `linnaeus` and ran the `L765_f02` validation commands against `/Volumes/dataDrive/dataProcessing/2p_processing`.
+- What changed:
+  - `prepare-ex-vivo-anatomy-stack` reports `status=fail` with a missing ex vivo stack error when no ex vivo file is discoverable under `01_raw/2p/anatomy`.
+  - `segment-ex-vivo-anatomy-cellpose` reports `status=fail` before importing Cellpose when the explicit manual-oriented ex vivo NRRD is absent.
+  - `segment-hcr-cellpose` reports `status=fail` before importing Cellpose when the requested HCR source directory such as `02_reg/00_preprocessing/rbest` is absent.
+- What remains broken:
+  - `linnaeus` has Cellpose model files but the mounted `L765_f02` folder lacks the ex vivo anatomy stack, the manual-oriented ex vivo NRRD, and the `rbest` HCR intensity directory needed for positive validation.
+  - positive Cellpose validation still likely needs the Helga NAS workflow, where the richer `Y:\default\D2c\07_Data\Danin\Microscopy\L765_f02` path is expected.
+- Remaining in-slice work:
+  - none for structured missing-input reporting on `linnaeus`.
+- Next likely breakpoint:
+  - either run `tools/helga_l765_f02_cellpose_job.bat` in a headful Helga SSH session with NAS credentials, or move to the next package-owned upstream preprocessing writer that can be validated from mounted `linnaeus` data.
+- Rerun implications:
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py` passed locally with `74 passed`.
+  - Earlier in the same session, `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py tests/test_activity.py` passed locally with `91 passed`.
+  - Remote evidence from `linnaeus` temp worktree: `prepare-ex-vivo-anatomy-stack` failed structurally with `No ex vivo anatomy stack found under /Volumes/dataDrive/dataProcessing/2p_processing/L765_f02/01_raw/2p/anatomy`; `segment-ex-vivo-anatomy-cellpose --no-gpu` failed structurally because the manual-oriented NRRD was missing; `segment-hcr-cellpose --hcr-source rbest --no-gpu` failed structurally because the `rbest` directory was missing while the HCR model file existed.
+
+### 2026-06-27 - add declared legacy-baseline bundle commands
+
+- Slice goal:
+  - make the documented frozen legacy-baseline command surface real for declared post-processing outputs.
+- Passes completed in this session:
+  - added package-owned `freeze-legacy-baseline` support that copies declared legacy/control outputs into `DATA_ROOT/pipeline_baselines/FISH_ID/legacy_singleFish/stages/<stage>/...`.
+  - added package-owned `compare-legacy-baseline` support that compares staged outputs against the frozen bundle using the existing CSV/figure comparison semantics.
+  - exposed both commands through `tools/single_fish_pipeline.py`.
+  - added focused local tests for freeze, overwrite refusal, comparison warnings, CLI help, and CLI JSON.
+- What changed:
+  - legacy-baseline commands are no longer roadmap-only for declared post-processing stage specs.
+- What remains broken:
+  - frozen bundles cover declared post-processing outputs only; preprocessing comparisons, non-declared comparison groups, and true recomputation of baseline identity/remaining figures are still separate roadmap work.
+- Remaining in-slice work:
+  - none for declared post-processing legacy-baseline command surface.
+- Next likely breakpoint:
+  - decide whether to validate frozen bundle behavior on `L395_f11` or move to the next upstream preprocessing/registration writer slice.
+- Rerun implications:
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -k 'legacy_baseline or cli_help'` passed locally.
+  - `PYTHONPATH=src pytest -q tests/test_package_exports.py` passed locally.
+  - remote validation from `/tmp/codeants-legacy-baseline-B8ASDO`: staged assign `pass`, score/export `warn` with known byte-parity warnings, mixed-render make-figures `warn` with one responsive-donut thumbnail warning, `freeze-legacy-baseline --stage-name make-figures` `pass` with 5 copied outputs, and `compare-legacy-baseline --stage-name make-figures` `warn` with zero failed checks and the same responsive-donut thumbnail warning. The remote run used a temp local root with `L395_f11` symlinked in, so the frozen bundle was written under `/tmp`, not the real data root.
+
+### 2026-06-27 - make-figures renders two package-owned outputs
+
+- Slice goal:
+  - promote the documented `make-figures` mixed render/baseline behavior into the package writer.
+- Passes completed in this session:
+  - added explicit rendered-vs-legacy figure groups in `pipeline.py`.
+  - changed `run_single_fish_make_figures_stage` to render `single_fish_50l_responsive_identity_donut.*` from staged `functional_roi_activity_identity.csv` and `conf_to_func_pairs.csv`.
+  - changed `run_single_fish_make_figures_stage` to render `single_fish_hcr_anatomy_coexpression_summary.*` from staged `hcr_activity_status.csv`.
+  - kept `compound_50j_56i_unified.png`, `bpi_all_pairs.png`, and `per_gene_stimulus_trace_with_hcr_status_56h.png` as legacy copied outputs.
+- What changed:
+  - `make-figures` no longer copies all five declared figure PNGs; two outputs are generated from staged canonical CSVs, and the manifest records `rendered_figures` plus `legacy_copied_figures`.
+  - added lightweight `plots.hcr.render_single_fish_hcr_anatomy_coexpression_summary` for staged pipeline use without importing broad QA overlay dependencies.
+  - made `plots` package exports lazy so one renderer import does not load unrelated plotting stacks.
+- What remains broken:
+  - three declared figures still depend on legacy `04_plots` artifacts until their full package-owned render inputs are staged.
+  - real-data visual comparison may report dimension/thumbnail warnings for rendered replacement figures and should be reviewed before treating them as visually promoted.
+- Remaining in-slice work:
+  - none for this mixed-render writer promotion; the next figure promotion is a separate slice.
+- Next likely breakpoint:
+  - promote one of the remaining copied figure artifacts only after its required staged table/trace inputs are available.
+- Rerun implications:
+  - `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` passed locally.
+  - remote validation from `/tmp/codeants-makefig-render-fh3fjg`: assign `pass`; score `warn` with 2 warnings; export `warn` with 2 warnings; mixed-render `make-figures` `warn` with zero errors and one responsive-donut thumbnail warning; strict `compare-staged --stage-name make-figures` `warn` with zero failed checks and one responsive-donut thumbnail warning.
+
+### 2026-06-26 - strengthen Cellpose segmentation writer contracts
+
+- Slice goal:
+  - make upstream segmentation writer error/reuse surfaces explicit before attempting real GPU-backed Cellpose validation.
+- Passes completed in this session:
+  - added local tests for `segment-ex-vivo-anatomy-cellpose` missing prepared stack/model manifest failure.
+  - added local tests for `segment-hcr-cellpose` cached-mask reuse without a model.
+  - added local tests for `segment-hcr-cellpose` missing model failure when cached masks are absent.
+  - added CLI JSON coverage for the cached HCR segmentation path.
+- What changed:
+  - segmentation writer tests now lock the expectation that stage failures are reported through JSON manifests rather than uncontrolled crashes.
+  - cached HCR masks remain an accepted pass path when `skip_if_exists` can avoid running Cellpose.
+- What remains broken:
+  - no positive Cellpose execution path is validated locally or remotely in this slice.
+  - ex vivo real-data candidates were not visible for `L765_f02` under the mounted `linnaeus` data root searched in this session.
+- Remaining in-slice work:
+  - none for dependency-safe local segmentation contract coverage.
+- Next likely breakpoint:
+  - run positive Cellpose validation on Helga or another environment with models/data available, or move to functional/anatomy preprocessing writer coverage.
+- Rerun implications:
+  - local validation passed: `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` (`87 passed`).
+
+### 2026-06-26 - strengthen `prepare-ex-vivo-anatomy-stack` contracts
+
+- Slice goal:
+  - move upstream from post-processing by locking the first concrete preprocessing writer slice with real contract tests.
+- Passes completed in this session:
+  - added tests that run `prepare-ex-vivo-anatomy-stack` on a tiny TIFF input and verify NRRD/JSON outputs.
+  - added cache-reuse coverage showing an existing prepared output is reused without `--force-recompute`.
+  - added CLI JSON coverage for explicit `--ex-vivo-stack-path` and `--output-path`.
+  - updated roadmap docs to mark ex vivo prep as the first locally covered upstream preprocessing writer slice.
+- What changed:
+  - local tests now exercise the real context-owned ex vivo preprocessing path instead of only checking paths/discovery.
+- What remains broken:
+  - real-data validation still needs a fish with ex vivo anatomy input, such as `L765_f02`; `L395_f11` is not the right validation target for this upstream slice.
+  - `segment-hcr-cellpose` and `segment-ex-vivo-anatomy-cellpose` still need stronger local/remote contract coverage.
+- Remaining in-slice work:
+  - none for local ex vivo prep contract coverage.
+- Next likely breakpoint:
+  - validate `prepare-ex-vivo-anatomy-stack` on a real ex vivo fish, or add dependency-safe contract coverage for one of the Cellpose segmentation writer stages.
+- Rerun implications:
+  - local validation passed: `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` (`83 passed`).
+
+### 2026-06-26 - add generated `make-qa-report` writer
+
+- Slice goal:
+  - make the report phase concrete with a package-owned generated Markdown/JSON QA report over staged canonical outputs.
+- Passes completed in this session:
+  - added `run_single_fish_make_qa_report_stage` in `src/codeants_2pf_hcr/pipeline.py`.
+  - exposed `tools/single_fish_pipeline.py make-qa-report`.
+  - added focused tests for missing staged canonical exports, Markdown/JSON report generation, overwrite refusal, CLI JSON output, and `compare-staged --stage-name make-qa-report`.
+  - ran real-data staged `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, `make-figures`, and strict report/figure staged comparisons on `L395_f11` from a fresh `linnaeus` temp workspace.
+  - updated roadmap/current-state/symbol docs to include `make-qa-report` in the current post-preprocessing writer surface.
+- What changed:
+  - `make-qa-report` writes `qa_report.md` and `qa_report_summary.json` under `pipeline_root/make-qa-report/`.
+  - the report summarizes staged canonical table presence/row counts and declared post-preprocessing output completeness for review.
+- What remains broken:
+  - this is a compact generated report, not a full biologist-facing HTML/PDF/notebook QA report.
+  - richer report content, identity recomputation, package-rendered figure replacement, and upstream preprocessing/geometry writers remain roadmap targets.
+- Remaining in-slice work:
+  - none for generated `make-qa-report` validation.
+- Next likely breakpoint:
+  - after remote report validation, choose between richer report content, true identity recomputation, package-rendered figure replacement, or upstream geometry/preprocessing writers.
+- Rerun implications:
+  - local validation passed: `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` (`80 passed`).
+  - remote validation passed from `/tmp/codeants-qa-report-8lRb2t`: `make-qa-report` wrote Markdown/JSON artifacts, strict report comparison passed, and the summary JSON recorded 8 canonical tables plus 4 post-preprocessing stage summaries.
+
+### 2026-06-26 - add baseline `assign-hcr-identity` writer surface
+
+- Slice goal:
+  - promote `assign-hcr-identity` from read-only staged-output inventory to a package-owned baseline writer surface so downstream score/export stages can consume staged identity/HCR outputs by default.
+- Passes completed in this session:
+  - added `run_single_fish_assign_hcr_identity_stage` in `src/codeants_2pf_hcr/pipeline.py`.
+  - exposed `tools/single_fish_pipeline.py assign-hcr-identity`.
+  - added focused tests for identity/HCR artifact staging, overwrite refusal, CLI JSON output, and default downstream `export-canonical-tables` use of the staged assign root.
+  - ran real-data staged `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-figures`, and strict staged comparisons on `L395_f11` from a fresh `linnaeus` temp workspace without explicit HCR bootstrap roots.
+  - updated roadmap/current-state/symbol docs to describe `assign-hcr-identity` as a baseline staging writer, not a true identity recomputation migration.
+- What changed:
+  - the writer stages `functional_roi_activity_identity.csv`, `anatomy_identity_lookup.csv`, `hcr_activity_status.csv`, `hcr_activity_status_summary.csv`, `conf_to_func_pairs_raw.csv`, `conf_to_func_pairs.csv`, and `hcr_func_candidates.csv`.
+  - `export-canonical-tables` can now consume staged assign outputs by default when the assign writer has seeded the chosen `--pipeline-root`.
+- What remains broken:
+  - true identity/HCR recomputation is still not implemented; this writer stages accepted registration artifacts first to lock manifest/overwrite/comparison behavior.
+  - upstream geometry/preprocessing writers remain roadmap targets.
+- Remaining in-slice work:
+  - none for baseline `assign-hcr-identity` writer validation.
+- Next likely breakpoint:
+  - after real-data validation, choose between true identity recomputation, package-rendered figure replacement, or moving upstream toward geometry/preprocessing writers.
+- Rerun implications:
+  - local validation passed: `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` (`75 passed`).
+  - remote validation passed from `/tmp/codeants-assign-5G6XJ1`: `assign-hcr-identity` wrote 7 staged CSVs and strict comparison passed; downstream score/export/make ran from staged assign defaults, with export reporting only two CSV byte-parity warnings and zero failed checks.
+
+### 2026-06-26 - add baseline `make-figures` writer surface
+
+- Slice goal:
+  - create the first package-owned `make-figures` writer contract so final figure artifacts have the same CLI/manifest/overwrite/comparison surface as upstream staged outputs.
+- Passes completed in this session:
+  - added `run_single_fish_make_figures_stage` in `src/codeants_2pf_hcr/pipeline.py`.
+  - exposed `tools/single_fish_pipeline.py make-figures`.
+  - added focused tests for missing staged canonical exports, declared figure artifact staging, overwrite refusal, and CLI JSON output.
+  - ran real-data staged `score-activity-bpi`, `export-canonical-tables`, baseline `make-figures`, and strict `compare-staged --stage-name make-figures` on `L395_f11` from a fresh `linnaeus` temp workspace.
+  - updated roadmap/current-state/symbol docs to describe `make-figures` as a baseline staging writer, not a package-rendered figure migration.
+- What changed:
+  - `make-figures` now requires staged canonical export CSV inputs before staging final figure artifacts.
+  - the writer copies the five declared baseline PNGs from `04_plots` or an explicit figure input root into `pipeline_root/make-figures/04_plots`.
+- What remains broken:
+  - package-rendered replacement of copied figure artifacts is still a future figure-specific promotion step.
+  - `assign-hcr-identity` remains the unpromoted post-preprocessing writer; export still needs explicit HCR/bootstrap roots until that stage is promoted.
+- Remaining in-slice work:
+  - none for baseline `make-figures` writer validation.
+- Next likely breakpoint:
+  - promote upstream `assign-hcr-identity` to remove explicit HCR/control bootstrap roots, or start replacing copied baseline figures with package-rendered outputs one figure at a time.
+- Rerun implications:
+  - focused local validation passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py` (`53 passed`).
+  - remote validation passed from `/tmp/codeants-figures-hV4SBO`: `make-figures` wrote 5 staged figure PNGs with no errors/warnings, and strict `compare-staged --stage-name make-figures` reported `pass`, zero failed checks, and zero warnings.
+
+### 2026-06-26 - cover staged `export-canonical-tables` writer locally
+
+- Slice goal:
+  - finish the local contract coverage for the partially promoted `export-canonical-tables` writer before real-data validation.
+- Passes completed in this session:
+  - updated stale CLI tests so `export-canonical-tables` is treated as a runnable writer command.
+  - added focused tests for missing default upstream roots, staged score/HCR source precedence, explicit HCR bootstrap roots, overwrite refusal, and CLI JSON output.
+  - ran real-data staged `score-activity-bpi`, `export-canonical-tables`, and strict `compare-staged --stage-name export-canonical-tables` on `L395_f11` from a fresh `linnaeus` temp workspace.
+  - updated roadmap/current-state/symbol docs to distinguish read-only stage-status from the promoted `score-activity-bpi` and `export-canonical-tables` writers.
+- What changed:
+  - the local pipeline suite now asserts that ROI/BPI canonical exports come from staged `score-activity-bpi/registration/`.
+  - the local pipeline suite now asserts that HCR-centric canonical exports come from staged `assign-hcr-identity/registration/` or an explicit `--hcr-input-root` bootstrap root.
+- What remains broken:
+  - HCR-centric canonical exports still depend on staged/explicit HCR identity roots until `assign-hcr-identity` is promoted as a writer.
+  - downstream `make-figures` and upstream `assign-hcr-identity` writer promotion remain roadmap targets.
+- Remaining in-slice work:
+  - none for local/real-data export writer validation.
+- Next likely breakpoint:
+  - choose whether to promote downstream `make-figures` from staged canonical exports or upstream `assign-hcr-identity` to remove the explicit HCR/control bootstrap root.
+- Rerun implications:
+  - local validation passed: `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` (`67 passed`).
+  - remote validation passed from `/tmp/codeants-export-Dy53Yf`: `score-activity-bpi` wrote 3 staged score CSVs with 2 byte-parity warnings; `export-canonical-tables` wrote 8 staged canonical CSVs with 2 byte-parity warnings; strict `compare-staged --stage-name export-canonical-tables` reported `warn`, zero failed checks, and 2 CSV byte-parity warnings.
+
+### 2026-06-26 - persist audit manifests and lock L395 baseline decision
+
+- Slice goal:
+  - make the first staged audit/status surface durable without enabling staged output writers.
+- Passes completed in this session:
+  - recorded the user decision that existing `L395_f11` staged outputs are the first baseline/control and preprocessing is out of scope for this slice.
+  - added explicit `audit-inputs --write-manifest` support for persisting only the audit manifest.
+  - added status comparison of persisted versus current audit inputs, including missing/current/stale/invalid states.
+  - added focused tests for explicit manifest writing, stale detection, invalid manifest failure, default no-write behavior, CLI opt-in writing, and staged canonical CSV parity mismatch.
+- What changed:
+  - default `contracts`, `audit-inputs`, and `status` remain read-only/dry-run.
+  - `audit-inputs --write-manifest` writes `03_analysis/functional/pipeline_manifests/audit-inputs_manifest.json` but does not write staged analysis outputs.
+  - `status` now reports persisted audit manifest state and warns when tracked input records differ from the saved manifest.
+  - glob manifest records now include aggregate file size and max file mtime so changed files inside a glob can mark the saved audit stale.
+- What remains broken:
+  - stale-state reporting is currently limited to the persisted `audit-inputs` manifest input records.
+  - downstream stage dependency/output freshness, writer stages, and preprocessing migration are still not implemented in this slice.
+- Remaining in-slice work:
+  - none for the manifest/status slice.
+- Next likely breakpoint:
+  - extend stale-state reporting only after the next downstream read-only stage declares expected inputs/outputs in tests.
+- Rerun implications:
+  - minimum validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py`, then real-data `audit-inputs --write-manifest` and `status` on `L395_f11`.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`25 passed`).
+  - `linnaeus` did not have `pytest` installed in the system `python3` environment, so remote unit tests were not run there.
+  - `linnaeus` real-data validation passed: `PYTHONPATH=src python3 tools/single_fish_pipeline.py audit-inputs --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict --write-manifest`, then `status` reported `pass`, 64 input records, 71 checks, persisted `audit-inputs_manifest.json` status `current`, and no stale records/warnings/errors.
+
+### 2026-06-26 - add read-only downstream stage-status manifests
+
+- Slice goal:
+  - move existing post-preprocessing staged outputs from optional audit evidence to explicit read-only stage-status manifests without enabling writer stages.
+- Passes completed in this session:
+  - added read-only downstream stage manifest support for `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, and `make-figures`.
+  - added `tools/single_fish_pipeline.py stage-status --stage-name STAGE_NAME` with optional `--write-manifest`.
+  - extended top-level `status` with downstream stage summaries and persisted-manifest current/stale/fail state.
+  - tightened docs so current CLI behavior is not described as writer/recompute/promote behavior.
+- What changed:
+  - stage-specific status now fails when an existing staged output folder is incomplete, while missing untouched staged folders are shown as `not_started` in top-level `status`.
+  - `stage-status --write-manifest` refreshes per-stage manifests under `03_analysis/functional/pipeline_manifests/`.
+  - downstream stage checks compare declared staged CSV row/header shape or figure presence against the existing control outputs.
+- What remains broken:
+  - these are still read-only inventories over existing outputs; they do not execute/recompute downstream writer stages.
+  - preprocessing, writer-stage execution, full compare-staged behavior, and visual/numeric tolerance reports remain roadmap targets.
+- Remaining in-slice work:
+  - none for the read-only downstream stage-status surface.
+- Next likely breakpoint:
+  - implement the first actual writer stage only after its declared inputs/outputs and read-only status remain stable on control data.
+- Rerun implications:
+  - minimum validation: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py`, then `stage-status --strict` for each downstream stage on `L395_f11`.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`35 passed`).
+  - `linnaeus` real-data `stage-status --strict` passed for `assign-hcr-identity` (7 outputs, 14 checks), `score-activity-bpi` (3 outputs, 6 checks), `export-canonical-tables` (8 outputs, 16 checks), and `make-figures` (5 outputs, 10 checks).
+  - after refreshing those four manifests with `stage-status --write-manifest`, top-level `status` on `L395_f11` reported `pass`; all downstream persisted manifests reported `current`.
+
+### 2026-06-26 - add read-only post-preprocessing compare-staged
+
+- Slice goal:
+  - make `compare-staged` runnable for existing post-preprocessing staged outputs without enabling writer stages or freezing separate baseline bundles.
+- Passes completed in this session:
+  - added package-owned read-only comparison manifests for the same four downstream stages as `stage-status`.
+  - added `tools/single_fish_pipeline.py compare-staged --stage-name STAGE_NAME`.
+  - updated docs/tests so `compare-staged` is current but scoped to declared post-preprocessing outputs only.
+- What changed:
+  - CSV comparisons require matching header and row count, and emit warnings for byte differences.
+  - figure comparisons require the control figure to exist and the staged figure to be non-empty.
+  - `anatomy_identity_lookup.csv` has no control path and is checked as a non-empty CSV.
+- What remains broken:
+  - numeric tolerance reports, row-level semantic diff reports, visual thumbnail comparison, preprocessing comparisons, baseline freeze/compare commands, and writer-stage execution remain roadmap targets.
+- Remaining in-slice work:
+  - none for the read-only post-preprocessing comparison surface.
+- Next likely breakpoint:
+  - add richer comparison reports or start the first writer stage once comparison requirements are stable.
+- Rerun implications:
+  - minimum validation: local focused tests, then `compare-staged --strict` on `L395_f11`.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`39 passed`).
+  - `linnaeus` real-data aggregate `compare-staged --strict` on `L395_f11` returned `warn` with no failed checks: `assign-hcr-identity` 4 byte-parity warnings, `score-activity-bpi` 2, `export-canonical-tables` 6, and `make-figures` pass.
+  - `compare-staged --write-manifest` refreshed comparison manifests with the same no-failure result.
+
+### 2026-06-25 - add agentic workflow living roadmap
+
+- Slice goal:
+  - make the staged pipeline/agentic workflow migration trackable across sessions without relying on temporary handoff files.
+- Passes completed in this session:
+  - added `.agents/references/agentic-workflow-roadmap.md` as the compact operational status board.
+  - routed staged pipeline / agentic workflow migration tasks to the new roadmap from the single-fish router.
+  - added doc-test coverage so the roadmap remains discoverable from `AGENTS.md` and the router.
+- What changed:
+  - future workflow sessions should update the roadmap after meaningful design, implementation, validation, or breakage discoveries.
+  - the roadmap explicitly records that documented `pipeline.py` / `tools/single_fish_pipeline.py` commands are currently target contract, not runnable implementation in this checkout.
+- What remains broken:
+  - the package-owned staged pipeline module and CLI wrapper still need to be implemented.
+- Next likely breakpoint:
+  - create `src/codeants_2pf_hcr/pipeline.py`, `tools/single_fish_pipeline.py`, and focused `tests/test_pipeline.py` for the first `contracts` / `audit-inputs` slice.
+- Rerun implications:
+  - doc-only change; run `PYTHONPATH=src pytest -q tests/test_agent_docs.py`.
+
+### 2026-06-25 - add read-only staged pipeline first pass
+
+- Slice goal:
+  - create a safe first-pass command surface that can inspect real fish folders without writing pipeline artifacts.
+- Passes completed in this session:
+  - added `src/codeants_2pf_hcr/pipeline.py` with stage contracts, read-only path resolution, manifest records, and a dry-run `audit-inputs` stage.
+  - added `tools/single_fish_pipeline.py` with `contracts` and read-only `audit-inputs`.
+  - added focused `tests/test_pipeline.py` coverage for stage order, dry-run behavior, strict missing-input failure, and CLI JSON output.
+  - exported the new package symbols lazily and updated `symbol-index.md` / roadmap docs.
+- What changed:
+  - agents can now inspect the declared staged workflow and run a non-writing input audit before any real-data writer stage exists.
+  - the input audit now inventories processed-control prerequisites across metadata, Suite2p, anatomy preprocessing, HCR masks, functional registration, NCC comparison, canonical ROI/HCR/activity/BPI tables, final plots, and existing staged outputs.
+  - the input audit now includes lightweight semantic checks for Suite2p plane completeness, `tforms_by_plane.csv` row count versus Suite2p planes, core canonical CSV row presence, and required schemas for transform/ROI/BPI/HCR tables.
+  - added cross-table checks for Suite2p/tforms/ROI/BPI plane consistency, ROI/BPI key equality, HCR candidate key subset, and responsive-pair key subset.
+  - added value-level checks for geometry-before-identity flags, response domains, BPI numeric values, HCR trace-export selection consistency, responsive-pair selection consistency, and optional staged-vs-control table/figure parity.
+  - added read-only `status` summary command for the current dry-run trust state.
+- What remains broken:
+  - downstream stages after `audit-inputs` are declarative only.
+  - semantic validation is still partial across the full roadmap because it has only been verified on `L395_f11`; persisted manifest/stale-state checks and writer stages remain disabled.
+  - `status` summarizes dry-run state only; it does not yet read persisted manifests or detect stale outputs.
+  - `L395_f11` has no non-sidecar raw functional files and no files under `03_analysis/functional/registration/reference_planes`; these are currently optional.
+- Next likely breakpoint:
+  - decide whether to formalize the existing `L395_f11` staged outputs as a baseline or freeze a separate baseline bundle before enabling writer stages.
+- Rerun implications:
+  - no fish outputs are written by this slice.
+- Validation:
+  - local focused tests passed: `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` (`16 passed`).
+  - `linnaeus` read-only real-data dry run passed on `L395_f11`: `PYTHONPATH=src python3 tools/single_fish_pipeline.py audit-inputs --fish-id L395_f11 --local-root /Volumes/dataDrive/dataProcessing/2p_processing --strict`.
+  - latest `L395_f11` dry-run evidence: 64 manifest input records; 71 semantic checks passing, including required schema, cross-table consistency, value-domain/selection, and staged parity checks; 1 metadata CSV; 1 experiment log CSV; 10 each Suite2p ops/F/Fneu/iscell/stat files; 5 Suite2p planes; 5 `tforms_by_plane.csv` rows; 4530 ROI identity rows; 4530 ROI activity/BPI cell rows; 162 HCR status rows; 40 responsive HCR/function pairs; 4 HCR masks; 8 staged canonical export CSVs; 12 staged figure outputs; no errors/warnings; no outputs written.
+
 ### 2026-06-25 - restore default 2P anatomy XY mirroring in `[14a]`
 
 - Slice goal:
@@ -1544,6 +3183,25 @@
 - Rerun implications:
   - rerun `[14a]` and downstream same-fish registration stages for fish whose anatomy NRRDs were generated before this change.
 
+### 2026-06-26 - granular Helga Cellpose stages for L765_f02 ex vivo/HCR segmentation
+
+- Slice goal:
+  - make Helga-backed Cellpose segmentation possible for the ex vivo anatomy and rbest HCR intensity stacks without hiding distinct data-handling operations behind a generic preprocessing command.
+- Passes completed in this session:
+  - added concrete CLI writer stages `prepare-ex-vivo-anatomy-stack`, `segment-ex-vivo-anatomy-cellpose`, and `segment-hcr-cellpose`.
+  - added package-owned pipeline wrappers/manifests for granular Cellpose/preparation stages, plus HCR source filtering for `rbest`/`rn` discovery.
+  - added Helga batch helpers for the credential-safe, temporary NAS `Y:` mapping workflow and the `L765_f02` Cellpose job.
+  - updated roadmap/current-state/stage-map docs so future agents use concrete operation names and keep ex vivo structural outputs under `03_analysis/structural/ex_vivo/`.
+  - corrected the `L765_f02` Helga job so anatomy Cellpose segments `02_reg/00_preprocessing/2p_anatomy/ex_vivo/L765_f02_exvivo_anatomy_2P_GCaMP_uint8_manual_oriented.nrrd`, not the raw or pre-manual/pre-rotation stack.
+- What changed:
+  - ex vivo anatomy Cellpose masks and manifests are isolated under `03_analysis/structural/ex_vivo/`.
+  - HCR Cellpose can be restricted to rbest intensity stacks, avoiding unrelated confocal sources during the ex vivo matching test.
+  - Helga NAS credentials are not stored on Helga or in the repo; the user enters the university password into a headful SSH session, and the batch files map `Y:` with `/persistent:no` for that session only.
+- What remains broken:
+  - the first real Helga job attempt used the wrong `--local-root` and the wrong ex vivo anatomy source; those scripts/docs were corrected, but the corrected real segmentation run still needs to be launched headfully.
+- Rerun implications:
+  - run `tools/helga_l765_f02_cellpose_job.bat` on Helga after entering NAS credentials, then verify manifests and masks in `L765_f02/03_analysis/structural/ex_vivo/` and `L765_f02/03_analysis/confocal/raw/cp_masks/`.
+
 ### 2026-06-17 - in vivo and ex vivo anatomy preprocessing are NRRD-only
 
 - Slice goal:
@@ -1560,3 +3218,88 @@
 - Rerun implications:
   - rerunning `[14a]` updates metadata sidecars and should not recreate `*_uint8.tif`; existing duplicate TIFF artifacts can be removed once the canonical NRRD for a fish is verified readable.
   - for ex vivo bridge work, launch `tools/ex_vivo_manual_orientation_gui.py` on fish folders, review rotations interactively, and apply centered `750x750` crops unless a different registration target is intentional.
+
+### 2026-06-26 - richer read-only `compare-staged` semantics
+
+- Slice goal:
+  - harden the existing read-only staged comparison surface before adding frozen-baseline commands or more writer stages.
+- Passes completed in this session:
+  - extended `StageOutputSpec` with declared CSV key, exact-cell, and numeric-cell comparison metadata.
+  - added table-specific comparison columns for ROI identity, activity/BPI cells and summary, HCR activity status, responsive HCR/function pairs, and HCR/function candidates.
+  - kept byte-identical CSV parity as warn-only so accepted reordered/equivalent outputs can still explain formatting/order differences.
+  - added focused tests for keyed row reordering, missing/extra keys, duplicate keys, exact semantic mismatches, numeric tolerance, non-numeric declared numeric cells, and figure dimension/thumbnail checks.
+  - added dependency-free PNG dimension checks for figure outputs plus optional Pillow thumbnail MAE/RMS warnings when available.
+- What changed:
+  - `compare-staged` now reports semantic CSV failures beyond header/row-count shape when table semantics are declared.
+  - numeric cell checks use `1e-5` absolute tolerance after `L395_f11` showed accepted BPI control-vs-staged differences up to `4.32679e-06`.
+  - figure comparison now reports dimension drift; thumbnail pixel metrics are available in local/Pillow-capable Python environments but skipped on minimal remote Python.
+  - no baseline bundle writer was added; the current slice still uses existing `L395_f11` staged outputs as the first control.
+- Validation:
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py` passed with `50 passed`.
+  - A temporary current-worktree copy on `linnaeus` ran `compare-staged --strict` against `L395_f11`; aggregate status was `warn`, with zero failed checks, CSV byte-parity warnings (`assign-hcr-identity`: 4, `score-activity-bpi`: 2, `export-canonical-tables`: 6), and one make-figures warning for `bpi_all_pairs.png` dimension drift.
+- What remains broken:
+  - preprocessing comparisons, legacy baseline freeze/compare commands, full biologist-facing visual review reports, and most package-owned writer stages remain roadmap targets.
+
+### 2026-06-26 - read-only `score-activity-bpi` recompute audit
+
+- Slice goal:
+  - add a real-recompute audit surface for activity/BPI scoring before promoting any writer that persists scored outputs.
+- Passes completed in this session:
+  - added `build_single_fish_score_activity_bpi_recompute_manifest` in `pipeline.py`.
+  - added CLI command `audit-score-activity-bpi`.
+  - required unscored ROI trace-quality inputs (`activity_class`, `is_active`) and called `activity.build_response_bpi_tables` with `precomputed_scored_bpi_df=None`.
+  - compared recomputed in-memory scored ROI, BPI cell, and BPI summary tables to control CSVs with declared key/exact/numeric semantics.
+  - narrowed `activity.py` and `suite2p.py` import surfaces so response/BPI table recompute does not require notebook/image dependencies such as `skimage`.
+  - aligned `ActivityConfig.zero_band` to the notebook/control `[50ia]` default of `0.50`.
+  - kept `functional_roi_activity_bpi_cells.csv` identity-neutral while preserving anatomy identity in the authoritative ROI master table.
+  - added focused tests for scored-only input rejection, mocked real recompute comparison, CLI JSON output, and read-only behavior.
+- What changed:
+  - agents can now audit whether persisted Suite2p/stimulus/ROI inputs are sufficient for real `score-activity-bpi` recomputation without writing staged CSV outputs.
+- What remains broken:
+  - real-data `audit-score-activity-bpi --strict` on `L395_f11` now passes from a temporary current-worktree copy on `linnaeus`; it should remain the guardrail for score writer and downstream export promotion.
+
+### 2026-06-26 - package-owned `score-activity-bpi` writer
+
+- Slice goal:
+  - promote the passing real-recompute activity/BPI path into the first post-preprocessing staged writer without copying control outputs.
+- Passes completed in this session:
+  - added `run_single_fish_score_activity_bpi_stage` in `pipeline.py`.
+  - added CLI command `score-activity-bpi`.
+  - made staged output specs and status/comparison helpers honor `PipelineConfig.pipeline_root`, so writer validation can target a temporary staged output root instead of mounted control data.
+  - defaulted writer identity input to `pipeline_root/assign-hcr-identity/registration/functional_roi_activity_identity.csv`; explicit `--identity-input-path` is available for controlled validation/bootstrap only.
+  - hard-coded `precomputed_scored_bpi_df=None`, fails if the recompute path reports `stim_source=precomputed`, and writes the three DataFrames returned by `activity.build_response_bpi_tables`.
+  - added an overwrite gate so existing staged score CSVs are not replaced without `--force-recompute`.
+  - added focused tests for default staged-identity requirement, custom `pipeline_root` writes, no use of the precomputed shortcut, overwrite refusal, CLI exposure, and structured CLI manifest output.
+- What changed:
+  - `score-activity-bpi` now writes:
+    - `PIPELINE_ROOT/score-activity-bpi/registration/functional_roi_activity_identity.csv`
+    - `PIPELINE_ROOT/score-activity-bpi/registration/functional_roi_activity_bpi_cells.csv`
+    - `PIPELINE_ROOT/score-activity-bpi/registration/functional_roi_activity_bpi_summary.csv`
+  - `audit-score-activity-bpi` remains read-only and should still be used as the recompute guardrail.
+- Validation so far:
+  - `PYTHONPATH=src pytest -q tests/test_pipeline.py -q` passed.
+  - `PYTHONPATH=src pytest -q tests/test_activity.py tests/test_pipeline.py tests/test_agent_docs.py tests/test_package_exports.py && git diff --check` passed with `62 passed`.
+  - A temporary current-worktree copy on `linnaeus` ran `score-activity-bpi --strict` on `L395_f11` with `--pipeline-root /tmp/codeants-score-writer-SbYYLr/staged-L395` and explicit control identity input. The writer created all three staged score CSVs, returned `warn` with no errors, passed true-recompute and row/key/exact/numeric checks, and reported only two byte-parity warnings.
+  - The same temp output root passed `compare-staged --stage-name score-activity-bpi --strict` with status `warn`, zero failed checks, and the same two byte-parity warnings.
+- What remains broken:
+  - upstream `assign-hcr-identity`, downstream `export-canonical-tables`, and figure/report writer promotion remain roadmap targets.
+  - real-data `score-activity-bpi` writer validation should run with a temporary `--pipeline-root` and explicit identity input before touching default fish staged outputs.
+
+### 2026-07-12 - fresh Cellpose validation and segmentation deferral
+
+- Slice goal:
+  - close the remaining positive Cellpose/ex vivo validation gap without modifying accepted fish outputs.
+- Passes completed:
+  - reached Helga through `linnaeus` as an SSH jump host and staged all validation inputs under `C:\Users\zebrafish\codeants_jobs\roadmap_validation_20260712`.
+  - freshly segmented `L765_f02` manual-oriented ex vivo anatomy with Cellpose 4.0.8/CUDA; the 15,530-label output was byte-identical to the accepted NAS mask (`SHA-256 74a81490661374258f723c2c300530628d7b498167098b8a61de03fe65c4e97c`).
+  - freshly segmented both `L395_f11` rbest HCR marker stacks; an independent `tac3b` repeat was byte-identical to the first fresh result, proving deterministic execution in the current runtime.
+  - compared current Cellpose 4.0.8, isolated 4.0.7, and an NRRD-header anisotropy diagnostic. Version 4.0.7 reproduced the 4.0.8 fresh mask exactly; anisotropy caused severe under-segmentation and was not promoted.
+  - ran fresh masks through direct ANTs HCR/anatomy recompute. Fresh final pairs retained `8/9` accepted `sst1.2` anatomy identities and `46/62` accepted `tac3b` identities, so the unmanifested November 2025 masks are not reproducible enough for promotion.
+  - by explicit user decision, deferred HCR segmentation parity to the planned replacement segmentation workflow rather than keeping it as a blocker for this staged-pipeline roadmap.
+- Code changes:
+  - Cellpose writer manifests now record Python, Cellpose, Torch, platform, CUDA/device, requested-GPU, and model SHA-256 provenance.
+  - the Cellpose CLI paths capture third-party console output so stdout remains valid JSON; package/notebook calls retain their normal logging behavior.
+  - preserved prior effective HCR segmentation semantics; the unsuccessful automatic NRRD-anisotropy change was reverted.
+- Validation:
+  - focused spatial/segmentation/pipeline tests passed with `155 passed, 61 warnings` before the unsuccessful anisotropy behavior was reverted; final validation is recorded in the active roadmap completion audit.
+  - final repository validation passed after documentation-contract reconciliation: the full suite reached `370 passed` before the sole wording-contract correction, the corrected documentation/package-export suite passed `14 passed`, `compileall` passed, and `git diff --check` passed.

@@ -14,6 +14,7 @@ from codeants_2pf_hcr.plots.analysis import (
     render_cohort_56h_status_donut_grid,
     render_cohort_50l_responsive_identity_donut_row,
     render_cohort_motion_auc,
+    render_single_fish_bpi_all_pairs_diagnostics,
     render_single_fish_50l_responsive_identity_donut,
     render_single_fish_50l_bpi_panel,
     render_single_fish_50l_composite,
@@ -149,6 +150,107 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertAlmostEqual(float(plot_df.loc[0, "bpi"]), 0.3, places=6)
         finally:
             plt.close(fig)
+
+    def test_render_single_fish_bpi_all_pairs_diagnostics_outputs_png(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bpi_csv = root / "functional_roi_activity_bpi_cells.csv"
+            master_csv = root / "functional_roi_activity_identity.csv"
+            bpi_df = pd.DataFrame(
+                {
+                    "fish_id": ["fishA", "fishA", "fishA", "fishA"],
+                    "gene": ["sst1.1", "sst1.1", "npy", "npy"],
+                    "plane_idx": [0, 0, 0, 0],
+                    "func_label": [1, 2, 3, 4],
+                    "mean_bout_zdff": [0.7, 0.2, -0.1, 0.3],
+                    "mean_cont_zdff": [0.1, 0.3, 0.5, 0.2],
+                    "bpi": [0.75, -0.2, -0.7, 0.1],
+                }
+            )
+            master_df = pd.DataFrame(
+                {
+                    "fish_id": ["fishA", "fishA", "fishA", "fishA"],
+                    "plane_idx": [0, 0, 0, 0],
+                    "func_label": [1, 2, 3, 4],
+                    "response_class": [
+                        "bout-responsive",
+                        "low activity",
+                        "continuous-responsive",
+                        "response unavailable",
+                    ],
+                    "response_summary_class": [
+                        "Responsive neurons",
+                        "Low activity",
+                        "Responsive neurons",
+                        "Response unavailable",
+                    ],
+                    "response_is_active": [True, False, True, False],
+                }
+            )
+            bpi_df.to_csv(bpi_csv, index=False)
+            master_df.to_csv(master_csv, index=False)
+
+            out = render_single_fish_bpi_all_pairs_diagnostics(
+                bpi_cells_csv=bpi_csv,
+                master_detail_csv=master_csv,
+                fish_id="fishA",
+                outdir=root / "plots",
+                zero_band=0.25,
+                dpi=80,
+            )
+            try:
+                self.assertEqual(Path(out["out_path"]).name, "bpi_all_pairs.png")
+                self.assertTrue(Path(out["out_path"]).exists())
+                self.assertTrue(Path(out["pdf_path"]).exists())
+                self.assertEqual(len(out["fig"].axes), 4)
+                self.assertEqual(len(out["df"]), 4)
+                self.assertIn("[56g] cells=4", out["log_lines"][0])
+            finally:
+                plt.close(out["fig"])
+
+    def test_render_single_fish_bpi_all_pairs_diagnostics_joins_identity_gene(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bpi_csv = root / "functional_roi_activity_bpi_cells.csv"
+            master_csv = root / "functional_roi_activity_identity.csv"
+            pd.DataFrame(
+                {
+                    "fish_id": ["fishA", "fishA"],
+                    "plane_idx": [0, 0],
+                    "func_label": [1, 2],
+                    "mean_bout_zdff": [0.7, 0.2],
+                    "mean_cont_zdff": [0.1, 0.3],
+                    "bpi": [0.75, -0.2],
+                    "response_class": ["bout-responsive", "low activity"],
+                    "response_summary_class": ["Responsive neurons", "Low activity"],
+                    "response_is_active": [True, False],
+                }
+            ).to_csv(bpi_csv, index=False)
+            pd.DataFrame(
+                {
+                    "fish_id": ["fishA", "fishA"],
+                    "plane_idx": [0, 0],
+                    "func_label": [1, 2],
+                    "identity_label": ["sst1.1", pd.NA],
+                    "response_class": ["bout-responsive", "low activity"],
+                    "response_summary_class": ["Responsive neurons", "Low activity"],
+                    "response_is_active": [True, False],
+                }
+            ).to_csv(master_csv, index=False)
+
+            out = render_single_fish_bpi_all_pairs_diagnostics(
+                bpi_cells_csv=bpi_csv,
+                master_detail_csv=master_csv,
+                fish_id="fishA",
+                outdir=root / "plots",
+                zero_band=0.25,
+                dpi=80,
+            )
+            try:
+                self.assertEqual(out["df"]["gene"].astype(str).tolist(), ["sst1.1", "unidentified"])
+                self.assertTrue(Path(out["out_path"]).exists())
+            finally:
+                plt.close(out["fig"])
 
     def test_render_single_fish_50l_bpi_panel_excludes_response_unavailable(self) -> None:
         fig, ax = plt.subplots()

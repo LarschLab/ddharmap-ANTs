@@ -15,13 +15,25 @@ from codeants_2pf_hcr import (
     HcrActivityExportConfig,
     HcrCellposeConfig,
     InPlaneRegistrationComparisonConfig,
+    ManifestPathRecord,
     ManualAnatomyOrientationConfig,
     MultiFishAnatomySegmentationConfig,
     MultiFishFunctionalAnatomyMatchConfig,
+    PIPELINE_MANIFEST_VERSION,
+    PIPELINE_STAGE_ORDER,
+    POST_PREPROCESSING_STAGE_NAMES,
+    GRANULAR_PREPROCESSING_STAGE_NAMES,
+    PipelinePaths,
+    PersistedManifestStatus,
     SingleFishBpiDiagnosticsConfig,
     NotebookContractViolation,
     RegistrationSearchConfig,
+    SingleFishPipelineConfig,
     SmokeValidationError,
+    StageContract,
+    StageCheckRecord,
+    StageManifest,
+    StageOutputSpec,
     Suite2pStageConfig,
     Suite2pStimulusLockedDiagnosticConfig,
     VoxelStageConfig,
@@ -47,6 +59,8 @@ from codeants_2pf_hcr import (
     build_functional_references_stage,
     build_functional_roi_master_df,
     build_hcr_activity_tables,
+    finalize_hcr_activity_export_tables,
+    hcr_response_lookup_from_roi_master_df,
     build_single_fish_motion_auc_plot_tables,
     build_plane_centroid_matches,
     build_voxel_debug_stage,
@@ -57,6 +71,17 @@ from codeants_2pf_hcr import (
     build_response_bpi_tables,
     build_suite2p_response_seed_table,
     build_run_config_stage,
+    build_single_fish_compare_legacy_baseline_manifest,
+    build_single_fish_compare_staged_manifest,
+    build_single_fish_downstream_stage_manifest,
+    build_single_fish_downstream_stage_manifests,
+    build_single_fish_hcr_activity_replay_manifest,
+    build_single_fish_stage_status,
+    build_single_fish_status,
+    compare_persisted_manifest,
+    compare_single_fish_legacy_baseline,
+    compare_single_fish_staged_outputs,
+    cellpose_stage_manifest_path,
     build_suite2p_stimulus_locked_diagnostic,
     check_notebook_contract,
     collect_cohort_53a_tables,
@@ -69,6 +94,9 @@ from codeants_2pf_hcr import (
     compute_zscore_stats,
     classify_stim_type,
     deduplicate_hcr_intensity_targets,
+    describe_glob,
+    describe_manifest_path,
+    downstream_stage_names,
     export_suite2p_native_labels_stage,
     infer_frame_rate_from_detail,
     imread_any,
@@ -88,6 +116,17 @@ from codeants_2pf_hcr import (
     multifish_functional_anatomy_match_cache_paths,
     preprocess_anatomy_uint8_stage,
     preprocess_ex_vivo_anatomy_stage,
+    pipeline_contracts,
+    discover_functional_reference_pairs,
+    discover_functional_motion_corrected_stacks,
+    functional_to_anatomy_registration_root,
+    functional_reference_output_dir,
+    hcr_to_anatomy_registration_root,
+    load_plane_refs_summary,
+    prepared_in_vivo_anatomy_path,
+    prepared_ex_vivo_anatomy_path,
+    roi_to_anatomy_match_root,
+    run_single_fish_freeze_legacy_baseline_stage,
     orient_functional_stacks_stage,
     MotionAucPlotConfig,
     annotate_midline_side,
@@ -122,6 +161,7 @@ from codeants_2pf_hcr import (
     resolve_hcr_cellpose_model_path,
     resolve_native_suite2p_labels_for_plane,
     resolve_notebook_context_stage,
+    resolve_pipeline_paths,
     resolve_presented_stimulus_metadata,
     resolve_plane_transform,
     resample_image,
@@ -130,11 +170,18 @@ from codeants_2pf_hcr import (
     resolve_voxel_context_stage,
     resolve_cohort_context_stage,
     run_hcr_cellpose_stage,
+    run_prepare_functional_reference_stacks_stage,
+    run_prepare_in_vivo_anatomy_stack_stage,
+    run_prepare_ex_vivo_anatomy_stack_stage,
+    run_register_functional_to_anatomy_stage,
+    run_register_hcr_to_anatomy_stage,
+    run_match_roi_to_anatomy_stage,
     run_in_plane_registration_comparison_stage,
     run_ncc_placement_stage,
     run_registration_search_stage,
     run_multifish_anatomy_segmentation_stage,
     run_multifish_functional_anatomy_match_stage,
+    run_single_fish_audit_inputs_stage,
     run_single_fish_cell_22c_stage,
     run_single_fish_cell_30_stage,
     run_single_fish_cell_34c_stage,
@@ -163,6 +210,8 @@ from codeants_2pf_hcr import (
     run_single_fish_cell_56h_stage,
     run_single_fish_cell_57_stage,
     run_suite2p_stimulus_locked_diagnostic_stage,
+    run_segment_ex_vivo_anatomy_cellpose_stage,
+    run_segment_hcr_cellpose_stage,
     organize,
     run_smoke_tier,
     scale_image,
@@ -177,6 +226,10 @@ from codeants_2pf_hcr import (
     show_registration_overlay_stage,
     summarize_distances,
     summarize_functional_anatomy_geometry_metrics,
+    stage_manifest_to_json,
+    stage_manifest_path,
+    write_cellpose_stage_manifest,
+    write_stage_manifest,
     top_correlated_mean,
     zproject_mean,
 )
@@ -199,13 +252,26 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(HcrActivityExportConfig)
     assert callable(HcrCellposeConfig)
     assert callable(InPlaneRegistrationComparisonConfig)
+    assert callable(ManifestPathRecord)
     assert callable(ManualAnatomyOrientationConfig)
     assert callable(MultiFishAnatomySegmentationConfig)
     assert callable(MultiFishFunctionalAnatomyMatchConfig)
+    assert callable(PersistedManifestStatus)
+    assert PIPELINE_MANIFEST_VERSION == "0.1"
+    assert "audit-inputs" in PIPELINE_STAGE_ORDER
+    assert "make-figures" in POST_PREPROCESSING_STAGE_NAMES
+    assert "prepare-functional-reference-stacks" in GRANULAR_PREPROCESSING_STAGE_NAMES
+    assert "prepare-in-vivo-anatomy-stack" in GRANULAR_PREPROCESSING_STAGE_NAMES
+    assert callable(PipelinePaths)
     assert callable(SingleFishBpiDiagnosticsConfig)
     assert callable(NotebookContractViolation)
     assert callable(RegistrationSearchConfig)
+    assert callable(SingleFishPipelineConfig)
     assert callable(SmokeValidationError)
+    assert callable(StageContract)
+    assert callable(StageCheckRecord)
+    assert callable(StageManifest)
+    assert callable(StageOutputSpec)
     assert callable(Suite2pStageConfig)
     assert callable(Suite2pStimulusLockedDiagnosticConfig)
     assert callable(VoxelStageConfig)
@@ -231,6 +297,8 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_functional_references_stage)
     assert callable(build_functional_roi_master_df)
     assert callable(build_hcr_activity_tables)
+    assert callable(finalize_hcr_activity_export_tables)
+    assert callable(hcr_response_lookup_from_roi_master_df)
     assert callable(build_single_fish_motion_auc_plot_tables)
     assert callable(build_plane_centroid_matches)
     assert callable(build_voxel_debug_stage)
@@ -241,6 +309,17 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_response_bpi_tables)
     assert callable(build_suite2p_response_seed_table)
     assert callable(build_run_config_stage)
+    assert callable(build_single_fish_compare_legacy_baseline_manifest)
+    assert callable(build_single_fish_compare_staged_manifest)
+    assert callable(build_single_fish_downstream_stage_manifest)
+    assert callable(build_single_fish_downstream_stage_manifests)
+    assert callable(build_single_fish_hcr_activity_replay_manifest)
+    assert callable(build_single_fish_stage_status)
+    assert callable(build_single_fish_status)
+    assert callable(compare_persisted_manifest)
+    assert callable(compare_single_fish_legacy_baseline)
+    assert callable(compare_single_fish_staged_outputs)
+    assert callable(cellpose_stage_manifest_path)
     assert callable(build_suite2p_stimulus_locked_diagnostic)
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
@@ -253,6 +332,9 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(compute_zscore_stats)
     assert callable(corrcoef_img)
     assert callable(deduplicate_hcr_intensity_targets)
+    assert callable(describe_glob)
+    assert callable(describe_manifest_path)
+    assert callable(downstream_stage_names)
     assert callable(export_suite2p_native_labels_stage)
     assert callable(harmonize_functional_labels_to_anatomy)
     assert callable(hungarian_match)
@@ -274,6 +356,19 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(multifish_functional_anatomy_match_cache_paths)
     assert callable(preprocess_anatomy_uint8_stage)
     assert callable(preprocess_ex_vivo_anatomy_stage)
+    assert callable(pipeline_contracts)
+    assert callable(discover_functional_reference_pairs)
+    assert callable(discover_functional_motion_corrected_stacks)
+    assert callable(functional_to_anatomy_registration_root)
+    assert callable(functional_reference_output_dir)
+    assert callable(hcr_to_anatomy_registration_root)
+    assert callable(load_plane_refs_summary)
+    assert callable(prepared_in_vivo_anatomy_path)
+    assert callable(prepared_ex_vivo_anatomy_path)
+    assert callable(roi_to_anatomy_match_root)
+    assert callable(run_match_roi_to_anatomy_stage)
+    assert callable(run_register_hcr_to_anatomy_stage)
+    assert callable(run_single_fish_freeze_legacy_baseline_stage)
     assert callable(norm01)
     assert callable(orient_functional_stacks_stage)
     assert callable(MotionAucPlotConfig)
@@ -310,15 +405,21 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(resolve_hcr_cellpose_model_path)
     assert callable(resolve_native_suite2p_labels_for_plane)
     assert callable(resolve_notebook_context_stage)
+    assert callable(resolve_pipeline_paths)
     assert callable(resolve_presented_stimulus_metadata)
     assert callable(resolve_voxel_context_stage)
     assert callable(resolve_cohort_context_stage)
     assert callable(run_hcr_cellpose_stage)
+    assert callable(run_prepare_functional_reference_stacks_stage)
+    assert callable(run_prepare_in_vivo_anatomy_stack_stage)
+    assert callable(run_prepare_ex_vivo_anatomy_stack_stage)
+    assert callable(run_register_functional_to_anatomy_stage)
     assert callable(run_in_plane_registration_comparison_stage)
     assert callable(run_ncc_placement_stage)
     assert callable(run_registration_search_stage)
     assert callable(run_multifish_anatomy_segmentation_stage)
     assert callable(run_multifish_functional_anatomy_match_stage)
+    assert callable(run_single_fish_audit_inputs_stage)
     assert callable(run_single_fish_cell_22c_stage)
     assert callable(run_single_fish_cell_30_stage)
     assert callable(run_single_fish_cell_34c_stage)
@@ -347,6 +448,8 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(run_single_fish_cell_56h_stage)
     assert callable(run_single_fish_cell_57_stage)
     assert callable(run_suite2p_stimulus_locked_diagnostic_stage)
+    assert callable(run_segment_ex_vivo_anatomy_cellpose_stage)
+    assert callable(run_segment_hcr_cellpose_stage)
     assert callable(organize)
     assert callable(run_smoke_tier)
     assert callable(scale_image)
@@ -361,5 +464,9 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(show_registration_overlay_stage)
     assert callable(summarize_distances)
     assert callable(summarize_functional_anatomy_geometry_metrics)
+    assert callable(stage_manifest_to_json)
+    assert callable(stage_manifest_path)
+    assert callable(write_cellpose_stage_manifest)
+    assert callable(write_stage_manifest)
     assert callable(top_correlated_mean)
     assert callable(zproject_mean)

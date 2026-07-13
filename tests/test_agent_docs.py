@@ -18,6 +18,7 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn(".agents/references/recent-changes.md", source)
         self.assertIn(".agents/references/recent-changes-single-fish.md", source)
         self.assertIn(".agents/references/recent-changes-cohort.md", source)
+        self.assertIn(".agents/references/agentic-workflow-roadmap.md", source)
         self.assertIn("append the workflow-specific recent-changes file", source)
 
     def test_top_router_dispatches_to_profile_routers(self) -> None:
@@ -34,6 +35,8 @@ class AgentDocsTests(unittest.TestCase):
         cohort = _read(".agents/workflows/2pf-hcr-cohort-router.md")
         self.assertIn("references/notebook-stage-map.md", single)
         self.assertIn("references/recent-changes-single-fish.md", single)
+        self.assertIn("references/agentic-workflow-roadmap.md", single)
+        self.assertIn("references/single-fish-pipeline-roadmap.md", single)
         self.assertIn("Do **not** use `tools/` as business-logic authority.", single)
         self.assertIn("references/cohort-stage-map.md", cohort)
         self.assertIn("references/recent-changes-cohort.md", cohort)
@@ -86,6 +89,61 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("Run the smallest relevant smoke or contract test first.", source)
         self.assertIn("Validate the first downstream consumer of the edited writer stage.", source)
         self.assertIn("Do not declare success from static reasoning alone.", source)
+
+    def test_agentic_workflow_roadmap_tracks_operational_state(self) -> None:
+        source = _read(".agents/references/agentic-workflow-roadmap.md")
+        self.assertIn("living status board", source)
+        self.assertIn("## Working", source)
+        self.assertIn("## Broken Or Missing", source)
+        self.assertIn("## Next Slice", source)
+        self.assertIn("tools/single_fish_pipeline.py", source)
+
+    def test_single_fish_pipeline_roadmap_records_l395_baseline_decision(self) -> None:
+        source = _read(".agents/references/single-fish-pipeline-roadmap.md")
+        self.assertIn("use the existing `L395_f11` staged outputs as the first control/baseline", source)
+        self.assertIn("Preprocessing is intentionally out of scope for this slice", source)
+        self.assertIn("audit-inputs --fish-id FISH_ID --local-root DATA_ROOT --strict --write-manifest", source)
+        self.assertIn("stage-status --fish-id FISH_ID --local-root DATA_ROOT --strict --stage-name STAGE_NAME", source)
+        self.assertIn("compare-staged --fish-id FISH_ID --local-root DATA_ROOT --strict --stage-name STAGE_NAME", source)
+        self.assertIn("Target scaffold, not all currently runnable", source)
+        self.assertIn("freeze-legacy-baseline` and `compare-legacy-baseline` now provide a first frozen-bundle surface", source)
+        self.assertNotIn("Current `score-activity-bpi` / `export-canonical-tables` status:", source)
+        self.assertIn("baseline `make-figures --strict` now runs", source)
+        self.assertIn("compare-staged --stage-name make-figures", source)
+
+    def test_symbol_index_includes_pipeline_manifest_persistence_surface(self) -> None:
+        source = _read(".agents/references/symbol-index.md")
+        self.assertIn("PersistedManifestStatus", source)
+        self.assertIn("StageOutputSpec", source)
+        self.assertIn("stage_manifest_path", source)
+        self.assertIn("write_stage_manifest", source)
+        self.assertIn("compare_persisted_manifest", source)
+        self.assertIn("build_single_fish_compare_staged_manifest", source)
+        self.assertIn("build_single_fish_compare_legacy_baseline_manifest", source)
+        self.assertIn("build_single_fish_downstream_stage_manifest", source)
+        self.assertIn("run_single_fish_freeze_legacy_baseline_stage", source)
+        self.assertIn("compare_single_fish_legacy_baseline", source)
+        self.assertIn("compare_single_fish_staged_outputs", source)
+        self.assertIn("downstream_stage_names", source)
+        self.assertIn("--write-manifest", source)
+        self.assertIn("stage-status", source)
+        self.assertIn("compare-staged", source)
+        self.assertIn("freeze-legacy-baseline", source)
+        self.assertIn("compare-legacy-baseline", source)
+
+    def test_docs_describe_current_downstream_writer_stage_boundary(self) -> None:
+        current_state = _read(".agents/references/current-state.md")
+        stage_map = _read(".agents/references/notebook-stage-map.md")
+        self.assertIn(
+            "assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, and `make-figures` now also have writer commands",
+            current_state,
+        )
+        self.assertIn("Upstream preprocessing, registration, matching, and broader comparison commands remain declarative contracts only", current_state)
+        self.assertIn("These stages now have package-owned writer commands plus read-only status/comparison surfaces", stage_map)
+        self.assertIn("remaining migration work is stage-specific promotion of upstream writers", stage_map)
+        for source in (current_state, stage_map):
+            self.assertNotIn("staged CLI path now stages", source)
+            self.assertNotIn("promotes staged identity/score outputs", source)
 
 
 if __name__ == "__main__":

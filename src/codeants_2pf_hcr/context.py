@@ -13,8 +13,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy import ndimage
-from skimage import transform
-import tifffile
+try:
+    from skimage import transform
+except Exception:  # pragma: no cover - optional for path-only context consumers
+    transform = None
+try:
+    import tifffile
+except Exception:  # pragma: no cover - optional for path-only context consumers
+    tifffile = None
 
 from .spatial import _infer_voxels_nrrd, _res_to_um_per_px, apply_func_orientation, corrcoef_img, load_or_cache_voxels
 from .runtime import default_local_root as runtime_default_local_root
@@ -58,6 +64,18 @@ DEFAULT_RUN_CONFIG: dict[str, Any] = {
         "cort": "#8c564b",
     },
 }
+
+
+def _require_skimage_transform() -> Any:
+    if transform is None:
+        raise RuntimeError("scikit-image is required for this context image-resizing operation.")
+    return transform
+
+
+def _require_tifffile() -> Any:
+    if tifffile is None:
+        raise RuntimeError("tifffile is required for this context TIFF operation.")
+    return tifffile
 
 FORCE_TRUE_RUN_CONFIG_KEYS = (
     "RECOMPUTE_WARP",
@@ -857,7 +875,7 @@ def infer_anatomy_stack_path(fish_dir: Path | str, fish_id: str | None = None) -
         "*anatomy*_uint8.tif",
         "*anatomy*_uint8.tiff",
     )
-    excluded_tokens = ("cp_masks", "mask", "label", "overlay")
+    excluded_tokens = ("cp_masks", "mask", "label", "overlay", "ex_vivo", "exvivo", "ex-vivo", "ex vivo")
     raw_hits = _collect_anatomy_stack_candidates(
         fish_path / "01_raw" / "2p" / "anatomy",
         raw_patterns,
@@ -1487,8 +1505,9 @@ def _resize_uint8_xy(arr: np.ndarray, target_xy_shape: tuple[int, int] | None) -
     leading_shape = data.shape[:-2]
     flat = data.reshape((-1, current_xy[0], current_xy[1]))
     resized = np.empty((flat.shape[0], target[0], target[1]), dtype=np.uint8)
+    sk_transform = _require_skimage_transform()
     for idx, plane in enumerate(flat):
-        plane_resized = transform.resize(
+        plane_resized = sk_transform.resize(
             plane,
             target,
             order=1,
@@ -2990,7 +3009,8 @@ def build_registration_helper_stage(*, polarity: str | None) -> dict[str, Any]:
         target_shape = tuple(int(v) for v in out_shape)
         if arr32.shape == target_shape:
             return arr32
-        return transform.resize(
+        sk_transform = _require_skimage_transform()
+        return sk_transform.resize(
             arr32,
             target_shape,
             order=1,

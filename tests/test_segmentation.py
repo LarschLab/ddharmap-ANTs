@@ -6,6 +6,7 @@ import numpy as np
 import tifffile
 
 from codeants_2pf_hcr.segmentation import (
+    AnatomyCellposeConfig,
     HcrCellposeConfig,
     collect_hcr_intensity_stack_paths,
     deduplicate_hcr_intensity_targets,
@@ -13,6 +14,7 @@ from codeants_2pf_hcr.segmentation import (
     resolve_functional_labels_for_plane,
     resolve_hcr_cellpose_model_path,
     resolve_native_suite2p_labels_for_plane,
+    run_anatomy_cellpose_stage,
     run_hcr_cellpose_stage,
 )
 from codeants_2pf_hcr.plots.qa import show_centroid_match_qa_stage
@@ -26,13 +28,37 @@ class SegmentationTests(unittest.TestCase):
             rbest.mkdir()
             keep = rbest / "fish_rbest_channel2_gene.nrrd"
             keep_legacy = rbest / "fish_round1_channel2_gene.nrrd"
+            skip_sidecar = rbest / "._fish_rbest_channel2_gene.nrrd"
             skip_channel1 = rbest / "fish_rbest_channel1_GCaMP.nrrd"
             skip_fullbrain = rbest / "fish_fullbrain_r2_channel2_gene.nrrd"
             skip_masks = rbest / "fish_r3_channel2_gene_cp_masks.tif"
-            for path in (keep, keep_legacy, skip_channel1, skip_fullbrain, skip_masks):
+            for path in (keep, keep_legacy, skip_sidecar, skip_channel1, skip_fullbrain, skip_masks):
                 path.write_bytes(b"")
             paths = collect_hcr_intensity_stack_paths(preproc_dir=root)
             self.assertEqual(paths, [keep, keep_legacy])
+
+    def test_collect_hcr_intensity_stack_paths_filters_explicit_sidecars(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            keep = root / "fish_rbest_channel2_gene.nrrd"
+            skip_sidecar = root / "._fish_rbest_channel2_gene.nrrd"
+            keep.write_bytes(b"")
+            skip_sidecar.write_bytes(b"")
+            paths = collect_hcr_intensity_stack_paths(hcr_intensity_paths=[skip_sidecar, keep])
+            self.assertEqual(paths, [keep])
+
+    def test_collect_hcr_intensity_stack_paths_can_restrict_to_rbest(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            rbest = root / "rbest"
+            rn = root / "rn"
+            rbest.mkdir()
+            rn.mkdir()
+            keep_rbest = rbest / "fish_rbest_channel2_gene.nrrd"
+            skip_rn = rn / "fish_r2_channel2_gene.nrrd"
+            keep_rbest.write_bytes(b"")
+            skip_rn.write_bytes(b"")
+            self.assertEqual(collect_hcr_intensity_stack_paths(preproc_dir=root, source="rbest"), [keep_rbest])
 
     def test_deduplicate_hcr_intensity_targets_prefers_nrrd(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -214,6 +240,42 @@ class SegmentationTests(unittest.TestCase):
             self.assertEqual(result["status"], "cached")
             self.assertIn("CP_MODEL_PATH", result["bindings"])
             self.assertTrue(any("skipping Cellpose import/model load" in line for line in result["log_lines"]))
+            self.assertIn("python_version", result["runtime_provenance"])
+            self.assertIsNone(result["runtime_provenance"]["model_sha256"])
+            self.assertIsNone(result["runtime_provenance"]["cuda_available"])
+
+    def test_run_anatomy_cellpose_stage_uses_output_root_for_cached_masks(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            analysis_dir = root / "analysis"
+            output_root = analysis_dir / "structural" / "ex_vivo"
+            output_root.mkdir(parents=True)
+            source = root / "prepared_ex_vivo.tif"
+            model = root / "model"
+            mask_dir = output_root / "cp_masks"
+            mask_dir.mkdir(parents=True)
+            mask_path = mask_dir / "prepared_ex_vivo_8bit_cp_masks.tif"
+            source_arr = np.zeros((2, 3, 4), dtype=np.uint8)
+            tifffile.imwrite(source, source_arr)
+            tifffile.imwrite(mask_path, np.zeros((2, 3, 4), dtype=np.uint16))
+            model.write_bytes(b"model")
+
+            result = run_anatomy_cellpose_stage(
+                anat_seg_source_path=source,
+                analysis_dir=analysis_dir,
+                output_root=output_root,
+                anat_cp_model_path=model,
+                config=AnatomyCellposeConfig(skip_if_exists=True),
+            )
+
+            self.assertEqual(result["status"], "cached")
+            self.assertEqual(result["bindings"]["ANAT_SEG_OUT_DIR"], output_root / "cp_masks")
+            self.assertEqual(result["bindings"]["ANAT_SEG_CONVERT_DIR"], output_root / "raw" / "converted_nrrd_to_tif")
+            self.assertEqual(
+                result["runtime_provenance"]["model_sha256"],
+                "9372c470eeadd5ecd9c3c74c2b3cb633f8e2f2fad799250a0f70d652b6b825e4",
+            )
+            self.assertIsNone(result["runtime_provenance"]["cuda_available"])
 
 
 if __name__ == "__main__":

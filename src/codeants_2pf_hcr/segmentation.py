@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+from importlib import metadata
 import os
 from pathlib import Path
+import platform
+import sys
 from typing import Any, Callable
 
 import numpy as np
@@ -61,6 +65,57 @@ def _norm01(arr: np.ndarray) -> np.ndarray:
     return norm01(arr)
 
 
+def _installed_version(distribution: str) -> str | None:
+    try:
+        return metadata.version(distribution)
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _file_sha256(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _cellpose_runtime_provenance(*, model_path: Path, optional_runtime_loaded: bool, use_gpu: bool | None) -> dict[str, Any]:
+    provenance: dict[str, Any] = {
+        "python_version": platform.python_version(),
+        "python_executable": sys.executable,
+        "platform": platform.platform(),
+        "cellpose_version": _installed_version("cellpose"),
+        "torch_version": _installed_version("torch"),
+        "model_sha256": _file_sha256(model_path),
+        "requested_gpu": use_gpu,
+        "cuda_available": None,
+        "cuda_version": None,
+        "compute_device": None,
+    }
+    if not optional_runtime_loaded:
+        return provenance
+    try:
+        import torch
+
+        cuda_available = bool(torch.cuda.is_available())
+        provenance["cuda_available"] = cuda_available
+        provenance["cuda_version"] = getattr(getattr(torch, "version", None), "cuda", None)
+        if cuda_available:
+            provenance["compute_device"] = str(torch.cuda.get_device_name(0))
+        else:
+            mps_backend = getattr(getattr(torch, "backends", None), "mps", None)
+            if mps_backend is not None and bool(mps_backend.is_available()):
+                provenance["compute_device"] = "mps"
+            else:
+                provenance["compute_device"] = "cpu"
+    except Exception:
+        provenance["compute_device"] = "unknown"
+    return provenance
+
+
 def resolve_hcr_cellpose_model_path(
     *,
     model_path_override: str | Path | None = None,
@@ -90,6 +145,7 @@ def collect_hcr_intensity_stack_paths(
     *,
     hcr_intensity_paths: list[str | Path] | None = None,
     preproc_dir: str | Path | None = None,
+    source: str = "all",
 ) -> list[Path]:
     if hcr_intensity_paths:
         intensity_paths = [Path(path) for path in hcr_intensity_paths]
@@ -97,7 +153,14 @@ def collect_hcr_intensity_stack_paths(
         intensity_paths = []
         if preproc_dir is not None:
             base = Path(preproc_dir)
-            for directory in (base / "rbest", base / "rn"):
+            source_key = str(source).strip().lower()
+            if source_key in {"", "all", "both"}:
+                directories = (base / "rbest", base / "rn")
+            elif source_key in {"rbest", "rn"}:
+                directories = (base / source_key,)
+            else:
+                raise ValueError("source must be one of: all, rbest, rn")
+            for directory in directories:
                 if directory.exists():
                     intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.nrrd")))
                     intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.tif")))
@@ -108,6 +171,12 @@ def collect_hcr_intensity_stack_paths(
                     intensity_paths.extend(sorted(directory.glob("*round*_channel*.nrrd")))
                     intensity_paths.extend(sorted(directory.glob("*round*_channel*.tif")))
                     intensity_paths.extend(sorted(directory.glob("*round*_channel*.tiff")))
+    ignored_names = {".DS_Store", "Thumbs.db", "desktop.ini"}
+    intensity_paths = [
+        path
+        for path in intensity_paths
+        if not any(part.startswith("._") or part in ignored_names for part in path.parts)
+    ]
     intensity_paths = [path for path in intensity_paths if "fullbrain" not in path.name.lower()]
     intensity_paths = [path for path in intensity_paths if "channel1" not in path.name.lower()]
     intensity_paths = [path for path in intensity_paths if "_cp_masks" not in path.stem.lower()]
@@ -293,6 +362,7 @@ def run_hcr_cellpose_stage(
     data_root: str | Path | None = None,
     local_root: str | Path | None = None,
     nas_root: str | Path | None = None,
+    source: str = "all",
     config: HcrCellposeConfig | None = None,
 ) -> dict[str, Any]:
     cfg = config or HcrCellposeConfig()
@@ -317,6 +387,7 @@ def run_hcr_cellpose_stage(
     intensity_paths = collect_hcr_intensity_stack_paths(
         hcr_intensity_paths=hcr_intensity_paths,
         preproc_dir=preproc_dir,
+        source=source,
     )
     if not intensity_paths:
         raise RuntimeError("No HCR intensity stacks found (rbest/rn, channel2/3 only).")
@@ -334,11 +405,21 @@ def run_hcr_cellpose_stage(
     if not pending:
         log_lines.append("[Cellpose] All mask outputs already exist; skipping Cellpose import/model load.")
         status = "cached"
+        runtime_provenance = _cellpose_runtime_provenance(
+            model_path=Path(cp_model_path),
+            optional_runtime_loaded=False,
+            use_gpu=cfg.use_gpu,
+        )
     else:
         cp_model = Path(cp_model_path)
         if not cp_model.exists():
             raise FileNotFoundError(f"CP_MODEL_PATH does not exist: {cp_model}")
         model = _load_cellpose_model(cp_model=cp_model, use_gpu=bool(cfg.use_gpu), stage_tag="[24]", log_lines=log_lines)
+        runtime_provenance = _cellpose_runtime_provenance(
+            model_path=cp_model,
+            optional_runtime_loaded=True,
+            use_gpu=cfg.use_gpu,
+        )
 
         log_lines.append(f"[Cellpose] stacks requiring segmentation: {len(pending)}")
         for intensity_path, mask_path in pending:
@@ -400,10 +481,12 @@ def run_hcr_cellpose_stage(
     return {
         "status": status,
         "bindings": bindings,
+        "source": source,
         "candidate_pairs": candidate_pairs,
         "pending_pairs": pending,
         "manifest_df": manifest_df,
         "log_lines": log_lines,
+        "runtime_provenance": runtime_provenance,
     }
 
 
@@ -411,6 +494,7 @@ def run_anatomy_cellpose_stage(
     *,
     anat_seg_source_path: str | Path,
     analysis_dir: str | Path,
+    output_root: str | Path | None = None,
     anat_labels_path: str | Path | None = None,
     anat_cp_model_path: str | Path | None,
     vox_anat: dict[str, Any] | None = None,
@@ -423,8 +507,9 @@ def run_anatomy_cellpose_stage(
 
     anat_src = Path(anat_seg_source_path)
     analysis_path = Path(analysis_dir)
-    out_dir = analysis_path / "structural" / "cp_masks"
-    convert_dir = analysis_path / "structural" / "raw" / "converted_nrrd_to_tif"
+    output_base = Path(output_root) if output_root is not None else analysis_path / "structural"
+    out_dir = output_base / "cp_masks"
+    convert_dir = output_base / "raw" / "converted_nrrd_to_tif"
     out_dir.mkdir(parents=True, exist_ok=True)
     convert_dir.mkdir(parents=True, exist_ok=True)
 
@@ -495,6 +580,11 @@ def run_anatomy_cellpose_stage(
                 "ANAT_LABELS_PATH": reuse_path,
             },
             "log_lines": log_lines,
+            "runtime_provenance": _cellpose_runtime_provenance(
+                model_path=model_path,
+                optional_runtime_loaded=False,
+                use_gpu=cfg.use_gpu,
+            ),
         }
 
     anat_u8 = _to_uint8_preserve(vol, log_lines=log_lines)
@@ -505,6 +595,11 @@ def run_anatomy_cellpose_stage(
     use_gpu = _resolve_cellpose_gpu_flag(use_gpu=cfg.use_gpu, compute_device=cfg.compute_device)
     log_lines.append(f"[ANAT CP] device={cfg.compute_device or 'auto'} gpu={use_gpu}")
     anat_model = _load_cellpose_model(cp_model=model_path, use_gpu=use_gpu, stage_tag="[24a]", log_lines=log_lines)
+    runtime_provenance = _cellpose_runtime_provenance(
+        model_path=model_path,
+        optional_runtime_loaded=True,
+        use_gpu=use_gpu,
+    )
 
     anisotropy = None
     if cfg.use_anisotropy and vol.ndim == 3 and isinstance(vox_anat, dict):
@@ -545,6 +640,7 @@ def run_anatomy_cellpose_stage(
             "ANAT_LABELS_PATH": anat_mask_out,
         },
         "log_lines": log_lines,
+        "runtime_provenance": runtime_provenance,
     }
 
 

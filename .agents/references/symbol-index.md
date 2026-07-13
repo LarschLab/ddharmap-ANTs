@@ -13,55 +13,72 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.pipeline`
 
-- `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the future single-fish staged pipeline.
-- `PIPELINE_MANIFEST_VERSION`: Current manifest schema version for staged pipeline manifests.
-- `SingleFishPipelineConfig`: Typed fish/root/strictness knob container for staged single-fish pipeline commands.
-- `LegacyBaselineConfig`: Typed fish/root/baseline knob container for freezing and comparing legacy singleFish output bundles.
-- `StagedOutputComparisonConfig`: Typed fish/root/baseline/tolerance knob container for comparing stage-owned outputs against a frozen legacy baseline, including numeric and visual-PNG thresholds.
+- `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the single-fish staged pipeline.
+- `PIPELINE_MANIFEST_VERSION`: Current first-pass manifest schema version for staged pipeline manifests.
+- `POST_PREPROCESSING_STAGE_NAMES`: Read-only stage-status names for existing post-preprocessing staged output folders.
+- `GRANULAR_PREPROCESSING_STAGE_NAMES`: Concrete writer-stage names for preparation/segmentation slices that must not be hidden under generic `preprocess-*` command names.
+- `STAGED_COMPARISON_STAGE_NAMES`: Declared stage names accepted by staged comparison/baseline commands, covering upstream writer surfaces plus post-processing stages.
+- `SingleFishPipelineConfig`: Typed fish/root/strictness/dry-run knob container for staged single-fish pipeline commands.
 - `PipelinePaths`: Resolved fish-scoped paths for staged pipeline commands without creating notebook output folders during path resolution.
-- `StageContract`: Declarative stage contract record containing stage order, purpose, dependencies, and canonical/diagnostic outputs.
-- `LegacyOutputSpec`: Declared legacy output record with relative path, requirement status, and comparison class.
-- `StagedOutputComparisonSpec`: Declared baseline-versus-staged output pair with comparison mode, requirement status, optional CSV ignored columns, and optional per-artifact visual tolerances.
-- `ActivityBpiScoreRecord`: Response/BPI consistency summary for staged `score-activity-bpi` outputs.
-- `AnatomyPreprocessRecord`: TIFF inspection row for staged `preprocess-anatomy` outputs.
-- `CanonicalTableExportRecord`: Canonical table scope/existence/schema summary for staged `export-canonical-tables` outputs.
-- `FunctionalPreprocessInventoryRecord`: Suite2p plane inventory row for the staged `preprocess-functional` command.
-- `FunctionalRegistrationRecord`: Per-plane registered functional artifact row for staged `register-functional-to-anatomy` outputs.
-- `FigureArtifactRecord`: Final figure artifact presence and scope row for staged `make-figures` outputs.
-- `HcrPreprocessRecord`: HCR intensity/mask inspection row for staged `preprocess-hcr` outputs.
-- `HcrIdentityAssignmentRecord`: Identity-assignment consistency summary for staged `assign-hcr-identity` outputs.
-- `HcrRegistrationRecord`: Per-HCR-mask registered intensity/label/match artifact row for staged `register-hcr-to-anatomy` outputs.
-- `RoiAnatomyMatchRecord`: Per-plane ROI/anatomy geometry audit row for staged `match-roi-to-anatomy` outputs.
-- `PathAuditRecord`: Input-audit row describing expected paths/globs before manifest serialization.
-- `ManifestPathRecord`: JSON-ready path record with existence, kind, size, mtime, and optional SHA256 hash.
-- `QaReportArtifactRecord`: QA/report artifact presence and category row for staged `make-qa-report` outputs.
-- `BaselineCopyRecord`: Per-output result row for `freeze-legacy-baseline`.
-- `BaselineComparisonRecord`: Per-output result row for `compare-legacy-baseline`.
-- `StagedOutputComparisonRecord`: Per-output comparison result row for `compare-staged`, including semantic CSV dimensions, numeric/text/bool deltas, and visual-PNG thumbnail metrics when applicable.
-- `StageManifest`: JSON-ready stage manifest payload with fish ID, stage status, inputs, outputs, upstream manifests, warnings, and errors.
+- `StageContract`: Declarative stage contract record containing stage order, purpose, dependencies, and first-pass read-only status.
+- `ManifestPathRecord`: JSON-ready path record with path, existence, kind, required status, and optional glob count/pattern.
+- `StageCheckRecord`: JSON-ready semantic check record with status, expected value, observed value, and detail.
+- `StageManifest`: JSON-ready stage manifest payload with fish ID, stage status, dry-run state, inputs, outputs, parameters, warnings, and errors.
+- `StageOutputSpec`: Declared staged output with optional control/parity metadata, table-specific keyed/exact/numeric CSV comparison columns, semantic-column comparison for narrowed staged tables, generated-file/directory nonempty checks, manifest-aware upstream explicit-output path handling for status/comparison, and figure dimension/thumbnail warning thresholds for staged comparison/baseline commands.
+- `PersistedManifestStatus`: JSON-ready persisted manifest trust-state record with missing/current/stale/fail status.
 - `pipeline_contracts`: Return the staged single-fish contract list in roadmap order.
-- `legacy_baseline_outputs`: Return the declared legacy output specs used for baseline freeze/compare.
-- `staged_output_comparison_specs`: Return declared stage-owned output comparisons for a staged pipeline stage.
+- `cellpose_stage_manifest_path`: Resolve modality-specific manifest paths for granular Cellpose/preparation writer stages.
+- `discover_functional_motion_corrected_stacks`: Discover concrete motion-corrected functional TIFF inputs under `02_reg/00_preprocessing/2p_functional/02_motionCorrected/`.
+- `discover_functional_reference_pairs`: Discover staged functional reference raw/norm TIFF pairs produced by `prepare-functional-reference-stacks`.
+- `functional_reference_output_dir`: Resolve the staged functional reference output directory under `pipeline_root/prepare-functional-reference-stacks/functional/raw/`.
+- `functional_to_anatomy_registration_root`: Resolve the staged functional-to-anatomy registration output root under `pipeline_root/register-functional-to-anatomy/`.
+- `hcr_to_anatomy_registration_root`: Resolve the staged HCR-to-anatomy registration output root under `pipeline_root/register-hcr-to-anatomy/`.
+- `roi_to_anatomy_match_root`: Resolve the staged ROI/anatomy geometry output root under `pipeline_root/match-roi-to-anatomy/`.
+- `load_plane_refs_summary`: Load the compact `plane_refs_summary.json` emitted by `register-functional-to-anatomy` for recompute/audit paths.
+- `run_prepare_functional_reference_stacks_stage`: Writer stage wrapping `[12]` functional reference preparation. It discovers or accepts motion-corrected functional TIFFs, resolves polarity, calls `spatial.build_functional_references_stage`, writes legacy-compatible raw/norm reference TIFF pairs, and records the generated pairs in a stage manifest.
+- `run_register_functional_to_anatomy_stage`: Writer stage wrapping `[16]` NCC best-z/scale search and `[20]` in-plane comparison. It reconstructs in-memory `plane_refs` from staged functional reference TIFFs, optionally limits work to explicit `reference_plane_indices` while preserving original plane indices, consumes prepared in vivo anatomy, uses notebook-equivalent scale-search defaults (`0.50-1.50` coarse plus fine refinements), passes anatomy XY voxel spacing into in-plane ANTs registration, writes NCC caches, in-plane comparison/recommendation CSVs, warped reference TIFFs, `plane_refs_summary.json`, and a staged `registration/tforms_by_plane.csv`; when `active_inplane_method="ants_rigid_affine"` it accepts a fixed-region mask JSON and optional deterministic seed, records mask/seed provenance, and persists ANTs transformlists in the plane summary.
+- `run_register_hcr_to_anatomy_stage`: Writer stage for HCR-to-anatomy artifacts. Default mode copies small accepted TIFF/CSV/JSON artifacts from an explicit or default `03_analysis/confocal/aligned/` source into `pipeline_root/register-hcr-to-anatomy/confocal/aligned/`, validates label/match/final-pair/metadata presence plus final-pair schema and accepted-pair semantics, records aligned intensity NRRDs as inputs, does not copy multi-GB NRRDs, and reports direct-ANTs recompute readiness from current raw HCR masks, rbest/rn HCR NRRDs, matching metadata, and transform files. `recompute_direct_ants=True` applies the notebook `label_voxel_floor_v3` prewarp HCR label filter, recomputes HCR label TIFFs, warp metadata, and HCR/anatomy match/review/final-pair CSVs from raw masks plus current ANTs transforms, and gates strict runs with accepted final-pair key parity.
+- `run_match_roi_to_anatomy_stage`: Writer stage for geometry-only ROI/anatomy matches. The promoted recompute mode consumes staged `plane_refs_summary.json`, Suite2p, anatomy labels, ANTs transformlists from staged registration when present, selected accepted `ants_rigid_affine` transformlists as fallback, anatomy XY spacing, and notebook-equivalent functional orientation before writing `functional_roi_anatomy_matches.csv`, `functional_roi_anatomy_match_by_plane.csv`, and `functional_roi_anatomy_match_plane_meta.csv`. It records `staged_ants_transformlist_count` and selected-overlay counts, strips identity/HCR/response/BPI/gene columns, and refuses overwrite without `force_recompute`; control-geometry staging from an explicit `--source-root` remains available for bootstrap/diagnostic use.
+- `build_single_fish_status`: Build a compact read-only trust-state summary from the dry-run input audit plus any persisted audit manifest.
+- `build_single_fish_compare_staged_manifest`: Build a read-only comparison manifest for one existing declared staged output surface, including upstream writer surfaces and post-processing stages; for `make-qa-report`, also validates QA summary JSON parseability, required sections, review status, and image metadata/readability.
+- `run_single_fish_freeze_legacy_baseline_stage`: Freeze declared legacy/control outputs for one or all comparison-stage specs into `DATA_ROOT/pipeline_baselines/FISH_ID/legacy_singleFish/stages/`, refusing overwrite without `overwrite=True`.
+- `build_single_fish_compare_legacy_baseline_manifest`: Build a read-only comparison manifest for one staged output surface against the frozen `legacy_singleFish` bundle.
+- `compare_single_fish_legacy_baseline`: Build a read-only aggregate comparison payload for declared staged outputs against the frozen `legacy_singleFish` bundle.
+- `build_single_fish_score_activity_bpi_recompute_manifest`: Build a read-only `score-activity-bpi` recompute audit manifest that calls `activity.build_response_bpi_tables` without the precomputed-output shortcut and compares in-memory activity/BPI tables to control CSVs.
+- `build_single_fish_hcr_activity_replay_manifest`: Build a read-only HCR-centric `[50]` replay audit manifest from staged `plane_refs_summary.json`, Suite2p, anatomy labels, staged HCR final pairs, and a response-aware ROI master used only as lookup. It checks selected ANTs transformlist availability, runs selected-ANTs and persisted affine transform variants in memory, runs `matching.build_hcr_activity_tables` plus `matching.finalize_hcr_activity_export_tables`, compares row/key counts to accepted HCR outputs when available, and keeps promotion disabled.
+- `run_single_fish_assign_hcr_identity_stage`: Write the staged identity/HCR registration CSV bundle under `pipeline_root/assign-hcr-identity/registration` after requiring staged ROI/anatomy geometry, staged functional/anatomy plane refs, Suite2p, anatomy labels, and staged HCR/anatomy artifacts, refusing overwrite without `force_recompute`. It recomputes `anatomy_identity_lookup.csv` from staged HCR final-pair CSVs using `FunctionalRoiIdentityConfig.default_gene_order`, recomputes `functional_roi_activity_identity.csv` from staged ROI/anatomy geometry plus that lookup, recomputes HCR-centric activity/status/candidate CSVs through the label-first replay, regenerates `hcr_activity_status_summary.csv`, verifies ROI/anatomy inputs stay geometry-only, and checks HCR final-pair CSV schema/accepted-pair semantics plus accepted-control parity.
+- `run_single_fish_score_activity_bpi_stage`: Recompute response/BPI tables through `activity.build_response_bpi_tables(precomputed_scored_bpi_df=None)` and write staged score CSVs under `pipeline_root/score-activity-bpi/registration`. Defaults to the staged `assign-hcr-identity` identity CSV, supports explicit identity input for controlled validation, and refuses overwrite without `force_recompute`.
+- `run_single_fish_export_canonical_tables_stage`: Assemble the staged canonical registration CSV bundle under `pipeline_root/export-canonical-tables/registration` from staged score outputs and staged or explicit HCR/identity roots, refusing overwrite without `force_recompute`.
+- `run_single_fish_make_qa_report_stage`: Generate staged `qa_report.md`, `qa_report.html`, `qa_report.pdf`, and `qa_report_summary.json` under `pipeline_root/make-qa-report` from staged canonical export inputs, including canonical table rows, staged output status, per-plane registration/matching QA summaries from existing staged overlay/match CSVs, a manual review checklist with image readability/dimension metadata, and inline image previews for existing QA/figure PNG artifacts; refuses overwrite without `force_recompute`.
+- `run_single_fish_make_figures_stage`: Stage the declared figure artifacts under `pipeline_root/make-figures/04_plots` after verifying staged canonical export CSV inputs and declared `[56i]` AUC table inputs, rendering package-owned `compound_50j_56i_unified.png`, `bpi_all_pairs.png`, `per_gene_stimulus_trace_with_hcr_status_56h.png`, responsive identity donut, and HCR anatomy coexpression summary, and refusing overwrite without `force_recompute`.
+- `build_single_fish_downstream_stage_manifest`: Build a read-only manifest for an existing post-preprocessing staged output folder.
+- `build_single_fish_downstream_stage_manifests`: Build read-only manifests for all current post-preprocessing staged output folders.
+- `build_single_fish_stage_status`: Summarize one downstream read-only stage manifest plus persisted-manifest state.
+- `downstream_stage_names`: Return the supported current downstream read-only stage-status names.
+- `staged_comparison_stage_names`: Return the supported stage names for `compare-staged`, `freeze-legacy-baseline`, and `compare-legacy-baseline`.
+- `_stage_output_specs_for_inventory`: Internal comparison/status view of staged outputs; for upstream stages with a same-pipeline-root persisted manifest, it follows the actual manifest output paths from explicit writer overrides instead of defaulting to canonical package paths.
+- `_manifest_records_for_inventory`: Internal upstream status helper that re-describes same-pipeline-root manifest input/output paths against the current filesystem so persisted writer manifests can report `current` while still detecting stale files.
 - `resolve_pipeline_paths`: Resolve staged pipeline paths without creating output directories.
 - `describe_manifest_path`: Build a manifest path record for a file or directory.
-- `write_stage_manifest`: Serialize a stage manifest to disk.
-- `load_stage_manifest`: Load a saved stage manifest JSON.
-- `run_single_fish_audit_inputs_stage`: Run the first staged pipeline input audit and write `audit-inputs_manifest.json`.
-- `run_single_fish_preprocess_anatomy_stage`: Run notebook-equivalent anatomy normalization/uint8 preprocessing through package-owned `[14]`/`[14a]` helpers and write `preprocess-anatomy_manifest.json`.
-- `run_single_fish_preprocess_functional_stage`: Inventory Suite2p plane outputs, write `[23a]`-style Suite2p load summary/source CSVs, optionally recreate `[23c]` Suite2p diagnostics under `pipeline_outputs/preprocess-functional/qa/`, and write `preprocess-functional_manifest.json`.
-- `run_single_fish_preprocess_hcr_stage`: Discover HCR intensity stacks, run/reuse HCR Cellpose masks, inspect mask labels, and write `preprocess-hcr_manifest.json`.
-- `run_single_fish_register_functional_to_anatomy_stage`: Audit per-plane functional-to-anatomy registration artifacts from `tforms_by_plane.csv` and write `register-functional-to-anatomy_manifest.json`.
-- `run_single_fish_register_hcr_to_anatomy_stage`: Audit registered HCR intensity, label, warp-metadata, matches, review, and final-pair artifacts in `03_analysis/confocal/aligned/` and write `register-hcr-to-anatomy_manifest.json`.
-- `run_single_fish_match_roi_to_anatomy_stage`: Audit geometry-only ROI/anatomy matching artifacts, including `plane_links.csv`, global/per-plane `f2a_centroid_matches*.csv`, and required geometry columns in `functional_roi_activity_identity.csv`, then write `match-roi-to-anatomy_manifest.json`.
-- `run_single_fish_assign_hcr_identity_stage`: Audit HCR identity assignment after geometry, including `anatomy_identity_lookup.csv`, ROI-level identity fields, and the invariant that identity-assigned ROIs have a unique anatomy match; stage the ROI identity master/lookup and current HCR-centric `[50]` table outputs under `pipeline_outputs/assign-hcr-identity/registration/`; regenerate `[50e]` `hcr_activity_status_summary.csv` from staged status plus HCR warp filter metadata; write a non-promoted HCR disk-recompute audit plus transform-replay, anatomy voxel-scale, affine-offset probe, candidate-key-diff, per-target functional-set, and per-target geometry diagnostics under `pipeline_outputs/assign-hcr-identity/recompute-audit/`; then write `assign-hcr-identity_manifest.json`.
-- `run_single_fish_score_activity_bpi_stage`: Generate staged `[50ia]` response/BPI outputs with `activity.build_response_bpi_tables`, preferring the staged identity master and staged `[23c]` pre-identity response calls when available, validate the staged BPI cells/summary/scored master tables, then write `score-activity-bpi_manifest.json`.
-- `run_single_fish_export_canonical_tables_stage`: Export canonical ROI-centric and HCR-centric table copies with explicit scope labels, preferring staged `score-activity-bpi` outputs for ROI master/BPI diagnostics and staged `assign-hcr-identity` outputs for HCR-centric tables when available, then write `export-canonical-tables_manifest.json`.
-- `run_single_fish_make_qa_report_stage`: Audit core biologist-facing QA/report artifacts across functional response, ROI/anatomy geometry, HCR identity/activity, BPI, and confocal plane coverage surfaces, then write `make-qa-report_manifest.json`.
-- `run_single_fish_make_figures_stage`: Audit final `04_plots` figure/table artifacts, regenerate package-owned responsive identity donut and HCR anatomy coexpression outputs into `pipeline_outputs/make-figures/04_plots/` from staged canonical exports when available, copy not-yet-extracted legacy figure artifacts, then write `make-figures_manifest.json`.
-- `freeze_legacy_single_fish_baseline`: Copy declared legacy outputs into a baseline bundle and write `baseline_manifest.json`.
-- `compare_legacy_single_fish_baseline`: Compare current declared legacy outputs to a frozen baseline bundle and write `comparison_manifest.json`.
-- `compare_staged_single_fish_outputs`: Compare stage-owned outputs against frozen legacy outputs, write a stage comparison CSV, and write `compare-staged-<stage>_manifest.json`.
-- CLI wrapper: `tools/single_fish_pipeline.py` exposes `audit-inputs`, `preprocess-functional`, `preprocess-anatomy`, `preprocess-hcr`, `register-functional-to-anatomy`, `register-hcr-to-anatomy`, `match-roi-to-anatomy`, `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, `make-figures`, `freeze-legacy-baseline`, `compare-legacy-baseline`, and `compare-staged`.
+- `describe_glob`: Build a manifest path record for a glob under a base directory.
+- `stage_manifest_path`: Resolve the fish-scoped path for a stage manifest under `03_analysis/functional/pipeline_manifests/`.
+- `write_stage_manifest`: Persist a stage manifest to its fish-scoped manifest path.
+- `write_cellpose_stage_manifest`: Persist granular Cellpose/preparation manifests under `03_analysis/confocal/raw/manifests/` or `03_analysis/structural/ex_vivo/manifests/`.
+- `prepared_in_vivo_anatomy_path`: Resolve the default canonical in vivo anatomy preparation NRRD under `02_reg/00_preprocessing/2p_anatomy/`.
+- `run_prepare_in_vivo_anatomy_stack_stage`: Writer stage wrapping `[14a]` signed-anatomy preprocessing for canonical in vivo 2P anatomy. It discovers an in vivo raw anatomy stack when no explicit source is provided, applies metadata-driven polarity, writes the registration-ready NRRD/JSON, checks uint8 and `750x750` Y/X output, and refuses existing outputs without `force_recompute`.
+- `discover_ex_vivo_anatomy_stack`: Discover exactly one raw ex vivo anatomy stack under `01_raw/2p/anatomy`, requiring an explicit path when ambiguous.
+- `ex_vivo_structural_root`: Resolve the ex vivo structural analysis subtree under `03_analysis/structural/ex_vivo/`.
+- `prepared_ex_vivo_anatomy_path`: Resolve the default prepared ex vivo anatomy NRRD under the structural ex vivo subtree.
+- `run_prepare_ex_vivo_anatomy_stack_stage`: Writer stage for converting/orienting the raw ex vivo stack into a registration-ready analysis NRRD without using a generic preprocessing command name.
+- `run_segment_ex_vivo_anatomy_cellpose_stage`: Writer stage for ex vivo anatomy Cellpose masks isolated under `03_analysis/structural/ex_vivo/`; manifests include runtime/device versions and model SHA-256 provenance.
+- `run_segment_hcr_cellpose_stage`: Writer stage for HCR Cellpose masks from an explicit source such as `rbest`; manifests include runtime/device versions and model SHA-256 provenance while cached-mask reuse avoids importing optional Cellpose/Torch runtimes.
+- `compare_persisted_manifest`: Compare a persisted manifest's path records against the current audit and report missing/current/stale/fail state.
+- `compare_single_fish_staged_outputs`: Build a read-only aggregate comparison payload for declared existing staged outputs. Upstream comparisons activate only from staged `pipeline_outputs` or same-pipeline-root persisted upstream manifests, so legacy preprocessing files and unrelated persisted manifests alone do not become active staged comparisons.
+- `stage_manifest_to_json`: Serialize a stage manifest to JSON text for stdout or persistence.
+- `run_single_fish_audit_inputs_stage`: Run the first staged pipeline input audit in read-only/dry-run mode and return a JSON-ready manifest with labeled input records, schema checks, cross-table consistency checks, value-domain checks, and optional staged parity checks, without writing into fish folders.
+- CLI wrapper: `tools/single_fish_pipeline.py` currently exposes read-only `contracts`, `audit-inputs`, `status`, `stage-status`, staged-output `compare-staged`, frozen-bundle `freeze-legacy-baseline` / `compare-legacy-baseline`, read-only `audit-score-activity-bpi`, downstream writers `assign-hcr-identity`, `score-activity-bpi`, `export-canonical-tables`, `make-qa-report`, and `make-figures`, plus granular upstream writers `prepare-functional-reference-stacks`, `prepare-in-vivo-anatomy-stack`, `prepare-ex-vivo-anatomy-stack`, `segment-ex-vivo-anatomy-cellpose`, `segment-hcr-cellpose`, functional `register-functional-to-anatomy` with `--reference-plane-index`, `--ants-fixed-mask-json`, `--ants-deterministic-seed`, and `--active-inplane-method ants_rigid_affine` support, HCR `register-hcr-to-anatomy` with opt-in `--recompute-direct-ants`, and recompute-capable `match-roi-to-anatomy`; `compare-staged`/baseline commands accept upstream writer-stage names plus post-processing stage names, while `stage-status` remains downstream-only. `assign-hcr-identity` accepts `--roi-anatomy-root` and `--hcr-anatomy-root` overrides for dependency validation. `--write-manifest` persists manifests for manifest-bearing commands; upstream writer manifests record `pipeline_root`, and for explicit output overrides same-pipeline-root persisted manifests let `status`/`compare-staged` follow the real input/output paths. Cellpose commands capture third-party console logs so stdout remains clean manifest JSON. `status`/`stage-status` warn when existing downstream staged outputs are older than required declared inputs or existing upstream staged dependencies. ROI/anatomy regenerated-ANTs comparison keeps exact key parity mandatory and treats label drift up to `0.2%` as warning-only.
+- Helga helper: `tools/helga_nas_session_test.bat` prompts for `danin.dharmaperwira@unil.ch` NAS credentials in a headful SSH session, maps `Y:` with `/persistent:no`, verifies `L765_f02`, and removes the temporary mapping before exit. Use this pattern for future NAS-backed Helga GPU jobs; never store passwords in repo artifacts.
+- Helga job helper: `tools/helga_l765_f02_cellpose_job.bat` uses the same temporary credential prompt pattern, then runs `segment-ex-vivo-anatomy-cellpose` on the manual-oriented `L765_f02` ex vivo NRRD and `segment-hcr-cellpose --hcr-source rbest` on Helga's CUDA Cellpose environment.
 
 ## `codeants_2pf_hcr.context`
 
@@ -89,6 +106,7 @@ Generated manually for the current extracted package surface.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
 - `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that mirrors/orients 2P anatomy XY by default, flips anatomy Z to match bottom-to-top confocal registration convention, resizes anatomy Y/X to `750x750`, saves the canonical uncompressed 8-bit registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd` plus `.nrrd.json` metadata under `02_reg/00_preprocessing/2p_anatomy`, avoids duplicate TIFF image outputs, and rebinds `ANAT_STACK_PATH`.
+- `infer_anatomy_stack_path`: Discover the raw in vivo anatomy stack while excluding mask/label/overlay and ex vivo-looking candidates so staged in vivo prep does not silently pick bridge-registration inputs.
 - `preprocess_ex_vivo_anatomy_stage`: Experimental same-fish bridge preprocessing stage for raw ex vivo 2P anatomy stacks from `01_raw/2p/anatomy`; writes isolated pre-manual-rotation NRRD plus JSON provenance under `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` without rebinding canonical in vivo `ANAT_STACK_PATH` or creating duplicate TIFF image outputs.
 - `apply_manual_anatomy_orientation_stage`: Experimental helper that applies brainAtlas-style preview-angle XY rotation, optional square crop, rot90, and explicit axis flips to a preprocessed anatomy stack, then writes manual-oriented NRRD plus JSON provenance for ex vivo registration trials.
 - `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `bottom-left`/`top-right` to `north`/`south`, and fail on conflicts.
@@ -133,7 +151,7 @@ Generated manually for the current extracted package surface.
 
 - `FunctionalReferenceConfig`: Typed functional-reference cache/build configuration for notebook cell `[12]`; oriented references can be built from original motion-corrected stacks without saving full oriented movies.
 - `FunctionalPlacementConfig`: Typed NCC XY placement configuration for notebook cell `[20]`.
-- `InPlaneRegistrationComparisonConfig`: Typed in-plane method-comparison configuration for notebook cell `[20]`.
+- `InPlaneRegistrationComparisonConfig`: Typed in-plane method-comparison configuration for notebook cell `[20]`, including optional ANTs deterministic seed control for `ants_rigid_affine` diagnostics.
 - `RegistrationSearchConfig`: Typed registration-search knob container for notebook cell `[16]`.
 - `imread_any`: Read TIFF or NRRD images with minimal notebook dependencies.
 - `zproject_mean`: Mean projection helper.
@@ -156,7 +174,10 @@ Generated manually for the current extracted package surface.
 
 - `FunctionalAnatomyDebugConfig`: Typed functional↔anatomy debug summary configuration for notebook cell `[34a]`.
 - `FunctionalRoiIdentityConfig`: Typed per-ROI identity export configuration for notebook cell `[50i]`.
+- `attach_identity_to_functional_roi_geometry_df`: Attach a staged anatomy identity lookup to geometry-only ROI/anatomy rows while preserving pass-through trace-quality/response columns from an accepted ROI master schema.
 - `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
+- `hcr_response_lookup_from_roi_master_df`: Normalize response-aware ROI master columns into the plane/function-label lookup used by HCR-centric identified-cell activity exports.
+- `finalize_hcr_activity_export_tables`: Package-owned finalizer for notebook `[50]` HCR activity exports. It decorates HCR candidate geometry with ROI response calls and produces finalized status, raw candidate, responsive analysis, and candidate tables; it does not build `hcr_activity_status_summary.csv`.
 - `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
 - `resolve_anatomy_label_z`: Map an anatomy-intensity `best_z` to the corresponding anatomy-label stack page, including reversed label stacks.
 - `resample_labels_nn`: Apply nearest-neighbor label resampling for functional-to-anatomy plane warps and shape harmonization, including ANTs transformlists via ANTsPy or the SimpleITK fallback for single-file affine transformlists.
@@ -175,6 +196,7 @@ Generated manually for the current extracted package surface.
 - `gene_from_mask`: Infer a gene label from a confocal mask filename.
 - `build_anat_identity_lookup_df`: Build the anatomy-label to identity lookup table from HCR matches.
 - `build_hcr_mask_fate_df`: Reconstruct per-confocal-label match fate rows from `[44]` `hcr_match_results` for downstream rejected-mask QA consumers such as `[50f]` and `[50g]`.
+- `build_hcr_anatomy_match_tables`: Recompute HCR/anatomy match, final-pair, review, and QC summary tables from warped HCR labels and anatomy labels using notebook-compatible overlap, distance, deduplication, pair-type, and quality rules.
 - `build_functional_roi_master_df`: Build the authoritative ROI-centric functional-to-anatomy master table for `[50i]`.
 - `annotate_session_anat_label_duplicates`: Mark same-anatomy-label functional ROI duplicates within each fish/session while retaining all ROI rows and ranking by geometry.
 - `build_hcr_activity_tables`: Build HCR-centric functional candidate/status tables for `[50]`.
@@ -226,16 +248,19 @@ Generated manually for the current extracted package surface.
 - `AnatomyCellposeConfig`: Typed anatomy Cellpose configuration for notebook cell `[24a]`.
 - `HcrCellposeConfig`: Typed HCR Cellpose segmentation configuration for notebook cell `[24]`.
 - `resolve_hcr_cellpose_model_path`: Resolve the active HCR Cellpose model path from overrides, run config, or repo defaults.
-- `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`, excluding fullbrain, channel1, mask outputs, and dot/AppleDouble sidecar files.
+- `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`, optionally restricted to one source, excluding fullbrain, channel1, mask outputs, and dot/AppleDouble sidecar files.
 - `deduplicate_hcr_intensity_targets`: Collapse duplicate intensity inputs that would write the same Cellpose mask output.
-- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import and cross-platform device selection.
-- `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, and writes mask TIFFs.
+- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import, cross-platform device selection, and an optional output root used to isolate ex vivo masks under `03_analysis/structural/ex_vivo/`.
+- `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, can restrict discovery to `rbest`/`rn`, and writes mask TIFFs.
 - `resolve_functional_labels_for_plane`: Resolve per-plane functional labels for `[26]` from Suite2p, Cellpose, or legacy label sources with orientation handling.
 - `resolve_native_suite2p_labels_for_plane`: Resolve the native Suite2p label image for a plane without Cellpose fallback for `[26a]`.
 - `export_suite2p_native_labels_stage`: Notebook-facing Suite2p native-label export stage for `[26a]` that writes QA TIFFs and a manifest CSV.
 
 ## `codeants_2pf_hcr.hcr_warp`
 
+- `HcrDirectWarpResult`: Result record for a direct ANTs HCR label warp.
+- `build_direct_ants_hcr_transform_chain`: Build the notebook-equivalent direct HCR label warp transform chain: best-round rbest-to-2p warp/affine, plus rn-to-rbest warp/affine for non-best rounds.
+- `run_direct_ants_hcr_label_warp`: Recompute HCR label TIFFs and warp metadata from raw HCR Cellpose masks, matching HCR intensity NRRDs, the prepared in vivo anatomy NRRD, and current ANTs transforms after notebook-equivalent prewarp small-label filtering.
 - `run_hcr_external_bigwarp_label_stage`: Notebook-facing wrapper for single-fish `[43]` external-BigWarp label prep / load logic with stage-local ANTs import.
 - `run_hcr_external_bigwarp_intensity_stage`: Notebook-facing wrapper for single-fish `[43b]` rn->rbest intensity prep logic with stage-local ANTs import.
 
@@ -264,7 +289,9 @@ Generated manually for the current extracted package surface.
 - `show_regional_match_review_stage`: Notebook-facing anatomy-space ROI/anatomy regional overlay for `[34c]`, using the `[22d]` crop and selected in-plane transform to warp functional labels forward.
 - `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
-- `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows.
+- `render_functional_anatomy_center_overlay_qc_png`: Render center-crop anatomy-space overlays of transformed functional ROI outlines and anatomy-label outlines over the best-Z anatomy image for manual functional/anatomy registration QA.
+- `render_functional_anatomy_plane_qc_row_png`: Render one functional-plane QA row per plane with functional reference, native Suite2p ROI boundaries, best-Z in vivo anatomy, anatomy-label boundaries, and the positioned functional reference in anatomy space; writes PNG plus per-plane review CSV for manual orientation/segmentation QA.
+- `render_single_fish_hcr_anatomy_coexpression_summary`: Render the single-fish `[57b-anatomy-coexpression-summary]` figure and export anatomy-label/coexpression summary tables from in-plane HCR status rows; top-level/lazy exports now resolve to lightweight `plots.hcr` for staged pipeline use, while notebook QA imports may still use `plots.qa`.
 - `show_centroid_match_qa_stage`: Notebook-facing centroid-distance QA stage for `[34]` with threshold UI, plane switching, context rendering, and `[26]`-matched functional label source selection via `use_suite2p_labels`.
 - `show_functional_label_overlay_stage`: Notebook-facing functional-label overlay stage for `[26]`.
 - `show_registration_overlay_stage`: Notebook-facing interactive registration overlay stage for `[22]`.
@@ -278,9 +305,11 @@ Generated manually for the current extracted package surface.
 - `render_suite2p_full_session_heatmap`: Render the `[23c]` full-experiment Suite2p cell heatmap with frame X axis, white-to-black activity scale, and transparent stimulus spans.
 - `plot_single_roi_57style`: Render the single-ROI `[57]` style figure and optional AUC table.
 - `render_single_fish_50l_bpi_panel`: Render the single-fish `[50l]` top-left whole-population AUC-vs-BPI scatter from `[50ia]` response/BPI outputs.
+- `render_single_fish_bpi_all_pairs_diagnostics`: Render `bpi_all_pairs.png/.pdf` from staged canonical BPI cells plus ROI identity rows, deriving plotting gene labels from `identity_label` when the ROI-centric BPI table lacks `gene`.
 - `render_single_fish_50l_gene_auc_panel`: Render the single-fish `[50l]` marker-specific ipsi/contra AUC box/point/count-strip panels from the package-owned motion AUC point/count tables.
 - `render_single_fish_50l_global_auc_panel`: Render the single-fish `[50l]` all-neurons ipsi/contra AUC panels as paired bout↔continuous ROI points with class-colored directional highlights, neutral non-directional classes, directional class-mean summaries, and unchanged count strips.
 - `render_single_fish_50l_composite`: Render notebook stage `[50l]` as one package-owned composite, including stale `[56i]` AUC cache rebuilding, BPI panel, response/BPI donut, AUC panels, legacy figure globals, and `compound_50j_56i_unified.png/.pdf`.
+- `render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status`: Render `per_gene_stimulus_trace_with_hcr_status_56h.png/.pdf` plus a plotted-values CSV from `[56i]` per-gene motion AUC plot points and `hcr_activity_status.csv`; this replaces the copied legacy PNG in `make-figures` without depending on hidden notebook trace payloads.
 - `render_single_fish_50l_population_response_donut_poster`: Render a standalone poster-scale `[50l]` population response donut with original response-status inner classes and collision-aware perimeter indicators.
 - `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
 - `render_cohort_56h_fish_average_poster_traces`: Render a gene-row cohort [56h]-style poster trace figure with equal-weight fish-averaged gene traces and SEM across fish.

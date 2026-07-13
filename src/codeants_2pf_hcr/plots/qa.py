@@ -24,10 +24,18 @@ import matplotlib.patheffects as path_effects
 from matplotlib import colors as mcolors
 import numpy as np
 import pandas as pd
-from skimage import color as skcolor
-from skimage import segmentation
-from skimage import transform
-import tifffile
+try:
+    from skimage import color as skcolor
+    from skimage import segmentation
+    from skimage import transform
+except Exception:  # pragma: no cover - optional dependency for heavyweight QA overlays
+    skcolor = None
+    segmentation = None
+    transform = None
+try:
+    import tifffile
+except Exception:  # pragma: no cover - optional dependency for TIFF-backed QA overlays
+    tifffile = None
 
 from ..context import infer_anat_labels_path
 from ..matching import (
@@ -56,12 +64,443 @@ from ..single_fish_notebook_stages import (
 from ..runtime import default_local_root
 from .annotations import place_labels_no_overlap
 from ..segmentation import resolve_functional_labels_for_plane
-from ..spatial import ncc_xy, norm01
+from ..spatial import imread_any, ncc_xy, norm01
 
 try:
     import SimpleITK as sitk
 except Exception:  # pragma: no cover
     sitk = None
+
+
+def _require_skimage_module(module: Any, module_name: str) -> Any:
+    if module is None:
+        raise RuntimeError(f"scikit-image is required for this QA plotting operation ({module_name}).")
+    return module
+
+
+def _read_tiff(path: str | Path) -> np.ndarray:
+    return np.asarray(imread_any(path))
+
+
+def _normalize_for_display(image: Any) -> np.ndarray:
+    arr = np.asarray(image)
+    if arr.ndim > 2:
+        arr = np.max(arr, axis=0)
+    arr = arr.astype(np.float32, copy=False)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return np.zeros(arr.shape, dtype=np.float32)
+    lo, hi = np.percentile(finite, [1.0, 99.5])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo, hi = float(np.nanmin(finite)), float(np.nanmax(finite))
+    if hi <= lo:
+        return np.zeros(arr.shape, dtype=np.float32)
+    return np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+
+
+def _label_boundary_overlay(
+    image: Any,
+    labels: Any,
+    *,
+    color: tuple[float, float, float] = (1.0, 0.18, 0.05),
+    alpha: float = 0.95,
+) -> np.ndarray:
+    base = np.dstack([_normalize_for_display(image)] * 3)
+    label_arr = np.asarray(labels)
+    if label_arr.ndim > 2:
+        label_arr = np.max(label_arr, axis=0)
+    if label_arr.shape != base.shape[:2]:
+        sk_transform = _require_skimage_module(transform, "transform.resize")
+        label_arr = sk_transform.resize(
+            label_arr.astype(np.float32, copy=False),
+            base.shape[:2],
+            order=0,
+            preserve_range=True,
+            anti_aliasing=False,
+        )
+    if np.count_nonzero(label_arr) == 0:
+        return base
+    sk_seg = _require_skimage_module(segmentation, "segmentation.find_boundaries")
+    boundaries = sk_seg.find_boundaries(label_arr.astype(np.uint32, copy=False), mode="outer")
+    overlay = base.copy()
+    color_arr = np.asarray(color, dtype=np.float32)
+    overlay[boundaries] = (1.0 - float(alpha)) * overlay[boundaries] + float(alpha) * color_arr
+    return np.clip(overlay, 0.0, 1.0)
+
+
+def _dual_label_boundary_overlay(
+    image: Any,
+    func_labels: Any,
+    anat_labels: Any,
+    *,
+    func_color: tuple[float, float, float] = (0.05, 0.95, 1.0),
+    anat_color: tuple[float, float, float] = (1.0, 0.15, 0.05),
+    overlap_color: tuple[float, float, float] = (1.0, 0.95, 0.10),
+    alpha: float = 0.95,
+) -> np.ndarray:
+    base = np.dstack([_normalize_for_display(image)] * 3)
+    sk_seg = _require_skimage_module(segmentation, "segmentation.find_boundaries")
+    func_arr = np.asarray(func_labels)
+    anat_arr = np.asarray(anat_labels)
+    if func_arr.ndim > 2:
+        func_arr = np.max(func_arr, axis=0)
+    if anat_arr.ndim > 2:
+        anat_arr = np.max(anat_arr, axis=0)
+    if func_arr.shape != base.shape[:2] or anat_arr.shape != base.shape[:2]:
+        raise ValueError(
+            "Overlay crop shapes must match image crop shape: "
+            f"image={base.shape[:2]}, func={func_arr.shape}, anat={anat_arr.shape}"
+        )
+    func_boundary = sk_seg.find_boundaries(func_arr.astype(np.uint32, copy=False), mode="outer")
+    anat_boundary = sk_seg.find_boundaries(anat_arr.astype(np.uint32, copy=False), mode="outer")
+    overlay = base.copy()
+    func_only = func_boundary & ~anat_boundary
+    anat_only = anat_boundary & ~func_boundary
+    both = func_boundary & anat_boundary
+    for mask, color in (
+        (func_only, func_color),
+        (anat_only, anat_color),
+        (both, overlap_color),
+    ):
+        color_arr = np.asarray(color, dtype=np.float32)
+        overlay[mask] = (1.0 - float(alpha)) * overlay[mask] + float(alpha) * color_arr
+    return np.clip(overlay, 0.0, 1.0)
+
+
+def _center_crop_slices(shape: tuple[int, int], crop_size_px: int) -> tuple[slice, slice]:
+    h, w = int(shape[0]), int(shape[1])
+    size = int(max(4, min(int(crop_size_px), h, w)))
+    y0 = max(0, min(int(round(h / 2.0 - size / 2.0)), h - size))
+    x0 = max(0, min(int(round(w / 2.0 - size / 2.0)), w - size))
+    return slice(y0, y0 + size), slice(x0, x0 + size)
+
+
+def _plane_label_path(label_dir: Path, fish_id: str, plane_idx: int, plane_label: str) -> Path | None:
+    candidates = [
+        label_dir / f"{plane_label}_suite2p_labels_native.tif",
+        label_dir / f"{fish_id}_plane{int(plane_idx)}_mcorrected_flipX_suite2p_labels_native.tif",
+        label_dir / f"{fish_id}_plane{int(plane_idx)}_suite2p_labels_native.tif",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    hits = sorted(label_dir.glob(f"*plane{int(plane_idx)}*suite2p_labels_native.tif"))
+    return hits[0] if hits else None
+
+
+def _anatomy_space_functional_label_path(label_dir: Path, fish_id: str, plane_idx: int, plane_label: str) -> Path | None:
+    candidates = [
+        label_dir / f"{plane_label}_func_mask_in_2p.tif",
+        label_dir / f"{fish_id}_plane{int(plane_idx)}_mcorrected_flipX_func_mask_in_2p.tif",
+        label_dir / f"best_replay_recomputed_func_labels_plane{int(plane_idx)}.tif",
+        label_dir / f"affine_cellfit_allroi_func_labels_plane{int(plane_idx)}.tif",
+        label_dir / f"affine_cellfit_hybrid_func_labels_plane{int(plane_idx)}.tif",
+    ]
+    for path in candidates:
+        if path.exists() and not path.name.startswith("._"):
+            return path
+    for pattern in (
+        f"*plane{int(plane_idx)}*func_mask_in_2p.tif",
+        f"*plane{int(plane_idx)}*.tif",
+    ):
+        hits = [path for path in sorted(label_dir.glob(pattern)) if not path.name.startswith("._")]
+        if hits:
+            return hits[0]
+    return None
+
+
+def _positioned_functional_reference_path(
+    positioned_reference_dir: Path | None,
+    fish_id: str,
+    plane_idx: int,
+    plane_label: str,
+) -> Path | None:
+    if positioned_reference_dir is None or not positioned_reference_dir.exists():
+        return None
+    candidate_names = [
+        f"{plane_label}_ants_rigid_affine_warped.tif",
+        f"{fish_id}_plane{int(plane_idx)}_mcorrected_flipX_ants_rigid_affine_warped.tif",
+        f"{plane_label}_ncc_xy_warped.tif",
+        f"{fish_id}_plane{int(plane_idx)}_mcorrected_flipX_ncc_xy_warped.tif",
+    ]
+    for name in candidate_names:
+        path = positioned_reference_dir / name
+        if path.exists():
+            return path
+    for pattern in (
+        f"*plane{int(plane_idx)}*ants_rigid_affine_warped.tif",
+        f"*plane{int(plane_idx)}*ncc_xy_warped.tif",
+    ):
+        hits = sorted(positioned_reference_dir.glob(pattern))
+        if hits:
+            return hits[0]
+    return None
+
+
+def _positioned_reference_method_label(path: Path | None) -> str:
+    if path is None:
+        return "missing positioned reference"
+    name = path.name
+    if "ants_rigid_affine" in name:
+        return "ANTs rigid affine"
+    if "ncc_xy" in name:
+        return "NCC XY"
+    return "positioned reference"
+
+
+def render_functional_anatomy_plane_qc_row_png(
+    *,
+    fish_id: str,
+    plane_refs_summary_path: str | Path,
+    anatomy_stack_path: str | Path,
+    anatomy_labels_path: str | Path,
+    suite2p_label_dir: str | Path,
+    out_path: str | Path,
+    functional_reference_dir: str | Path | None = None,
+    positioned_reference_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Render one QA row per functional plane for functional/anatomy registration review."""
+    fish_id_s = str(fish_id)
+    plane_refs_path = Path(plane_refs_summary_path)
+    anatomy_stack_p = Path(anatomy_stack_path)
+    anatomy_labels_p = Path(anatomy_labels_path)
+    suite2p_label_dir_p = Path(suite2p_label_dir)
+    functional_reference_dir_p = Path(functional_reference_dir) if functional_reference_dir not in (None, "", False) else None
+    positioned_reference_dir_p = Path(positioned_reference_dir) if positioned_reference_dir not in (None, "", False) else None
+    out_path_p = Path(out_path)
+
+    if not plane_refs_path.exists():
+        raise FileNotFoundError(f"plane_refs_summary_path not found: {plane_refs_path}")
+    if not anatomy_stack_p.exists():
+        raise FileNotFoundError(f"anatomy_stack_path not found: {anatomy_stack_p}")
+    if not anatomy_labels_p.exists():
+        raise FileNotFoundError(f"anatomy_labels_path not found: {anatomy_labels_p}")
+    if not suite2p_label_dir_p.exists():
+        raise FileNotFoundError(f"suite2p_label_dir not found: {suite2p_label_dir_p}")
+
+    plane_refs = json.loads(plane_refs_path.read_text())
+    if not isinstance(plane_refs, list) or not plane_refs:
+        raise RuntimeError(f"plane_refs_summary_path has no plane refs: {plane_refs_path}")
+    anatomy_stack = _read_tiff(anatomy_stack_p)
+    anatomy_labels = _read_tiff(anatomy_labels_p)
+    if anatomy_stack.ndim < 3:
+        raise RuntimeError(f"Expected 3D anatomy stack, got shape {anatomy_stack.shape}")
+    if anatomy_labels.ndim < 3:
+        raise RuntimeError(f"Expected 3D anatomy label stack, got shape {anatomy_labels.shape}")
+
+    n_planes = len(plane_refs)
+    fig, axes = plt.subplots(
+        n_planes,
+        5,
+        figsize=(19.0, max(2.8, 3.1 * n_planes)),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    fig.suptitle(
+        f"{fish_id_s}: functional planes, native Suite2p ROIs, best-Z anatomy, and anatomy labels",
+        fontsize=13,
+        fontweight="bold",
+    )
+
+    review_rows: list[dict[str, Any]] = []
+    for row_idx, plane_ref in enumerate(plane_refs):
+        plane_idx = int(plane_ref.get("index", row_idx))
+        plane_label = str(plane_ref.get("label", f"{fish_id_s}_plane{plane_idx}_mcorrected_flipX"))
+        best_z = int(plane_ref.get("best_z", 0))
+        best_z = max(0, min(best_z, int(anatomy_stack.shape[0]) - 1))
+        label_z = resolve_anatomy_label_z(plane_ref, int(anatomy_labels.shape[0]))
+        label_z = max(0, min(int(label_z), int(anatomy_labels.shape[0]) - 1))
+
+        ref_path = Path(str(plane_ref.get("reference_norm_path") or ""))
+        if not ref_path.exists() and functional_reference_dir_p is not None:
+            alt = functional_reference_dir_p / f"{plane_label}_ref_norm.tif"
+            ref_path = alt if alt.exists() else ref_path
+        if not ref_path.exists():
+            raise FileNotFoundError(f"Functional reference not found for {plane_label}: {ref_path}")
+        roi_label_path = _plane_label_path(suite2p_label_dir_p, fish_id_s, plane_idx, plane_label)
+        if roi_label_path is None:
+            raise FileNotFoundError(f"Suite2p native label TIFF not found for plane {plane_idx} in {suite2p_label_dir_p}")
+        positioned_ref_path = _positioned_functional_reference_path(
+            positioned_reference_dir_p,
+            fish_id_s,
+            plane_idx,
+            plane_label,
+        )
+
+        ref_img = _read_tiff(ref_path)
+        roi_labels = _read_tiff(roi_label_path)
+        anatomy_img = anatomy_stack[best_z]
+        anatomy_label_img = anatomy_labels[label_z]
+        positioned_ref_img = _read_tiff(positioned_ref_path) if positioned_ref_path is not None else np.zeros_like(anatomy_img)
+        positioned_title = f"Functional reference in anatomy space\n{_positioned_reference_method_label(positioned_ref_path)}"
+
+        panels = [
+            (_normalize_for_display(ref_img), "gray", f"Functional reference\nplane {plane_idx}", None),
+            (_label_boundary_overlay(ref_img, roi_labels, color=(0.05, 0.95, 1.0), alpha=0.95), None, f"Suite2p ROIs on reference\nlabels={len(np.unique(roi_labels)) - int(0 in np.unique(roi_labels))}", None),
+            (_normalize_for_display(anatomy_img), "gray", f"In vivo anatomy best Z\nz={best_z}", None),
+            (_label_boundary_overlay(anatomy_img, anatomy_label_img, color=(1.0, 0.15, 0.05), alpha=0.95), None, f"Anatomy labels on best Z\nlabel_z={label_z}", None),
+            (_normalize_for_display(positioned_ref_img), "gray", positioned_title, None),
+        ]
+        for col_idx, (image, cmap, title, _unused) in enumerate(panels):
+            ax = axes[row_idx, col_idx]
+            ax.imshow(image, cmap=cmap)
+            ax.set_title(title, fontsize=10)
+            ax.axis("off")
+
+        review_rows.append(
+            {
+                "plane_idx": plane_idx,
+                "plane_label": plane_label,
+                "best_z": best_z,
+                "label_z": label_z,
+                "functional_reference_path": str(ref_path),
+                "suite2p_label_path": str(roi_label_path),
+                "positioned_functional_reference_path": str(positioned_ref_path) if positioned_ref_path is not None else "",
+                "functional_reference_shape": tuple(np.asarray(ref_img).shape),
+                "suite2p_label_shape": tuple(np.asarray(roi_labels).shape),
+                "positioned_functional_reference_shape": tuple(np.asarray(positioned_ref_img).shape),
+                "anatomy_slice_shape": tuple(np.asarray(anatomy_img).shape),
+                "anatomy_label_slice_shape": tuple(np.asarray(anatomy_label_img).shape),
+                "suite2p_label_count": int(len(np.unique(roi_labels)) - int(0 in np.unique(roi_labels))),
+                "anatomy_label_count_on_slice": int(len(np.unique(anatomy_label_img)) - int(0 in np.unique(anatomy_label_img))),
+                "has_positioned_functional_reference": bool(positioned_ref_path is not None),
+            }
+        )
+
+    out_path_p.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path_p, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    review_df = pd.DataFrame(review_rows)
+    review_csv = out_path_p.with_suffix(".csv")
+    review_df.to_csv(review_csv, index=False)
+    return {
+        "out_path": out_path_p,
+        "review_csv": review_csv,
+        "review_df": review_df,
+        "n_planes": int(n_planes),
+        "panel_count": int(n_planes * 5),
+    }
+
+
+def render_functional_anatomy_center_overlay_qc_png(
+    *,
+    fish_id: str,
+    plane_refs_summary_path: str | Path,
+    anatomy_stack_path: str | Path,
+    anatomy_labels_path: str | Path,
+    functional_labels_anatomy_dir: str | Path,
+    out_path: str | Path,
+    crop_size_px: int = 200,
+) -> dict[str, Any]:
+    """Render center-crop anatomy-space overlays of functional and anatomy label outlines."""
+    fish_id_s = str(fish_id)
+    plane_refs_path = Path(plane_refs_summary_path)
+    anatomy_stack_p = Path(anatomy_stack_path)
+    anatomy_labels_p = Path(anatomy_labels_path)
+    functional_labels_dir_p = Path(functional_labels_anatomy_dir)
+    out_path_p = Path(out_path)
+    if not plane_refs_path.exists():
+        raise FileNotFoundError(f"plane_refs_summary_path not found: {plane_refs_path}")
+    if not anatomy_stack_p.exists():
+        raise FileNotFoundError(f"anatomy_stack_path not found: {anatomy_stack_p}")
+    if not anatomy_labels_p.exists():
+        raise FileNotFoundError(f"anatomy_labels_path not found: {anatomy_labels_p}")
+    if not functional_labels_dir_p.exists():
+        raise FileNotFoundError(f"functional_labels_anatomy_dir not found: {functional_labels_dir_p}")
+
+    plane_refs = json.loads(plane_refs_path.read_text())
+    if not isinstance(plane_refs, list) or not plane_refs:
+        raise RuntimeError(f"plane_refs_summary_path has no plane refs: {plane_refs_path}")
+    anatomy_stack = _read_tiff(anatomy_stack_p)
+    anatomy_labels = _read_tiff(anatomy_labels_p)
+    if anatomy_stack.ndim < 3:
+        raise RuntimeError(f"Expected 3D anatomy stack, got shape {anatomy_stack.shape}")
+    if anatomy_labels.ndim < 3:
+        raise RuntimeError(f"Expected 3D anatomy label stack, got shape {anatomy_labels.shape}")
+
+    n_planes = len(plane_refs)
+    fig, axes = plt.subplots(
+        1,
+        n_planes,
+        figsize=(3.3 * n_planes, 3.8),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    fig.suptitle(
+        f"{fish_id_s}: center {int(crop_size_px)}x{int(crop_size_px)} anatomy-space label overlay\n"
+        "cyan=functional ROI outline, red=anatomy-label outline, yellow=shared outline pixels",
+        fontsize=12,
+        fontweight="bold",
+    )
+    review_rows: list[dict[str, Any]] = []
+    for col_idx, plane_ref in enumerate(plane_refs):
+        plane_idx = int(plane_ref.get("index", col_idx))
+        plane_label = str(plane_ref.get("label", f"{fish_id_s}_plane{plane_idx}_mcorrected_flipX"))
+        best_z = int(plane_ref.get("best_z", 0))
+        best_z = max(0, min(best_z, int(anatomy_stack.shape[0]) - 1))
+        label_z = resolve_anatomy_label_z(plane_ref, int(anatomy_labels.shape[0]))
+        label_z = max(0, min(int(label_z), int(anatomy_labels.shape[0]) - 1))
+        func_label_path = _anatomy_space_functional_label_path(functional_labels_dir_p, fish_id_s, plane_idx, plane_label)
+        if func_label_path is None:
+            raise FileNotFoundError(f"Anatomy-space functional label TIFF not found for plane {plane_idx} in {functional_labels_dir_p}")
+
+        anatomy_img = anatomy_stack[best_z]
+        anatomy_label_img = anatomy_labels[label_z]
+        func_label_img = _read_tiff(func_label_path)
+        if func_label_img.ndim > 2:
+            func_label_img = np.max(func_label_img, axis=0)
+        if func_label_img.shape != anatomy_img.shape:
+            sk_transform = _require_skimage_module(transform, "transform.resize")
+            func_label_img = sk_transform.resize(
+                func_label_img.astype(np.float32, copy=False),
+                anatomy_img.shape,
+                order=0,
+                preserve_range=True,
+                anti_aliasing=False,
+            ).astype(np.uint32)
+
+        y_slice, x_slice = _center_crop_slices(tuple(anatomy_img.shape), int(crop_size_px))
+        anatomy_crop = anatomy_img[y_slice, x_slice]
+        anatomy_label_crop = anatomy_label_img[y_slice, x_slice]
+        func_label_crop = func_label_img[y_slice, x_slice]
+        overlay = _dual_label_boundary_overlay(anatomy_crop, func_label_crop, anatomy_label_crop)
+        ax = axes[0, col_idx]
+        ax.imshow(overlay)
+        ax.set_title(f"plane {plane_idx}\nz={best_z}", fontsize=10)
+        ax.axis("off")
+        review_rows.append(
+            {
+                "plane_idx": plane_idx,
+                "plane_label": plane_label,
+                "best_z": best_z,
+                "label_z": label_z,
+                "crop_size_px": int(crop_size_px),
+                "crop_y0": int(y_slice.start),
+                "crop_y1": int(y_slice.stop),
+                "crop_x0": int(x_slice.start),
+                "crop_x1": int(x_slice.stop),
+                "functional_labels_anatomy_path": str(func_label_path),
+                "functional_label_count_full_plane": int(len(np.unique(func_label_img)) - int(0 in np.unique(func_label_img))),
+                "functional_label_count_crop": int(len(np.unique(func_label_crop)) - int(0 in np.unique(func_label_crop))),
+                "anatomy_label_count_crop": int(len(np.unique(anatomy_label_crop)) - int(0 in np.unique(anatomy_label_crop))),
+                "functional_boundary_pixels_crop": int(np.count_nonzero(func_label_crop)),
+                "anatomy_label_pixels_crop": int(np.count_nonzero(anatomy_label_crop)),
+            }
+        )
+
+    out_path_p.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path_p, dpi=260, bbox_inches="tight")
+    plt.close(fig)
+    review_df = pd.DataFrame(review_rows)
+    review_csv = out_path_p.with_suffix(".csv")
+    review_df.to_csv(review_csv, index=False)
+    return {
+        "out_path": out_path_p,
+        "review_csv": review_csv,
+        "review_df": review_df,
+        "n_planes": int(n_planes),
+        "panel_count": int(n_planes),
+    }
 
 DEFAULT_DATA_ROOT = default_local_root(fallback=Path.cwd())
 DEFAULT_FUNCTIONAL_IMAGE = DEFAULT_DATA_ROOT / "L396_f04/03_analysis/functional/derived/L396_f04_plane0_mcorrected_flipX_func_ref_in_2p_8bitnorm.tif"
@@ -99,7 +538,7 @@ FONT_FAMILY = pick_font_family()
 def _read_image(path: Path) -> np.ndarray:
     suffixes = [suffix.lower() for suffix in path.suffixes]
     if suffixes and suffixes[-1] in {".tif", ".tiff"}:
-        return np.asarray(tifffile.imread(path), dtype=np.float32)
+        return np.asarray(_read_tiff(path), dtype=np.float32)
     if suffixes and suffixes[-1] == ".nrrd":
         if sitk is None:
             raise ImportError("Reading .nrrd in plots.qa requires SimpleITK.")
@@ -358,7 +797,8 @@ def show_registration_overlay_stage(
             f_vis = norm01(f_src)
             a_vis = norm01(a_src)
             if f_vis.shape != a_vis.shape:
-                f_vis = transform.resize(
+                sk_transform = _require_skimage_module(transform, "transform.resize")
+                f_vis = sk_transform.resize(
                     f_vis,
                     a_vis.shape,
                     order=1,
@@ -479,7 +919,8 @@ def show_functional_label_overlay_stage(
         if labels.shape != ref_img.shape:
             log_lines.append(f"[SKIP] Label/ref shape mismatch for {label}: labels {labels.shape}, ref {ref_img.shape}")
             continue
-        overlay = skcolor.label2rgb(labels, image=norm01(ref_img), bg_label=0, alpha=0.35, image_alpha=1.0)
+        sk_color = _require_skimage_module(skcolor, "color.label2rgb")
+        overlay = sk_color.label2rgb(labels, image=norm01(ref_img), bg_label=0, alpha=0.35, image_alpha=1.0)
         fig, ax = plt.subplots(figsize=(6, 6))
         ax.imshow(overlay)
         title_src = src_desc if src_desc else "labels"
@@ -596,7 +1037,8 @@ def show_region_shift_square_selector_stage(
             continue
         func_img = np.asarray(func_src, dtype=np.float32)
         if func_img.shape != anat_img.shape:
-            func_img = transform.resize(
+            sk_transform = _require_skimage_module(transform, "transform.resize")
+            func_img = sk_transform.resize(
                 func_img,
                 anat_img.shape,
                 order=1,
@@ -968,7 +1410,8 @@ def _overlay_registration_pair(
     anat_vis = norm01(anat_img)
     func_vis = norm01(func_img)
     if func_vis.shape != anat_vis.shape:
-        func_vis = transform.resize(
+        sk_transform = _require_skimage_module(transform, "transform.resize")
+        func_vis = sk_transform.resize(
             func_vis,
             anat_vis.shape,
             order=1,
@@ -987,7 +1430,8 @@ def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]
     out = np.zeros(labels.shape + (4,), dtype=np.float32)
     if labels.size == 0:
         return out
-    boundaries = segmentation.find_boundaries(labels, mode="outer")
+    sk_segmentation = _require_skimage_module(segmentation, "segmentation.find_boundaries")
+    boundaries = sk_segmentation.find_boundaries(labels, mode="outer")
     if np.any(boundaries):
         r, g, b, a = [float(v) for v in rgba]
         out[boundaries, 0] = r
@@ -999,7 +1443,8 @@ def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]
 
 def _label_boundary_edge_score(anat_img: np.ndarray, label_img: np.ndarray) -> float | None:
     labels = _ensure_uint_labels(label_img)
-    boundaries = segmentation.find_boundaries(labels, mode="outer")
+    sk_segmentation = _require_skimage_module(segmentation, "segmentation.find_boundaries")
+    boundaries = sk_segmentation.find_boundaries(labels, mode="outer")
     if int(np.count_nonzero(boundaries)) < 20:
         return None
     img = norm01(np.asarray(anat_img, dtype=np.float32))
@@ -1059,7 +1504,8 @@ def _method_transform_for_label_warp(method: str, result: dict[str, Any]) -> Any
     if method == "ncc_xy":
         ncc_xy_record = result.get("ncc_xy")
         if isinstance(ncc_xy_record, dict) and {"x0", "y0"}.issubset(ncc_xy_record):
-            return transform.SimilarityTransform(
+            sk_transform = _require_skimage_module(transform, "transform.SimilarityTransform")
+            return sk_transform.SimilarityTransform(
                 translation=(int(ncc_xy_record["x0"]), int(ncc_xy_record["y0"]))
             )
     return None
@@ -2130,7 +2576,7 @@ def _collect_func_anat_offsets_for_fish(
     if anat_labels_path is None or not Path(anat_labels_path).exists():
         z_offsets = np.full((len(matched),), np.nan, dtype=float)
     else:
-        anat_labels = np.asarray(tifffile.imread(str(anat_labels_path)))
+        anat_labels = _read_tiff(anat_labels_path)
         anat_centroids = compute_centroids(anat_labels)
         z_lookup = dict(zip(anat_centroids["label"].astype(int), pd.to_numeric(anat_centroids["z"], errors="coerce")))
         dz = float(vox_anat.get("Z", 1.0))
@@ -2414,7 +2860,7 @@ def _collect_hcr_offsets_for_fish(
     anat_labels_path = infer_anat_labels_path(fish_dir, fish_id)
     if anat_labels_path is None or not Path(anat_labels_path).exists():
         return pd.DataFrame(columns=["fish_id", "gene", "anat_label", "xy_um", "abs_dz_um", "distance_um"])
-    anat_labels = np.asarray(tifffile.imread(str(anat_labels_path)))
+    anat_labels = _read_tiff(anat_labels_path)
     anat_centroids = compute_centroids(anat_labels)
     anat_centroids["label"] = pd.to_numeric(anat_centroids["label"], errors="coerce").astype("Int64")
     anat_centroids = anat_centroids.dropna(subset=["label"])
@@ -2460,7 +2906,7 @@ def _collect_hcr_offsets_for_fish(
         conf_label_val = getattr(row, "conf_label", getattr(row, "primary_conf_label", np.nan))
         conf_label = pd.to_numeric(pd.Series([conf_label_val]), errors="coerce").iloc[0]
         if conf_mask_path is not None and not pd.isna(conf_label):
-            conf_labels = np.asarray(tifffile.imread(str(conf_mask_path)))
+            conf_labels = _read_tiff(conf_mask_path)
             if conf_labels.shape == anat_labels.shape:
                 conf_centroids = compute_centroids(conf_labels)
                 if not conf_centroids.empty:
