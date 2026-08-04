@@ -27,6 +27,8 @@ PIPELINE_STAGE_ORDER: tuple[str, ...] = (
     "preprocess-anatomy",
     "preprocess-hcr",
     "register-functional-to-anatomy",
+    "transform-functional-rois-to-anatomy",
+    "make-functional-registration-qc",
     "register-hcr-to-anatomy",
     "match-roi-to-anatomy",
     "assign-hcr-identity",
@@ -149,6 +151,8 @@ GRANULAR_PREPROCESSING_STAGE_NAMES: tuple[str, ...] = (
 UPSTREAM_STAGE_NAMES: tuple[str, ...] = (
     *GRANULAR_PREPROCESSING_STAGE_NAMES,
     "register-functional-to-anatomy",
+    "transform-functional-rois-to-anatomy",
+    "make-functional-registration-qc",
     "register-hcr-to-anatomy",
     "match-roi-to-anatomy",
 )
@@ -477,6 +481,8 @@ def pipeline_contracts() -> tuple[StageContract, ...]:
         "preprocess-anatomy": "Roadmap grouping only for anatomy preparation; writer commands must use concrete operation names.",
         "preprocess-hcr": "Roadmap grouping only for HCR preparation; writer commands must use concrete operation names.",
         "register-functional-to-anatomy": "Audit or generate functional-to-anatomy registration products.",
+        "transform-functional-rois-to-anatomy": "Apply the selected functional-to-anatomy transform to Suite2p ROI labels.",
+        "make-functional-registration-qc": "Render functional-registration QC from registered intensities and transformed ROI labels.",
         "register-hcr-to-anatomy": "Audit or generate HCR-to-anatomy registration products.",
         "match-roi-to-anatomy": "Fix geometry-only ROI-to-anatomy matches.",
         "assign-hcr-identity": "Attach molecular identity after geometry is fixed.",
@@ -491,6 +497,8 @@ def pipeline_contracts() -> tuple[StageContract, ...]:
         "preprocess-anatomy": ("audit-inputs",),
         "preprocess-hcr": ("audit-inputs",),
         "register-functional-to-anatomy": ("preprocess-functional", "preprocess-anatomy"),
+        "transform-functional-rois-to-anatomy": ("register-functional-to-anatomy",),
+        "make-functional-registration-qc": ("transform-functional-rois-to-anatomy",),
         "register-hcr-to-anatomy": ("preprocess-anatomy", "preprocess-hcr"),
         "match-roi-to-anatomy": ("register-functional-to-anatomy",),
         "assign-hcr-identity": ("match-roi-to-anatomy", "register-hcr-to-anatomy"),
@@ -1187,6 +1195,32 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
                 **_csv_comparison_kwargs("tforms_by_plane.csv"),
             ),
         )
+    if stage_name == "transform-functional-rois-to-anatomy":
+        return (
+            describe_manifest_path(
+                functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json",
+                label="registered plane refs summary",
+            ),
+            describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root"),
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
+        )
+    if stage_name == "make-functional-registration-qc":
+        return (
+            describe_manifest_path(
+                functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json",
+                label="registered plane refs summary",
+            ),
+            describe_manifest_path(
+                functional_roi_anatomy_transform_root(paths) / "functional_roi_anatomy_transform_manifest.csv",
+                label="functional ROI transform manifest",
+            ),
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
+            describe_glob(
+                paths.analysis_dir / "structural" / "cp_masks",
+                "*_cp_masks.tif",
+                label="anatomy label stack",
+            ),
+        )
     if stage_name == "register-hcr-to-anatomy":
         return (
             StageOutputSpec(
@@ -1588,6 +1622,32 @@ def _upstream_stage_input_records(paths: PipelinePaths, stage_name: str) -> tupl
             describe_glob(functional_reference_output_dir(paths), "*_norm.tif", label="staged functional reference normalized TIFFs"),
             describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
         )
+    if stage_name == "transform-functional-rois-to-anatomy":
+        return (
+            describe_manifest_path(
+                functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json",
+                label="registered plane refs summary",
+            ),
+            describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root"),
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
+        )
+    if stage_name == "make-functional-registration-qc":
+        return (
+            describe_manifest_path(
+                functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json",
+                label="registered plane refs summary",
+            ),
+            describe_manifest_path(
+                functional_roi_anatomy_transform_root(paths) / "functional_roi_anatomy_transform_manifest.csv",
+                label="functional ROI transform manifest",
+            ),
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
+            describe_glob(
+                paths.analysis_dir / "structural" / "cp_masks",
+                "*_cp_masks.tif",
+                label="anatomy label stack",
+            ),
+        )
     if stage_name == "register-hcr-to-anatomy":
         return (
             describe_glob(paths.confocal_raw_cp_masks_dir, "*_cp_masks.tif", label="raw HCR Cellpose masks"),
@@ -1661,6 +1721,23 @@ def _upstream_stage_output_records(paths: PipelinePaths, stage_name: str) -> tup
             describe_manifest_path(stage_root / "plane_refs_summary.json", label="staged plane refs summary"),
             describe_manifest_path(stage_root / "registration" / "tforms_by_plane.csv", label="staged functional transform table"),
             describe_glob(compare_root, "*_ncc_xy_warped.tif", required=False, label="staged NCC warped functional references"),
+        )
+    if stage_name == "transform-functional-rois-to-anatomy":
+        stage_root = functional_roi_anatomy_transform_root(paths)
+        return (
+            describe_manifest_path(
+                stage_root / "functional_roi_anatomy_transform_manifest.csv",
+                label="functional ROI transform manifest",
+            ),
+            describe_glob(stage_root / "functional" / "native", "*_suite2p_labels_native.tif", label="native Suite2p labels"),
+            describe_glob(stage_root / "functional" / "anatomy", "*_func_mask_in_2p.tif", label="anatomy-space functional labels"),
+        )
+    if stage_name == "make-functional-registration-qc":
+        stage_root = functional_registration_qc_root(paths)
+        return (
+            describe_manifest_path(stage_root / "plane_refs_summary_qc.json", label="QC plane refs summary"),
+            describe_glob(stage_root / "qa", "*.png", label="functional registration QC PNGs"),
+            describe_glob(stage_root / "qa", "*.csv", label="functional registration QC tables"),
         )
     if stage_name == "register-hcr-to-anatomy":
         aligned_root = hcr_to_anatomy_registration_root(paths) / "confocal" / "aligned"
@@ -6299,6 +6376,14 @@ def functional_to_anatomy_registration_root(paths: PipelinePaths) -> Path:
     return _stage_root(paths, "register-functional-to-anatomy")
 
 
+def functional_roi_anatomy_transform_root(paths: PipelinePaths) -> Path:
+    return _stage_root(paths, "transform-functional-rois-to-anatomy")
+
+
+def functional_registration_qc_root(paths: PipelinePaths) -> Path:
+    return _stage_root(paths, "make-functional-registration-qc")
+
+
 def hcr_to_anatomy_registration_root(paths: PipelinePaths) -> Path:
     return _stage_root(paths, "register-hcr-to-anatomy")
 
@@ -6387,6 +6472,9 @@ def _plane_refs_summary(plane_refs: list[dict[str, Any]]) -> list[dict[str, Any]
         }
         if plane_ref.get("ants_transformlist"):
             row["ants_transformlist"] = list(plane_ref.get("ants_transformlist", ()))
+        ants_transform = plane_ref.get("ants_transform")
+        if isinstance(ants_transform, dict) and ants_transform.get("type") == "ants_transformlist":
+            row["ants_transform"] = dict(ants_transform)
         rows.append(row)
     return rows
 
@@ -6415,7 +6503,11 @@ def load_plane_refs_summary(path: str | Path) -> list[dict[str, Any]]:
             "reference_norm_path": row.get("reference_norm_path"),
             "anat_label_z_mode": row.get("anat_label_z_mode", row.get("anat_labels_z_mode", "direct")),
         }
-        if row.get("ants_transformlist"):
+        if isinstance(row.get("ants_transform"), dict):
+            plane_ref["ants_transform"] = dict(row["ants_transform"])
+            plane_ref["ants_transformlist"] = list(row["ants_transform"].get("transformlist", ()))
+            plane_ref["tform_src"] = "ants_rigid_affine"
+        elif row.get("ants_transformlist"):
             plane_ref["ants_transformlist"] = list(row.get("ants_transformlist", ()))
             plane_ref["tform_src"] = "ants_rigid_affine"
         plane_refs.append(plane_ref)
@@ -6872,6 +6964,7 @@ def run_prepare_functional_reference_stacks_stage(
     functional_stack_paths: tuple[str | Path, ...] | list[str | Path] | None = None,
     output_dir: str | Path | None = None,
     force_recompute: bool = False,
+    exclude_first_block: bool = True,
 ) -> StageManifest:
     from .context import resolve_func_polarity
     from .spatial import FunctionalReferenceConfig, build_functional_references_stage
@@ -6895,9 +6988,17 @@ def run_prepare_functional_reference_stacks_stage(
             out_raw=out_dir,
             polarity=polarity,
             polarity_source=polarity_source,
-            config=FunctionalReferenceConfig(force_recompute_refs=force_recompute),
+            config=FunctionalReferenceConfig(
+                force_recompute_refs=force_recompute,
+                exclude_first_block=exclude_first_block,
+            ),
         )
         plane_refs = tuple(result.get("plane_refs", ()))
+        frame_selection_by_plane = {
+            str(plane_ref.get("label", "")): dict(plane_ref["functional_reference_frame_selection"])
+            for plane_ref in plane_refs
+            if plane_ref.get("label") and isinstance(plane_ref.get("functional_reference_frame_selection"), dict)
+        }
         raw_outputs: list[Path] = []
         norm_outputs: list[Path] = []
         for plane_ref in plane_refs:
@@ -6942,6 +7043,7 @@ def run_prepare_functional_reference_stacks_stage(
         raw_outputs = []
         norm_outputs = []
         result = {"log_lines": []}
+        frame_selection_by_plane = {}
         polarity = None
         polarity_source = None
         status = "fail"
@@ -6955,6 +7057,16 @@ def run_prepare_functional_reference_stacks_stage(
         describe_manifest_path(path, label="functional reference normalized TIFF")
         for path in norm_outputs
     )
+    metadata_inputs = tuple(
+        describe_manifest_path(path, label="functional preprocessing metadata")
+        for path in sorted(
+            {
+                Path(selection["preprocessing_metadata_path"])
+                for selection in frame_selection_by_plane.values()
+                if selection.get("preprocessing_metadata_path")
+            }
+        )
+    )
     return StageManifest(
         manifest_version=PIPELINE_MANIFEST_VERSION,
         stage_name="prepare-functional-reference-stacks",
@@ -6962,17 +7074,20 @@ def run_prepare_functional_reference_stacks_stage(
         status=status,
         dry_run=False,
         generated_at=datetime.now(timezone.utc).isoformat(),
-        inputs=tuple(describe_manifest_path(path, label="motion-corrected functional stack") for path in source_paths),
+        inputs=tuple(describe_manifest_path(path, label="motion-corrected functional stack") for path in source_paths)
+        + metadata_inputs,
         outputs=outputs,
         checks=checks,
         parameters={
             "local_root": str(config.local_root),
             "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
+            "exclude_first_block": bool(exclude_first_block),
             "output_dir": str(out_dir),
             "polarity": polarity,
             "polarity_source": polarity_source,
             "log_lines": tuple(result.get("log_lines", ())),
+            "frame_selection_by_plane": frame_selection_by_plane,
         },
         warnings=warnings,
         errors=errors,
@@ -7020,13 +7135,14 @@ def run_register_functional_to_anatomy_stage(
     anatomy_labels_path: str | Path | None = None,
     functional_labels_anatomy_dir: str | Path | None = None,
     output_root: str | Path | None = None,
+    ncc_cache_source_dir: str | Path | None = None,
     ants_fixed_mask_json: str | Path | None = None,
     ants_require_fixed_mask: bool = True,
     force_recompute: bool = False,
     run_inplane_comparison: bool = True,
-    inplane_methods: tuple[str, ...] = ("ncc_xy",),
-    active_inplane_method: str = "ncc_xy",
-    ants_deterministic_seed: int | None = None,
+    inplane_methods: tuple[str, ...] = ("ncc_xy", "ants_rigid_affine"),
+    active_inplane_method: str = "ants_rigid_affine",
+    ants_deterministic_seed: int | None = 0,
     use_cv2: bool = False,
     emit_visual_qa: bool = True,
     visual_qa_crop_size_px: int = 200,
@@ -7066,6 +7182,9 @@ def run_register_functional_to_anatomy_stage(
     if run_inplane_comparison:
         required_output_paths = required_output_paths + (comparison_path, recommendation_path)
     requested_reference_plane_indices = tuple(dict.fromkeys(int(value) for value in (reference_plane_indices or ())))
+    cache_source_dir = (
+        Path(ncc_cache_source_dir) if ncc_cache_source_dir not in (None, "", False) else None
+    )
     discovered_reference_pairs: tuple[tuple[str, Path, Path], ...] = ()
     reference_pairs: tuple[tuple[str, Path, Path], ...] = ()
     selected_reference_labels: tuple[str, ...] = ()
@@ -7076,6 +7195,20 @@ def run_register_functional_to_anatomy_stage(
                 "register-functional-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
                 + ", ".join(str(path) for path in existing_outputs)
             )
+        if cache_source_dir is not None:
+            cache_sources = tuple(
+                cache_source_dir / name
+                for name in ("ncc_scale_by_fish.json", "ncc_bestz_by_plane.json")
+            )
+            missing_cache_sources = tuple(path for path in cache_sources if not path.is_file())
+            if missing_cache_sources:
+                raise FileNotFoundError(
+                    "NCC cache reuse requires both scale and best-Z caches; missing: "
+                    + ", ".join(str(path) for path in missing_cache_sources)
+                )
+            out_ncc.mkdir(parents=True, exist_ok=True)
+            for source_path in cache_sources:
+                shutil.copy2(source_path, out_ncc / source_path.name)
         discovered_reference_pairs = discover_functional_reference_pairs(ref_dir)
         annotated_reference_pairs = tuple(
             (label, raw_path, norm_path, _parse_plane_index(label, default_idx))
@@ -7116,7 +7249,7 @@ def run_register_functional_to_anatomy_stage(
             fish_id=config.fish_id,
             out_ncc=out_ncc,
             config=RegistrationSearchConfig(
-                force_recompute=force_recompute,
+                force_recompute=bool(force_recompute and cache_source_dir is None),
                 scale_coarse=(0.50, 1.50, 0.05),
                 scale_fine=(0.05, 0.01),
                 scale_xfine=(0.005, 0.001),
@@ -7155,7 +7288,7 @@ def run_register_functional_to_anatomy_stage(
         summary_path.write_text(json.dumps(_plane_refs_summary(final_plane_refs), indent=2, sort_keys=True))
         qa_checks: tuple[StageCheckRecord, ...] = ()
         warnings_list: list[str] = []
-        if emit_visual_qa:
+        if emit_visual_qa and functional_labels_anatomy_dir not in (None, "", False):
             anat_labels_path = (
                 Path(anatomy_labels_path)
                 if anatomy_labels_path not in (None, "", False)
@@ -7303,6 +7436,14 @@ def run_register_functional_to_anatomy_stage(
             ),
         )
         + tuple(
+            describe_manifest_path(cache_source_dir / name, label=f"reused NCC {label} cache")
+            for name, label in (
+                ("ncc_scale_by_fish.json", "scale"),
+                ("ncc_bestz_by_plane.json", "best-Z"),
+            )
+            if cache_source_dir is not None
+        )
+        + tuple(
             describe_manifest_path(raw_path, label="functional reference raw TIFF")
             for _, raw_path, _ in reference_pairs
         ),
@@ -7319,6 +7460,7 @@ def run_register_functional_to_anatomy_stage(
             "selected_reference_labels": selected_reference_labels,
             "anatomy_stack_path": str(anat_path),
             "output_root": str(stage_root),
+            "ncc_cache_source_dir": str(cache_source_dir) if cache_source_dir is not None else None,
             "registration_backend": str(active_inplane_method),
             "run_inplane_comparison": bool(run_inplane_comparison),
             "inplane_methods": tuple(inplane_methods),
@@ -7331,6 +7473,344 @@ def run_register_functional_to_anatomy_stage(
             "visual_qa_crop_size_px": int(visual_qa_crop_size_px),
             "functional_anatomy_center_overlay_path": str(qa_overlay_path),
             "log_lines": log_lines,
+        },
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def run_transform_functional_rois_to_anatomy_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    plane_refs_summary_path: str | Path | None = None,
+    anatomy_stack_path: str | Path | None = None,
+    output_root: str | Path | None = None,
+    force_recompute: bool = False,
+) -> StageManifest:
+    import numpy as np
+    import pandas as pd
+    import tifffile
+
+    from .context import resolve_func_polarity
+    from .matching import harmonize_functional_labels_to_anatomy
+    from .spatial import imread_any
+    from .suite2p import Suite2pStageConfig, load_suite2p_stage
+
+    paths = resolve_pipeline_paths(config)
+    registration_root = functional_to_anatomy_registration_root(paths)
+    summary_path = (
+        Path(plane_refs_summary_path)
+        if plane_refs_summary_path not in (None, "", False)
+        else registration_root / "plane_refs_summary.json"
+    )
+    anatomy_path = (
+        Path(anatomy_stack_path)
+        if anatomy_stack_path not in (None, "", False)
+        else prepared_in_vivo_anatomy_path(paths)
+    )
+    stage_root = Path(output_root) if output_root not in (None, "", False) else functional_roi_anatomy_transform_root(paths)
+    native_dir = stage_root / "functional" / "native"
+    anatomy_dir = stage_root / "functional" / "anatomy"
+    transform_csv = stage_root / "functional_roi_anatomy_transform_manifest.csv"
+    rows: list[dict[str, Any]] = []
+    outputs: tuple[ManifestPathRecord, ...] = ()
+    checks: tuple[StageCheckRecord, ...] = ()
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+    try:
+        plane_refs = load_plane_refs_summary(summary_path)
+        expected_paths = tuple(
+            anatomy_dir / f"{str(plane_ref['label'])}_func_mask_in_2p.tif" for plane_ref in plane_refs
+        )
+        existing = tuple(path for path in (*expected_paths, transform_csv) if path.exists())
+        if existing and not force_recompute:
+            raise FileExistsError(
+                "transform-functional-rois-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
+                + ", ".join(str(path) for path in existing[:10])
+            )
+        anatomy = np.asarray(imread_any(anatomy_path))
+        if anatomy.ndim < 3:
+            raise RuntimeError(f"Expected 3D anatomy stack, got shape {anatomy.shape}")
+        target_shape = tuple(int(v) for v in anatomy.shape[-2:])
+        polarity, polarity_source = resolve_func_polarity(
+            config.fish_id,
+            paths.matching_metadata_csv,
+            fish_dir=paths.fish_dir,
+        )
+        suite2p_result = load_suite2p_stage(
+            plane_refs=plane_refs,
+            suite2p_root=paths.functional_suite2p_dir,
+            fish_id=config.fish_id,
+            polarity=polarity,
+            polarity_source=polarity_source,
+            config=Suite2pStageConfig(verbose=False),
+        )
+        native_dir.mkdir(parents=True, exist_ok=True)
+        anatomy_dir.mkdir(parents=True, exist_ok=True)
+        native_outputs: list[Path] = []
+        transformed_outputs: list[Path] = []
+        for local_idx, plane_ref in enumerate(plane_refs):
+            plane_idx = int(plane_ref.get("index", local_idx))
+            label = str(plane_ref.get("label", f"{config.fish_id}_plane{plane_idx}_mcorrected_flipX"))
+            suite2p_plane = suite2p_result["suite2p_by_ref_idx"].get(local_idx)
+            native_labels = None if not isinstance(suite2p_plane, dict) else suite2p_plane.get("labels")
+            if native_labels is None:
+                rows.append({"plane_idx": plane_idx, "plane_label": label, "status": "missing_suite2p_labels"})
+                continue
+            native_labels = np.asarray(native_labels, dtype=np.uint32)
+            native_path = native_dir / f"{label}_suite2p_labels_native.tif"
+            native_max = int(native_labels.max()) if native_labels.size else 0
+            native_dtype = np.uint16 if native_max <= np.iinfo(np.uint16).max else np.uint32
+            tifffile.imwrite(native_path, native_labels.astype(native_dtype, copy=False))
+            result = harmonize_functional_labels_to_anatomy(native_labels, plane_ref, target_shape)
+            transformed = result.get("labels")
+            if transformed is None or str(result.get("status")) != "ok":
+                rows.append(
+                    {
+                        "plane_idx": plane_idx,
+                        "plane_label": label,
+                        "status": str(result.get("status")),
+                        "native_labels_path": str(native_path),
+                    }
+                )
+                continue
+            transformed = np.asarray(transformed, dtype=np.uint32)
+            transformed_path = anatomy_dir / f"{label}_func_mask_in_2p.tif"
+            transformed_max = int(transformed.max()) if transformed.size else 0
+            transformed_dtype = np.uint16 if transformed_max <= np.iinfo(np.uint16).max else np.uint32
+            tifffile.imwrite(transformed_path, transformed.astype(transformed_dtype, copy=False))
+            native_count = int(np.unique(native_labels[native_labels > 0]).size)
+            transformed_count = int(np.unique(transformed[transformed > 0]).size)
+            rows.append(
+                {
+                    "plane_idx": plane_idx,
+                    "plane_label": label,
+                    "status": "pass",
+                    "transform_source": str(plane_ref.get("tform_src", "")),
+                    "best_z": int(plane_ref.get("best_z", 0)),
+                    "native_labels_path": str(native_path),
+                    "anatomy_space_labels_path": str(transformed_path),
+                    "native_label_count": native_count,
+                    "anatomy_space_label_count": transformed_count,
+                    "labels_lost_after_transform": native_count - transformed_count,
+                    "native_shape": tuple(int(v) for v in native_labels.shape),
+                    "anatomy_shape": tuple(int(v) for v in transformed.shape),
+                }
+            )
+            native_outputs.append(native_path)
+            transformed_outputs.append(transformed_path)
+        manifest_df = pd.DataFrame(rows)
+        transform_csv.parent.mkdir(parents=True, exist_ok=True)
+        manifest_df.to_csv(transform_csv, index=False)
+        pass_count = int((manifest_df.get("status", pd.Series(dtype=str)) == "pass").sum())
+        status = "pass" if pass_count == len(plane_refs) else "fail"
+        checks = (
+            StageCheckRecord(
+                label="native Suite2p label TIFFs",
+                status="pass" if len(native_outputs) == len(plane_refs) else "fail",
+                detail="one rasterized native Suite2p label TIFF exists per registered plane",
+                observed=str(len(native_outputs)),
+                expected=str(len(plane_refs)),
+            ),
+            StageCheckRecord(
+                label="anatomy-space functional label TIFFs",
+                status="pass" if len(transformed_outputs) == len(plane_refs) else "fail",
+                detail="the selected functional-to-anatomy transform was applied to every Suite2p label plane",
+                observed=str(len(transformed_outputs)),
+                expected=str(len(plane_refs)),
+            ),
+        )
+        outputs = tuple(
+            [describe_manifest_path(transform_csv, label="functional ROI transform manifest")]
+            + [describe_manifest_path(path, label="native Suite2p label TIFF") for path in native_outputs]
+            + [describe_manifest_path(path, label="anatomy-space functional label TIFF") for path in transformed_outputs]
+        )
+        if status == "fail":
+            errors = tuple(
+                f"{row.get('plane_label')}: {row.get('status')}" for row in rows if row.get("status") != "pass"
+            )
+    except Exception as exc:
+        status = "fail"
+        errors = (str(exc),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name="transform-functional-rois-to-anatomy",
+        fish_id=config.fish_id,
+        status=status,
+        dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=(
+            describe_manifest_path(summary_path, label="registered plane refs summary"),
+            describe_manifest_path(anatomy_path, label="canonical prepared anatomy NRRD"),
+            describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root"),
+        ),
+        outputs=outputs,
+        checks=checks,
+        parameters={
+            "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
+            "output_root": str(stage_root),
+            "force_recompute": bool(force_recompute),
+            "plane_count": len(rows),
+        },
+        warnings=warnings,
+        errors=errors,
+    )
+
+
+def run_make_functional_registration_qc_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    plane_refs_summary_path: str | Path | None = None,
+    anatomy_stack_path: str | Path | None = None,
+    anatomy_labels_path: str | Path | None = None,
+    transformed_roi_root: str | Path | None = None,
+    output_root: str | Path | None = None,
+    anatomy_label_z_mode: str = "auto",
+    force_recompute: bool = False,
+) -> StageManifest:
+    from .context import infer_anat_labels_path
+    from .plots.qa import (
+        render_functional_anatomy_center_overlay_qc_png,
+        render_functional_anatomy_intensity_overlay_qc_png,
+        render_functional_anatomy_plane_qc_row_png,
+        render_functional_ncc_profiles_qc_png,
+    )
+
+    paths = resolve_pipeline_paths(config)
+    registration_root = functional_to_anatomy_registration_root(paths)
+    transform_root = (
+        Path(transformed_roi_root)
+        if transformed_roi_root not in (None, "", False)
+        else functional_roi_anatomy_transform_root(paths)
+    )
+    summary_path = (
+        Path(plane_refs_summary_path)
+        if plane_refs_summary_path not in (None, "", False)
+        else registration_root / "plane_refs_summary.json"
+    )
+    anatomy_path = (
+        Path(anatomy_stack_path)
+        if anatomy_stack_path not in (None, "", False)
+        else prepared_in_vivo_anatomy_path(paths)
+    )
+    anat_labels_path = (
+        Path(anatomy_labels_path)
+        if anatomy_labels_path not in (None, "", False)
+        else infer_anat_labels_path(paths.fish_dir, config.fish_id)
+    )
+    stage_root = Path(output_root) if output_root not in (None, "", False) else functional_registration_qc_root(paths)
+    qa_dir = stage_root / "qa"
+    adjusted_summary_path = stage_root / "plane_refs_summary_qc.json"
+    plane_rows_png = qa_dir / "functional_anatomy_plane_qc_rows.png"
+    intensity_png = qa_dir / "functional_anatomy_intensity_overlay_rows.png"
+    center_png = qa_dir / "functional_anatomy_center_label_overlay_200px.png"
+    ncc_png = qa_dir / "functional_ncc_depth_profiles.png"
+    expected_pngs = (plane_rows_png, intensity_png, center_png, ncc_png)
+    outputs: tuple[ManifestPathRecord, ...] = ()
+    checks: tuple[StageCheckRecord, ...] = ()
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+    try:
+        existing = tuple(path for path in expected_pngs if path.exists())
+        if existing and not force_recompute:
+            raise FileExistsError(
+                "make-functional-registration-qc outputs already exist; pass --force-recompute to overwrite: "
+                + ", ".join(str(path) for path in existing)
+            )
+        if anat_labels_path is None:
+            raise FileNotFoundError(f"No anatomy label stack found for {config.fish_id}")
+        z_mode = str(anatomy_label_z_mode).strip().lower()
+        if z_mode not in {"auto", "direct", "reverse"}:
+            raise ValueError("anatomy_label_z_mode must be one of: auto, direct, reverse")
+        plane_rows = json.loads(summary_path.read_text())
+        if not isinstance(plane_rows, list) or not plane_rows:
+            raise RuntimeError(f"Plane refs summary has no records: {summary_path}")
+        if z_mode != "auto":
+            for row in plane_rows:
+                if isinstance(row, dict):
+                    row["anat_label_z_mode"] = z_mode
+        adjusted_summary_path.parent.mkdir(parents=True, exist_ok=True)
+        adjusted_summary_path.write_text(json.dumps(plane_rows, indent=2, sort_keys=True))
+        native_dir = transform_root / "functional" / "native"
+        transformed_dir = transform_root / "functional" / "anatomy"
+        positioned_dir = registration_root / "ncc" / "inplane_registration_comparison"
+        ncc_bestz_path = registration_root / "ncc" / "ncc_bestz_by_plane.json"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        render_functional_anatomy_plane_qc_row_png(
+            fish_id=config.fish_id,
+            plane_refs_summary_path=adjusted_summary_path,
+            anatomy_stack_path=anatomy_path,
+            anatomy_labels_path=anat_labels_path,
+            suite2p_label_dir=native_dir,
+            out_path=plane_rows_png,
+            functional_reference_dir=functional_reference_output_dir(paths),
+            positioned_reference_dir=positioned_dir,
+        )
+        render_functional_anatomy_intensity_overlay_qc_png(
+            fish_id=config.fish_id,
+            plane_refs_summary_path=adjusted_summary_path,
+            anatomy_stack_path=anatomy_path,
+            positioned_reference_dir=positioned_dir,
+            out_path=intensity_png,
+        )
+        render_functional_anatomy_center_overlay_qc_png(
+            fish_id=config.fish_id,
+            plane_refs_summary_path=adjusted_summary_path,
+            anatomy_stack_path=anatomy_path,
+            anatomy_labels_path=anat_labels_path,
+            functional_labels_anatomy_dir=transformed_dir,
+            out_path=center_png,
+            crop_size_px=200,
+        )
+        render_functional_ncc_profiles_qc_png(
+            fish_id=config.fish_id,
+            plane_refs_summary_path=adjusted_summary_path,
+            ncc_bestz_path=ncc_bestz_path,
+            out_path=ncc_png,
+        )
+        existing_count = sum(path.exists() for path in expected_pngs)
+        status = "pass" if existing_count == len(expected_pngs) else "fail"
+        checks = (
+            StageCheckRecord(
+                label="functional registration QC PNGs",
+                status="pass" if existing_count == len(expected_pngs) else "fail",
+                detail="registration intensity, ROI/anatomy label, plane-row, and NCC profile figures were rendered",
+                observed=str(existing_count),
+                expected=str(len(expected_pngs)),
+            ),
+        )
+        outputs = tuple(
+            [describe_manifest_path(adjusted_summary_path, label="QC plane refs summary")]
+            + [describe_manifest_path(path, label="functional registration QC PNG") for path in expected_pngs]
+            + [describe_manifest_path(path.with_suffix(".csv"), label="functional registration QC table") for path in expected_pngs]
+        )
+        if status == "fail":
+            errors = (f"Only {existing_count}/{len(expected_pngs)} QC PNGs were rendered",)
+    except Exception as exc:
+        status = "fail"
+        errors = (str(exc),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name="make-functional-registration-qc",
+        fish_id=config.fish_id,
+        status=status,
+        dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=(
+            describe_manifest_path(summary_path, label="registered plane refs summary"),
+            describe_manifest_path(anatomy_path, label="canonical prepared anatomy NRRD"),
+            _optional_manifest_path(anat_labels_path, label="anatomy label stack"),
+            describe_manifest_path(transform_root / "functional", label="transformed functional ROI labels"),
+        ),
+        outputs=outputs,
+        checks=checks,
+        parameters={
+            "local_root": str(config.local_root),
+            "pipeline_root": str(paths.pipeline_root),
+            "output_root": str(stage_root),
+            "anatomy_label_z_mode": str(anatomy_label_z_mode),
+            "force_recompute": bool(force_recompute),
         },
         warnings=warnings,
         errors=errors,
@@ -8618,6 +9098,8 @@ __all__ = [
     "downstream_stage_names",
     "ex_vivo_structural_root",
     "functional_to_anatomy_registration_root",
+    "functional_roi_anatomy_transform_root",
+    "functional_registration_qc_root",
     "functional_reference_output_dir",
     "hcr_to_anatomy_registration_root",
     "load_plane_refs_summary",
@@ -8630,6 +9112,8 @@ __all__ = [
     "run_prepare_in_vivo_anatomy_stack_stage",
     "run_prepare_ex_vivo_anatomy_stack_stage",
     "run_register_functional_to_anatomy_stage",
+    "run_transform_functional_rois_to_anatomy_stage",
+    "run_make_functional_registration_qc_stage",
     "run_register_hcr_to_anatomy_stage",
     "run_match_roi_to_anatomy_stage",
     "run_segment_ex_vivo_anatomy_cellpose_stage",

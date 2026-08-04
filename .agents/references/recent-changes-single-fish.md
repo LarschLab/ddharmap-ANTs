@@ -3303,3 +3303,53 @@
 - Validation:
   - focused spatial/segmentation/pipeline tests passed with `155 passed, 61 warnings` before the unsuccessful anisotropy behavior was reverted; final validation is recorded in the active roadmap completion audit.
   - final repository validation passed after documentation-contract reconciliation: the full suite reached `370 passed` before the sole wording-contract correction, the corrected documentation/package-export suite passed `14 passed`, `compileall` passed, and `git diff --check` passed.
+
+### 2026-08-03 - exclude settling block from functional references
+
+- Slice goal:
+  - prevent the low-melting-agarose settling block from contributing one third of each functional reference used for NCC Z/scale search.
+- Code changes:
+  - added explicit metadata-aware first-block exclusion to `FunctionalReferenceConfig` and the `[12]` functional-reference builder.
+  - made `prepare-functional-reference-stacks` exclude the first selected TIFF in each imaging session by default and record per-plane frame-selection provenance in its manifest.
+  - preserved already-trimmed inputs such as `L395_f11` metadata with `blocks: [2, 3]`; ambiguous metadata or unequal inferred block boundaries fail rather than silently guessing.
+  - added the CLI compatibility override `--include-first-block` and updated the notebook `[12]` orchestration knob.
+- Validation:
+  - focused and downstream contract coverage passed with `203 passed, 63 warnings`; `git diff --check` passed.
+  - the first detached `L758_f07` run exposed that r2 raw TIFF numbering begins at `00004`; the resolver was corrected to exclude the first selected TIFF per session rather than only numeric block 1, and a regression test now covers this case.
+  - corrected detached Linnaeus job `20260803T073129Z-l758-f07-first-block-excluded-refs-rerun-6926` succeeded with email notification reported sent.
+  - staged output `/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260803T073700Z_first_block_exclusion/L758_f07` contains 10 raw and 10 normalized references. All ten planes excluded frames `0:1834`, retained 3,668 frames, and covered five r1 plus five r2 planes.
+- Rerun implications:
+  - existing functional-reference caches are stale when they were built from all frames; recompute `[12]` before repeating NCC scale/Z search and downstream functional-to-anatomy registration.
+
+### 2026-08-03 - make functional registration ordering explicit
+
+- Replaced the registration-stage backward dependency on pre-existing `*_func_mask_in_2p.tif` files with three ordered writers: intensity registration, Suite2p-label transformation, then QC rendering.
+- NCC XY placement now initializes ANTs rigid+affine; the persisted transform includes both operations so registered intensities and ROI masks follow the same deterministic geometry.
+- ANTs failure is terminal and cannot silently select NCC as the final transform.
+- Added post-transform intensity, label-overlay, plane-row, and NCC-profile PNG renderers with CSV provenance.
+- Local focused validation exercises all three stages on synthetic data and verifies four QC PNGs plus four CSVs.
+
+### 2026-08-04 - time-resolved functional Z-drift diagnostic
+
+- Added package-owned `z_drift.py` plus the thin `tools/diagnose_functional_z_drift.py` wrapper.
+- The diagnostic divides motion-corrected plane movies into aligned temporal windows, builds top-correlated interval references, reuses the persisted per-plane NCC scale, and writes interval/profile/session-summary CSVs plus Z-track and NCC-profile PNGs without ANTs or canonical output changes.
+- Session interpretation now distinguishes coherent post-initial progressive drift, an initial transient followed by stability, complex/heterogeneous Z change, and stable controls. A progressive call requires a material effect, shared plane direction, a narrow per-plane change distribution, and an exact temporal-order permutation check.
+- Focused tests pass (`6 passed`), CLI import/help and `git diff --check` pass, and rendered real-data plots passed nonblank/dimension checks plus visual review.
+- Linnaeus jobs ran for the declared cohort under `/Volumes/dataDrive/dataProcessing/2p_processing/_z_drift_diagnostics/20260804T_z_drift_ncc_v2_zyx/`, but only L758_f07 and L765_f04-L765_f06 are valid: their south polarity matches the diagnostic's flipX default. L765_f02/L765_f03 are north-polarity fish and their folders were renamed `_INVALID_WRONG_POLARITY` because the required rot180+flipX orientation was not applied.
+- At that audit stage, L765_f05 r1 showed candidate progressive drift of `-9.53` anatomy slices (`-19.06 µm`) after the initial window, L765_f06 r1 showed a candidate `+2.79`-slice (`+5.58 µm`) change, and L758_f07/L765_f04 were stable. A corrected L765_f02 orientation spot check restored NCC to approximately 0.60-0.61 and prior best-Z values; later bullets record the final post-block-0 L765_f02/L765_f03 reruns.
+- The first real-data pass exposed a pynrrd Y/X/Z versus registration Z/Y/X axis mismatch. That invalid diagnostic was preserved under the explicit `INVALID_NRRD_AXIS` name and excluded; the corrected implementation uses SimpleITK Z/Y/X anatomy readback.
+- Remaining gate: no replacement functional references or transforms have been accepted. The diagnostic must resolve polarity from canonical metadata/manifests before L765_f02/L765_f03 are rerun; L765_f05/L765_f06 r1 need isolated time-dependent registration review.
+- Follow-up hardening: the diagnostic now requires a matching `pass` functional-reference manifest, resolves `north`/`south` polarity from it, records the effective polarity/source, and fails rather than defaulting orientation. The CLI requires `--functional-reference-manifest-path`; focused regression coverage increased to `9 passed`.
+- Second provenance correction: the polarity-resolved v3 pass still split the full 5,502-frame movie, so its `post-initial` metric excluded only 917 frames rather than the complete 1,834-frame first block used by canonical preparation. The diagnostic now loads and validates per-plane `frame_start`, source-frame count, and retained-frame count from the same accepted manifest, and fails closed unless first-block exclusion is verified. Focused regression coverage increased to `11 passed`.
+- Final north-polarity jobs `20260804T111121Z-z-drift-v4-post-block0-L765_f02-aab5` and `20260804T111122Z-z-drift-v4-post-block0-L765_f03-f8dd` succeeded using frames `1834:5502` under `/Volumes/dataDrive/dataProcessing/2p_processing/_z_drift_diagnostics/20260804T_z_drift_ncc_v4_post_block0_polarity_resolved/`. L765_f02 was stable in both sessions (full retained-span changes `-0.18` and `+0.13` slices). L765_f03 retained strong coherent negative drift in both sessions (`-10.58` and `-11.91` slices); r1 magnitude was plane-dependent, while r2 was tightly coherent.
+- Replaced abstract interval indices in the trajectory/profile figures and CSVs with acquisition-aware labels: `Block 1/2` plus `first/middle/final third`. Figure titles and axes now state that Block 0 was excluded and that reported ΔZ spans the retained acquisition.
+- Final labeled full-cohort jobs succeeded under `/Volumes/dataDrive/dataProcessing/2p_processing/_z_drift_diagnostics/20260804T_z_drift_ncc_v5_post_block0_labeled_full_cohort/`. L758_f07, L765_f02, L765_f04, and L765_f06 were below the 2-slice material threshold; the earlier L765_f06 drift hold was removed. L765_f05 showed coherent r1-only drift (`-7.73` slices), while L765_f03 showed strong drift in both sessions (`-10.58`/`-11.91` slices), with plane-dependent r1 magnitude and late r2 plane-9 boundary censoring.
+- Validation: `tests/test_z_drift.py` passes all 13 tests; the six track and six profile figures were retrieved and visually checked after the shared-legend rerender.
+
+### 2026-08-04 - cached bounded plane retry and NRRD-axis hardening
+
+- Added `--reuse-ncc-cache-dir` / `ncc_cache_source_dir` so an isolated bounded functional-plane retry can copy prior `ncc_scale_by_fish.json` and `ncc_bestz_by_plane.json` and skip the scale sweep while rerunning XY and ANTs registration.
+- Fixed bounded in-plane registration to retain each selected reference's original plane index instead of replacing it with the subset enumeration index; this keeps masks, transforms, and QC provenance aligned for single-plane retries such as plane 4.
+- Hardened shared NRRD loading: SimpleITK is preferred for Z/Y/X array readback, and the pynrrd fallback uses `index_order="C"`. The first L765_f02 plane-4 retry exposed the prior Y/X/Z interpretation by producing impossible `best_z=666`; it failed before ANTs and its isolated output was preserved as invalid.
+- Corrected persistent job `20260804T123753Z-l765-f02-plane4-retry-v2` reused scale `1.167` and `Z=54`. NCC XY post-NCC was `0.5956`; ANTs rigid+affine improved it to `0.7278`. Four QC PNGs and transformed Suite2p labels were generated under the isolated staged root, visually inspected for gross coherence, and left unpromoted pending user acceptance.
+- Validation: focused spatial, pipeline, and Z-drift coverage passed `157 passed, 61 warnings`; the remote anatomy smoke read the canonical NRRD as `(76, 750, 750)`; the corrected persistent retry exited 0.

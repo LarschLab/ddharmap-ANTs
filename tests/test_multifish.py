@@ -204,8 +204,8 @@ def test_run_multifish_anatomy_segmentation_preprocesses_raw_anatomy_to_750_xy(t
 
     summary = result["bindings"]["MULTIFISH_ANATOMY_SEGMENTATION_DF"]
     assert summary.iloc[0]["status"] == "cached"
-    assert captured["shape"][:2] == (750, 750)
-    assert captured["shape"][2] == 2
+    assert captured["shape"][0] == 2
+    assert captured["shape"][1:] == (750, 750)
     assert str(captured["anat_seg_source_path"]).endswith(".nrrd")
 
 

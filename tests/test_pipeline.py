@@ -33,6 +33,8 @@ from codeants_2pf_hcr.pipeline import (
     downstream_stage_names,
     ex_vivo_structural_root,
     functional_to_anatomy_registration_root,
+    functional_roi_anatomy_transform_root,
+    functional_registration_qc_root,
     functional_reference_output_dir,
     hcr_to_anatomy_registration_root,
     load_plane_refs_summary,
@@ -44,6 +46,8 @@ from codeants_2pf_hcr.pipeline import (
     run_prepare_in_vivo_anatomy_stack_stage,
     run_prepare_ex_vivo_anatomy_stack_stage,
     run_register_functional_to_anatomy_stage,
+    run_transform_functional_rois_to_anatomy_stage,
+    run_make_functional_registration_qc_stage,
     run_register_hcr_to_anatomy_stage,
     run_match_roi_to_anatomy_stage,
     roi_to_anatomy_match_root,
@@ -919,6 +923,7 @@ def test_prepare_functional_reference_stacks_stage_writes_manifest_outputs(tmp_p
         functional_stack_paths=[source],
         output_dir=output_dir,
         force_recompute=True,
+        exclude_first_block=False,
     )
 
     raw_ref = output_dir / f"{source.stem}_flipX_ref_raw.tif"
@@ -950,12 +955,175 @@ def test_prepare_functional_reference_stacks_stage_discovers_motion_corrected_in
     manifest = run_prepare_functional_reference_stacks_stage(
         SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged"),
         force_recompute=True,
+        exclude_first_block=False,
     )
 
     assert manifest.status == "pass"
     assert manifest.inputs[0].path == str(source)
     assert manifest.parameters["pipeline_root"] == str(paths.pipeline_root)
     assert all(record.path.startswith(str(functional_reference_output_dir(paths))) for record in manifest.outputs)
+
+
+def test_prepare_functional_reference_stacks_stage_excludes_first_selected_tiff_block(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,bottom-left\n"
+    )
+    source = (
+        fish_dir
+        / "02_reg"
+        / "00_preprocessing"
+        / "2p_functional"
+        / "02_motionCorrected"
+        / f"{fish_dir.name}_plane0_mcorrected.tif"
+    )
+    import numpy as np
+    import tifffile
+
+    source.parent.mkdir(parents=True, exist_ok=True)
+    stack = np.stack(
+        [
+            np.full((4, 4), 1, dtype=np.uint16),
+            np.full((4, 4), 1, dtype=np.uint16),
+            np.full((4, 4), 10, dtype=np.uint16),
+            np.full((4, 4), 10, dtype=np.uint16),
+            np.full((4, 4), 20, dtype=np.uint16),
+            np.full((4, 4), 20, dtype=np.uint16),
+        ]
+    )
+    tifffile.imwrite(source, stack)
+    metadata_path = source.parent.parent / "01_individualPlanes" / f"{fish_dir.name}_preprocessing_metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "blocks": None,
+                "sessions": [
+                    {
+                        "session_label": "r1",
+                        "output_planes": [0],
+                        "selected_tiffs": [
+                            f"/raw/{fish_dir.name}_00001.tif",
+                            f"/raw/{fish_dir.name}_00002.tif",
+                            f"/raw/{fish_dir.name}_00003.tif",
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    output_dir = tmp_path / "excluded-first-block-refs"
+
+    manifest = run_prepare_functional_reference_stacks_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        functional_stack_paths=[source],
+        output_dir=output_dir,
+        force_recompute=True,
+    )
+
+    raw_ref = tifffile.imread(output_dir / f"{source.stem}_flipX_ref_raw.tif")
+    selection = manifest.parameters["frame_selection_by_plane"][f"{source.stem}_flipX"]
+    assert manifest.status == "pass"
+    np.testing.assert_array_equal(raw_ref, np.full((4, 4), 15, dtype=np.float32))
+    assert selection["frame_start"] == 2
+    assert selection["reference_frame_count"] == 4
+    assert selection["decision"] == "excluded_first_selected_tiff_block"
+    assert any(record.path == str(metadata_path) for record in manifest.inputs)
+
+
+def test_prepare_functional_reference_stacks_stage_does_not_double_trim_preselected_blocks(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    source = (
+        fish_dir
+        / "02_reg"
+        / "00_preprocessing"
+        / "2p_functional"
+        / "02_motionCorrected"
+        / f"{fish_dir.name}_plane0_mcorrected.tif"
+    )
+    import numpy as np
+    import tifffile
+
+    source.parent.mkdir(parents=True, exist_ok=True)
+    tifffile.imwrite(
+        source,
+        np.stack(
+            [
+                np.full((4, 4), 10, dtype=np.uint16),
+                np.full((4, 4), 10, dtype=np.uint16),
+                np.full((4, 4), 20, dtype=np.uint16),
+                np.full((4, 4), 20, dtype=np.uint16),
+            ]
+        ),
+    )
+    metadata_path = source.parent.parent / "01_individualPlanes" / f"{fish_dir.name}_preprocessing_metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps({"blocks": [2, 3]}))
+    output_dir = tmp_path / "already-trimmed-refs"
+
+    manifest = run_prepare_functional_reference_stacks_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        functional_stack_paths=[source],
+        output_dir=output_dir,
+        force_recompute=True,
+    )
+
+    selection = manifest.parameters["frame_selection_by_plane"][f"{source.stem}_flipX"]
+    assert manifest.status == "pass"
+    assert selection["frame_start"] == 0
+    assert selection["reference_frame_count"] == 4
+    assert selection["decision"] == "first_block_already_excluded_upstream"
+
+
+def test_prepare_functional_reference_stacks_stage_excludes_first_tiff_of_later_session(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    source = (
+        fish_dir
+        / "02_reg"
+        / "00_preprocessing"
+        / "2p_functional"
+        / "02_motionCorrected"
+        / f"{fish_dir.name}_plane5_mcorrected.tif"
+    )
+    import numpy as np
+    import tifffile
+
+    source.parent.mkdir(parents=True, exist_ok=True)
+    tifffile.imwrite(source, np.arange(6 * 4 * 4, dtype=np.uint16).reshape(6, 4, 4))
+    metadata_path = source.parent.parent / "01_individualPlanes" / f"{fish_dir.name}_preprocessing_metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "blocks": None,
+                "sessions": [
+                    {
+                        "session_label": "r2",
+                        "output_planes": [5],
+                        "selected_tiffs": [
+                            f"/raw/{fish_dir.name}_r2_00004.tif",
+                            f"/raw/{fish_dir.name}_r2_00005.tif",
+                            f"/raw/{fish_dir.name}_r2_00006.tif",
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    manifest = run_prepare_functional_reference_stacks_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        functional_stack_paths=[source],
+        output_dir=tmp_path / "later-session-refs",
+        force_recompute=True,
+    )
+
+    selection = manifest.parameters["frame_selection_by_plane"][f"{source.stem}_flipX"]
+    assert manifest.status == "pass"
+    assert selection["frame_start"] == 2
+    assert selection["selected_block_numbers"] == [4, 5, 6]
+    assert selection["session_label"] == "r2"
+    assert selection["decision"] == "excluded_first_selected_tiff_block"
 
 
 def test_single_fish_pipeline_cli_prepare_functional_reference_outputs_manifest(tmp_path: Path) -> None:
@@ -982,6 +1150,7 @@ def test_single_fish_pipeline_cli_prepare_functional_reference_outputs_manifest(
             "--output-dir",
             str(output_dir),
             "--force-recompute",
+            "--include-first-block",
         ],
         cwd=REPO_ROOT,
         env={"PYTHONPATH": "src"},
@@ -1024,6 +1193,7 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
         config,
         functional_stack_paths=[source],
         force_recompute=True,
+        exclude_first_block=False,
     )
     assert refs_manifest.status == "pass"
 
@@ -1043,8 +1213,8 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     assert manifest.status == "pass"
     assert tforms_path.exists()
     assert summary_path.exists()
-    assert qa_png.exists()
-    assert qa_csv.exists()
+    assert not qa_png.exists()
+    assert not qa_csv.exists()
     summary = json.loads(summary_path.read_text())
     assert summary[0]["label"] == f"{fish_dir.name}_plane0_mcorrected_flipX"
     assert summary[0]["ncc_scores_count"] > 0
@@ -1056,7 +1226,29 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     assert (stage_root / "ncc" / "inplane_registration_comparison" / "inplane_registration_comparison.csv").exists()
     assert discover_functional_reference_pairs(functional_reference_output_dir(resolve_pipeline_paths(config)))
     assert any(check.label == "functional transform table" and check.status == "pass" for check in manifest.checks)
-    assert any(check.label == "functional/anatomy center overlay QA" and check.status == "pass" for check in manifest.checks)
+
+    pipeline_paths = resolve_pipeline_paths(config)
+    _write_minimal_suite2p_plane(pipeline_paths.functional_suite2p_dir / "plane0")
+    transform_manifest = run_transform_functional_rois_to_anatomy_stage(
+        config,
+        anatomy_stack_path=anatomy,
+        force_recompute=True,
+    )
+    assert transform_manifest.status == "pass"
+    transform_root = functional_roi_anatomy_transform_root(pipeline_paths)
+    assert len(tuple((transform_root / "functional" / "anatomy").glob("*_func_mask_in_2p.tif"))) == 1
+
+    qc_manifest = run_make_functional_registration_qc_stage(
+        config,
+        anatomy_stack_path=anatomy,
+        anatomy_labels_path=anatomy_labels,
+        anatomy_label_z_mode="direct",
+        force_recompute=True,
+    )
+    assert qc_manifest.status == "pass"
+    qc_dir = functional_registration_qc_root(pipeline_paths) / "qa"
+    assert len(tuple(qc_dir.glob("*.png"))) == 4
+    assert len(tuple(qc_dir.glob("*.csv"))) == 4
 
 
 def test_register_functional_to_anatomy_stage_can_limit_reference_planes(tmp_path: Path) -> None:
@@ -1076,6 +1268,7 @@ def test_register_functional_to_anatomy_stage_can_limit_reference_planes(tmp_pat
         config,
         functional_stack_paths=[source0, source1],
         force_recompute=True,
+        exclude_first_block=False,
     )
     assert refs_manifest.status == "pass"
 
@@ -1085,6 +1278,8 @@ def test_register_functional_to_anatomy_stage_can_limit_reference_planes(tmp_pat
         reference_plane_indices=(1,),
         force_recompute=True,
         emit_visual_qa=False,
+        inplane_methods=("ncc_xy",),
+        active_inplane_method="ncc_xy",
     )
 
     stage_root = functional_to_anatomy_registration_root(resolve_pipeline_paths(config))
@@ -1120,6 +1315,7 @@ def test_register_functional_to_anatomy_stage_fails_for_missing_reference_plane(
         config,
         functional_stack_paths=[source],
         force_recompute=True,
+        exclude_first_block=False,
     )
     assert refs_manifest.status == "pass"
 
@@ -1160,6 +1356,7 @@ def test_register_functional_to_anatomy_stage_uses_notebook_scale_search_default
         config,
         functional_stack_paths=[source],
         force_recompute=True,
+        exclude_first_block=False,
     )
     assert refs_manifest.status == "pass"
 
@@ -1248,7 +1445,7 @@ def test_functional_anatomy_center_overlay_accepts_nrrd_anatomy_stack(tmp_path: 
     anatomy_stack = np.zeros((3, 16, 16), dtype=np.uint8)
     anatomy_stack[1, 4:12, 4:12] = 80
     anatomy_path = tmp_path / "anatomy.nrrd"
-    nrrd.write(str(anatomy_path), anatomy_stack)
+    nrrd.write(str(anatomy_path), anatomy_stack, index_order="C")
 
     anatomy_labels = np.zeros((3, 16, 16), dtype=np.uint16)
     anatomy_labels[1, 5:11, 5:11] = 3
@@ -1312,6 +1509,7 @@ def test_single_fish_pipeline_cli_register_functional_to_anatomy_outputs_manifes
             config,
             functional_stack_paths=[source0, source1],
             force_recompute=True,
+            exclude_first_block=False,
         ).status
         == "pass"
     )

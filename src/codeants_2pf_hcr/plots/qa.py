@@ -382,6 +382,153 @@ def render_functional_anatomy_plane_qc_row_png(
     }
 
 
+def render_functional_anatomy_intensity_overlay_qc_png(
+    *,
+    fish_id: str,
+    plane_refs_summary_path: str | Path,
+    anatomy_stack_path: str | Path,
+    positioned_reference_dir: str | Path,
+    out_path: str | Path,
+) -> dict[str, Any]:
+    """Render exact registration-input anatomy slices beside positioned functional references."""
+    plane_refs_path = Path(plane_refs_summary_path)
+    anatomy_stack_p = Path(anatomy_stack_path)
+    positioned_dir_p = Path(positioned_reference_dir)
+    out_path_p = Path(out_path)
+    if not plane_refs_path.exists():
+        raise FileNotFoundError(f"plane_refs_summary_path not found: {plane_refs_path}")
+    if not anatomy_stack_p.exists():
+        raise FileNotFoundError(f"anatomy_stack_path not found: {anatomy_stack_p}")
+    if not positioned_dir_p.exists():
+        raise FileNotFoundError(f"positioned_reference_dir not found: {positioned_dir_p}")
+
+    plane_refs = json.loads(plane_refs_path.read_text())
+    if not isinstance(plane_refs, list) or not plane_refs:
+        raise RuntimeError(f"plane_refs_summary_path has no plane refs: {plane_refs_path}")
+    anatomy_stack = _read_tiff(anatomy_stack_p)
+    if anatomy_stack.ndim < 3:
+        raise RuntimeError(f"Expected 3D anatomy stack, got shape {anatomy_stack.shape}")
+
+    fig, axes = plt.subplots(
+        len(plane_refs),
+        3,
+        figsize=(12.0, max(3.0, 3.0 * len(plane_refs))),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    fig.suptitle(
+        f"{fish_id}: positioned functional references match canonical anatomy NRRD planes",
+        fontsize=13,
+        fontweight="bold",
+    )
+    rows: list[dict[str, Any]] = []
+    for row_idx, plane_ref in enumerate(plane_refs):
+        plane_idx = int(plane_ref.get("index", row_idx))
+        label = str(plane_ref.get("label", f"{fish_id}_plane{plane_idx}_mcorrected_flipX"))
+        best_z = max(0, min(int(plane_ref.get("best_z", 0)), int(anatomy_stack.shape[0]) - 1))
+        positioned_path = _positioned_functional_reference_path(positioned_dir_p, fish_id, plane_idx, label)
+        if positioned_path is None:
+            raise FileNotFoundError(f"Positioned functional reference not found for plane {plane_idx} in {positioned_dir_p}")
+        anatomy_img = _normalize_for_display(anatomy_stack[best_z])
+        functional_img = _normalize_for_display(_read_tiff(positioned_path))
+        if functional_img.shape != anatomy_img.shape:
+            raise RuntimeError(
+                f"Positioned functional reference shape mismatch for plane {plane_idx}: "
+                f"{functional_img.shape} vs {anatomy_img.shape}"
+            )
+        overlay = np.zeros((*anatomy_img.shape, 3), dtype=np.float32)
+        overlay[..., 0] = anatomy_img
+        overlay[..., 2] = anatomy_img
+        overlay[..., 1] = functional_img
+        panels = (
+            (anatomy_img, "gray", f"Canonical anatomy NRRD\nz={best_z}"),
+            (functional_img, "gray", f"Positioned functional reference\n{_positioned_reference_method_label(positioned_path)}"),
+            (np.clip(overlay, 0.0, 1.0), None, "Overlay\nmagenta=anatomy, green=functional"),
+        )
+        for col_idx, (image, cmap, title) in enumerate(panels):
+            axes[row_idx, col_idx].imshow(image, cmap=cmap)
+            axes[row_idx, col_idx].set_title(f"plane {plane_idx}: {title}", fontsize=9)
+            axes[row_idx, col_idx].axis("off")
+        rows.append(
+            {
+                "plane_idx": plane_idx,
+                "plane_label": label,
+                "best_z": best_z,
+                "positioned_functional_reference_path": str(positioned_path),
+                "anatomy_stack_path": str(anatomy_stack_p),
+            }
+        )
+
+    out_path_p.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path_p, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    review_csv = out_path_p.with_suffix(".csv")
+    pd.DataFrame(rows).to_csv(review_csv, index=False)
+    return {"out_path": out_path_p, "review_csv": review_csv, "n_planes": len(rows), "panel_count": len(rows) * 3}
+
+
+def render_functional_ncc_profiles_qc_png(
+    *,
+    fish_id: str,
+    plane_refs_summary_path: str | Path,
+    ncc_bestz_path: str | Path,
+    out_path: str | Path,
+) -> dict[str, Any]:
+    """Render one NCC depth profile per functional plane with the selected best Z marked."""
+    plane_refs_path = Path(plane_refs_summary_path)
+    ncc_path = Path(ncc_bestz_path)
+    out_path_p = Path(out_path)
+    plane_refs = json.loads(plane_refs_path.read_text())
+    payload = json.loads(ncc_path.read_text())
+    per_fish = payload.get("per_fish", {}).get(str(fish_id), {})
+    if not isinstance(plane_refs, list) or not plane_refs:
+        raise RuntimeError(f"plane_refs_summary_path has no plane refs: {plane_refs_path}")
+    if not isinstance(per_fish, dict) or not per_fish:
+        raise RuntimeError(f"NCC cache has no records for {fish_id}: {ncc_path}")
+
+    ncols = 2
+    nrows = int(np.ceil(len(plane_refs) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(12.0, 2.9 * nrows), squeeze=False, constrained_layout=True)
+    fig.suptitle(f"{fish_id}: NCC depth profiles and selected anatomy Z", fontsize=13, fontweight="bold")
+    rows: list[dict[str, Any]] = []
+    for plot_idx, plane_ref in enumerate(plane_refs):
+        plane_idx = int(plane_ref.get("index", plot_idx))
+        label = str(plane_ref.get("label", f"{fish_id}_plane{plane_idx}_mcorrected_flipX"))
+        record = per_fish.get(label)
+        if not isinstance(record, dict):
+            raise KeyError(f"NCC cache missing plane record: {label}")
+        scores = np.asarray(record.get("scores", ()), dtype=float)
+        best_z = int(record.get("best_z", plane_ref.get("best_z", 0)))
+        if scores.size == 0:
+            raise RuntimeError(f"NCC cache has no scores for {label}")
+        ax = axes.flat[plot_idx]
+        ax.plot(np.arange(scores.size), scores, color="#275d8c", linewidth=1.5)
+        ax.axvline(best_z, color="#c1121f", linestyle="--", linewidth=1.2, label=f"best Z={best_z}")
+        ax.scatter([best_z], [scores[best_z]], color="#c1121f", s=24, zorder=3)
+        ax.set_title(f"plane {plane_idx}", fontsize=10)
+        ax.set_xlabel("Canonical anatomy NRRD Z index")
+        ax.set_ylabel("NCC")
+        ax.grid(alpha=0.2)
+        ax.legend(frameon=False, fontsize=8)
+        rows.append(
+            {
+                "plane_idx": plane_idx,
+                "plane_label": label,
+                "best_z": best_z,
+                "best_ncc": float(scores[best_z]),
+                "n_z": int(scores.size),
+            }
+        )
+    for empty_idx in range(len(plane_refs), nrows * ncols):
+        axes.flat[empty_idx].axis("off")
+    out_path_p.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path_p, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+    review_csv = out_path_p.with_suffix(".csv")
+    pd.DataFrame(rows).to_csv(review_csv, index=False)
+    return {"out_path": out_path_p, "review_csv": review_csv, "n_planes": len(rows), "panel_count": len(rows)}
+
+
 def render_functional_anatomy_center_overlay_qc_png(
     *,
     fish_id: str,

@@ -19,6 +19,7 @@ from codeants_2pf_hcr import FunctionalReferenceConfig, build_functional_referen
 USE_TOP_CORR_REFS = True
 TOP_CORR_K = 20
 TOP_CORR_SAMPLE = 20
+EXCLUDE_FIRST_FUNCTIONAL_BLOCK = True
 REUSE_SAVED_REFS = True
 FORCE_RECOMPUTE_REFS = False
 
@@ -31,6 +32,7 @@ functional_ref_result = build_functional_references_stage(
         use_top_corr_refs=USE_TOP_CORR_REFS,
         top_corr_k=TOP_CORR_K,
         top_corr_sample=TOP_CORR_SAMPLE,
+        exclude_first_block=EXCLUDE_FIRST_FUNCTIONAL_BLOCK,
         reuse_saved_refs=REUSE_SAVED_REFS,
         force_recompute_refs=FORCE_RECOMPUTE_REFS,
     ),
