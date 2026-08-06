@@ -20,6 +20,8 @@ import SimpleITK as sitk
 import tifffile
 
 from .spatial import (
+    FunctionalReferenceConfig,
+    _functional_reference_frame_selection,
     apply_func_orientation,
     best_z_by_ncc,
     local_unsharp,
@@ -192,6 +194,59 @@ def load_functional_frame_selection(manifest_path: str | Path, fish_id: str) -> 
     return result
 
 
+def _resolve_drift_input_provenance(
+    *,
+    fish_id: str,
+    motion_corrected_dir: Path,
+    preprocessing_metadata_path: Path,
+    plane_indices: list[int],
+    functional_reference_manifest_path: Path | None,
+    fish_dir: Path | None,
+) -> tuple[str, str, dict[int, dict[str, Any]], str]:
+    if functional_reference_manifest_path is not None:
+        polarity, polarity_source = load_functional_polarity(functional_reference_manifest_path, fish_id)
+        frame_selection = load_functional_frame_selection(functional_reference_manifest_path, fish_id)
+        return polarity, polarity_source, frame_selection, "accepted_functional_reference_manifest"
+
+    if fish_dir is None:
+        raise ValueError(
+            "fish_dir is required when no functional-reference manifest is supplied"
+        )
+    if fish_dir.name != fish_id:
+        raise ValueError(f"Fish directory mismatch: expected {fish_id}, got {fish_dir.name}")
+
+    from .context import resolve_func_polarity
+
+    polarity, polarity_source = resolve_func_polarity(
+        fish_id,
+        fish_dir.parent / "matchingMetadata.csv",
+        fish_dir=fish_dir,
+    )
+    if polarity not in {"north", "south"}:
+        raise ValueError(f"Could not resolve a valid north/south polarity for {fish_id}")
+
+    selection_config = FunctionalReferenceConfig(
+        exclude_first_block=True,
+        preprocessing_metadata_path=preprocessing_metadata_path,
+    )
+    frame_selection: dict[int, dict[str, Any]] = {}
+    for plane_index in sorted(plane_indices):
+        movie_path = motion_corrected_dir / f"{fish_id}_plane{plane_index}_mcorrected.tif"
+        if not movie_path.exists():
+            raise FileNotFoundError(f"Motion-corrected plane movie not found: {movie_path}")
+        selection = _functional_reference_frame_selection(movie_path, selection_config)
+        if selection.get("decision") not in {
+            "excluded_first_selected_tiff_block",
+            "first_block_already_excluded_upstream",
+        }:
+            raise ValueError(
+                f"Plane {plane_index} has unaccepted frame-selection decision: "
+                f"{selection.get('decision', '<missing>')}"
+            )
+        frame_selection[plane_index] = dict(selection)
+    return polarity, str(polarity_source), frame_selection, "direct_source_validation"
+
+
 def _sample_indices(start: int, stop: int, sample_count: int) -> np.ndarray:
     count = min(int(sample_count), int(stop - start))
     if count < 1:
@@ -209,13 +264,35 @@ def _interval_reference(
 ) -> tuple[np.ndarray, int]:
     indices = _sample_indices(start, stop, config.sampled_frames_per_interval)
     sampled = np.asarray(movie[indices], dtype=np.float32)
+    return _reference_from_sampled_frames(sampled, config, polarity=polarity)
+
+
+def _reference_from_sampled_frames(
+    sampled: np.ndarray,
+    config: FunctionalZDriftConfig,
+    *,
+    polarity: str,
+) -> tuple[np.ndarray, int]:
     reference, _, _ = top_correlated_mean(
         sampled,
         take_k=min(config.top_correlated_frames, sampled.shape[0]),
         pre_smooth_sigma=config.top_corr_pre_smooth_sigma,
     )
     oriented = apply_func_orientation(reference, polarity=polarity, flip_x=config.flip_x)
-    return np.asarray(oriented, dtype=np.float32), int(indices.size)
+    return np.asarray(oriented, dtype=np.float32), int(sampled.shape[0])
+
+
+def _interval_reference_from_tiff(
+    tif: tifffile.TiffFile,
+    start: int,
+    stop: int,
+    config: FunctionalZDriftConfig,
+    *,
+    polarity: str,
+) -> tuple[np.ndarray, int]:
+    indices = _sample_indices(start, stop, config.sampled_frames_per_interval)
+    sampled = np.asarray(tif.asarray(key=indices.tolist()), dtype=np.float32)
+    return _reference_from_sampled_frames(sampled, config, polarity=polarity)
 
 
 def _read_anatomy_zyx(path: str | Path) -> np.ndarray:
@@ -386,7 +463,8 @@ def run_functional_z_drift_diagnostic(
     motion_corrected_dir: str | Path,
     anatomy_stack_path: str | Path,
     preprocessing_metadata_path: str | Path,
-    functional_reference_manifest_path: str | Path,
+    functional_reference_manifest_path: str | Path | None = None,
+    fish_dir: str | Path | None = None,
     scale_cache_path: str | Path,
     output_dir: str | Path,
     config: FunctionalZDriftConfig | None = None,
@@ -395,7 +473,12 @@ def run_functional_z_drift_diagnostic(
     motion_dir = Path(motion_corrected_dir)
     anatomy_path = Path(anatomy_stack_path)
     metadata_path = Path(preprocessing_metadata_path)
-    reference_manifest_path = Path(functional_reference_manifest_path)
+    reference_manifest_path = (
+        Path(functional_reference_manifest_path)
+        if functional_reference_manifest_path not in (None, "", False)
+        else None
+    )
+    fish_root = Path(fish_dir) if fish_dir not in (None, "", False) else None
     scale_path = Path(scale_cache_path)
     out_dir = Path(output_dir)
     if out_dir.exists() and any(out_dir.iterdir()):
@@ -404,8 +487,14 @@ def run_functional_z_drift_diagnostic(
 
     scales = load_plane_scales(scale_path, fish_id)
     session_map = load_session_map(metadata_path)
-    polarity, polarity_source = load_functional_polarity(reference_manifest_path, fish_id)
-    frame_selection = load_functional_frame_selection(reference_manifest_path, fish_id)
+    polarity, polarity_source, frame_selection, provenance_mode = _resolve_drift_input_provenance(
+        fish_id=fish_id,
+        motion_corrected_dir=motion_dir,
+        preprocessing_metadata_path=metadata_path,
+        plane_indices=sorted(scales),
+        functional_reference_manifest_path=reference_manifest_path,
+        fish_dir=fish_root,
+    )
     anatomy = np.asarray(_read_anatomy_zyx(anatomy_path), dtype=np.float32)
     if anatomy.ndim != 3:
         raise ValueError(f"Expected Z,Y,X anatomy stack, got {anatomy.shape}: {anatomy_path}")
@@ -423,66 +512,73 @@ def run_functional_z_drift_diagnostic(
         session = session_map.get(plane_index)
         if session is None:
             raise ValueError(f"No session mapping for plane {plane_index}")
-        movie = tifffile.memmap(movie_path)
-        if movie.ndim != 3:
-            raise ValueError(f"Expected T,Y,X movie for plane {plane_index}, got {movie.shape}")
-        selection = frame_selection.get(plane_index)
-        if selection is None:
-            raise ValueError(f"No accepted frame-selection provenance for plane {plane_index}")
-        if int(movie.shape[0]) != selection["source_frame_count"]:
-            raise ValueError(
-                f"Motion-corrected frame count disagrees with preparation provenance for plane {plane_index}: "
-                f"movie={movie.shape[0]}, manifest={selection['source_frame_count']}"
+        with tifffile.TiffFile(movie_path) as tif:
+            movie_shape = tuple(int(value) for value in tif.series[0].shape)
+            if len(movie_shape) != 3:
+                raise ValueError(f"Expected T,Y,X movie for plane {plane_index}, got {movie_shape}")
+            selection = frame_selection.get(plane_index)
+            if selection is None:
+                raise ValueError(f"No accepted frame-selection provenance for plane {plane_index}")
+            if int(movie_shape[0]) != selection["source_frame_count"]:
+                raise ValueError(
+                    f"Motion-corrected frame count disagrees with preparation provenance for plane {plane_index}: "
+                    f"movie={movie_shape[0]}, manifest={selection['source_frame_count']}"
+                )
+            selected_start = selection["frame_start"]
+            selected_count = selection["reference_frame_count"]
+            display_labels = interval_block_labels(
+                excluded_block_frame_count=selected_start,
+                retained_frame_count=selected_count,
+                interval_count=cfg.intervals_per_session,
             )
-        selected_start = selection["frame_start"]
-        selected_count = selection["reference_frame_count"]
-        display_labels = interval_block_labels(
-            excluded_block_frame_count=selected_start,
-            retained_frame_count=selected_count,
-            interval_count=cfg.intervals_per_session,
-        )
-        for interval_index, (relative_start, relative_stop) in enumerate(
-            interval_bounds(selected_count, cfg.intervals_per_session)
-        ):
-            start = selected_start + relative_start
-            stop = selected_start + relative_stop
-            reference, sampled_count = _interval_reference(movie, start, stop, cfg, polarity=polarity)
-            scaled = scale_image(reference, scale)
-            best_z, scores = best_z_by_ncc(scaled, anatomy_filtered, use_cv2=cfg.use_cv2)
-            metrics = registration_metric_from_scores(scores) or {}
-            best_subslice = quadratic_peak_z(scores)
-            interval_rows.append(
-                {
-                    "fish_id": fish_id,
-                    "session": session,
-                    "plane_index": plane_index,
-                    "plane_label": label,
-                    "interval_index": interval_index,
-                    "interval_label": display_labels[interval_index],
-                    "frame_start": start,
-                    "frame_stop": stop,
-                    "frame_midpoint": (start + stop - 1) / 2.0,
-                    "sampled_frame_count": sampled_count,
-                    "scale": scale,
-                    "best_z": best_z,
-                    "best_z_subslice": best_subslice,
-                    "max_score": metrics.get("max_score"),
-                    "peak_delta": metrics.get("peak_delta"),
-                    "peak_zscore": metrics.get("peak_zscore"),
-                }
-            )
-            profile_rows.extend(
-                {
-                    "fish_id": fish_id,
-                    "session": session,
-                    "plane_index": plane_index,
-                    "interval_index": interval_index,
-                    "interval_label": display_labels[interval_index],
-                    "anatomy_z": z_idx,
-                    "ncc": float(score),
-                }
-                for z_idx, score in enumerate(scores)
-            )
+            for interval_index, (relative_start, relative_stop) in enumerate(
+                interval_bounds(selected_count, cfg.intervals_per_session)
+            ):
+                start = selected_start + relative_start
+                stop = selected_start + relative_stop
+                reference, sampled_count = _interval_reference_from_tiff(
+                    tif,
+                    start,
+                    stop,
+                    cfg,
+                    polarity=polarity,
+                )
+                scaled = scale_image(reference, scale)
+                best_z, scores = best_z_by_ncc(scaled, anatomy_filtered, use_cv2=cfg.use_cv2)
+                metrics = registration_metric_from_scores(scores) or {}
+                best_subslice = quadratic_peak_z(scores)
+                interval_rows.append(
+                    {
+                        "fish_id": fish_id,
+                        "session": session,
+                        "plane_index": plane_index,
+                        "plane_label": label,
+                        "interval_index": interval_index,
+                        "interval_label": display_labels[interval_index],
+                        "frame_start": start,
+                        "frame_stop": stop,
+                        "frame_midpoint": (start + stop - 1) / 2.0,
+                        "sampled_frame_count": sampled_count,
+                        "scale": scale,
+                        "best_z": best_z,
+                        "best_z_subslice": best_subslice,
+                        "max_score": metrics.get("max_score"),
+                        "peak_delta": metrics.get("peak_delta"),
+                        "peak_zscore": metrics.get("peak_zscore"),
+                    }
+                )
+                profile_rows.extend(
+                    {
+                        "fish_id": fish_id,
+                        "session": session,
+                        "plane_index": plane_index,
+                        "interval_index": interval_index,
+                        "interval_label": display_labels[interval_index],
+                        "anatomy_z": z_idx,
+                        "ncc": float(score),
+                    }
+                    for z_idx, score in enumerate(scores)
+                )
 
     interval_df = pd.DataFrame(interval_rows)
     profile_df = pd.DataFrame(profile_rows)
@@ -504,13 +600,15 @@ def run_functional_z_drift_diagnostic(
             "motion_corrected_dir": str(motion_dir),
             "anatomy_stack_path": str(anatomy_path),
             "preprocessing_metadata_path": str(metadata_path),
-            "functional_reference_manifest_path": str(reference_manifest_path),
+            "functional_reference_manifest_path": str(reference_manifest_path) if reference_manifest_path else None,
+            "fish_dir": str(fish_root) if fish_root else None,
             "scale_cache_path": str(scale_path),
         },
         "parameters": {
             **asdict(cfg),
             "effective_polarity": polarity,
             "polarity_source": polarity_source,
+            "input_provenance_mode": provenance_mode,
             "frame_selection_by_plane": frame_selection,
         },
         "outputs": [str(path) for path in (interval_path, profile_path, summary_path, out_dir / "z_drift_tracks.png", out_dir / "z_drift_ncc_profiles.png")],

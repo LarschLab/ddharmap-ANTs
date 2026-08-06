@@ -2,10 +2,13 @@ import json
 
 import numpy as np
 import pandas as pd
+import tifffile
 
 from codeants_2pf_hcr.z_drift import (
     FunctionalZDriftConfig,
     _interval_reference,
+    _interval_reference_from_tiff,
+    _resolve_drift_input_provenance,
     interval_block_labels,
     interval_bounds,
     load_functional_frame_selection,
@@ -107,6 +110,50 @@ def test_load_functional_frame_selection_rejects_unexcluded_manifest(tmp_path):
         load_functional_frame_selection(path, "L765_f02")
 
 
+def test_direct_source_provenance_excludes_block0_without_writing_references(tmp_path):
+    fish_id = "L758_f04"
+    fish_dir = tmp_path / fish_id
+    metadata_dir = fish_dir / "01_raw" / "2p" / "metadata"
+    motion_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "02_motionCorrected"
+    preprocessing_path = motion_dir.parent / "01_individualPlanes" / f"{fish_id}_preprocessing_metadata.json"
+    metadata_dir.mkdir(parents=True)
+    motion_dir.mkdir(parents=True)
+    preprocessing_path.parent.mkdir(parents=True)
+    metadata_dir.joinpath(f"{fish_id}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,top-right\n"
+    )
+    preprocessing_path.write_text(json.dumps({
+        "sessions": [{
+            "session_label": "r1",
+            "output_planes": [0],
+            "selected_tiffs": [
+                f"/raw/{fish_id}_00001.tif",
+                f"/raw/{fish_id}_00002.tif",
+                f"/raw/{fish_id}_00003.tif",
+            ],
+        }],
+    }))
+    movie_path = motion_dir / f"{fish_id}_plane0_mcorrected.tif"
+    tifffile.imwrite(movie_path, np.zeros((6, 4, 4), dtype=np.uint16))
+
+    polarity, source, selections, mode = _resolve_drift_input_provenance(
+        fish_id=fish_id,
+        motion_corrected_dir=motion_dir,
+        preprocessing_metadata_path=preprocessing_path,
+        plane_indices=[0],
+        functional_reference_manifest_path=None,
+        fish_dir=fish_dir,
+    )
+
+    assert polarity == "south"
+    assert source.endswith(":fish_orientation")
+    assert mode == "direct_source_validation"
+    assert selections[0]["frame_start"] == 2
+    assert selections[0]["reference_frame_count"] == 4
+    assert selections[0]["decision"] == "excluded_first_selected_tiff_block"
+    assert not list(tmp_path.rglob("*ref_raw.tif"))
+
+
 def test_interval_reference_applies_resolved_north_polarity():
     frame = np.arange(16, dtype=np.float32).reshape(4, 4)
     movie = np.stack([frame] * 4)
@@ -114,6 +161,21 @@ def test_interval_reference_applies_resolved_north_polarity():
     reference, sampled = _interval_reference(movie, 0, 4, config, polarity="north")
     assert sampled == 4
     assert np.array_equal(reference, apply_func_orientation(frame, polarity="north", flip_x=True))
+
+
+def test_interval_reference_reads_selected_tiff_pages_without_memmap(tmp_path):
+    frame = np.arange(16, dtype=np.float32).reshape(4, 4)
+    movie = np.stack([frame + index for index in range(8)]).astype(np.float32)
+    path = tmp_path / "movie.tif"
+    tifffile.imwrite(path, movie, photometric="minisblack")
+    config = FunctionalZDriftConfig(sampled_frames_per_interval=4, top_correlated_frames=2)
+
+    expected, expected_count = _interval_reference(movie, 2, 8, config, polarity="south")
+    with tifffile.TiffFile(path) as tif:
+        observed, observed_count = _interval_reference_from_tiff(tif, 2, 8, config, polarity="south")
+
+    assert observed_count == expected_count == 4
+    np.testing.assert_array_equal(observed, expected)
 
 
 def test_session_summary_requires_coherent_plane_motion():

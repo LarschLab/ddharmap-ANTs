@@ -16,7 +16,13 @@ def main() -> int:
     parser.add_argument("--motion-corrected-dir", required=True, type=Path)
     parser.add_argument("--anatomy-stack-path", required=True, type=Path)
     parser.add_argument("--preprocessing-metadata-path", required=True, type=Path)
-    parser.add_argument("--functional-reference-manifest-path", required=True, type=Path)
+    provenance = parser.add_mutually_exclusive_group(required=True)
+    provenance.add_argument("--functional-reference-manifest-path", type=Path)
+    provenance.add_argument(
+        "--fish-dir",
+        type=Path,
+        help="Validate polarity and Block-0 exclusion directly from fish metadata without creating functional references.",
+    )
     parser.add_argument("--scale-cache-path", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--intervals", type=int, default=6)
@@ -30,6 +36,7 @@ def main() -> int:
         anatomy_stack_path=args.anatomy_stack_path,
         preprocessing_metadata_path=args.preprocessing_metadata_path,
         functional_reference_manifest_path=args.functional_reference_manifest_path,
+        fish_dir=args.fish_dir,
         scale_cache_path=args.scale_cache_path,
         output_dir=args.output_dir,
         config=FunctionalZDriftConfig(
