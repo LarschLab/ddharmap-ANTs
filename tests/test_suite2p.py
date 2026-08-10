@@ -1,4 +1,5 @@
 import unittest
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -74,6 +75,78 @@ class Suite2pStageTests(unittest.TestCase):
             self.assertEqual(len(result["func_labels"]), 1)
             self.assertIsNotNone(result["func_labels"][0])
             self.assertEqual(result["suite2p_by_ref_idx"][0]["ref_idx"], 0)
+
+    def test_canonical_manifest_prevents_suite2p_label_double_flip(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish = Path(tmpdir) / "L000_f00"
+            root = fish / "03_analysis" / "functional" / "suite2P" / "plane0"
+            self._write_minimal_suite2p_plane(root)
+            canonical_plane = fish / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes" / "L000_f00_plane0.tif"
+            canonical_plane.parent.mkdir(parents=True)
+            canonical_plane.touch()
+            ops = np.load(root / "ops.npy", allow_pickle=True).item()
+            ops["tiff_list"] = [str(canonical_plane)]
+            ops["data_path"] = [str(canonical_plane.parent)]
+            np.save(root / "ops.npy", ops, allow_pickle=True)
+            manifest = fish / "02_reg" / "00_preprocessing" / "spatial_preprocessing_manifest.json"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(json.dumps({
+                "stage": "canonical_spatial_preprocessing",
+                "status": "complete",
+                "polarity": {"value": "south"},
+                "coordinate_frames": {
+                    "canonical_functional_xy": "codeants_2p_canonical_xy_v1",
+                    "canonical_anatomy_xy": "codeants_2p_canonical_xy_v1",
+                    "canonical_anatomy_z": "codeants_confocal_registration_z_v1",
+                },
+                "functional_planes": [{"output_path": str(canonical_plane)}],
+                "anatomy": {},
+            }))
+            result = load_suite2p_stage(
+                plane_refs=[{"label": "fish_plane0", "index": 0}],
+                suite2p_root=root.parent,
+                fish_id="L000_f00",
+                polarity="south",
+                polarity_source="manifest",
+                config=Suite2pStageConfig(verbose=False),
+            )
+            labels = result["func_labels"][0]
+            self.assertEqual(int(labels[1, 1]), 1)
+            self.assertEqual(int(labels[1, 3]), 0)
+            self.assertEqual(result["input_xy_frame"], "codeants_2p_canonical_xy_v1")
+
+    def test_canonical_manifest_rejects_stale_suite2p_input_provenance(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish = Path(tmpdir) / "L000_f00"
+            root = fish / "03_analysis" / "functional" / "suite2P" / "plane0"
+            self._write_minimal_suite2p_plane(root)
+            stale_plane = fish / "old_acquisition_plane0.tif"
+            stale_plane.touch()
+            ops = np.load(root / "ops.npy", allow_pickle=True).item()
+            ops["tiff_list"] = [str(stale_plane)]
+            np.save(root / "ops.npy", ops, allow_pickle=True)
+            manifest = fish / "02_reg" / "00_preprocessing" / "spatial_preprocessing_manifest.json"
+            manifest.parent.mkdir(parents=True, exist_ok=True)
+            manifest.write_text(json.dumps({
+                "stage": "canonical_spatial_preprocessing",
+                "status": "complete",
+                "polarity": {"value": "south"},
+                "coordinate_frames": {
+                    "canonical_functional_xy": "codeants_2p_canonical_xy_v1",
+                    "canonical_anatomy_xy": "codeants_2p_canonical_xy_v1",
+                    "canonical_anatomy_z": "codeants_confocal_registration_z_v1",
+                },
+                "functional_planes": [{"output_path": str(fish / "new_plane0.tif")}],
+                "anatomy": {},
+            }))
+            with self.assertRaisesRegex(ValueError, "stale"):
+                load_suite2p_stage(
+                    plane_refs=[{"label": "fish_plane0", "index": 0}],
+                    suite2p_root=root.parent,
+                    fish_id="L000_f00",
+                    polarity="south",
+                    config=Suite2pStageConfig(verbose=False),
+                )
 
 
 if __name__ == "__main__":

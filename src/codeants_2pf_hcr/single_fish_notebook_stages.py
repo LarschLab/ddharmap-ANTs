@@ -1180,7 +1180,11 @@ def run_single_fish_cell_34c_stage(namespace: MutableMapping[str, Any]) -> None:
         out_qa=namespace.get("OUT_QA"),
         plane_indices="all",
         use_suite2p_labels=True,
-        apply_func_orientation_func=namespace.get("apply_func_orientation"),
+        apply_func_orientation_func=(
+            None
+            if namespace.get("SUITE2P_INPUT_XY_FRAME") == "codeants_2p_canonical_xy_v1"
+            else namespace.get("apply_func_orientation")
+        ),
         imread_func=namespace.get("imread_any"),
         crop_pad_px=24,
         save_outputs=True,

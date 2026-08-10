@@ -649,12 +649,42 @@ def _resample_labels_ants_nn(labels: np.ndarray, tform: dict[str, Any], *, outpu
     except Exception as exc:  # pragma: no cover - depends on optional native package
         raise ImportError("ANTsPy is required to resample labels with ants_rigid_affine transforms") from exc
 
+    preplacement = tform.get("ncc_preplacement") if isinstance(tform.get("ncc_preplacement"), dict) else None
     moving_shape_raw = tform.get("moving_shape")
     moving_shape: tuple[int, int] | None = None
     if isinstance(moving_shape_raw, (tuple, list)) and len(moving_shape_raw) >= 2:
         moving_shape = (int(moving_shape_raw[-2]), int(moving_shape_raw[-1]))
     labels_moving = labels
-    if moving_shape is not None and tuple(labels.shape) != moving_shape:
+    if preplacement is not None:
+        source_shape_raw = preplacement.get("source_shape", labels.shape)
+        source_shape = tuple(int(v) for v in source_shape_raw)
+        if tuple(labels_moving.shape) != source_shape:
+            labels_moving = resize(
+                labels_moving.astype(np.float32, copy=False),
+                source_shape,
+                order=0,
+                preserve_range=True,
+                anti_aliasing=False,
+            ).astype(np.uint32)
+        canvas_shape_raw = preplacement.get("canvas_shape", output_shape)
+        canvas_shape = tuple(int(v) for v in canvas_shape_raw)
+        canvas = np.zeros(canvas_shape, dtype=np.uint32)
+        x0 = int(preplacement.get("x0", 0))
+        y0 = int(preplacement.get("y0", 0))
+        src_y0 = max(0, -y0)
+        src_x0 = max(0, -x0)
+        dst_y0 = max(0, y0)
+        dst_x0 = max(0, x0)
+        height = min(labels_moving.shape[0] - src_y0, canvas.shape[0] - dst_y0)
+        width = min(labels_moving.shape[1] - src_x0, canvas.shape[1] - dst_x0)
+        if height <= 0 or width <= 0:
+            raise ValueError("NCC preplacement puts the functional labels outside the anatomy canvas")
+        canvas[dst_y0 : dst_y0 + height, dst_x0 : dst_x0 + width] = labels_moving[
+            src_y0 : src_y0 + height,
+            src_x0 : src_x0 + width,
+        ]
+        labels_moving = canvas
+    elif moving_shape is not None and tuple(labels.shape) != moving_shape:
         labels_moving = resize(
             labels.astype(np.float32, copy=False),
             moving_shape,
@@ -693,12 +723,40 @@ def _resample_image_ants(image: np.ndarray, tform: dict[str, Any], *, output_sha
     except Exception as exc:  # pragma: no cover - depends on optional native package
         raise ImportError("ANTsPy is required to resample images with ants_rigid_affine transforms") from exc
 
+    preplacement = tform.get("ncc_preplacement") if isinstance(tform.get("ncc_preplacement"), dict) else None
     moving_shape_raw = tform.get("moving_shape")
     moving_shape: tuple[int, int] | None = None
     if isinstance(moving_shape_raw, (tuple, list)) and len(moving_shape_raw) >= 2:
         moving_shape = (int(moving_shape_raw[-2]), int(moving_shape_raw[-1]))
     moving_np = np.asarray(image, dtype=np.float32)
-    if moving_shape is not None and tuple(moving_np.shape) != moving_shape:
+    if preplacement is not None:
+        source_shape = tuple(int(v) for v in preplacement.get("source_shape", moving_np.shape))
+        if tuple(moving_np.shape) != source_shape:
+            moving_np = resize(
+                moving_np,
+                source_shape,
+                order=1,
+                preserve_range=True,
+                anti_aliasing=True,
+            ).astype(np.float32)
+        canvas_shape = tuple(int(v) for v in preplacement.get("canvas_shape", output_shape))
+        canvas = np.zeros(canvas_shape, dtype=np.float32)
+        x0 = int(preplacement.get("x0", 0))
+        y0 = int(preplacement.get("y0", 0))
+        src_y0 = max(0, -y0)
+        src_x0 = max(0, -x0)
+        dst_y0 = max(0, y0)
+        dst_x0 = max(0, x0)
+        height = min(moving_np.shape[0] - src_y0, canvas.shape[0] - dst_y0)
+        width = min(moving_np.shape[1] - src_x0, canvas.shape[1] - dst_x0)
+        if height <= 0 or width <= 0:
+            raise ValueError("NCC preplacement puts the functional image outside the anatomy canvas")
+        canvas[dst_y0 : dst_y0 + height, dst_x0 : dst_x0 + width] = moving_np[
+            src_y0 : src_y0 + height,
+            src_x0 : src_x0 + width,
+        ]
+        moving_np = canvas
+    elif moving_shape is not None and tuple(moving_np.shape) != moving_shape:
         moving_np = resize(
             moving_np,
             moving_shape,

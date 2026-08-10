@@ -27,6 +27,8 @@ from codeants_2pf_hcr.pipeline import (
     run_prepare_in_vivo_anatomy_stack_stage,
     run_prepare_ex_vivo_anatomy_stack_stage,
     run_register_functional_to_anatomy_stage,
+    run_transform_functional_rois_to_anatomy_stage,
+    run_make_functional_registration_qc_stage,
     run_register_hcr_to_anatomy_stage,
     run_match_roi_to_anatomy_stage,
     run_segment_ex_vivo_anatomy_cellpose_stage,
@@ -221,6 +223,11 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_func_refs.add_argument("--functional-stack-path", action="append", type=Path)
     prepare_func_refs.add_argument("--output-dir", type=Path)
     prepare_func_refs.add_argument("--force-recompute", action="store_true")
+    prepare_func_refs.add_argument(
+        "--include-first-block",
+        action="store_true",
+        help="Compatibility override: include the first selected functional TIFF block in each reference.",
+    )
 
     prepare_in_vivo = subparsers.add_parser(
         "prepare-in-vivo-anatomy-stack",
@@ -250,19 +257,55 @@ def build_parser() -> argparse.ArgumentParser:
     register_func.add_argument("--anatomy-labels-path", type=Path)
     register_func.add_argument("--functional-labels-anatomy-dir", type=Path)
     register_func.add_argument("--output-root", type=Path)
+    register_func.add_argument(
+        "--reuse-ncc-cache-dir",
+        type=Path,
+        help="Reuse existing ncc_scale_by_fish.json and ncc_bestz_by_plane.json while rerunning XY placement/ANTs.",
+    )
+    register_func.add_argument(
+        "--preprocessing-ncc-manifest",
+        type=Path,
+        help=(
+            "Reuse the canonical preprocessing NCC reference, scale, best-Z profile, and XY placement; "
+            "only downstream ANTs refinement is run."
+        ),
+    )
     register_func.add_argument("--ants-fixed-mask-json", type=Path)
     register_func.add_argument("--no-ants-fixed-mask-required", dest="ants_require_fixed_mask", action="store_false")
     register_func.set_defaults(ants_require_fixed_mask=True)
-    register_func.add_argument("--ants-deterministic-seed", type=int, default=None)
+    register_func.add_argument("--ants-deterministic-seed", type=int, default=0)
     register_func.add_argument("--no-ants-deterministic", dest="ants_deterministic_seed", action="store_const", const=None)
     register_func.add_argument("--skip-inplane-comparison", action="store_true")
     register_func.add_argument("--inplane-method", action="append", default=None)
-    register_func.add_argument("--active-inplane-method", default="ncc_xy")
+    register_func.add_argument("--active-inplane-method", default="ants_rigid_affine")
     register_func.add_argument("--skip-visual-qa", action="store_true")
     register_func.add_argument("--visual-qa-crop-size-px", type=int, default=200)
     register_func.add_argument("--no-cv2", dest="use_cv2", action="store_false")
     register_func.set_defaults(use_cv2=False)
     register_func.add_argument("--force-recompute", action="store_true")
+
+    transform_func_rois = subparsers.add_parser(
+        "transform-functional-rois-to-anatomy",
+        help="Writer stage: apply the selected registration transform to Suite2p ROI labels.",
+    )
+    _add_common_fish_args(transform_func_rois)
+    transform_func_rois.add_argument("--plane-refs-summary-path", type=Path)
+    transform_func_rois.add_argument("--anatomy-stack-path", type=Path)
+    transform_func_rois.add_argument("--output-root", type=Path)
+    transform_func_rois.add_argument("--force-recompute", action="store_true")
+
+    func_qc = subparsers.add_parser(
+        "make-functional-registration-qc",
+        help="Writer stage: render registration QC after Suite2p ROI labels have been transformed.",
+    )
+    _add_common_fish_args(func_qc)
+    func_qc.add_argument("--plane-refs-summary-path", type=Path)
+    func_qc.add_argument("--anatomy-stack-path", type=Path)
+    func_qc.add_argument("--anatomy-labels-path", type=Path)
+    func_qc.add_argument("--transformed-roi-root", type=Path)
+    func_qc.add_argument("--output-root", type=Path)
+    func_qc.add_argument("--anatomy-label-z-mode", choices=("auto", "direct", "reverse"), default="auto")
+    func_qc.add_argument("--force-recompute", action="store_true")
 
     register_hcr = subparsers.add_parser(
         "register-hcr-to-anatomy",
@@ -574,6 +617,7 @@ def main(argv: list[str] | None = None) -> int:
             functional_stack_paths=args.functional_stack_path,
             output_dir=args.output_dir,
             force_recompute=args.force_recompute,
+            exclude_first_block=not args.include_first_block,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -597,16 +641,63 @@ def main(argv: list[str] | None = None) -> int:
             anatomy_labels_path=args.anatomy_labels_path,
             functional_labels_anatomy_dir=args.functional_labels_anatomy_dir,
             output_root=args.output_root,
+            ncc_cache_source_dir=args.reuse_ncc_cache_dir,
+            preprocessing_ncc_manifest_path=args.preprocessing_ncc_manifest,
             ants_fixed_mask_json=args.ants_fixed_mask_json,
             ants_require_fixed_mask=args.ants_require_fixed_mask,
             force_recompute=args.force_recompute,
             run_inplane_comparison=not args.skip_inplane_comparison,
-            inplane_methods=tuple(args.inplane_method or ("ncc_xy",)),
+            inplane_methods=tuple(args.inplane_method or ("ncc_xy", "ants_rigid_affine")),
             active_inplane_method=args.active_inplane_method,
             ants_deterministic_seed=args.ants_deterministic_seed,
             use_cv2=args.use_cv2,
             emit_visual_qa=not args.skip_visual_qa,
             visual_qa_crop_size_px=args.visual_qa_crop_size_px,
+        )
+        if args.write_manifest:
+            write_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
+    if args.command == "transform-functional-rois-to-anatomy":
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id,
+            local_root=args.local_root,
+            owner=args.owner,
+            strict=args.strict,
+            dry_run=False,
+            write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        manifest = run_transform_functional_rois_to_anatomy_stage(
+            config,
+            plane_refs_summary_path=args.plane_refs_summary_path,
+            anatomy_stack_path=args.anatomy_stack_path,
+            output_root=args.output_root,
+            force_recompute=args.force_recompute,
+        )
+        if args.write_manifest:
+            write_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
+    if args.command == "make-functional-registration-qc":
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id,
+            local_root=args.local_root,
+            owner=args.owner,
+            strict=args.strict,
+            dry_run=False,
+            write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        manifest = run_make_functional_registration_qc_stage(
+            config,
+            plane_refs_summary_path=args.plane_refs_summary_path,
+            anatomy_stack_path=args.anatomy_stack_path,
+            anatomy_labels_path=args.anatomy_labels_path,
+            transformed_roi_root=args.transformed_roi_root,
+            output_root=args.output_root,
+            anatomy_label_z_mode=args.anatomy_label_z_mode,
+            force_recompute=args.force_recompute,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

@@ -20,12 +20,42 @@ from codeants_2pf_hcr.spatial import (
     apply_square_region_mask,
     best_z_by_ncc,
     corrcoef_img,
+    imread_any,
     run_in_plane_registration_comparison_stage,
     run_registration_search_stage,
 )
 
 
 class SpatialTests(unittest.TestCase):
+    def test_imread_any_prefers_simpleitk_zyx_for_nrrd(self) -> None:
+        expected = np.zeros((7, 6, 5), dtype=np.uint8)
+        fake_sitk = types.SimpleNamespace(
+            ReadImage=lambda path: ("image", path),
+            GetArrayFromImage=lambda image: expected,
+        )
+        fake_nrrd = types.SimpleNamespace(
+            read=lambda *args, **kwargs: self.fail("pynrrd must not override SimpleITK ZYX readback")
+        )
+        with patch("codeants_2pf_hcr.spatial.sitk", fake_sitk), patch(
+            "codeants_2pf_hcr.spatial.nrrd", fake_nrrd
+        ):
+            out = imread_any("anatomy.nrrd")
+        self.assertEqual(out.shape, (7, 6, 5))
+
+    def test_imread_any_pynrrd_fallback_requests_c_order(self) -> None:
+        calls = []
+
+        def fake_read(path, **kwargs):
+            calls.append((path, kwargs))
+            return np.zeros((7, 6, 5), dtype=np.uint8), {}
+
+        with patch("codeants_2pf_hcr.spatial.sitk", None), patch(
+            "codeants_2pf_hcr.spatial.nrrd", types.SimpleNamespace(read=fake_read)
+        ):
+            out = imread_any("anatomy.nrrd")
+        self.assertEqual(out.shape, (7, 6, 5))
+        self.assertEqual(calls[0][1]["index_order"], "C")
+
     def test_corrcoef_img_identity_is_one(self) -> None:
         img = np.arange(9, dtype=np.float32).reshape(3, 3)
         self.assertLess(abs(corrcoef_img(img, img) - 1.0), 1e-6)
@@ -176,7 +206,7 @@ class SpatialTests(unittest.TestCase):
             template[1:3, 1:3] = 1.0
             anat = np.zeros((1, 8, 8), dtype=np.float32)
             anat[0, 2:6, 3:7] = template
-            plane_refs = [{"label": "plane0", "ref_match": template, "best_z": 0, "scale": 1.0}]
+            plane_refs = [{"label": "plane4", "index": 4, "ref_match": template, "best_z": 0, "scale": 1.0}]
 
             result = run_in_plane_registration_comparison_stage(
                 plane_refs=plane_refs,
@@ -194,6 +224,7 @@ class SpatialTests(unittest.TestCase):
             self.assertIn("ncc_xy", plane_refs[0])
             self.assertIn("tform", plane_refs[0])
             self.assertEqual(len(result["comparison_df"]), 1)
+            self.assertEqual(int(result["comparison_df"].iloc[0]["plane_idx"]), 4)
             self.assertTrue((out_ncc / "inplane_registration_comparison" / "inplane_registration_comparison.csv").exists())
 
     def test_ants_import_is_deferred_until_ants_method_is_requested(self) -> None:

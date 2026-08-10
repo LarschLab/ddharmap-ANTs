@@ -38,11 +38,11 @@ except Exception:  # pragma: no cover
 def imread_any(path: str | Path) -> np.ndarray:
     target = Path(path)
     if target.suffix.lower() == ".nrrd":
-        if nrrd is not None:
-            data, _ = nrrd.read(str(target))
-            return np.asarray(data)
         if sitk is not None:
             return np.asarray(sitk.GetArrayFromImage(sitk.ReadImage(str(target))))
+        if nrrd is not None:
+            data, _ = nrrd.read(str(target), index_order="C")
+            return np.asarray(data)
         raise ImportError("Reading .nrrd requires pynrrd or SimpleITK")
     return tifffile.imread(target)
 
@@ -116,11 +116,14 @@ def apply_func_orientation(arr: np.ndarray, *, polarity: str | None = None, flip
     out = np.asarray(arr)
     if out.ndim < 2:
         return out
-    if str(polarity).strip().lower() == "north":
-        out = out[..., ::-1, ::-1]
-    if flip_x:
-        out = out[..., ::-1]
-    return out
+    value = str(polarity).strip().lower()
+    if not flip_x:
+        return out.copy()
+    if value == "north":
+        return np.flip(out, axis=-2).copy()
+    if value == "south":
+        return np.flip(out, axis=-1).copy()
+    raise ValueError(f"Cannot orient functional data without north/south polarity, got {polarity!r}")
 
 
 def _to_um(val: float | int | None, unit: str | None) -> float | None:
@@ -277,6 +280,8 @@ class FunctionalReferenceConfig:
     reuse_saved_refs: bool = True
     force_recompute_refs: bool = False
     top_corr_pre_smooth_sigma: float = 0.5
+    exclude_first_block: bool = False
+    preprocessing_metadata_path: str | Path | None = None
 
 
 @dataclass(frozen=True)
@@ -290,7 +295,7 @@ class FunctionalPlacementConfig:
 class InPlaneRegistrationComparisonConfig:
     methods: tuple[str, ...] = ("ncc_xy", "ants_rigid_affine")
     active_method: str = "ants_rigid_affine"
-    fallback_method: str | None = "ncc_xy"
+    fallback_method: str | None = None
     save_outputs: bool = True
     output_subdir: str = "inplane_registration_comparison"
     display_normalize_placed: bool = True
@@ -301,7 +306,7 @@ class InPlaneRegistrationComparisonConfig:
     clip_percentiles: tuple[float, float] = (5.0, 95.0)
     ants_fixed_mask_json: str | Path | None = None
     ants_require_fixed_mask: bool = True
-    ants_deterministic_seed: int | None = None
+    ants_deterministic_seed: int | None = 0
     fail_on_active_method_error: bool = True
 
 
@@ -352,6 +357,7 @@ def _functional_plane_ref(
     ref2d: np.ndarray,
     index: int | None = None,
     vox_func: Any = None,
+    frame_selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     plane_ref = {
         "label": label,
@@ -362,7 +368,112 @@ def _functional_plane_ref(
         plane_ref["index"] = int(index)
     if vox_func is not None:
         plane_ref["vox_func"] = vox_func
+    if frame_selection:
+        plane_ref["functional_reference_frame_selection"] = dict(frame_selection)
     return plane_ref
+
+
+def _functional_preprocessing_metadata_path(source_path: Path, configured_path: str | Path | None) -> Path:
+    if configured_path not in (None, "", False):
+        path = Path(configured_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Functional preprocessing metadata not found: {path}")
+        return path
+    fish_id = source_path.stem.split("_plane", 1)[0]
+    metadata_dir = source_path.parent.parent / "01_individualPlanes"
+    exact = metadata_dir / f"{fish_id}_preprocessing_metadata.json"
+    if exact.exists():
+        return exact
+    candidates = sorted(metadata_dir.glob("*_preprocessing_metadata.json"))
+    if len(candidates) == 1:
+        return candidates[0]
+    raise FileNotFoundError(
+        f"Could not resolve functional preprocessing metadata for {source_path}; "
+        f"expected {exact}"
+    )
+
+
+def _functional_source_frame_count(source_path: Path) -> int:
+    with tifffile.TiffFile(source_path) as tif:
+        shape = tuple(int(value) for value in tif.series[0].shape)
+    if len(shape) < 3 or shape[0] < 1:
+        raise ValueError(f"Functional stack has unsupported shape {shape}: {source_path}")
+    return int(shape[0])
+
+
+def _raw_functional_block_number(path: str | Path) -> int | None:
+    match = re.search(r"_(\d{5})\.tiff?$", Path(path).name, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _functional_reference_frame_selection(source_path: Path, cfg: FunctionalReferenceConfig) -> dict[str, Any]:
+    source_frame_count = _functional_source_frame_count(source_path)
+    selection: dict[str, Any] = {
+        "exclude_first_block": bool(cfg.exclude_first_block),
+        "frame_start": 0,
+        "source_frame_count": source_frame_count,
+        "reference_frame_count": source_frame_count,
+        "decision": "all_frames_requested",
+    }
+    if not cfg.exclude_first_block:
+        return selection
+
+    metadata_path = _functional_preprocessing_metadata_path(source_path, cfg.preprocessing_metadata_path)
+    payload = json.loads(metadata_path.read_text())
+    selection["preprocessing_metadata_path"] = str(metadata_path)
+    configured_blocks = payload.get("blocks")
+    if isinstance(configured_blocks, list) and configured_blocks:
+        configured_block_numbers = [int(value) for value in configured_blocks]
+        selection["selected_block_numbers"] = configured_block_numbers
+        if 1 not in configured_block_numbers:
+            selection["decision"] = "first_block_already_excluded_upstream"
+            return selection
+
+    plane_match = re.search(r"_plane(\d+)(?:_|$)", source_path.stem)
+    plane_index = int(plane_match.group(1)) if plane_match else None
+    selected_tiffs: list[str] = []
+    selected_session: str | None = None
+    sessions = payload.get("sessions")
+    if isinstance(sessions, list) and plane_index is not None:
+        for session in sessions:
+            output_planes = session.get("output_planes", []) if isinstance(session, dict) else []
+            if plane_index in [int(value) for value in output_planes]:
+                selected_tiffs = [str(path) for path in session.get("selected_tiffs", [])]
+                selected_session = str(session.get("session_label", "")) or None
+                break
+    if not selected_tiffs and isinstance(configured_blocks, list) and configured_blocks:
+        selected_tiffs = [f"block_{int(value):05d}.tif" for value in configured_blocks]
+    if len(selected_tiffs) < 2:
+        raise ValueError(
+            f"Cannot exclude the first functional block for {source_path}: preprocessing metadata "
+            "does not identify at least two selected TIFF blocks for this plane"
+        )
+
+    block_numbers = [_raw_functional_block_number(path) for path in selected_tiffs]
+    if any(value is None for value in block_numbers):
+        raise ValueError(
+            f"Cannot parse selected functional block numbers for {source_path}: {selected_tiffs}"
+        )
+    selected_block_numbers = [int(value) for value in block_numbers if value is not None]
+    selection["selected_block_numbers"] = selected_block_numbers
+    selection["selected_tiff_count"] = len(selected_tiffs)
+    if selected_session is not None:
+        selection["session_label"] = selected_session
+    if source_frame_count % len(selected_tiffs) != 0:
+        raise ValueError(
+            f"Cannot resolve an exact first-block boundary for {source_path}: {source_frame_count} frames "
+            f"are not divisible by {len(selected_tiffs)} selected TIFF blocks"
+        )
+
+    frame_start = source_frame_count // len(selected_tiffs)
+    selection.update(
+        {
+            "frame_start": frame_start,
+            "reference_frame_count": source_frame_count - frame_start,
+            "decision": "excluded_first_selected_tiff_block",
+        }
+    )
+    return selection
 
 
 def _load_cached_functional_ref(raw_path: Path, norm_path: Path) -> tuple[np.ndarray, np.ndarray] | None:
@@ -390,6 +501,7 @@ def build_functional_references_stage(
     vox_func_by_path: dict[str, Any] | None = None,
     polarity: str | None = None,
     polarity_source: str | None = None,
+    input_xy_frame: str | None = None,
     config: FunctionalReferenceConfig | None = None,
 ) -> dict[str, Any]:
     del polarity_source
@@ -407,6 +519,22 @@ def build_functional_references_stage(
     if not source_paths:
         raise FileNotFoundError("No functional stacks available")
 
+    from .spatial_contract import CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME, declared_xy_frame
+
+    declared_frames = {declared_xy_frame(path, kind="functional") for path in source_paths}
+    declared_frames.discard(None)
+    if len(declared_frames) > 1:
+        raise ValueError(f"Functional inputs declare contradictory XY frames: {sorted(declared_frames)}")
+    declared_frame = next(iter(declared_frames), None)
+    if input_xy_frame is not None and declared_frame is not None and input_xy_frame != declared_frame:
+        raise ValueError(f"Requested functional XY frame {input_xy_frame!r} conflicts with manifest {declared_frame!r}")
+    frame = input_xy_frame or declared_frame
+    if frame is None:
+        frame = CANONICAL_XY_FRAME if source_is_preoriented else LEGACY_ACQUISITION_XY_FRAME
+    if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
+        raise ValueError(f"Unknown functional XY frame: {frame!r}")
+    source_is_preoriented = source_is_preoriented or frame == CANONICAL_XY_FRAME
+
     reuse_saved_refs = bool(cfg.reuse_saved_refs)
     if cfg.force_recompute_refs:
         reuse_saved_refs = False
@@ -420,6 +548,14 @@ def build_functional_references_stage(
         if not fp.exists():
             raise FileNotFoundError(f"Functional stack not found: {fp}")
 
+        frame_selection = _functional_reference_frame_selection(fp, cfg)
+        frame_start = int(frame_selection["frame_start"])
+        if cfg.exclude_first_block:
+            log_lines.append(
+                f"[12] {fp.name}: {frame_selection['decision']} "
+                f"(frames {frame_start}:{frame_selection['source_frame_count']})"
+            )
+
         legacy_oriented_path = _legacy_oriented_path_for_source(fp, flipped_paths, source_idx, out_raw_path)
         vox_f = {}
         if vox_func_by_path:
@@ -430,7 +566,7 @@ def build_functional_references_stage(
         legacy_raw_path = (outdir_path / f"{stem}_ref_raw.tif") if outdir_path is not None else None
         legacy_norm_path = (outdir_path / f"{stem}_ref_norm.tif") if outdir_path is not None else None
 
-        if reuse_saved_refs:
+        if reuse_saved_refs and frame_start == 0:
             plane_raws = sorted(out_raw_path.glob(f"{stem}_plane*_raw.tif"))
             if (not plane_raws) and outdir_path is not None:
                 plane_raws = sorted(outdir_path.glob(f"{stem}_plane*_raw.tif"))
@@ -450,6 +586,7 @@ def build_functional_references_stage(
                         ref2d=ref2d_i,
                         index=zi,
                         vox_func=vox_f,
+                        frame_selection=frame_selection,
                     )
                 )
             if stack_plane_refs:
@@ -461,7 +598,13 @@ def build_functional_references_stage(
             if cached is not None:
                 ref2d_raw, ref2d = cached
                 plane_refs.append(
-                    _functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f)
+                    _functional_plane_ref(
+                        label=stem,
+                        ref2d_raw=ref2d_raw,
+                        ref2d=ref2d,
+                        vox_func=vox_f,
+                        frame_selection=frame_selection,
+                    )
                 )
                 log_lines.append(f"[12] Using existing refs for {legacy_oriented_path}")
                 continue
@@ -471,12 +614,20 @@ def build_functional_references_stage(
                 if cached is not None:
                     ref2d_raw, ref2d = cached
                     plane_refs.append(
-                        _functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f)
+                        _functional_plane_ref(
+                            label=stem,
+                            ref2d_raw=ref2d_raw,
+                            ref2d=ref2d,
+                            vox_func=vox_f,
+                            frame_selection=frame_selection,
+                        )
                     )
                     log_lines.append(f"[12] Using existing refs for {legacy_oriented_path} (legacy)")
                     continue
 
         func = np.asarray(imread_any(fp), dtype=np.float32)
+        if frame_start > 0:
+            func = func[frame_start:]
 
         def orient_ref(arr: np.ndarray) -> np.ndarray:
             if source_is_preoriented:
@@ -512,6 +663,7 @@ def build_functional_references_stage(
                         ref2d=ref2d_i,
                         index=zi,
                         vox_func=vox_f,
+                        frame_selection=frame_selection,
                     )
                 )
             log_lines.append(f"[12] Built top-correlated per-plane refs for {fp} -> {legacy_oriented_path.stem}")
@@ -523,7 +675,15 @@ def build_functional_references_stage(
             tifffile.imwrite(raw_path, ref2d_raw.astype(np.float32))
             ref2d = norm01(ref2d_raw)
             tifffile.imwrite(norm_path, (ref2d * 65535).astype(np.uint16))
-            plane_refs.append(_functional_plane_ref(label=stem, ref2d_raw=ref2d_raw, ref2d=ref2d, vox_func=vox_f))
+            plane_refs.append(
+                _functional_plane_ref(
+                    label=stem,
+                    ref2d_raw=ref2d_raw,
+                    ref2d=ref2d,
+                    vox_func=vox_f,
+                    frame_selection=frame_selection,
+                )
+            )
             log_lines.append(f"[12] Built mean reference for {fp} -> {legacy_oriented_path.stem}")
             continue
 
@@ -547,6 +707,7 @@ def build_functional_references_stage(
                     ref2d=ref2d_i,
                     index=zi,
                     vox_func=vox_f,
+                    frame_selection=frame_selection,
                 )
             )
         log_lines.append(f"[12] Built mean per-plane refs for {fp} -> {legacy_oriented_path.stem}")
@@ -565,6 +726,8 @@ def build_functional_references_stage(
             "plane_refs": plane_refs,
             "ref2d_raw": ref2d_raw,
             "ref2d": ref2d,
+            "FUNCTIONAL_INPUT_XY_FRAME": frame,
+            "FUNCTIONAL_REFERENCE_XY_FRAME": CANONICAL_XY_FRAME,
         },
     }
 
@@ -760,8 +923,14 @@ def _ncc_in_plane_result(
     fixed_slice: np.ndarray,
     use_cv2: bool,
     display_normalize_placed: bool,
+    initial_ncc_xy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    x0, y0, score = ncc_xy(ref_scaled, fixed_slice, use_cv2=use_cv2)
+    if isinstance(initial_ncc_xy, dict):
+        x0 = int(initial_ncc_xy["x0"])
+        y0 = int(initial_ncc_xy["y0"])
+        score = float(initial_ncc_xy["score"])
+    else:
+        x0, y0, score = ncc_xy(ref_scaled, fixed_slice, use_cv2=use_cv2)
     metric_img = _place_image_on_canvas(np.asarray(ref_scaled, dtype=np.float32), tuple(fixed_slice.shape), x0, y0)
     display_img = _place_image_on_canvas(
         norm01(ref_scaled) if display_normalize_placed else np.asarray(ref_scaled, dtype=np.float32),
@@ -793,6 +962,7 @@ def _ants_rigid_affine_in_plane_result(
     output_dir: Path | None,
     spacing: tuple[float, float],
     config: InPlaneRegistrationComparisonConfig,
+    initial_ncc_xy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if bool(config.ants_require_fixed_mask) and config.ants_fixed_mask_json in (None, "", False):
         raise RuntimeError("ants_rigid_affine requires a saved fixed-region mask JSON; run [19a] first.")
@@ -806,8 +976,25 @@ def _ants_rigid_affine_in_plane_result(
             set_deterministic(True, seed_value=int(config.ants_deterministic_seed))
 
     pmin, pmax = config.clip_percentiles
-    moving_np = _clip_norm01(ref_scaled, pmin=pmin, pmax=pmax).astype(np.float32)
+    ref_moving_np = _clip_norm01(ref_scaled, pmin=pmin, pmax=pmax).astype(np.float32)
     fixed_np = _clip_norm01(fixed_slice, pmin=pmin, pmax=pmax).astype(np.float32)
+    if isinstance(initial_ncc_xy, dict):
+        ncc_x0 = int(initial_ncc_xy["x0"])
+        ncc_y0 = int(initial_ncc_xy["y0"])
+        ncc_score = float(initial_ncc_xy["score"])
+    else:
+        ncc_x0, ncc_y0, ncc_score = ncc_xy(ref_moving_np, fixed_np, use_cv2=bool(config.use_cv2))
+    moving_np = _place_image_on_canvas(ref_moving_np, tuple(fixed_np.shape), ncc_x0, ncc_y0)
+    moving_support_np = _place_image_on_canvas(
+        np.ones(tuple(ref_moving_np.shape), dtype=np.float32),
+        tuple(fixed_np.shape),
+        ncc_x0,
+        ncc_y0,
+    )
+    if moving_np is None or moving_support_np is None:
+        raise RuntimeError("NCC initialization produced no overlap with the ANTs fixed canvas")
+    moving_np = np.asarray(moving_np, dtype=np.float32)
+    moving_support_np = np.asarray(moving_support_np, dtype=np.float32) > 0.5
     fixed_region_spec, fixed_region_path = _load_square_region_mask_json(config.ants_fixed_mask_json)
     fixed_mask_np = None
     fixed_region_bounds = None
@@ -850,7 +1037,7 @@ def _ants_rigid_affine_in_plane_result(
         transformlist = _copy_ants_transforms(transformlist, output_dir / "transforms", label, "ants_rigid_affine")
 
     warped = np.asarray(reg_affine["warpedmovout"].numpy(), dtype=np.float32)
-    mask_img = ants.from_numpy(np.ones(tuple(moving_np.shape), dtype=np.float32))
+    mask_img = ants.from_numpy(moving_support_np.astype(np.float32, copy=False))
     _set_ants_2d_metadata(mask_img, spacing=spacing)
     mask_warped = ants.apply_transforms(
         fixed=fixed,
@@ -869,6 +1056,13 @@ def _ants_rigid_affine_in_plane_result(
             "type": "ants_transformlist",
             "method": "ants_rigid_affine",
             "transformlist": transformlist,
+            "ncc_preplacement": {
+                "x0": int(ncc_x0),
+                "y0": int(ncc_y0),
+                "score": float(ncc_score),
+                "source_shape": tuple(int(v) for v in ref_moving_np.shape),
+                "canvas_shape": tuple(int(v) for v in fixed_np.shape),
+            },
             "fixed_spacing": tuple(float(v) for v in spacing),
             "moving_spacing": tuple(float(v) for v in spacing),
             "fixed_origin": (0.0, 0.0),
@@ -880,6 +1074,7 @@ def _ants_rigid_affine_in_plane_result(
         },
         "post_ncc": _post_transform_ncc(warped_masked, fixed_np),
         "valid_fraction": float(valid_mask.mean()) if valid_mask.size else 0.0,
+        "ncc_xy": {"x0": int(ncc_x0), "y0": int(ncc_y0), "score": float(ncc_score)},
         "transformlist": transformlist,
         "ants_fixed_mask_path": str(fixed_region_path) if fixed_region_path is not None else None,
         "ants_fixed_mask_bounds_xyxy": fixed_region_bounds,
@@ -954,6 +1149,7 @@ def run_in_plane_registration_comparison_stage(
     for plane_idx, plane_ref in enumerate(plane_refs):
         if plane_ref is None:
             continue
+        resolved_plane_idx = int(plane_ref.get("index", plane_idx))
         label = str(plane_ref.get("label", f"plane{plane_idx}"))
         bz = int(plane_ref.get("best_z", best_z))
         if bz < 0 or bz >= anat_arr.shape[0]:
@@ -970,6 +1166,7 @@ def run_in_plane_registration_comparison_stage(
         second_best = float(np.partition(ncc_scores_arr, -2)[-2]) if ncc_scores_arr.size >= 2 else np.nan
         plane_results: dict[str, dict[str, Any]] = {}
         plane_errors: dict[str, str] = {}
+        initial_ncc_xy = plane_ref.get("ncc_xy") if isinstance(plane_ref.get("ncc_xy"), dict) else None
 
         for method in methods:
             try:
@@ -979,16 +1176,18 @@ def run_in_plane_registration_comparison_stage(
                         fixed_slice=fixed_slice,
                         use_cv2=bool(cfg.use_cv2),
                         display_normalize_placed=bool(cfg.display_normalize_placed),
+                        initial_ncc_xy=initial_ncc_xy,
                     )
                 elif method == "ants_rigid_affine":
                     result = _ants_rigid_affine_in_plane_result(
                         ref_scaled=ref_scaled,
                         fixed_slice=fixed_slice,
-                        plane_idx=plane_idx,
+                        plane_idx=resolved_plane_idx,
                         label=label,
                         output_dir=output_dir,
                         spacing=spacing,
                         config=cfg,
+                        initial_ncc_xy=initial_ncc_xy,
                     )
                 else:
                     raise ValueError(f"Unsupported in-plane registration method: {method}")
@@ -998,7 +1197,7 @@ def run_in_plane_registration_comparison_stage(
                 rows.append(
                     {
                         "fish_id": fish_id,
-                        "plane_idx": int(plane_idx),
+                        "plane_idx": resolved_plane_idx,
                         "plane": label,
                         "method": method,
                         "selected": False,
@@ -1043,7 +1242,7 @@ def run_in_plane_registration_comparison_stage(
                 rows.append(
                     {
                         "fish_id": fish_id,
-                        "plane_idx": int(plane_idx),
+                        "plane_idx": resolved_plane_idx,
                         "plane": label,
                         "method": method,
                         "selected": False,
@@ -1092,7 +1291,7 @@ def run_in_plane_registration_comparison_stage(
                 continue
 
         for row in rows:
-            if int(row.get("plane_idx", -1)) == int(plane_idx) and str(row.get("plane")) == label:
+            if int(row.get("plane_idx", -1)) == resolved_plane_idx and str(row.get("plane")) == label:
                 row["selected"] = str(row.get("method")) == selected_method
                 row["selected_method"] = selected_method
                 row["fallback_reason"] = fallback_reason

@@ -738,6 +738,7 @@ def load_suite2p_stage(
     fish_id: str | None = None,
     polarity: str | None = None,
     polarity_source: str | None = None,
+    input_xy_frame: str | None = None,
     config: Suite2pStageConfig | None = None,
     assert_fish_compatible: Any = None,
 ) -> dict[str, Any]:
@@ -757,8 +758,28 @@ def load_suite2p_stage(
                 print(f"[Suite2p] stale SUITE2P_ROOT detected; resetting to {default_root}")
             resolved_root = default_root
 
-    orient_mode = func_orientation_mode(polarity)
-    orient_effective = func_orientation_effective(polarity)
+    from .spatial_contract import (
+        CANONICAL_XY_FRAME,
+        LEGACY_ACQUISITION_XY_FRAME,
+        fish_dir_from_product_path,
+        load_spatial_manifest,
+    )
+
+    fish_dir = fish_dir_from_product_path(resolved_root)
+    manifest = load_spatial_manifest(fish_dir, required=False) if fish_dir is not None else None
+    declared_frame = CANONICAL_XY_FRAME if manifest is not None else None
+    if input_xy_frame is not None and declared_frame is not None and input_xy_frame != declared_frame:
+        raise ValueError(f"Suite2P frame {input_xy_frame!r} conflicts with canonical manifest {declared_frame!r}")
+    frame = input_xy_frame or declared_frame or LEGACY_ACQUISITION_XY_FRAME
+    if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
+        raise ValueError(f"Unknown Suite2P input XY frame: {frame!r}")
+    canonical_plane_paths = {
+        Path(str(record["output_path"])).resolve()
+        for record in (manifest or {}).get("functional_planes", [])
+        if isinstance(record, dict) and record.get("output_path")
+    }
+    orient_mode = "none" if frame == CANONICAL_XY_FRAME else func_orientation_mode(polarity)
+    orient_effective = "none" if frame == CANONICAL_XY_FRAME else func_orientation_effective(polarity)
     if cfg.verbose:
         print(
             f"[Suite2p] Base functional orientation={orient_mode} "
@@ -837,10 +858,32 @@ def load_suite2p_stage(
         spks = np.load(paths["spks"], allow_pickle=True)
         stat = np.load(paths["stat"], allow_pickle=True)
         ops = _load_ops_npy(paths["ops"])
+        if manifest is not None:
+            ops_inputs: set[Path] = set()
+            for key in ("tiff_list", "filelist"):
+                values = ops.get(key, []) if isinstance(ops, dict) else []
+                if isinstance(values, (str, Path)):
+                    values = [values]
+                for value in values or []:
+                    candidate = Path(str(value))
+                    if not candidate.is_absolute():
+                        data_paths = ops.get("data_path", []) if isinstance(ops, dict) else []
+                        if isinstance(data_paths, (str, Path)):
+                            data_paths = [data_paths]
+                        if data_paths:
+                            candidate = Path(str(data_paths[0])) / candidate
+                    ops_inputs.add(candidate.resolve())
+            if not ops_inputs or not ops_inputs.issubset(canonical_plane_paths):
+                raise ValueError(
+                    "Suite2P outputs are stale or lack canonical input provenance: "
+                    f"ops inputs={sorted(str(path) for path in ops_inputs)}, "
+                    f"manifest planes={sorted(str(path) for path in canonical_plane_paths)}"
+                )
         iscell = np.load(paths["iscell"], allow_pickle=True)
 
         labels, keep = _build_labels_from_stat(stat, iscell, ops)
-        labels = apply_func_orientation(labels, polarity=polarity, flip_x=True)
+        if frame == LEGACY_ACQUISITION_XY_FRAME:
+            labels = apply_func_orientation(labels, polarity=polarity, flip_x=True)
 
         flip_x = bool(cfg.flip_x) if cfg.flip_x is not None else False
         if flip_x:
@@ -866,6 +909,7 @@ def load_suite2p_stage(
             "dff": dff,
             "flip_x": flip_x,
             "func_orient": orient_mode,
+            "input_xy_frame": frame,
         }
         suite2p_planes.append(plane_info)
 
@@ -888,6 +932,7 @@ def load_suite2p_stage(
                 "flip_x": flip_x,
                 "flip_x_src": flip_x_src,
                 "orient": orient_mode,
+                "input_xy_frame": frame,
                 "F": str(paths.get("F")) if paths.get("F") else None,
                 "Fneu": str(paths.get("Fneu")) if paths.get("Fneu") else None,
                 "spks": str(paths.get("spks")) if paths.get("spks") else None,
@@ -920,6 +965,8 @@ def load_suite2p_stage(
         "suite2p_by_ref_idx": suite2p_by_ref_idx,
         "func_labels": func_labels,
         "suite2p_fish_id": fish_id,
+        "input_xy_frame": frame,
+        "output_xy_frame": CANONICAL_XY_FRAME,
         "df_sum": df_sum,
         "df_src": df_src,
     }
