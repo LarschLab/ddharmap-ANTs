@@ -3353,3 +3353,29 @@
 - Hardened shared NRRD loading: SimpleITK is preferred for Z/Y/X array readback, and the pynrrd fallback uses `index_order="C"`. The first L765_f02 plane-4 retry exposed the prior Y/X/Z interpretation by producing impossible `best_z=666`; it failed before ANTs and its isolated output was preserved as invalid.
 - Corrected persistent job `20260804T123753Z-l765-f02-plane4-retry-v2` reused scale `1.167` and `Z=54`. NCC XY post-NCC was `0.5956`; ANTs rigid+affine improved it to `0.7278`. Four QC PNGs and transformed Suite2p labels were generated under the isolated staged root, visually inspected for gross coherence, and left unpromoted pending user acceptance.
 - Validation: focused spatial, pipeline, and Z-drift coverage passed `157 passed, 61 warnings`; the remote anatomy smoke read the canonical NRRD as `(76, 750, 750)`; the corrected persistent retry exited 0.
+
+### 2026-08-10 - review-only raw-anatomy polarity inference
+
+- Added package-owned `orientation.py`, plot-owned polarity QC rendering, and the thin `tools/predict_anatomy_polarity.py` wrapper.
+- The predictor reads legacy TIFF pages directly, builds 90th/95th/99th-percentile projections, compares intensity and edge HOG descriptors under the existing north=`flipY` and south=`flipX` conventions, and abstains when the six variants disagree or fall below the acquisition-series-held-out calibration floor.
+- Predictions are review evidence only: the audit writes CSV/JSON/PNG outputs and never edits raw metadata or supplies inferred polarity to canonical preprocessing.
+- Per user direction, interleaved `L427` fish are excluded until explicit channel deinterleaving is supported.
+- The 10-fish balanced manual reference set (5 north, 5 south after excluding `L427`) passed acquisition-series-held-out validation `10/10`, with all six variants unanimous.
+- The full Matilde audit represents every non-`L427` fish with 40 QC tiles: multiple raw anatomy acquisitions are shown separately and missing anatomy is retained explicitly. Accepted predictions agreed with all 31 comparable manual/raw-metadata stack labels; five manual reference fish were scored with their acquisition series held out, and 26 additional accepted out-of-sample metadata comparisons all agreed. `L467_f01` and the first `L500_f04` anatomy acquisition abstained for review; `L467_f04` has no raw anatomy; the second `L500_f04` acquisition produced an accepted north prediction.
+- Durable CSV/JSON/PNG outputs live under `/Volumes/jlarsch/default/D2c/07_Data/Matilde/anatomy_polarity_audit_L427_excluded/`. Focused unit coverage passes `5 passed`; the `3012x3684` contact sheet passed nonblank, label, status-color, and visual inspection checks.
+
+### 2026-08-10 - canonical orientation moves upstream
+
+- The calcium preprocessing branch now owns the one-time spatial conversion: direct north=`flipY`/south=`flipX` on functional plane movies before Suite2p, and the same XY transform plus signed correction, uint8 conversion, registration-Z flip, and 750x750 resize for in-vivo anatomy.
+- `spatial_preprocessing_manifest.json` is the authoritative frame/provenance contract. codeANTs validates canonical functional/anatomy XY plus anatomy registration Z and fails on unknown or contradictory values.
+- `[12]` reference building, Suite2p label reconstruction, ROI matching, and HCR replay skip orientation for manifest-declared canonical products. `[14a]` passes the upstream anatomy NRRD through without rewriting it. Explicit legacy acquisition products retain direct-transform compatibility.
+- Runtime polarity resolution no longer falls back to `matchingMetadata.csv`; that file is available only through an explicit legacy switch. The anatomy classifier and its audit wrapper now train exclusively from raw `fish_orientation` metadata and exclude `L427` when requested.
+- Focused context/orientation/reference/anatomy/Suite2p/spatial-contract validation passed `57 passed`; the final full repository suite passed `401 passed` and `git diff --check` passed.
+- Isolated Helga/J: validation under `J:\Danin\Microscopy\_codex_validation\20260810-canonical-spatial-v1` used the 27-fish raw-metadata model (`27/27` acquisition-group-held-out correct and unanimous). Independent `L395_f11` anatomy predicted south unanimously despite missing raw orientation metadata; direct functional transformation matched the historical effective transform exactly. The new anatomy NRRD exactly matched the legacy oriented uint8 TIFF after the required Z reversal, but not the pre-existing accepted NRRD, exposing that NRRD as stale/internally inconsistent and leaving all accepted products untouched.
+
+### 2026-08-10 - consume the upstream NCC placement without repeated search
+
+- Added the versioned `functional_anatomy_ncc_handoff_v1` consumer in `ncc_contract.py`. It validates fish identity, passing drift-candidate status, selected canonical anatomy, canonical XY/registration-Z frames, placement/profile schemas, exact Z coverage, reference files, and agreement between the reported best Z and the full NCC depth profile.
+- `register-functional-to-anatomy` now auto-discovers or accepts `--preprocessing-ncc-manifest`, reconstructs `plane_refs` from the saved pooled post-Block-0 references, scale, best-Z/sub-slice result, full depth scores, and XY placement, and skips reference averaging, scale sweep, best-Z search, and XY search. It does not write duplicate legacy NCC cache JSON on this path.
+- Both NCC placement materialization and ANTs initialization accept the validated upstream XY placement. ANTs remains the downstream residual-refinement stage, and failed/review-required drift candidates fail closed before static registration.
+- Focused handoff and spatial-contract coverage passes, including a registration-stage contract proving that the legacy NCC cache files are absent on the handoff path.

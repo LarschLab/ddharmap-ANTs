@@ -108,7 +108,7 @@ def _make_minimal_fish(root: Path, fish_id: str = "L000_f00") -> Path:
         plots_dir,
     ):
         directory.mkdir(parents=True)
-    (metadata_dir / f"{fish_id}_metadata.csv").write_text("key,value\n")
+    (metadata_dir / f"{fish_id}_metadata.csv").write_text("key,value\nfish_orientation,south\n")
     (metadata_dir / f"{fish_id}_experiment_log.csv").write_text("time,event\n")
     (metadata_dir / ".DS_Store").write_text("ignored\n")
     (functional_raw_dir / ".DS_Store").write_text("ignored\n")

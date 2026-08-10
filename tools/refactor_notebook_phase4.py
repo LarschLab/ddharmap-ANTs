@@ -70,6 +70,7 @@ suite2p_planes = suite2p_result["suite2p_planes"]
 suite2p_by_ref_idx = suite2p_result["suite2p_by_ref_idx"]
 func_labels = suite2p_result["func_labels"]
 SUITE2P_FISH_ID = suite2p_result["suite2p_fish_id"]
+SUITE2P_INPUT_XY_FRAME = suite2p_result["input_xy_frame"]
 df_sum = suite2p_result["df_sum"]
 df_src = suite2p_result["df_src"]
 

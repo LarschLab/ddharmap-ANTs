@@ -71,6 +71,7 @@ class ContextTests(unittest.TestCase):
             (fish_dir / "03_analysis" / "functional" / "segmentation").mkdir(parents=True)
             (fish_dir / "03_analysis" / "functional" / "segmentation" / f"{fish_id}_functional_labels.tif").touch()
             (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL395_f11,south\n")
+            self._write_raw_orientation_metadata(root, fish_id, "top-right")
             ctx = resolve_fish_context(fish_id=fish_id, data_mode="local", local_root=root)
 
             paths = prepare_notebook_paths(ctx)
@@ -116,7 +117,7 @@ class ContextTests(unittest.TestCase):
             self.assertEqual(polarity, "south")
             self.assertEqual(source, f"{fish_id}_metadata.csv:fish_orientation")
 
-    def test_resolve_func_polarity_falls_back_to_matching_metadata(self) -> None:
+    def test_resolve_func_polarity_uses_matching_metadata_only_for_explicit_legacy_mode(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             fish_id = "L758_f03"
@@ -129,6 +130,14 @@ class ContextTests(unittest.TestCase):
                 fish_dir=root / fish_id,
             )
 
+            self.assertIsNone(polarity)
+            self.assertIn("unresolved", source)
+            polarity, source = resolve_func_polarity(
+                fish_id,
+                root / "matchingMetadata.csv",
+                fish_dir=root / fish_id,
+                allow_legacy_matching_metadata=True,
+            )
             self.assertEqual(polarity, "north")
             self.assertEqual(source, "matchingMetadata.csv:polarity")
 
@@ -211,6 +220,7 @@ class ContextTests(unittest.TestCase):
             fish_id = "L395_f11"
             (root / fish_id / "03_analysis").mkdir(parents=True)
             (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL395_f11,south\n")
+            self._write_raw_orientation_metadata(root, fish_id, "top-right")
             ctx = resolve_fish_context(fish_id=fish_id, owner="Matilde", data_mode="local", local_root=root)
 
             bindings = notebook_bindings_from_context(ctx)
@@ -236,6 +246,7 @@ class ContextTests(unittest.TestCase):
             fish_id = "L395_f11"
             (root / fish_id / "03_analysis").mkdir(parents=True)
             (root / "matchingMetadata.csv").write_text("fish_id,polarity\nL395_f11,south\n")
+            self._write_raw_orientation_metadata(root, fish_id, "top-right")
 
             result = resolve_notebook_context_stage(
                 ContextStageConfig(

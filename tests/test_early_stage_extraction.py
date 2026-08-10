@@ -301,7 +301,7 @@ def test_preprocess_anatomy_uint8_stage_applies_functional_orientation_by_defaul
 
     out = _read_nrrd_zyx(result["bindings"]["ANAT_8BIT_STACK_PATH"])
     assert out.tolist() == [[[170, 255], [0, 85]]]
-    assert result["artifacts"]["orientation_mode"] == "rot180+flipX"
+    assert result["artifacts"]["orientation_mode"] == "flipY"
     assert result["artifacts"]["apply_func_orientation"] is True
     assert result["artifacts"]["polarity"] == "north"
 
@@ -342,6 +342,7 @@ def test_preprocess_anatomy_uint8_stage_defaults_to_750_xy(tmp_path: Path) -> No
     result = preprocess_anatomy_uint8_stage(
         anat_stack_path=raw_path,
         preproc_dir=preproc_dir,
+        polarity="south",
         config=AnatomyUint8PreprocessingConfig(force_recompute_anat_uint8=True),
     )
 

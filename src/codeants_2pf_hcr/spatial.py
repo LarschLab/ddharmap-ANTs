@@ -116,11 +116,14 @@ def apply_func_orientation(arr: np.ndarray, *, polarity: str | None = None, flip
     out = np.asarray(arr)
     if out.ndim < 2:
         return out
-    if str(polarity).strip().lower() == "north":
-        out = out[..., ::-1, ::-1]
-    if flip_x:
-        out = out[..., ::-1]
-    return out
+    value = str(polarity).strip().lower()
+    if not flip_x:
+        return out.copy()
+    if value == "north":
+        return np.flip(out, axis=-2).copy()
+    if value == "south":
+        return np.flip(out, axis=-1).copy()
+    raise ValueError(f"Cannot orient functional data without north/south polarity, got {polarity!r}")
 
 
 def _to_um(val: float | int | None, unit: str | None) -> float | None:
@@ -498,6 +501,7 @@ def build_functional_references_stage(
     vox_func_by_path: dict[str, Any] | None = None,
     polarity: str | None = None,
     polarity_source: str | None = None,
+    input_xy_frame: str | None = None,
     config: FunctionalReferenceConfig | None = None,
 ) -> dict[str, Any]:
     del polarity_source
@@ -514,6 +518,22 @@ def build_functional_references_stage(
         source_is_preoriented = True
     if not source_paths:
         raise FileNotFoundError("No functional stacks available")
+
+    from .spatial_contract import CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME, declared_xy_frame
+
+    declared_frames = {declared_xy_frame(path, kind="functional") for path in source_paths}
+    declared_frames.discard(None)
+    if len(declared_frames) > 1:
+        raise ValueError(f"Functional inputs declare contradictory XY frames: {sorted(declared_frames)}")
+    declared_frame = next(iter(declared_frames), None)
+    if input_xy_frame is not None and declared_frame is not None and input_xy_frame != declared_frame:
+        raise ValueError(f"Requested functional XY frame {input_xy_frame!r} conflicts with manifest {declared_frame!r}")
+    frame = input_xy_frame or declared_frame
+    if frame is None:
+        frame = CANONICAL_XY_FRAME if source_is_preoriented else LEGACY_ACQUISITION_XY_FRAME
+    if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
+        raise ValueError(f"Unknown functional XY frame: {frame!r}")
+    source_is_preoriented = source_is_preoriented or frame == CANONICAL_XY_FRAME
 
     reuse_saved_refs = bool(cfg.reuse_saved_refs)
     if cfg.force_recompute_refs:
@@ -706,6 +726,8 @@ def build_functional_references_stage(
             "plane_refs": plane_refs,
             "ref2d_raw": ref2d_raw,
             "ref2d": ref2d,
+            "FUNCTIONAL_INPUT_XY_FRAME": frame,
+            "FUNCTIONAL_REFERENCE_XY_FRAME": CANONICAL_XY_FRAME,
         },
     }
 
@@ -901,8 +923,14 @@ def _ncc_in_plane_result(
     fixed_slice: np.ndarray,
     use_cv2: bool,
     display_normalize_placed: bool,
+    initial_ncc_xy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    x0, y0, score = ncc_xy(ref_scaled, fixed_slice, use_cv2=use_cv2)
+    if isinstance(initial_ncc_xy, dict):
+        x0 = int(initial_ncc_xy["x0"])
+        y0 = int(initial_ncc_xy["y0"])
+        score = float(initial_ncc_xy["score"])
+    else:
+        x0, y0, score = ncc_xy(ref_scaled, fixed_slice, use_cv2=use_cv2)
     metric_img = _place_image_on_canvas(np.asarray(ref_scaled, dtype=np.float32), tuple(fixed_slice.shape), x0, y0)
     display_img = _place_image_on_canvas(
         norm01(ref_scaled) if display_normalize_placed else np.asarray(ref_scaled, dtype=np.float32),
@@ -934,6 +962,7 @@ def _ants_rigid_affine_in_plane_result(
     output_dir: Path | None,
     spacing: tuple[float, float],
     config: InPlaneRegistrationComparisonConfig,
+    initial_ncc_xy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if bool(config.ants_require_fixed_mask) and config.ants_fixed_mask_json in (None, "", False):
         raise RuntimeError("ants_rigid_affine requires a saved fixed-region mask JSON; run [19a] first.")
@@ -949,7 +978,12 @@ def _ants_rigid_affine_in_plane_result(
     pmin, pmax = config.clip_percentiles
     ref_moving_np = _clip_norm01(ref_scaled, pmin=pmin, pmax=pmax).astype(np.float32)
     fixed_np = _clip_norm01(fixed_slice, pmin=pmin, pmax=pmax).astype(np.float32)
-    ncc_x0, ncc_y0, ncc_score = ncc_xy(ref_moving_np, fixed_np, use_cv2=bool(config.use_cv2))
+    if isinstance(initial_ncc_xy, dict):
+        ncc_x0 = int(initial_ncc_xy["x0"])
+        ncc_y0 = int(initial_ncc_xy["y0"])
+        ncc_score = float(initial_ncc_xy["score"])
+    else:
+        ncc_x0, ncc_y0, ncc_score = ncc_xy(ref_moving_np, fixed_np, use_cv2=bool(config.use_cv2))
     moving_np = _place_image_on_canvas(ref_moving_np, tuple(fixed_np.shape), ncc_x0, ncc_y0)
     moving_support_np = _place_image_on_canvas(
         np.ones(tuple(ref_moving_np.shape), dtype=np.float32),
@@ -1132,6 +1166,7 @@ def run_in_plane_registration_comparison_stage(
         second_best = float(np.partition(ncc_scores_arr, -2)[-2]) if ncc_scores_arr.size >= 2 else np.nan
         plane_results: dict[str, dict[str, Any]] = {}
         plane_errors: dict[str, str] = {}
+        initial_ncc_xy = plane_ref.get("ncc_xy") if isinstance(plane_ref.get("ncc_xy"), dict) else None
 
         for method in methods:
             try:
@@ -1141,6 +1176,7 @@ def run_in_plane_registration_comparison_stage(
                         fixed_slice=fixed_slice,
                         use_cv2=bool(cfg.use_cv2),
                         display_normalize_placed=bool(cfg.display_normalize_placed),
+                        initial_ncc_xy=initial_ncc_xy,
                     )
                 elif method == "ants_rigid_affine":
                     result = _ants_rigid_affine_in_plane_result(
@@ -1151,6 +1187,7 @@ def run_in_plane_registration_comparison_stage(
                         output_dir=output_dir,
                         spacing=spacing,
                         config=cfg,
+                        initial_ncc_xy=initial_ncc_xy,
                     )
                 else:
                     raise ValueError(f"Unsupported in-plane registration method: {method}")

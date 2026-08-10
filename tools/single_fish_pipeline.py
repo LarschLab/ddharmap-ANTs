@@ -262,6 +262,14 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Reuse existing ncc_scale_by_fish.json and ncc_bestz_by_plane.json while rerunning XY placement/ANTs.",
     )
+    register_func.add_argument(
+        "--preprocessing-ncc-manifest",
+        type=Path,
+        help=(
+            "Reuse the canonical preprocessing NCC reference, scale, best-Z profile, and XY placement; "
+            "only downstream ANTs refinement is run."
+        ),
+    )
     register_func.add_argument("--ants-fixed-mask-json", type=Path)
     register_func.add_argument("--no-ants-fixed-mask-required", dest="ants_require_fixed_mask", action="store_false")
     register_func.set_defaults(ants_require_fixed_mask=True)
@@ -634,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
             functional_labels_anatomy_dir=args.functional_labels_anatomy_dir,
             output_root=args.output_root,
             ncc_cache_source_dir=args.reuse_ncc_cache_dir,
+            preprocessing_ncc_manifest_path=args.preprocessing_ncc_manifest,
             ants_fixed_mask_json=args.ants_fixed_mask_json,
             ants_require_fixed_mask=args.ants_require_fixed_mask,
             force_recompute=args.force_recompute,

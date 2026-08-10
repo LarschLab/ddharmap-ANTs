@@ -489,6 +489,7 @@ def resolve_func_polarity(
     polarity_override: Any = None,
     *,
     fish_dir: Path | str | None = None,
+    allow_legacy_matching_metadata: bool = False,
 ) -> tuple[str | None, str]:
     override = normalize_polarity_value(polarity_override)
     if override in ("north", "south"):
@@ -497,7 +498,14 @@ def resolve_func_polarity(
         raw_polarity, raw_source = read_raw_metadata_polarity(fish_dir)
         if raw_polarity in {"north", "south"}:
             return raw_polarity, raw_source
-    return read_matching_metadata_polarity(fish_id, metadata_csv)
+        from .spatial_contract import manifest_polarity
+
+        manifest_value, manifest_source = manifest_polarity(fish_dir)
+        if manifest_value in {"north", "south"}:
+            return manifest_value, manifest_source
+    if allow_legacy_matching_metadata:
+        return read_matching_metadata_polarity(fish_id, metadata_csv)
+    return None, "unresolved: raw metadata and canonical spatial manifest contain no polarity"
 
 
 def func_polarity_north(polarity: str | None) -> bool:
@@ -505,7 +513,7 @@ def func_polarity_north(polarity: str | None) -> bool:
 
 
 def func_orientation_mode(polarity: str | None) -> str:
-    return "rot180+flipX" if func_polarity_north(polarity) else "flipX"
+    return "flipY" if func_polarity_north(polarity) else "flipX"
 
 
 def func_orientation_effective(polarity: str | None) -> str:
@@ -2427,7 +2435,11 @@ def preprocess_anatomy_uint8_stage(
     if not requested_source_path.exists():
         raise FileNotFoundError(f"Anatomy source not found: {requested_source_path}")
 
-    requested_is_uint8 = _is_uint8_anatomy_preprocess_path(requested_source_path)
+    from .spatial_contract import CANONICAL_XY_FRAME, declared_xy_frame
+
+    canonical_upstream_input = declared_xy_frame(requested_source_path, kind="anatomy") == CANONICAL_XY_FRAME
+
+    requested_is_uint8 = _is_uint8_anatomy_preprocess_path(requested_source_path) or canonical_upstream_input
     derived_input_path = requested_source_path if requested_is_uint8 else None
 
     if output_path is None:
@@ -2470,10 +2482,22 @@ def preprocess_anatomy_uint8_stage(
     apply_orientation = bool(cfg.apply_func_orientation)
     flip_z_for_registration = bool(cfg.flip_z_for_registration)
     target_xy_shape = _normalize_target_xy_shape(cfg.target_xy_shape)
+    if canonical_upstream_input:
+        apply_orientation = False
+        flip_z_for_registration = False
+        target_xy_shape = None
     orient_mode = func_orientation_mode(polarity) if apply_orientation else "none"
     polarity_norm = normalize_polarity_value(polarity)
     meta_path = _anatomy_uint8_cache_metadata_path(out_path)
     log_lines: list[str] = []
+    if canonical_upstream_input:
+        passthrough_uint8_input = True
+        out_path = requested_source_path
+        registration_nrrd_path = requested_source_path
+        meta_path = _anatomy_uint8_cache_metadata_path(out_path)
+        log_lines.append(
+            "[INFO] Canonical upstream anatomy manifest detected; skipping XY orientation, Z flip, resize, and rewrite."
+        )
     if passthrough_uint8_input and force_recompute:
         log_lines.append(
             "[INFO] Existing anatomy preprocessing input has no raw source metadata; "

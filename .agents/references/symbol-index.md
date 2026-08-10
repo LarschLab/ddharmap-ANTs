@@ -35,8 +35,8 @@ Generated manually for the current extracted package surface.
 - `hcr_to_anatomy_registration_root`: Resolve the staged HCR-to-anatomy registration output root under `pipeline_root/register-hcr-to-anatomy/`.
 - `roi_to_anatomy_match_root`: Resolve the staged ROI/anatomy geometry output root under `pipeline_root/match-roi-to-anatomy/`.
 - `load_plane_refs_summary`: Load the compact `plane_refs_summary.json` emitted by `register-functional-to-anatomy` for recompute/audit paths.
-- `run_prepare_functional_reference_stacks_stage`: Writer stage wrapping `[12]` functional reference preparation. It discovers or accepts motion-corrected functional TIFFs, resolves polarity, excludes the first selected TIFF block by default using preprocessing metadata, calls `spatial.build_functional_references_stage`, writes legacy-compatible raw/norm reference TIFF pairs, and records frame-selection provenance plus the generated pairs in a stage manifest.
-- `run_register_functional_to_anatomy_stage`: Writer stage wrapping `[16]` NCC best-z/scale search and `[20]` in-plane registration. It uses NCC XY placement to initialize ANTs rigid+affine, persists the composed preplacement plus ANTs transform in `plane_refs_summary.json`, and fails when ANTs fails rather than selecting NCC as a final fallback. `ncc_cache_source_dir` can seed a fresh isolated run with previously accepted scale and best-Z JSON caches so a bounded plane retry skips the scale sweep while recomputing XY/ANTs placement.
+- `run_prepare_functional_reference_stacks_stage`: Writer stage wrapping `[12]` functional reference preparation. It discovers or accepts motion-corrected functional TIFFs, resolves polarity, excludes the first selected TIFF block by default using preprocessing metadata, and consumes the upstream canonical spatial manifest when present so references are not reoriented; explicit legacy acquisition inputs retain the compatibility transform.
+- `run_register_functional_to_anatomy_stage`: Writer stage wrapping `[16]` NCC placement and `[20]` in-plane registration. A version-4 `preprocessing_ncc_manifest_path` is the preferred route: it validates and reuses the canonical pooled reference, scale, full best-Z profile, and XY placement without writing legacy cache copies or repeating those searches, then runs ANTs residual refinement. The legacy staged-reference route and `ncc_cache_source_dir` remain available for older analyses.
 - `run_transform_functional_rois_to_anatomy_stage`: Rasterize native Suite2p ROI labels and apply the exact selected composed functional-to-anatomy transform, writing native and anatomy-space TIFFs plus a per-plane transform manifest.
 - `run_make_functional_registration_qc_stage`: Render four post-transform review artifacts—plane rows, intensity overlays, center label overlays, and NCC depth profiles—plus companion CSV provenance only after transformed functional labels exist.
 - `run_register_hcr_to_anatomy_stage`: Writer stage for HCR-to-anatomy artifacts. Default mode copies small accepted TIFF/CSV/JSON artifacts from an explicit or default `03_analysis/confocal/aligned/` source into `pipeline_root/register-hcr-to-anatomy/confocal/aligned/`, validates label/match/final-pair/metadata presence plus final-pair schema and accepted-pair semantics, records aligned intensity NRRDs as inputs, does not copy multi-GB NRRDs, and reports direct-ANTs recompute readiness from current raw HCR masks, rbest/rn HCR NRRDs, matching metadata, and transform files. `recompute_direct_ants=True` applies the notebook `label_voxel_floor_v3` prewarp HCR label filter, recomputes HCR label TIFFs, warp metadata, and HCR/anatomy match/review/final-pair CSVs from raw masks plus current ANTs transforms, and gates strict runs with accepted final-pair key parity.
@@ -107,16 +107,25 @@ Generated manually for the current extracted package surface.
 - `build_registration_helper_stage`: Publish package-owned registration helper bindings for `[6]`, including legacy image/orientation helpers consumed by QC notebook cells.
 - `resolve_voxel_context_stage`: Notebook-facing voxel discovery/cache stage for `[8]` that preserves legacy voxel globals, maps original functional source paths to legacy flipped aliases, treats `step_size_um_anatomy` metadata as authoritative for anatomy Z, and returns summary dataframe outputs.
 - `normalize_anatomy_stack_stage`: Notebook-facing anatomy normalization stage for `[14]` that preserves current NRRD->TIFF conversion/cache behavior and `ANAT_STACK_PATH` bindings.
-- `preprocess_anatomy_uint8_stage`: Notebook-facing signed 16-bit anatomy preprocessing stage for `[14a]` that mirrors/orients 2P anatomy XY by default, flips anatomy Z to match bottom-to-top confocal registration convention, resizes anatomy Y/X to `750x750`, saves the canonical uncompressed 8-bit registration NRRD `<fish_id>_anatomy_2P_GCaMP.nrrd` plus `.nrrd.json` metadata under `02_reg/00_preprocessing/2p_anatomy`, avoids duplicate TIFF image outputs, and rebinds `ANAT_STACK_PATH`.
+- `preprocess_anatomy_uint8_stage`: Legacy `[14a]` signed-16-bit anatomy preprocessing remains available for explicitly acquisition-framed inputs. When the upstream spatial manifest declares the input canonical, the stage passes the NRRD through without XY orientation, Z reversal, resize, or rewrite and rebinds `ANAT_STACK_PATH` directly.
 - `infer_anatomy_stack_path`: Discover the raw in vivo anatomy stack while excluding mask/label/overlay and ex vivo-looking candidates so staged in vivo prep does not silently pick bridge-registration inputs.
 - `preprocess_ex_vivo_anatomy_stage`: Experimental same-fish bridge preprocessing stage for raw ex vivo 2P anatomy stacks from `01_raw/2p/anatomy`; writes isolated pre-manual-rotation NRRD plus JSON provenance under `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` without rebinding canonical in vivo `ANAT_STACK_PATH` or creating duplicate TIFF image outputs.
 - `apply_manual_anatomy_orientation_stage`: Experimental helper that applies brainAtlas-style preview-angle XY rotation, optional square crop, rot90, and explicit axis flips to a preprocessed anatomy stack, then writes manual-oriented NRRD plus JSON provenance for ex vivo registration trials.
 - `read_raw_metadata_polarity`: Read per-fish raw metadata orientation from `01_raw/2p/metadata/*metadata*.csv`, normalize `bottom-left`/`top-right` to `north`/`south`, and fail on conflicts.
 - `read_matching_metadata_polarity`: Read the legacy fallback polarity from `matchingMetadata.csv`.
-- `resolve_func_polarity`: Resolve orientation with override support, preferring raw per-fish metadata and falling back to legacy matching metadata.
+- `resolve_func_polarity`: Resolve orientation with override support from raw per-fish metadata or the canonical spatial manifest. `matchingMetadata.csv` is available only through the explicit `allow_legacy_matching_metadata=True` compatibility switch.
 - `build_voxel_debug_stage`: Notebook-facing anatomy voxel debug helper for `[8a]`.
 - `orient_functional_stacks_stage`: Notebook-facing functional orientation stage for `[10]` that audits legacy full-stack caches and only writes oriented movie stacks when explicitly requested.
 - `build_final_fish_audit_stage`: Notebook-facing final contamination audit for `[99-debug-fish-audit]`.
+
+## `codeants_2pf_hcr.orientation`
+
+- `AnatomyPolarityConfig`: Configuration for multi-percentile intensity/edge HOG polarity inference and held-out calibration.
+- `read_anatomy_projection_variants`: Read legacy raw anatomy TIFF pages directly and build normalized XY projection variants without trusting malformed TZC series metadata.
+- `build_anatomy_polarity_model`: Build canonical-orientation reference templates from manually labeled fish.
+- `cross_validate_anatomy_polarity`: Hold out an entire acquisition prefix (for example `L396`) while scoring each reference fish.
+- `predict_anatomy_polarity`: Compare north=`flipY` and south=`flipX`, returning a prediction only when all configured variants agree and clear the calibrated margin.
+- `run_anatomy_polarity_prediction`: Write review-only validation/prediction CSVs, a summary JSON, and an all-target QC PNG; it never edits fish metadata.
 
 ## `codeants_2pf_hcr.cohort`
 
@@ -162,9 +171,23 @@ Generated manually for the current extracted package surface.
 - `corrcoef_img`: Pearson correlation for image pairs.
 - `top_correlated_mean`: Suite2p-like top-k frame reference builder.
 - `best_z_by_ncc`: Best-z search by NCC-like scoring.
-- `apply_func_orientation`: Apply the notebook’s functional orientation convention.
+- `apply_func_orientation`: Apply the direct effective functional transform (`north=flipY`, `south=flipX`) for explicitly legacy/acquisition-framed inputs.
 - `apply_square_region_mask`: Preserve values inside an anatomy-space square and set outside pixels to zero for masked registration.
-- `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy `ref2d_raw` / `ref2d` bindings and cache filenames while applying functional orientation to derived 2D references and recording functional frame-selection provenance.
+- `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy bindings/cache names, validates declared XY frames, skips orientation for upstream canonical inputs, and applies direct orientation only for explicit legacy/acquisition inputs.
+
+## `codeants_2pf_hcr.spatial_contract`
+
+- `load_spatial_manifest`: Validate the upstream canonical functional/anatomy XY and registration-Z contract; unknown or contradictory frames fail closed.
+- `manifest_polarity`: Read polarity provenance from the canonical spatial manifest.
+- `canonical_anatomy_path`: Resolve the single upstream registration-ready anatomy NRRD.
+- `declared_xy_frame`: Verify that a functional or anatomy product is declared by the upstream manifest.
+
+## `codeants_2pf_hcr.ncc_contract`
+
+- `preprocessing_ncc_manifest_path`: Resolve the canonical per-fish preprocessing NCC manifest.
+- `load_preprocessing_ncc_handoff`: Validate the versioned handoff schema, passing drift status, fish identity, selected canonical anatomy, coordinate frames, placement table, anchor profiles, and reference directory.
+- `plane_refs_from_preprocessing_ncc_handoff`: Reconstruct registration-ready `plane_refs` from the saved pooled references, scales, complete best-Z profiles, and XY placements without rerunning NCC.
+
 - `ncc_xy`: Shared NCC XY placement primitive for notebook cell `[20]`.
 - `scale_image`: Resize a 2D functional reference by an empirical NCC search scale.
 - `registration_metric_from_scores`: Summarize NCC scores into best-z and peak metrics.

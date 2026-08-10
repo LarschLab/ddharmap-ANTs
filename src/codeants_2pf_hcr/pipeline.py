@@ -3605,6 +3605,14 @@ def run_single_fish_assign_hcr_identity_stage(
         def _apply_replay_func_orientation(arr: Any) -> Any:
             return apply_func_orientation(arr, polarity=polarity, flip_x=True)
 
+        from .spatial_contract import load_spatial_manifest
+
+        replay_orientation_callback = (
+            None
+            if load_spatial_manifest(paths.fish_dir, required=False) is not None
+            else _apply_replay_func_orientation
+        )
+
         suite2p_result = load_suite2p_stage(
             plane_refs=replay_plane_refs,
             suite2p_root=paths.functional_suite2p_dir,
@@ -3639,7 +3647,7 @@ def run_single_fish_assign_hcr_identity_stage(
             dy_um=float(anatomy_xy_spacing[1]),
             gene_from_mask_func=gene_from_mask,
             response_lookup_df=response_lookup,
-            apply_func_orientation_func=_apply_replay_func_orientation,
+            apply_func_orientation_func=replay_orientation_callback,
         )
         final_status_df, final_raw_df, final_analysis_df, final_candidate_df = finalize_hcr_activity_export_tables(
             status_df,
@@ -3867,6 +3875,14 @@ def build_single_fish_hcr_activity_replay_manifest(
             def _apply_replay_func_orientation(arr: Any) -> Any:
                 return apply_func_orientation(arr, polarity=polarity, flip_x=True)
 
+            from .spatial_contract import load_spatial_manifest
+
+            replay_orientation_callback = (
+                None
+                if load_spatial_manifest(paths.fish_dir, required=False) is not None
+                else _apply_replay_func_orientation
+            )
+
             suite2p_result = load_suite2p_stage(
                 plane_refs=plane_refs,
                 suite2p_root=paths.functional_suite2p_dir,
@@ -3903,7 +3919,7 @@ def build_single_fish_hcr_activity_replay_manifest(
                 dy_um=float(anatomy_xy_spacing[1]),
                 gene_from_mask_func=gene_from_mask,
                 response_lookup_df=response_lookup,
-                apply_func_orientation_func=_apply_replay_func_orientation,
+                apply_func_orientation_func=replay_orientation_callback,
             )
             final_status_df, final_raw_df, final_analysis_df, final_candidate_df = finalize_hcr_activity_export_tables(
                 status_df,
@@ -4006,7 +4022,7 @@ def build_single_fish_hcr_activity_replay_manifest(
                         dy_um=float(anatomy_xy_spacing[1]),
                         gene_from_mask_func=gene_from_mask,
                         response_lookup_df=response_lookup,
-                        apply_func_orientation_func=_apply_replay_func_orientation,
+                        apply_func_orientation_func=replay_orientation_callback,
                     )
                     v_final_status_df, v_final_raw_df, v_final_analysis_df, v_final_candidate_df = finalize_hcr_activity_export_tables(
                         v_status_df,
@@ -6462,6 +6478,7 @@ def _plane_refs_summary(plane_refs: list[dict[str, Any]]) -> list[dict[str, Any]
             "ref_scaled_shape": list(plane_ref.get("ref_scaled_shape", ())),
             "scale": plane_ref.get("scale"),
             "best_z": plane_ref.get("best_z"),
+            "best_z_subslice": plane_ref.get("best_z_subslice"),
             "ncc_scores_count": int(scores_count),
             "tform_src": plane_ref.get("tform_src"),
             "ncc_xy": ncc_xy_record,
@@ -6469,6 +6486,7 @@ def _plane_refs_summary(plane_refs: list[dict[str, Any]]) -> list[dict[str, Any]
             "inplane_active_method": plane_ref.get("inplane_active_method"),
             "inplane_fallback_reason": plane_ref.get("inplane_fallback_reason"),
             "anat_label_z_mode": plane_ref.get("anat_label_z_mode", plane_ref.get("anat_labels_z_mode", "direct")),
+            "ncc_handoff_manifest_path": plane_ref.get("ncc_handoff_manifest_path"),
         }
         if plane_ref.get("ants_transformlist"):
             row["ants_transformlist"] = list(plane_ref.get("ants_transformlist", ()))
@@ -6494,6 +6512,7 @@ def load_plane_refs_summary(path: str | Path) -> list[dict[str, Any]]:
             "label": str(row.get("label", f"plane{idx}")),
             "index": int(row.get("index", idx)),
             "best_z": int(row.get("best_z", 0)),
+            "best_z_subslice": row.get("best_z_subslice"),
             "scale": row.get("scale"),
             "tform_src": row.get("tform_src"),
             "ncc_xy": row.get("ncc_xy") if isinstance(row.get("ncc_xy"), dict) else None,
@@ -6502,6 +6521,7 @@ def load_plane_refs_summary(path: str | Path) -> list[dict[str, Any]]:
             "reference_raw_path": row.get("reference_raw_path"),
             "reference_norm_path": row.get("reference_norm_path"),
             "anat_label_z_mode": row.get("anat_label_z_mode", row.get("anat_labels_z_mode", "direct")),
+            "ncc_handoff_manifest_path": row.get("ncc_handoff_manifest_path"),
         }
         if isinstance(row.get("ants_transform"), dict):
             plane_ref["ants_transform"] = dict(row["ants_transform"])
@@ -6872,12 +6892,18 @@ def run_prepare_in_vivo_anatomy_stack_stage(
     )
 
     paths = resolve_pipeline_paths(config)
-    out_path = Path(output_path) if output_path not in (None, "", False) else prepared_in_vivo_anatomy_path(paths)
+    from .spatial_contract import canonical_anatomy_path, load_spatial_manifest
+
+    upstream_manifest = load_spatial_manifest(paths.fish_dir, required=False)
+    upstream_anatomy = canonical_anatomy_path(paths.fish_dir) if upstream_manifest is not None else None
+    out_path = Path(output_path) if output_path not in (None, "", False) else (
+        upstream_anatomy or prepared_in_vivo_anatomy_path(paths)
+    )
     try:
         source_path = (
             Path(anatomy_stack_path)
             if anatomy_stack_path not in (None, "", False)
-            else infer_anatomy_stack_path(paths.fish_dir, paths.fish_dir.name)
+            else (upstream_anatomy or infer_anatomy_stack_path(paths.fish_dir, paths.fish_dir.name))
         )
         if source_path is None:
             raise FileNotFoundError(f"No in vivo anatomy stack found under {paths.fish_dir}")
@@ -6940,10 +6966,18 @@ def run_prepare_in_vivo_anatomy_stack_stage(
         status=status,
         dry_run=False,
         generated_at=datetime.now(timezone.utc).isoformat(),
-        inputs=(describe_manifest_path(source_path, label="raw in vivo anatomy stack"),),
+        inputs=(describe_manifest_path(
+            source_path,
+            label="canonical upstream anatomy NRRD" if upstream_manifest is not None else "raw in vivo anatomy stack",
+        ),),
         outputs=(
             describe_manifest_path(out_path, label="prepared in vivo anatomy NRRD"),
-            describe_manifest_path(Path(str(out_path) + ".json"), label="prepared in vivo anatomy metadata"),
+            describe_manifest_path(
+                (paths.fish_dir / "02_reg" / "00_preprocessing" / "spatial_preprocessing_manifest.json")
+                if upstream_manifest is not None
+                else Path(str(out_path) + ".json"),
+                label="upstream spatial preprocessing manifest" if upstream_manifest is not None else "prepared in vivo anatomy metadata",
+            ),
         ),
         checks=checks,
         parameters={
@@ -7136,6 +7170,7 @@ def run_register_functional_to_anatomy_stage(
     functional_labels_anatomy_dir: str | Path | None = None,
     output_root: str | Path | None = None,
     ncc_cache_source_dir: str | Path | None = None,
+    preprocessing_ncc_manifest_path: str | Path | None = None,
     ants_fixed_mask_json: str | Path | None = None,
     ants_require_fixed_mask: bool = True,
     force_recompute: bool = False,
@@ -7155,6 +7190,7 @@ def run_register_functional_to_anatomy_stage(
         InPlaneRegistrationComparisonConfig,
         RegistrationSearchConfig,
         imread_any,
+        local_unsharp,
         norm01,
         run_in_plane_registration_comparison_stage,
         run_registration_search_stage,
@@ -7164,6 +7200,21 @@ def run_register_functional_to_anatomy_stage(
     stage_root = Path(output_root) if output_root not in (None, "", False) else functional_to_anatomy_registration_root(paths)
     ref_dir = Path(reference_dir) if reference_dir not in (None, "", False) else functional_reference_output_dir(paths)
     anat_path = Path(anatomy_stack_path) if anatomy_stack_path not in (None, "", False) else prepared_in_vivo_anatomy_path(paths)
+    from .ncc_contract import (
+        load_preprocessing_ncc_handoff,
+        plane_refs_from_preprocessing_ncc_handoff,
+        preprocessing_ncc_manifest_path as default_preprocessing_ncc_manifest_path,
+    )
+
+    explicit_preprocessing_ncc_manifest = preprocessing_ncc_manifest_path not in (None, "", False)
+    requested_preprocessing_ncc_manifest = (
+        Path(preprocessing_ncc_manifest_path)
+        if explicit_preprocessing_ncc_manifest
+        else default_preprocessing_ncc_manifest_path(paths.fish_dir)
+    )
+    if not explicit_preprocessing_ncc_manifest and not requested_preprocessing_ncc_manifest.exists():
+        requested_preprocessing_ncc_manifest = None
+    using_preprocessing_ncc_handoff = requested_preprocessing_ncc_manifest is not None
     out_ncc = stage_root / "ncc"
     registration_dir = stage_root / "registration"
     qa_dir = stage_root / "qa"
@@ -7173,12 +7224,12 @@ def run_register_functional_to_anatomy_stage(
     qa_overlay_csv_path = qa_overlay_path.with_suffix(".csv")
     comparison_path = out_ncc / "inplane_registration_comparison" / "inplane_registration_comparison.csv"
     recommendation_path = out_ncc / "inplane_registration_comparison" / "inplane_registration_recommendation.csv"
-    required_output_paths = (
-        out_ncc / "ncc_scale_by_fish.json",
-        out_ncc / "ncc_bestz_by_plane.json",
-        summary_path,
-        tforms_path,
-    )
+    required_output_paths = (summary_path, tforms_path)
+    if not using_preprocessing_ncc_handoff:
+        required_output_paths = (
+            out_ncc / "ncc_scale_by_fish.json",
+            out_ncc / "ncc_bestz_by_plane.json",
+        ) + required_output_paths
     if run_inplane_comparison:
         required_output_paths = required_output_paths + (comparison_path, recommendation_path)
     requested_reference_plane_indices = tuple(dict.fromkeys(int(value) for value in (reference_plane_indices or ())))
@@ -7195,6 +7246,8 @@ def run_register_functional_to_anatomy_stage(
                 "register-functional-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
                 + ", ".join(str(path) for path in existing_outputs)
             )
+        if cache_source_dir is not None and using_preprocessing_ncc_handoff:
+            raise ValueError("Choose either the preprocessing NCC handoff or legacy NCC cache reuse, not both")
         if cache_source_dir is not None:
             cache_sources = tuple(
                 cache_source_dir / name
@@ -7209,55 +7262,95 @@ def run_register_functional_to_anatomy_stage(
             out_ncc.mkdir(parents=True, exist_ok=True)
             for source_path in cache_sources:
                 shutil.copy2(source_path, out_ncc / source_path.name)
-        discovered_reference_pairs = discover_functional_reference_pairs(ref_dir)
-        annotated_reference_pairs = tuple(
-            (label, raw_path, norm_path, _parse_plane_index(label, default_idx))
-            for default_idx, (label, raw_path, norm_path) in enumerate(discovered_reference_pairs)
-        )
-        if requested_reference_plane_indices:
-            available_plane_indices = {plane_idx for _, _, _, plane_idx in annotated_reference_pairs}
-            missing_plane_indices = tuple(
-                plane_idx for plane_idx in requested_reference_plane_indices if plane_idx not in available_plane_indices
+        if using_preprocessing_ncc_handoff:
+            anatomy = np.asarray(imread_any(anat_path), dtype=np.float32)
+            if anatomy.ndim != 3:
+                raise ValueError(f"Prepared anatomy must be a Z,Y,X stack, got {anatomy.shape}: {anat_path}")
+            handoff = load_preprocessing_ncc_handoff(
+                requested_preprocessing_ncc_manifest,
+                fish_id=config.fish_id,
+                anatomy_stack_path=anat_path,
             )
-            if missing_plane_indices:
-                available_detail = ", ".join(str(plane_idx) for plane_idx in sorted(available_plane_indices)) or "none"
-                missing_detail = ", ".join(str(plane_idx) for plane_idx in missing_plane_indices)
-                raise FileNotFoundError(
-                    "Requested functional reference plane indices were not found under "
-                    f"{ref_dir}: {missing_detail}; available plane indices: {available_detail}"
+            plane_refs = plane_refs_from_preprocessing_ncc_handoff(
+                handoff,
+                anatomy_z_count=int(anatomy.shape[0]),
+                selected_plane_indices=requested_reference_plane_indices or None,
+            )
+            reference_pairs = tuple(
+                (
+                    str(plane_ref["label"]),
+                    Path(str(plane_ref["reference_raw_path"])),
+                    Path(str(plane_ref["reference_raw_path"])),
                 )
-            requested_plane_index_set = set(requested_reference_plane_indices)
-            annotated_reference_pairs = tuple(
-                record for record in annotated_reference_pairs if record[3] in requested_plane_index_set
+                for plane_ref in plane_refs
             )
-        reference_pairs = tuple((label, raw_path, norm_path) for label, raw_path, norm_path, _ in annotated_reference_pairs)
-        selected_reference_labels = tuple(label for label, _, _, _ in annotated_reference_pairs)
-        plane_refs = [
-            {
-                "label": label,
-                "index": plane_idx,
-                "ref2d_raw": np.asarray(imread_any(raw_path), dtype=np.float32),
-                "ref2d": norm01(imread_any(norm_path)),
-                "reference_raw_path": str(raw_path),
-                "reference_norm_path": str(norm_path),
+            discovered_reference_pairs = reference_pairs
+            selected_reference_labels = tuple(str(plane_ref["label"]) for plane_ref in plane_refs)
+            anatomy_filtered = np.stack(
+                [local_unsharp(norm01(slice_img), 1.0, 0.6) for slice_img in anatomy],
+                axis=0,
+            )
+            search_result = {
+                "plane_refs": plane_refs,
+                "anat": anatomy,
+                "anat_f": anatomy_filtered,
+                "best_z": int(plane_refs[0]["best_z"]),
+                "log_lines": (
+                    f"[16] Reused canonical preprocessing NCC handoff: {requested_preprocessing_ncc_manifest}",
+                    "[16] Skipped functional-reference averaging, scale sweep, best-Z search, and XY search.",
+                ),
+                "handoff_manifest_path": requested_preprocessing_ncc_manifest,
             }
-            for label, raw_path, norm_path, plane_idx in annotated_reference_pairs
-        ]
-        search_result = run_registration_search_stage(
-            anat_stack_path=anat_path,
-            plane_refs=plane_refs,
-            fish_id=config.fish_id,
-            out_ncc=out_ncc,
-            config=RegistrationSearchConfig(
-                force_recompute=bool(force_recompute and cache_source_dir is None),
-                scale_coarse=(0.50, 1.50, 0.05),
-                scale_fine=(0.05, 0.01),
-                scale_xfine=(0.005, 0.001),
-                scale_ufine=(0.0005, 0.0001),
-                scale_workers=None,
-                use_cv2=use_cv2,
-            ),
-        )
+        else:
+            discovered_reference_pairs = discover_functional_reference_pairs(ref_dir)
+            annotated_reference_pairs = tuple(
+                (label, raw_path, norm_path, _parse_plane_index(label, default_idx))
+                for default_idx, (label, raw_path, norm_path) in enumerate(discovered_reference_pairs)
+            )
+            if requested_reference_plane_indices:
+                available_plane_indices = {plane_idx for _, _, _, plane_idx in annotated_reference_pairs}
+                missing_plane_indices = tuple(
+                    plane_idx for plane_idx in requested_reference_plane_indices if plane_idx not in available_plane_indices
+                )
+                if missing_plane_indices:
+                    available_detail = ", ".join(str(plane_idx) for plane_idx in sorted(available_plane_indices)) or "none"
+                    missing_detail = ", ".join(str(plane_idx) for plane_idx in missing_plane_indices)
+                    raise FileNotFoundError(
+                        "Requested functional reference plane indices were not found under "
+                        f"{ref_dir}: {missing_detail}; available plane indices: {available_detail}"
+                    )
+                requested_plane_index_set = set(requested_reference_plane_indices)
+                annotated_reference_pairs = tuple(
+                    record for record in annotated_reference_pairs if record[3] in requested_plane_index_set
+                )
+            reference_pairs = tuple((label, raw_path, norm_path) for label, raw_path, norm_path, _ in annotated_reference_pairs)
+            selected_reference_labels = tuple(label for label, _, _, _ in annotated_reference_pairs)
+            plane_refs = [
+                {
+                    "label": label,
+                    "index": plane_idx,
+                    "ref2d_raw": np.asarray(imread_any(raw_path), dtype=np.float32),
+                    "ref2d": norm01(imread_any(norm_path)),
+                    "reference_raw_path": str(raw_path),
+                    "reference_norm_path": str(norm_path),
+                }
+                for label, raw_path, norm_path, plane_idx in annotated_reference_pairs
+            ]
+            search_result = run_registration_search_stage(
+                anat_stack_path=anat_path,
+                plane_refs=plane_refs,
+                fish_id=config.fish_id,
+                out_ncc=out_ncc,
+                config=RegistrationSearchConfig(
+                    force_recompute=bool(force_recompute and cache_source_dir is None),
+                    scale_coarse=(0.50, 1.50, 0.05),
+                    scale_fine=(0.05, 0.01),
+                    scale_xfine=(0.005, 0.001),
+                    scale_ufine=(0.0005, 0.0001),
+                    scale_workers=None,
+                    use_cv2=use_cv2,
+                ),
+            )
         if run_inplane_comparison:
             anatomy_xy_spacing = _anatomy_xy_spacing_from_voxel_cache(paths)
             comparison_result = run_in_plane_registration_comparison_stage(
@@ -7340,20 +7433,42 @@ def run_register_functional_to_anatomy_stage(
                         ),
                     )
 
+        ncc_source_check = StageCheckRecord(
+            label="preprocessing NCC handoff" if using_preprocessing_ncc_handoff else "NCC best-z cache",
+            status=(
+                "pass"
+                if using_preprocessing_ncc_handoff
+                and requested_preprocessing_ncc_manifest is not None
+                and requested_preprocessing_ncc_manifest.exists()
+                else "pass"
+                if not using_preprocessing_ncc_handoff
+                and Path(search_result["bestz_cache_path"]).exists()
+                else "fail"
+            ),
+            detail=(
+                "canonical preprocessing reference, scale, best-Z profile, and XY placement were reused"
+                if using_preprocessing_ncc_handoff
+                else "NCC best-z cache exists"
+            ),
+            observed=str(
+                requested_preprocessing_ncc_manifest
+                if using_preprocessing_ncc_handoff
+                else search_result.get("bestz_cache_path", "missing")
+            ),
+        )
         checks = (
             StageCheckRecord(
                 label="functional reference inputs",
                 status="pass" if reference_pairs else "fail",
-                detail="functional reference raw/norm pairs were loaded",
+                detail=(
+                    "canonical preprocessing functional references were loaded"
+                    if using_preprocessing_ncc_handoff
+                    else "functional reference raw/norm pairs were loaded"
+                ),
                 observed=str(len(reference_pairs)),
                 expected=">=1",
             ),
-            StageCheckRecord(
-                label="NCC best-z cache",
-                status="pass" if Path(search_result["bestz_cache_path"]).exists() else "fail",
-                detail="NCC best-z cache exists",
-                observed=str(search_result["bestz_cache_path"]),
-            ),
+            ncc_source_check,
             StageCheckRecord(
                 label="in-plane comparison CSV",
                 status="pass" if (not run_inplane_comparison or comparison_path.exists()) else "fail",
@@ -7387,9 +7502,15 @@ def run_register_functional_to_anatomy_stage(
         errors = (str(exc),)
         warnings = ()
         log_lines = ()
-    outputs = (
-        describe_manifest_path(out_ncc / "ncc_scale_by_fish.json", label="staged NCC scale cache"),
-        describe_manifest_path(out_ncc / "ncc_bestz_by_plane.json", label="staged NCC best-z cache"),
+    ncc_source_outputs = (
+        ()
+        if using_preprocessing_ncc_handoff
+        else (
+            describe_manifest_path(out_ncc / "ncc_scale_by_fish.json", label="staged NCC scale cache"),
+            describe_manifest_path(out_ncc / "ncc_bestz_by_plane.json", label="staged NCC best-z cache"),
+        )
+    )
+    outputs = ncc_source_outputs + (
         describe_manifest_path(
             comparison_path,
             required=run_inplane_comparison,
@@ -7427,7 +7548,16 @@ def run_register_functional_to_anatomy_stage(
         dry_run=False,
         generated_at=datetime.now(timezone.utc).isoformat(),
         inputs=(
-            describe_manifest_path(ref_dir, label="functional reference directory"),
+            describe_manifest_path(
+                requested_preprocessing_ncc_manifest
+                if using_preprocessing_ncc_handoff and requested_preprocessing_ncc_manifest is not None
+                else ref_dir,
+                label=(
+                    "preprocessing NCC handoff manifest"
+                    if using_preprocessing_ncc_handoff
+                    else "functional reference directory"
+                ),
+            ),
             describe_manifest_path(anat_path, label="prepared in vivo anatomy stack"),
             _optional_manifest_path(
                 Path(ants_fixed_mask_json) if ants_fixed_mask_json not in (None, "", False) else None,
@@ -7461,6 +7591,12 @@ def run_register_functional_to_anatomy_stage(
             "anatomy_stack_path": str(anat_path),
             "output_root": str(stage_root),
             "ncc_cache_source_dir": str(cache_source_dir) if cache_source_dir is not None else None,
+            "preprocessing_ncc_manifest_path": (
+                str(requested_preprocessing_ncc_manifest)
+                if using_preprocessing_ncc_handoff and requested_preprocessing_ncc_manifest is not None
+                else None
+            ),
+            "ncc_search_reused": bool(using_preprocessing_ncc_handoff),
             "registration_backend": str(active_inplane_method),
             "run_inplane_comparison": bool(run_inplane_comparison),
             "inplane_methods": tuple(inplane_methods),
@@ -8548,6 +8684,14 @@ def run_match_roi_to_anatomy_stage(
 
                 return apply_func_orientation(arr, polarity=polarity, flip_x=True)
 
+            from .spatial_contract import load_spatial_manifest
+
+            match_orientation_callback = (
+                None
+                if load_spatial_manifest(paths.fish_dir, required=False) is not None
+                else _apply_match_func_orientation
+            )
+
             suite2p_result = load_suite2p_stage(
                 plane_refs=plane_refs,
                 suite2p_root=paths.functional_suite2p_dir,
@@ -8580,7 +8724,7 @@ def run_match_roi_to_anatomy_stage(
                 claim_matched=cfg.claim_matched,
                 claim_duplicate=cfg.claim_duplicate,
                 claim_unmatched=cfg.claim_unmatched,
-                apply_func_orientation_func=_apply_match_func_orientation,
+                apply_func_orientation_func=match_orientation_callback,
             )
             geometry_columns = [column for column in ROI_ANATOMY_GEOMETRY_COLUMNS if column in detail_df.columns]
             detail_df = detail_df.loc[:, geometry_columns].copy()
