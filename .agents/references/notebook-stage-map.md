@@ -78,6 +78,14 @@
 - Geometry matching -> matching stage only.
 - Figure semantics -> downstream table filtering only; figures do not infer identity or response state.
 
+## Read-only ROI/anatomy geometry QC
+
+- `notebooks/qc/03_roi_anatomy_geometry_qc.ipynb` reviews the geometry-only
+  outputs before geometry is frozen. Its spatial views consume
+  `match-roi-to-anatomy/registration/plane_refs_summary_geometry.json` and
+  require explicit, table-consistent anatomy-label Z pages. Reusable loading,
+  validation, and plotting remain package-owned in `plots.qc_geometry`.
+
 ## Navigation notes
 
 - For module ownership and functions: see `symbol-index.md`.

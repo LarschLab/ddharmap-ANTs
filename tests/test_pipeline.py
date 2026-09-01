@@ -372,6 +372,20 @@ def _make_minimal_upstream_staged_outputs(fish_dir: Path) -> None:
     (match_root / "functional_roi_anatomy_match_plane_meta.csv").write_text(
         "fish_id,plane_idx,n_rois\n" f"{fish_dir.name},0,1\n"
     )
+    (match_root / "plane_refs_summary_geometry.json").write_text(
+        json.dumps(
+            [
+                {
+                    "label": f"{fish_dir.name}_plane0",
+                    "index": 0,
+                    "best_z": 3,
+                    "anat_label_z_mode": "direct",
+                    "anat_label_z": 3,
+                }
+            ]
+        )
+        + "\n"
+    )
 
 
 def _write_roi_identity_csv(path: Path, rows: list[dict[str, str]]) -> None:
@@ -523,6 +537,15 @@ def _write_plane_refs_summary(path: Path) -> None:
     )
 
 
+def _write_geometry_plane_refs_summary(path: Path) -> None:
+    _write_plane_refs_summary(path)
+    rows = json.loads(path.read_text())
+    for row in rows:
+        row["anat_label_z_mode"] = "direct"
+        row["anat_label_z"] = int(row["best_z"])
+    path.write_text(json.dumps(rows, indent=2) + "\n")
+
+
 def _write_selected_ants_comparison(path: Path, transform_path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     transform_path.parent.mkdir(parents=True, exist_ok=True)
@@ -618,6 +641,20 @@ def _write_staged_identity_geometry_dependencies(pipeline_root: Path, fish_id: s
     (roi_root / "functional_roi_anatomy_match_by_plane.csv").write_text(
         "fish_id,plane_idx,n_rois,n_unique_matches\n" f"{fish_id},0,1,1\n"
     )
+    (roi_root / "plane_refs_summary_geometry.json").write_text(
+        json.dumps(
+            [
+                {
+                    "label": f"{fish_id}_plane0_mcorrected_flipX",
+                    "index": 0,
+                    "best_z": 0,
+                    "anat_label_z_mode": "direct",
+                    "anat_label_z": 0,
+                }
+            ]
+        )
+        + "\n"
+    )
     hcr_root = pipeline_root / "register-hcr-to-anatomy" / "confocal" / "aligned"
     _write_hcr_aligned_artifacts(hcr_root, fish_id)
 
@@ -635,8 +672,13 @@ def _write_assign_hcr_replay_inputs_and_controls(fish_dir: Path, pipeline_root: 
     _write_minimal_suite2p_plane(suite2p_plane)
     anatomy_labels = fish_dir / "03_analysis" / "structural" / "cp_masks" / f"{fish_id}_anatomy_00001_8bit_cp_masks.tif"
     _write_tiny_anatomy_labels_tiff(anatomy_labels)
-    plane_summary = pipeline_root / "register-functional-to-anatomy" / "plane_refs_summary.json"
-    _write_plane_refs_summary(plane_summary)
+    plane_summary = pipeline_root / "match-roi-to-anatomy" / "registration" / "plane_refs_summary_geometry.json"
+    _write_geometry_plane_refs_summary(plane_summary)
+    plane_rows = json.loads(plane_summary.read_text())
+    for row in plane_rows:
+        row["anat_label_z_mode"] = "direct"
+        row["anat_label_z"] = int(row["best_z"])
+    plane_summary.write_text(json.dumps(plane_rows) + "\n")
 
     plane_refs = load_plane_refs_summary(plane_summary)
     polarity, polarity_source = resolve_func_polarity(
@@ -1771,7 +1813,7 @@ def test_hcr_activity_replay_audit_runs_label_first_without_outputs(tmp_path: Pa
     anatomy_labels = tmp_path / "anat_labels.tif"
     _write_tiny_anatomy_labels_tiff(anatomy_labels)
     plane_summary = tmp_path / "plane_refs_summary.json"
-    _write_plane_refs_summary(plane_summary)
+    _write_geometry_plane_refs_summary(plane_summary)
     hcr_root = tmp_path / "hcr-aligned"
     _write_hcr_aligned_artifacts(hcr_root, fish_dir.name)
     response_master = tmp_path / "functional_roi_activity_identity.csv"
@@ -1806,6 +1848,38 @@ def test_hcr_activity_replay_audit_runs_label_first_without_outputs(tmp_path: Pa
     assert any(check.label == "HCR activity replay recompute" and check.status == "pass" for check in manifest.checks)
     assert observed_orientation_callbacks
     assert all(callable(callback) for callback in observed_orientation_callbacks)
+
+
+def test_hcr_activity_replay_rejects_inconsistent_geometry_label_z_provenance(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _write_minimal_suite2p_plane(fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0")
+    anatomy_labels = tmp_path / "anat_labels.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_labels)
+    plane_summary = tmp_path / "plane_refs_summary_geometry.json"
+    _write_geometry_plane_refs_summary(plane_summary)
+    rows = json.loads(plane_summary.read_text())
+    rows[0]["anat_label_z_mode"] = "reverse"
+    rows[0]["anat_label_z"] = 1
+    plane_summary.write_text(json.dumps(rows) + "\n")
+    hcr_root = tmp_path / "hcr-aligned"
+    _write_hcr_aligned_artifacts(hcr_root, fish_dir.name)
+    response_master = tmp_path / "functional_roi_activity_identity.csv"
+    _write_hcr_replay_response_master(response_master, fish_dir.name)
+
+    manifest = build_single_fish_hcr_activity_replay_manifest(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged"),
+        plane_refs_summary_path=plane_summary,
+        hcr_anatomy_root=hcr_root,
+        identity_input_path=response_master,
+        anatomy_labels_path=anatomy_labels,
+    )
+
+    assert manifest.status == "fail"
+    assert any(
+        check.label == "HCR replay geometry label-Z provenance" and check.status == "fail"
+        for check in manifest.checks
+    )
+    assert not any(check.label == "HCR activity replay recompute" for check in manifest.checks)
 
 
 def test_hcr_activity_replay_overlays_selected_ants_transformlists(tmp_path: Path) -> None:
@@ -1867,7 +1941,7 @@ def test_single_fish_pipeline_cli_audit_hcr_activity_replay_outputs_manifest(tmp
     anatomy_labels = tmp_path / "anat_labels.tif"
     _write_tiny_anatomy_labels_tiff(anatomy_labels)
     plane_summary = tmp_path / "plane_refs_summary.json"
-    _write_plane_refs_summary(plane_summary)
+    _write_geometry_plane_refs_summary(plane_summary)
     hcr_root = tmp_path / "hcr-aligned"
     _write_hcr_aligned_artifacts(hcr_root, fish_dir.name)
     response_master = tmp_path / "functional_roi_activity_identity.csv"
@@ -1923,20 +1997,53 @@ def test_match_roi_to_anatomy_stage_writes_geometry_outputs(tmp_path: Path) -> N
         config,
         plane_refs_summary_path=plane_summary,
         anatomy_labels_path=anatomy_labels,
+        anatomy_label_z_mode="direct",
         force_recompute=True,
     )
 
     out_root = tmp_path / "staged" / "match-roi-to-anatomy" / "registration"
     detail_path = out_root / "functional_roi_anatomy_matches.csv"
     summary_path = out_root / "functional_roi_anatomy_match_by_plane.csv"
+    geometry_refs_path = out_root / "plane_refs_summary_geometry.json"
     assert manifest.status == "pass"
     assert detail_path.exists()
     assert summary_path.exists()
+    assert geometry_refs_path.exists()
+    geometry_refs = json.loads(geometry_refs_path.read_text())
+    assert geometry_refs[0]["anat_label_z_mode"] == "direct"
+    assert geometry_refs[0]["anat_label_z"] == geometry_refs[0]["best_z"]
+    assert manifest.parameters["anatomy_label_z_mode_resolved"] == "direct"
     rows = detail_path.read_text()
     assert "selected_anat_label" in rows
     assert ",7," in rows
     assert load_plane_refs_summary(plane_summary)[0]["ncc_xy"]["x0"] == 0
     assert any(check.label == "ROI/anatomy match rows" and check.status == "pass" for check in manifest.checks)
+
+
+def test_match_roi_to_anatomy_stage_rejects_out_of_range_resolved_label_page(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _write_minimal_suite2p_plane(fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0")
+    anatomy_labels = tmp_path / "anat_labels.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_labels)
+    plane_summary = tmp_path / "plane_refs_summary.json"
+    _write_plane_refs_summary(plane_summary)
+    rows = json.loads(plane_summary.read_text())
+    rows[0]["best_z"] = 1
+    plane_summary.write_text(json.dumps(rows) + "\n")
+    output_root = tmp_path / "staged" / "match-roi-to-anatomy"
+
+    manifest = run_match_roi_to_anatomy_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True, pipeline_root=tmp_path / "staged"),
+        plane_refs_summary_path=plane_summary,
+        anatomy_labels_path=anatomy_labels,
+        anatomy_label_z_mode="direct",
+        output_root=output_root,
+        force_recompute=True,
+    )
+
+    assert manifest.status == "fail"
+    assert "outside 0..0" in manifest.errors[0]
+    assert not (output_root / "registration" / "functional_roi_anatomy_matches.csv").exists()
 
 
 def test_match_roi_to_anatomy_stage_threads_selected_ants_and_orientation(tmp_path: Path) -> None:
@@ -2004,6 +2111,7 @@ def test_match_roi_to_anatomy_stage_threads_selected_ants_and_orientation(tmp_pa
             config,
             plane_refs_summary_path=plane_summary,
             anatomy_labels_path=anatomy_labels,
+            anatomy_label_z_mode="direct",
             force_recompute=True,
         )
 
@@ -2092,6 +2200,7 @@ def test_match_roi_to_anatomy_stage_prefers_staged_ants_transformlist(tmp_path: 
             config,
             plane_refs_summary_path=plane_summary,
             anatomy_labels_path=anatomy_labels,
+            anatomy_label_z_mode="direct",
             force_recompute=True,
         )
 
@@ -2168,6 +2277,7 @@ def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tm
             config,
             plane_refs_summary_path=plane_summary,
             anatomy_labels_path=anatomy_labels,
+            anatomy_label_z_mode="direct",
             force_recompute=True,
         )
 
@@ -4347,6 +4457,28 @@ def test_assign_hcr_identity_writer_requires_staged_geometry_dependencies(tmp_pa
     )
     assert any(
         check.label == "assign-hcr-identity staged HCR/anatomy final pairs" and check.status == "fail"
+        for check in manifest.checks
+    )
+    assert not (output_root / "assign-hcr-identity").exists()
+
+
+def test_assign_hcr_identity_writer_rejects_inconsistent_label_z_provenance(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    output_root = tmp_path / "staged-output-root"
+    _write_staged_identity_geometry_dependencies(output_root, fish_dir.name)
+    geometry_refs = output_root / "match-roi-to-anatomy" / "registration" / "plane_refs_summary_geometry.json"
+    rows = json.loads(geometry_refs.read_text())
+    rows[0]["anat_label_z_mode"] = "reverse"
+    rows[0]["anat_label_z"] = 1
+    geometry_refs.write_text(json.dumps(rows) + "\n")
+
+    manifest = run_single_fish_assign_hcr_identity_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, pipeline_root=output_root, strict=True)
+    )
+
+    assert manifest.status == "fail"
+    assert any(
+        check.label == "assign-hcr-identity geometry label-Z provenance" and check.status == "fail"
         for check in manifest.checks
     )
     assert not (output_root / "assign-hcr-identity").exists()

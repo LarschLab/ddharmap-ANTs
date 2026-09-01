@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
+import pytest
 from skimage.transform import SimilarityTransform
 import tifffile
 
@@ -13,9 +14,11 @@ from codeants_2pf_hcr.matching import (
     build_hcr_anatomy_match_tables,
     build_hcr_mask_fate_df,
     build_functional_anatomy_debug_stage,
+    infer_anatomy_label_z_mode,
     resample_image,
     resolve_anatomy_label_z,
     summarize_functional_anatomy_geometry_metrics,
+    validate_anatomy_label_z_provenance,
     transform_points_between_spaces,
 )
 
@@ -103,6 +106,42 @@ def test_resolve_anatomy_label_z_supports_reversed_label_stacks() -> None:
     assert resolve_anatomy_label_z({"best_z": 2, "anat_label_z_mode": "reverse"}, 5) == 2
     assert resolve_anatomy_label_z({"best_z": 3, "anat_label_z_mode": "reverse"}, 5) == 1
     assert resolve_anatomy_label_z({"best_z": 3, "anat_label_z": 4, "anat_label_z_mode": "reverse"}, 5) == 4
+
+
+def test_infer_anatomy_label_z_mode_prefers_boundaries_matching_anatomy_edges() -> None:
+    anatomy = np.zeros((3, 32, 32), dtype=np.float32)
+    anatomy[2, 8:24, 8:24] = 1.0
+    labels = np.zeros((3, 32, 32), dtype=np.uint16)
+    labels[0, 8:24, 8:24] = 7
+    labels[2, 2:18, 2:18] = 9
+
+    mode, scores = infer_anatomy_label_z_mode(anatomy, labels, [{"best_z": 2}])
+
+    assert mode == "reverse"
+    assert scores["reverse"] > scores["direct"]
+
+
+def test_infer_anatomy_label_z_mode_rejects_weak_margin(monkeypatch) -> None:
+    import codeants_2pf_hcr.matching as matching_module
+
+    scores = iter((0.001, 0.00105))
+    monkeypatch.setattr(matching_module, "_label_boundary_edge_score", lambda *_args: next(scores))
+
+    with pytest.raises(ValueError, match="too similar"):
+        infer_anatomy_label_z_mode(
+            np.ones((2, 8, 8), dtype=np.float32),
+            np.ones((2, 8, 8), dtype=np.uint16),
+            [{"best_z": 0}],
+        )
+
+
+def test_validate_anatomy_label_z_provenance_rejects_inconsistent_persisted_page() -> None:
+    errors = validate_anatomy_label_z_provenance(
+        [{"index": 0, "best_z": 3, "anat_label_z_mode": "reverse", "anat_label_z": 3}],
+        5,
+    )
+
+    assert errors == ("plane 0 persists anat_label_z=3, expected 1 for reverse mode",)
 
 
 def test_transform_points_between_spaces_uses_skimage_transform_directions() -> None:

@@ -27,6 +27,14 @@ Representative column groups:
 
 ## Derived helper tables
 
+### `match-roi-to-anatomy/registration/plane_refs_summary_geometry.json`
+
+- Authority:
+  - direct-versus-reversed anatomy-label Z convention used by ROI/anatomy geometry matching
+- Records the anatomy intensity `best_z`, resolved anatomy-label page, and label-Z mode for every functional plane.
+- Geometry QC must use this geometry-owned sidecar rather than independently reinterpreting registration plane references.
+- A missing, ambiguous, or table-inconsistent label-Z mapping blocks geometry review and all downstream identity/activity stages.
+
 ### `functional_roi_activity_bpi_cells.csv`
 
 - Authority:

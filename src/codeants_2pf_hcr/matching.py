@@ -13,6 +13,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 from scipy.spatial.distance import cdist
 from skimage.measure import regionprops_table
+from skimage.segmentation import find_boundaries
 from skimage.transform import AffineTransform, SimilarityTransform, resize, warp
 
 from .single_fish_notebook_stages import (
@@ -1206,6 +1207,175 @@ def resolve_anatomy_label_z(plane_ref: dict[str, Any] | None, z_size: int, *, be
     if mode in {"reverse", "reversed", "inverted", "invert", "flipz", "flip_z"}:
         return int(z_count - 1 - bz)
     return int(bz)
+
+
+def _label_boundary_edge_score(anatomy_plane: ArrayLike, label_plane: ArrayLike) -> float | None:
+    labels = _ensure_uint_labels(label_plane)
+    boundaries = find_boundaries(labels, mode="outer")
+    if int(np.count_nonzero(boundaries)) < 20:
+        return None
+    image = np.asarray(anatomy_plane, dtype=np.float32)
+    finite = image[np.isfinite(image)]
+    if finite.size == 0:
+        return None
+    lo, hi = np.percentile(finite, [1.0, 99.5])
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        lo, hi = float(np.nanmin(finite)), float(np.nanmax(finite))
+    if hi <= lo:
+        return None
+    image = np.clip((image - lo) / (hi - lo), 0.0, 1.0)
+    gy, gx = np.gradient(image)
+    edge = np.hypot(gx, gy)
+    return float(np.mean(edge[boundaries]) - np.mean(edge))
+
+
+def infer_anatomy_label_z_mode(
+    anatomy_stack: ArrayLike,
+    anatomy_labels: ArrayLike,
+    plane_refs: list[dict[str, Any]],
+) -> tuple[str, dict[str, float]]:
+    """Infer whether anatomy-label pages follow direct or reversed anatomy Z order."""
+
+    anatomy = np.asarray(anatomy_stack)
+    labels = _ensure_uint_labels(anatomy_labels)
+    if anatomy.ndim != 3 or labels.ndim != 3:
+        raise ValueError("Anatomy intensity and label inputs must both be 3D stacks")
+    if anatomy.shape[1:] != labels.shape[1:]:
+        raise ValueError(
+            f"Anatomy intensity and label XY shapes differ: {anatomy.shape[1:]} vs {labels.shape[1:]}"
+        )
+    scores: dict[str, list[float]] = {"direct": [], "reverse": []}
+    for plane_ref in plane_refs:
+        best_z = _resolve_best_z(plane_ref)
+        if best_z < 0 or best_z >= anatomy.shape[0]:
+            continue
+        for mode in scores:
+            label_z = resolve_anatomy_label_z(
+                {"best_z": best_z, "anat_label_z_mode": mode},
+                labels.shape[0],
+                best_z=best_z,
+            )
+            if not 0 <= label_z < labels.shape[0]:
+                continue
+            score = _label_boundary_edge_score(anatomy[best_z], labels[label_z])
+            if score is not None and np.isfinite(score):
+                scores[mode].append(float(score))
+    summary = {mode: float(np.mean(values)) for mode, values in scores.items() if values}
+    if not summary:
+        raise ValueError(
+            "Could not infer anatomy-label Z order from label-boundary evidence"
+        )
+    if len(summary) == 1:
+        mode = next(iter(summary))
+        if summary[mode] <= 0:
+            raise ValueError("Anatomy-label Z order has no positive label-boundary evidence")
+        return mode, summary
+    winner = "reverse" if summary["reverse"] > summary["direct"] else "direct"
+    winning_score = float(summary[winner])
+    score_gap = abs(float(summary["reverse"]) - float(summary["direct"]))
+    minimum_gap = max(1e-4, 0.1 * max(abs(winning_score), 1e-12))
+    if winning_score <= 0 or score_gap < minimum_gap:
+        raise ValueError(
+            "Anatomy-label Z order is ambiguous because boundary evidence is non-positive "
+            f"or too similar (direct={summary['direct']:.6g}, reverse={summary['reverse']:.6g}, "
+            f"required_gap={minimum_gap:.6g})"
+        )
+    return winner, summary
+
+
+def validate_anatomy_label_z_provenance(
+    plane_refs: list[dict[str, Any]],
+    z_size: int,
+    *,
+    geometry_df: Any | None = None,
+    anatomy_labels: ArrayLike | None = None,
+) -> tuple[str, ...]:
+    """Return fail-closed errors for geometry-owned anatomy-label Z provenance."""
+
+    z_count = int(z_size)
+    errors: list[str] = []
+    refs_by_plane: dict[int, dict[str, Any]] = {}
+    if z_count <= 0:
+        return ("anatomy label stack has no Z pages",)
+    if not plane_refs:
+        return ("geometry plane-reference sidecar has no plane records",)
+
+    for default_idx, ref in enumerate(plane_refs):
+        if not isinstance(ref, dict):
+            errors.append(f"plane reference {default_idx} is not an object")
+            continue
+        try:
+            plane_idx = int(ref.get("index", ref.get("plane_idx", default_idx)))
+        except (TypeError, ValueError):
+            errors.append(f"plane reference {default_idx} has an invalid plane index")
+            continue
+        if plane_idx in refs_by_plane:
+            errors.append(f"plane index {plane_idx} occurs more than once in geometry sidecar")
+            continue
+        refs_by_plane[plane_idx] = ref
+        mode = str(ref.get("anat_label_z_mode", "")).strip().lower()
+        if mode not in {"direct", "reverse"}:
+            errors.append(f"plane {plane_idx} lacks an explicit direct/reverse anatomy-label Z mode")
+            continue
+        try:
+            best_z = int(ref["best_z"])
+            persisted_z = int(ref["anat_label_z"])
+        except (KeyError, TypeError, ValueError):
+            errors.append(f"plane {plane_idx} lacks integer best_z/anat_label_z provenance")
+            continue
+        if not 0 <= best_z < z_count:
+            errors.append(f"plane {plane_idx} best_z={best_z} is outside 0..{z_count - 1}")
+            continue
+        expected_z = best_z if mode == "direct" else z_count - 1 - best_z
+        if persisted_z != expected_z:
+            errors.append(
+                f"plane {plane_idx} persists anat_label_z={persisted_z}, expected {expected_z} for {mode} mode"
+            )
+        if not 0 <= persisted_z < z_count:
+            errors.append(f"plane {plane_idx} anat_label_z={persisted_z} is outside 0..{z_count - 1}")
+
+    if geometry_df is not None and hasattr(geometry_df, "columns") and "plane_idx" in geometry_df.columns:
+        geometry_planes = {
+            int(value)
+            for value in pd.to_numeric(geometry_df["plane_idx"], errors="coerce").dropna().astype(int).tolist()
+        }
+        missing_planes = sorted(geometry_planes - set(refs_by_plane))
+        extra_planes = sorted(set(refs_by_plane) - geometry_planes)
+        if missing_planes:
+            errors.append(f"geometry table planes missing from sidecar: {missing_planes}")
+        if extra_planes:
+            errors.append(f"sidecar planes absent from geometry table: {extra_planes}")
+
+        if anatomy_labels is not None and "selected_anat_label" in geometry_df.columns:
+            labels = _ensure_uint_labels(anatomy_labels)
+            for plane_idx, group in geometry_df.groupby("plane_idx", dropna=False):
+                if pd.isna(plane_idx):
+                    continue
+                idx = int(plane_idx)
+                ref = refs_by_plane.get(idx)
+                if ref is None:
+                    continue
+                try:
+                    label_z = int(ref["anat_label_z"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if not 0 <= label_z < labels.shape[0]:
+                    continue
+                selected = {
+                    int(value)
+                    for value in pd.to_numeric(group["selected_anat_label"], errors="coerce")
+                    .dropna()
+                    .astype(int)
+                    .tolist()
+                    if int(value) > 0
+                }
+                available = {int(value) for value in np.unique(labels[label_z]) if int(value) > 0}
+                absent = sorted(selected - available)
+                if absent:
+                    errors.append(
+                        f"plane {idx} selected anatomy labels are absent from label Z={label_z}: {absent[:10]}"
+                    )
+    return tuple(errors)
 
 
 def _keep_mask(plane_data: dict[str, Any]) -> np.ndarray:
@@ -3041,10 +3211,12 @@ __all__ = [
     "harmonize_functional_labels_to_anatomy",
     "hungarian_match",
     "idx_to_um",
+    "infer_anatomy_label_z_mode",
     "nearest_neighbor_match",
     "resample_image",
     "resample_labels_nn",
     "resolve_anatomy_label_z",
+    "validate_anatomy_label_z_provenance",
     "resolve_plane_transform",
     "run_single_fish_cell_44_stage",
     "run_single_fish_cell_46_stage",

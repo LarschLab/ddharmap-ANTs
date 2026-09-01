@@ -1252,6 +1252,11 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
                 str(registration_dir / "functional_roi_anatomy_match_plane_meta.csv"),
                 parity="nonempty_csv",
             ),
+            StageOutputSpec(
+                "geometry-resolved plane references",
+                str(registration_dir / "plane_refs_summary_geometry.json"),
+                parity="nonempty_file",
+            ),
         )
     if stage_name == "assign-hcr-identity":
         registration_dir = stage_root / "registration"
@@ -1548,9 +1553,8 @@ def _stage_dependency_input_records(paths: PipelinePaths, stage_name: str) -> tu
                 label="upstream match-roi-to-anatomy CSV dependency",
             ),
             describe_manifest_path(
-                _stage_root(paths, "register-functional-to-anatomy") / "plane_refs_summary.json",
-                required=False,
-                label="upstream functional-to-anatomy plane refs dependency",
+                _stage_root(paths, "match-roi-to-anatomy") / "registration" / "plane_refs_summary_geometry.json",
+                label="upstream geometry-resolved plane refs dependency",
             ),
             describe_glob(
                 _stage_root(paths, "register-hcr-to-anatomy") / "confocal" / "aligned",
@@ -1661,6 +1665,7 @@ def _upstream_stage_input_records(paths: PipelinePaths, stage_name: str) -> tupl
                 label="staged plane refs summary",
             ),
             describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root"),
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
             describe_glob(paths.analysis_dir / "structural" / "cp_masks", "*_cp_masks.tif", label="anatomy label stack"),
         )
     raise ValueError(f"unsupported upstream stage: {stage_name}")
@@ -1754,6 +1759,7 @@ def _upstream_stage_output_records(paths: PipelinePaths, stage_name: str) -> tup
             describe_manifest_path(registration_dir / "functional_roi_anatomy_matches.csv", label="staged ROI/anatomy geometry matches"),
             describe_manifest_path(registration_dir / "functional_roi_anatomy_match_by_plane.csv", label="staged ROI/anatomy geometry summary"),
             describe_manifest_path(registration_dir / "functional_roi_anatomy_match_plane_meta.csv", label="staged ROI/anatomy plane metadata"),
+            describe_manifest_path(registration_dir / "plane_refs_summary_geometry.json", label="geometry-resolved plane references"),
         )
     raise ValueError(f"unsupported upstream stage: {stage_name}")
 
@@ -3247,13 +3253,50 @@ def _assign_hcr_identity_hcr_anatomy_root(paths: PipelinePaths, hcr_anatomy_root
     )
 
 
+def _geometry_label_z_provenance_errors(
+    geometry_refs_path: Path,
+    anatomy_labels_path: Path | None,
+    *,
+    geometry_table_path: Path | None = None,
+) -> tuple[str, ...]:
+    if not geometry_refs_path.is_file():
+        return ("geometry plane-reference sidecar is missing",)
+    if anatomy_labels_path is None or not anatomy_labels_path.is_file():
+        return ("anatomy label stack is missing",)
+    try:
+        import pandas as pd
+
+        from .matching import validate_anatomy_label_z_provenance
+        from .spatial import imread_any
+
+        raw_refs = json.loads(geometry_refs_path.read_text())
+        if not isinstance(raw_refs, list):
+            return ("geometry plane-reference sidecar is not a list",)
+        anatomy_labels = imread_any(anatomy_labels_path)
+        geometry_df = (
+            pd.read_csv(geometry_table_path)
+            if geometry_table_path is not None and geometry_table_path.is_file()
+            else None
+        )
+        return validate_anatomy_label_z_provenance(
+            raw_refs,
+            int(getattr(anatomy_labels, "shape", (0,))[0]),
+            geometry_df=geometry_df,
+            anatomy_labels=anatomy_labels if geometry_df is not None else None,
+        )
+    except Exception as exc:
+        return (str(exc),)
+
+
 def _append_assign_identity_geometry_dependency_checks(
     checks: list[StageCheckRecord],
     *,
     roi_anatomy_root: Path,
     hcr_anatomy_root: Path,
+    anatomy_labels_path: Path | None,
 ) -> None:
     roi_geometry_path = roi_anatomy_root / "functional_roi_anatomy_matches.csv"
+    geometry_refs_path = roi_anatomy_root / "plane_refs_summary_geometry.json"
     roi_header = _csv_header(roi_geometry_path) or ()
     roi_rows = _csv_row_count(roi_geometry_path)
     forbidden = tuple(
@@ -3266,6 +3309,13 @@ def _append_assign_identity_geometry_dependency_checks(
     hcr_final_pair_rows = sum((_csv_row_count(path) or 0) for path in hcr_final_pair_paths)
     final_pair_schema_status, final_pair_schema_observed = _hcr_final_pair_schema_status(hcr_final_pair_paths)
     final_pair_acceptance_status, final_pair_acceptance_observed = _hcr_final_pair_acceptance_status(hcr_final_pair_paths)
+    geometry_ref_errors = _geometry_label_z_provenance_errors(
+        geometry_refs_path,
+        anatomy_labels_path,
+        geometry_table_path=roi_geometry_path,
+    )
+    geometry_ref_status = "fail" if geometry_ref_errors else "pass"
+    geometry_ref_observed = "; ".join(geometry_ref_errors) if geometry_ref_errors else "complete and table-consistent"
     checks.extend(
         (
             StageCheckRecord(
@@ -3281,6 +3331,13 @@ def _append_assign_identity_geometry_dependency_checks(
                 detail="upstream ROI/anatomy geometry must not already include identity, response, BPI, or gene columns",
                 observed="complete" if not forbidden else ",".join(forbidden),
                 expected="no identity/response/BPI/gene columns",
+            ),
+            StageCheckRecord(
+                label="assign-hcr-identity geometry label-Z provenance",
+                status=geometry_ref_status,
+                detail="identity assignment requires the exact anatomy-label pages used by geometry matching",
+                observed=geometry_ref_observed,
+                expected="all geometry planes record direct/reverse mode and resolved label Z",
             ),
             StageCheckRecord(
                 label="assign-hcr-identity staged HCR/anatomy labels",
@@ -3491,7 +3548,7 @@ def run_single_fish_assign_hcr_identity_stage(
     input_root = _assign_hcr_identity_source_root(paths, source_root)
     roi_anatomy_root_path = _assign_hcr_identity_roi_anatomy_root(paths, roi_anatomy_root)
     hcr_anatomy_root_path = _assign_hcr_identity_hcr_anatomy_root(paths, hcr_anatomy_root)
-    plane_summary_path = _hcr_activity_replay_plane_refs_path(paths, None)
+    plane_summary_path = roi_anatomy_root_path / "plane_refs_summary_geometry.json"
     from .context import infer_anat_labels_path
 
     anat_labels_path = infer_anat_labels_path(paths.fish_dir, config.fish_id)
@@ -3500,6 +3557,7 @@ def run_single_fish_assign_hcr_identity_stage(
     source_paths = {filename: input_root / filename for filename in ASSIGN_HCR_IDENTITY_CSVS}
     inputs = (
         describe_manifest_path(roi_anatomy_root_path / "functional_roi_anatomy_matches.csv", label="staged ROI/anatomy geometry matches"),
+        describe_manifest_path(plane_summary_path, label="geometry-resolved plane refs summary"),
         describe_glob(roi_anatomy_root_path, "functional_roi_anatomy_match*.csv", required=False, label="staged ROI/anatomy geometry summaries"),
         describe_glob(hcr_anatomy_root_path, "*_cp_masks_in_2p_labels_uint16.tif", label="staged HCR/anatomy aligned labels"),
         describe_glob(hcr_anatomy_root_path, "*_cp_masks_in_2p_final_pairs.csv", label="staged HCR/anatomy final-pair CSVs"),
@@ -3518,6 +3576,7 @@ def run_single_fish_assign_hcr_identity_stage(
         checks,
         roi_anatomy_root=roi_anatomy_root_path,
         hcr_anatomy_root=hcr_anatomy_root_path,
+        anatomy_labels_path=anat_labels_path,
     )
     checks.append(
         StageCheckRecord(
@@ -3733,7 +3792,7 @@ def run_single_fish_assign_hcr_identity_stage(
 def _hcr_activity_replay_plane_refs_path(paths: PipelinePaths, plane_refs_summary_path: str | Path | None) -> Path:
     if plane_refs_summary_path not in (None, "", False):
         return Path(plane_refs_summary_path)
-    return functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json"
+    return roi_to_anatomy_match_root(paths) / "registration" / "plane_refs_summary_geometry.json"
 
 
 def _hcr_activity_replay_hcr_root(paths: PipelinePaths, hcr_anatomy_root: str | Path | None) -> Path:
@@ -3798,6 +3857,10 @@ def build_single_fish_hcr_activity_replay_manifest(
     candidate_key_gap: dict[str, int] = {}
     transform_report: dict[str, Any] = {}
     replay_variant_summaries: list[dict[str, Any]] = []
+    geometry_ref_errors = _geometry_label_z_provenance_errors(
+        plane_summary_path,
+        anat_labels_path,
+    )
 
     checks.append(
         StageCheckRecord(
@@ -3817,8 +3880,17 @@ def build_single_fish_hcr_activity_replay_manifest(
             observed=str(len(final_pair_paths)),
         )
     )
+    checks.append(
+        StageCheckRecord(
+            label="HCR replay geometry label-Z provenance",
+            status="fail" if geometry_ref_errors else "pass",
+            detail="HCR replay must use the geometry-owned, internally consistent anatomy-label pages.",
+            expected="all planes have consistent direct/reverse mode and resolved label Z",
+            observed="; ".join(geometry_ref_errors) if geometry_ref_errors else "complete and internally consistent",
+        )
+    )
 
-    if not missing_required and final_pair_paths:
+    if not missing_required and final_pair_paths and not geometry_ref_errors:
         try:
             import pandas as pd
 
@@ -4129,7 +4201,7 @@ def build_single_fish_hcr_activity_replay_manifest(
                 observed=run_error,
             )
         )
-    elif not missing_required and final_pair_paths:
+    elif not missing_required and final_pair_paths and not geometry_ref_errors:
         checks.append(
             StageCheckRecord(
                 label="HCR activity replay recompute",
@@ -6486,6 +6558,7 @@ def _plane_refs_summary(plane_refs: list[dict[str, Any]]) -> list[dict[str, Any]
             "inplane_active_method": plane_ref.get("inplane_active_method"),
             "inplane_fallback_reason": plane_ref.get("inplane_fallback_reason"),
             "anat_label_z_mode": plane_ref.get("anat_label_z_mode", plane_ref.get("anat_labels_z_mode", "direct")),
+            "anat_label_z": plane_ref.get("anat_label_z"),
             "ncc_handoff_manifest_path": plane_ref.get("ncc_handoff_manifest_path"),
         }
         if plane_ref.get("ants_transformlist"):
@@ -6521,6 +6594,7 @@ def load_plane_refs_summary(path: str | Path) -> list[dict[str, Any]]:
             "reference_raw_path": row.get("reference_raw_path"),
             "reference_norm_path": row.get("reference_norm_path"),
             "anat_label_z_mode": row.get("anat_label_z_mode", row.get("anat_labels_z_mode", "direct")),
+            "anat_label_z": row.get("anat_label_z"),
             "ncc_handoff_manifest_path": row.get("ncc_handoff_manifest_path"),
         }
         if isinstance(row.get("ants_transform"), dict):
@@ -8593,14 +8667,24 @@ def run_match_roi_to_anatomy_stage(
     *,
     source_root: str | Path | None = None,
     plane_refs_summary_path: str | Path | None = None,
+    anatomy_stack_path: str | Path | None = None,
     anatomy_labels_path: str | Path | None = None,
+    anatomy_label_z_mode: str = "auto",
     output_root: str | Path | None = None,
     force_recompute: bool = False,
 ) -> StageManifest:
+    import numpy as np
     import pandas as pd
 
     from .context import infer_anat_labels_path, resolve_func_polarity
-    from .matching import FunctionalRoiIdentityConfig, build_functional_roi_master_df, summarize_functional_anatomy_geometry_metrics
+    from .matching import (
+        FunctionalRoiIdentityConfig,
+        build_functional_roi_master_df,
+        infer_anatomy_label_z_mode,
+        resolve_anatomy_label_z,
+        summarize_functional_anatomy_geometry_metrics,
+        validate_anatomy_label_z_provenance,
+    )
     from .spatial import imread_any
     from .suite2p import Suite2pStageConfig, load_suite2p_stage
 
@@ -8610,6 +8694,7 @@ def run_match_roi_to_anatomy_stage(
     detail_path = registration_dir / "functional_roi_anatomy_matches.csv"
     summary_path = registration_dir / "functional_roi_anatomy_match_by_plane.csv"
     meta_path = registration_dir / "functional_roi_anatomy_match_plane_meta.csv"
+    geometry_plane_refs_path = registration_dir / "plane_refs_summary_geometry.json"
     source_root_path = Path(source_root) if source_root not in (None, "", False) else None
     plane_summary_path = (
         Path(plane_refs_summary_path)
@@ -8620,6 +8705,11 @@ def run_match_roi_to_anatomy_stage(
         Path(anatomy_labels_path)
         if anatomy_labels_path not in (None, "", False)
         else infer_anat_labels_path(paths.fish_dir, config.fish_id)
+    )
+    anatomy_path = (
+        Path(anatomy_stack_path)
+        if anatomy_stack_path not in (None, "", False)
+        else prepared_in_vivo_anatomy_path(paths)
     )
     try:
         existing_outputs = tuple(path for path in (detail_path, summary_path, meta_path) if path.exists())
@@ -8661,6 +8751,9 @@ def run_match_roi_to_anatomy_stage(
             polarity_source = None
             anatomy_xy_spacing = (1.0, 1.0)
             transform_report = {"overlay_applied_planes": 0}
+            resolved_label_z_mode = None
+            label_z_scores: dict[str, float] = {}
+            declared_label_z_modes: tuple[str, ...] = ()
             accepted_parity_checks: tuple[StageCheckRecord, ...] = ()
         else:
             if anat_labels_path is None:
@@ -8701,6 +8794,45 @@ def run_match_roi_to_anatomy_stage(
                 config=Suite2pStageConfig(verbose=False),
             )
             anat_labels = imread_any(anat_labels_path)
+            requested_label_z_mode = str(anatomy_label_z_mode or "auto").strip().lower()
+            if requested_label_z_mode not in {"auto", "direct", "reverse"}:
+                raise ValueError("anatomy_label_z_mode must be one of: auto, direct, reverse")
+            declared_label_z_modes = tuple(
+                sorted(
+                    {
+                        str(ref.get("anat_label_z_mode")).strip().lower()
+                        for ref in plane_refs
+                        if ref.get("anat_label_z_mode") not in (None, "", False)
+                    }
+                )
+            )
+            label_z_scores: dict[str, float] = {}
+            if requested_label_z_mode == "auto":
+                if not anatomy_path.is_file():
+                    raise FileNotFoundError(
+                        f"Anatomy intensity stack is required to infer anatomy-label Z order: {anatomy_path}"
+                    )
+                resolved_label_z_mode, label_z_scores = infer_anatomy_label_z_mode(
+                    imread_any(anatomy_path),
+                    anat_labels,
+                    plane_refs,
+                )
+            else:
+                resolved_label_z_mode = requested_label_z_mode
+            for plane_ref in plane_refs:
+                plane_ref["anat_label_z_mode"] = resolved_label_z_mode
+                plane_ref["anat_label_z"] = resolve_anatomy_label_z(
+                    plane_ref,
+                    int(np.asarray(anat_labels).shape[0]),
+                )
+            label_z_provenance_errors = validate_anatomy_label_z_provenance(
+                plane_refs,
+                int(np.asarray(anat_labels).shape[0]),
+            )
+            if label_z_provenance_errors:
+                raise ValueError(
+                    "Invalid anatomy-label Z provenance: " + "; ".join(label_z_provenance_errors)
+                )
             cfg = FunctionalRoiIdentityConfig()
             detail_df, plane_meta_df = build_functional_roi_master_df(
                 suite2p_result["suite2p_by_ref_idx"],
@@ -8824,6 +8956,10 @@ def run_match_roi_to_anatomy_stage(
         detail_df.to_csv(detail_path, index=False)
         summary_df.to_csv(summary_path, index=False)
         plane_meta_df.to_csv(meta_path, index=False)
+        if source_root_path is None:
+            geometry_plane_refs_path.write_text(
+                json.dumps(_plane_refs_summary(plane_refs), indent=2, sort_keys=True)
+            )
         checks = (
             StageCheckRecord(
                 label="ROI/anatomy planes loaded" if source_root_path is not None else "Suite2p planes loaded",
@@ -8858,6 +8994,37 @@ def run_match_roi_to_anatomy_stage(
                 detail="geometry summary CSV exists",
                 observed=str(summary_path),
             ),
+            StageCheckRecord(
+                label="anatomy-label Z provenance",
+                status=("pass" if source_root_path is not None or resolved_label_z_mode in {"direct", "reverse"} else "fail"),
+                detail="geometry matching records the resolved anatomy-label page convention",
+                observed=(
+                    "control geometry"
+                    if source_root_path is not None
+                    else f"resolved={resolved_label_z_mode}; declared={','.join(declared_label_z_modes) or 'missing'}"
+                ),
+                expected="direct or reverse",
+            ),
+            StageCheckRecord(
+                label="anatomy-label Z declaration agreement",
+                status=(
+                    "pass"
+                    if source_root_path is not None
+                    or not declared_label_z_modes
+                    or declared_label_z_modes == (resolved_label_z_mode,)
+                    else "warn"
+                ),
+                detail=(
+                    "the resolved geometry convention is compared with any convention inherited "
+                    "from functional registration before geometry metrics are accepted"
+                ),
+                observed=(
+                    "control geometry"
+                    if source_root_path is not None
+                    else f"resolved={resolved_label_z_mode}; declared={','.join(declared_label_z_modes) or 'missing'}"
+                ),
+                expected="declared convention absent or equal to resolved convention",
+            ),
         ) + accepted_parity_checks
         status = "pass" if not any(check.status == "fail" for check in checks) else "fail"
         errors: tuple[str, ...] = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
@@ -8878,12 +9045,18 @@ def run_match_roi_to_anatomy_stage(
             describe_manifest_path(source_root_path, label="control geometry source root", required=False) if source_root_path is not None else _optional_manifest_path(None, label="control geometry source root", required=False),
             describe_manifest_path(plane_summary_path, label="staged plane refs summary", required=source_root_path is None),
             describe_manifest_path(anat_labels_path, label="anatomy label stack", required=source_root_path is None) if anat_labels_path is not None else _optional_manifest_path(None, label="anatomy label stack", required=source_root_path is None),
+            describe_manifest_path(anatomy_path, label="anatomy intensity stack", required=source_root_path is None),
             describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root", required=source_root_path is None),
         ),
         outputs=(
             describe_manifest_path(detail_path, label="staged ROI/anatomy geometry matches"),
             describe_manifest_path(summary_path, label="staged ROI/anatomy geometry summary"),
             describe_manifest_path(meta_path, label="staged ROI/anatomy plane metadata"),
+            describe_manifest_path(
+                geometry_plane_refs_path,
+                label="geometry-resolved plane references",
+                required=source_root_path is None,
+            ),
         ),
         checks=checks,
         parameters={
@@ -8893,6 +9066,11 @@ def run_match_roi_to_anatomy_stage(
             "source_root": str(source_root_path) if source_root_path is not None else None,
             "plane_refs_summary_path": str(plane_summary_path),
             "anatomy_labels_path": str(anat_labels_path) if anat_labels_path is not None else None,
+            "anatomy_stack_path": str(anatomy_path),
+            "anatomy_label_z_mode_requested": str(anatomy_label_z_mode),
+            "anatomy_label_z_mode_resolved": resolved_label_z_mode if "resolved_label_z_mode" in locals() else None,
+            "anatomy_label_z_mode_declared": declared_label_z_modes if "declared_label_z_modes" in locals() else (),
+            "anatomy_label_z_mode_scores": label_z_scores if "label_z_scores" in locals() else {},
             "output_root": str(stage_root),
             "match_policy_version": FunctionalRoiIdentityConfig().match_policy_version,
             "geometry_only": True,

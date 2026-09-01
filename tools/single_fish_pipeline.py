@@ -324,7 +324,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_fish_args(match_roi)
     match_roi.add_argument("--source-root", type=Path)
     match_roi.add_argument("--plane-refs-summary-path", type=Path)
+    match_roi.add_argument("--anatomy-stack-path", type=Path)
     match_roi.add_argument("--anatomy-labels-path", type=Path)
+    match_roi.add_argument("--anatomy-label-z-mode", choices=("auto", "direct", "reverse"), default="auto")
     match_roi.add_argument("--output-root", type=Path)
     match_roi.add_argument("--force-recompute", action="store_true")
 
@@ -738,7 +740,9 @@ def main(argv: list[str] | None = None) -> int:
             config,
             source_root=args.source_root,
             plane_refs_summary_path=args.plane_refs_summary_path,
+            anatomy_stack_path=args.anatomy_stack_path,
             anatomy_labels_path=args.anatomy_labels_path,
+            anatomy_label_z_mode=args.anatomy_label_z_mode,
             output_root=args.output_root,
             force_recompute=args.force_recompute,
         )

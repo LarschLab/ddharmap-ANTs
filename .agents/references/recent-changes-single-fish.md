@@ -3379,3 +3379,27 @@
 - `register-functional-to-anatomy` now auto-discovers or accepts `--preprocessing-ncc-manifest`, reconstructs `plane_refs` from the saved pooled post-Block-0 references, scale, best-Z/sub-slice result, full depth scores, and XY placement, and skips reference averaging, scale sweep, best-Z search, and XY search. It does not write duplicate legacy NCC cache JSON on this path.
 - Both NCC placement materialization and ANTs initialization accept the validated upstream XY placement. ANTs remains the downstream residual-refinement stage, and failed/review-required drift candidates fail closed before static registration.
 - Focused handoff and spatial-contract coverage passes, including a registration-stage contract proving that the legacy NCC cache files are absent on the handoff path.
+
+### 2026-09-01 - make anatomy-label Z provenance geometry-owned
+
+- Diagnosed L765_f04 notebook `03` against the saved stacks: functional plane
+  0 uses anatomy intensity Z=30, while its corresponding anatomy-label page is
+  Z=21 under reversed indexing. The previous geometry writer silently consumed
+  direct label Z=30 even though later registration QC recorded `reverse`.
+- `match-roi-to-anatomy` now resolves or explicitly accepts the anatomy-label
+  Z convention before matching and writes
+  `registration/plane_refs_summary_geometry.json` with `anat_label_z_mode` and
+  `anat_label_z` for every functional plane.
+- Notebook `03` consumes that geometry-owned sidecar and fails closed when the
+  mapping is missing, internally inconsistent, or selects anatomy labels that
+  are absent from the resolved page. Spatial-panel titles show both the anatomy
+  intensity Z and anatomy-label Z.
+- Identity, activity/BPI, exports, reports, and figures remain downstream of
+  the corrected geometry and must not reuse outputs derived from the old
+  direct-page match table.
+- A shared fail-closed validator blocks identity assignment and standalone HCR
+  activity replay when the geometry sidecar has missing, inconsistent,
+  out-of-range, duplicate, or incomplete plane provenance; the geometry writer
+  runs it before writing metrics, and identity also checks selected-label
+  membership against the persisted pages.
+- Automatic direct/reverse inference requires positive boundary evidence and a

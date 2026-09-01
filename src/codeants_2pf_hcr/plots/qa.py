@@ -42,6 +42,7 @@ from ..matching import (
     _ensure_uint_labels,
     _regionprops_centroids_2d,
     build_plane_centroid_matches,
+    infer_anatomy_label_z_mode,
     resample_labels_nn,
     resolve_anatomy_label_z,
     resolve_plane_transform,
@@ -1588,18 +1589,6 @@ def _outline_rgba(label_img: np.ndarray, rgba: tuple[float, float, float, float]
     return out
 
 
-def _label_boundary_edge_score(anat_img: np.ndarray, label_img: np.ndarray) -> float | None:
-    labels = _ensure_uint_labels(label_img)
-    sk_segmentation = _require_skimage_module(segmentation, "segmentation.find_boundaries")
-    boundaries = sk_segmentation.find_boundaries(labels, mode="outer")
-    if int(np.count_nonzero(boundaries)) < 20:
-        return None
-    img = norm01(np.asarray(anat_img, dtype=np.float32))
-    gy, gx = np.gradient(img)
-    edge = np.hypot(gx, gy)
-    return float(np.mean(edge[boundaries]) - np.mean(edge))
-
-
 def _infer_anatomy_label_z_mode(
     *,
     anat_arr: np.ndarray,
@@ -1609,39 +1598,10 @@ def _infer_anatomy_label_z_mode(
 ) -> tuple[str, dict[str, float]]:
     if anat_labels_arr is None or anat_labels_arr.ndim != 3 or anat_arr.ndim != 3:
         return "direct", {}
-    modes = ("direct", "reverse")
-    scores_by_mode: dict[str, list[float]] = {mode: [] for mode in modes}
-    z_size = int(anat_labels_arr.shape[0])
-    for plane_idx, plane_ref in enumerate(plane_refs):
-        if plane_ref is None:
-            continue
-        try:
-            best_z = int(plane_ref.get("best_z", plane_idx))
-        except Exception:
-            continue
-        if best_z < 0 or best_z >= int(anat_arr.shape[0]):
-            continue
-        anat_img = np.asarray(anat_arr[best_z], dtype=np.float32)
-        crop_bounds = _square_bounds_from_spec(square_spec, anat_img.shape) if square_spec is not None else None
-        if crop_bounds is not None:
-            x0, y0, x1, y1 = crop_bounds
-            anat_eval = anat_img[y0:y1, x0:x1]
-        else:
-            x0, y0, x1, y1 = 0, 0, anat_img.shape[1], anat_img.shape[0]
-            anat_eval = anat_img
-        for mode in modes:
-            label_z = resolve_anatomy_label_z({"best_z": best_z, "anat_label_z_mode": mode}, z_size, best_z=best_z)
-            if label_z < 0 or label_z >= z_size:
-                continue
-            score = _label_boundary_edge_score(anat_eval, anat_labels_arr[label_z, y0:y1, x0:x1])
-            if score is not None and np.isfinite(score):
-                scores_by_mode[mode].append(float(score))
-    summary = {mode: float(np.nanmean(vals)) for mode, vals in scores_by_mode.items() if vals}
-    if not summary:
+    try:
+        return infer_anatomy_label_z_mode(anat_arr, anat_labels_arr, plane_refs)
+    except ValueError:
         return "direct", {}
-    direct = summary.get("direct", float("-inf"))
-    reverse = summary.get("reverse", float("-inf"))
-    return ("reverse" if reverse > direct else "direct"), summary
 
 
 def _method_transform_for_label_warp(method: str, result: dict[str, Any]) -> Any | None:
