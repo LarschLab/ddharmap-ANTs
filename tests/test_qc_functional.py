@@ -9,10 +9,13 @@ import tifffile
 
 from codeants_2pf_hcr.plots.qc_functional import (
     functional_registration_plane_review,
+    load_early_response_timing_qc,
     load_functional_reference_drift_qc,
     load_functional_registration_qc,
     render_functional_registration_all_planes,
     render_functional_reference_drift_summary,
+    render_early_response_timing_audit,
+    render_early_response_full_session_heatmap,
     render_functional_reference_artifacts,
     render_functional_registration_plane,
     render_functional_registration_artifacts,
@@ -134,6 +137,78 @@ def test_functional_reference_drift_qc_fails_on_missing_profile_png(tmp_path: Pa
         )
 
 
+def test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent(tmp_path: Path) -> None:
+    fish_dir = tmp_path / FISH_ID
+    metadata = fish_dir / "01_raw" / "2p" / "metadata"
+    metadata.mkdir(parents=True)
+    (metadata / f"2026_f{FISH_ID}_metadata.csv").write_text("parameter,value\nframerate,2\n")
+    (metadata / f"2026_f{FISH_ID}_experiment_log.csv").write_text(
+        "event,timestamp\nB1_start,0\nB1_stim0_LLB,2\nB1_end,6\n"
+    )
+    qa = tmp_path / "qa"
+    qa.mkdir()
+    pd.DataFrame([{"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1", "fps": 2.0}]).to_csv(
+        qa / "suite2p_stimulus_locked_sources_23b.csv", index=False
+    )
+    np.save(qa / "suite2p_full_session_heatmap_matrix_23c.npy", np.ones((2, 12), dtype=float))
+    pd.DataFrame([{"plane_idx": 0, "func_label": 1}, {"plane_idx": 0, "func_label": 2}]).to_csv(
+        qa / "suite2p_full_session_heatmap_rows_23c.csv", index=False
+    )
+    scored = tmp_path / "scored_stimulus_windows.csv"
+    pd.DataFrame([
+        {"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1", "block": "B1", "stim_idx": 0,
+         "stim_type": "LLB", "scored_onset_sec": 2.0, "scored_offset_sec": 4.0,
+         "scored_onset_frame": 4, "scored_offset_frame": 8}
+    ]).to_csv(scored, index=False)
+
+    bundle = load_early_response_timing_qc(
+        fish_id=FISH_ID, fish_dir=fish_dir, diagnostic_root=qa, scored_windows_path=scored
+    )
+    assert len(bundle["recorded_events"]) == 1
+    assert bundle["timing_audit"].loc[0, "event_key_status"] == "matched"
+    assert {"onset_delta_frames", "offset_delta_frames", "rounding_within_tolerance"}.issubset(bundle["timing_audit"].columns)
+    assert bundle["timing_audit"].loc[0, "recorded_log_path"].endswith("experiment_log.csv")
+    figure = render_early_response_timing_audit(bundle)
+    assert figure.axes
+    plt.close(figure)
+    heatmap = render_early_response_full_session_heatmap(bundle)
+    assert len(heatmap.axes[0].patches) == 2
+    plt.close(heatmap)
+
+
+def test_early_response_timing_qc_warns_when_offset_exceeds_rounding_tolerance(tmp_path: Path) -> None:
+    fish_dir = tmp_path / FISH_ID
+    metadata = fish_dir / "01_raw" / "2p" / "metadata"
+    metadata.mkdir(parents=True)
+    (metadata / f"2026_f{FISH_ID}_metadata.csv").write_text("parameter,value\nframerate,2\n")
+    (metadata / f"2026_f{FISH_ID}_experiment_log.csv").write_text("event,timestamp\nB1_start,0\nB1_stim0_LLB,2\nB1_end,6\n")
+    qa = tmp_path / "qa"; qa.mkdir()
+    pd.DataFrame([{"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1"}]).to_csv(qa / "suite2p_stimulus_locked_sources_23b.csv", index=False)
+    pd.DataFrame([{"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "scored_onset_sec": 2.0, "scored_offset_sec": 20.0, "scored_onset_frame": 4, "scored_offset_frame": 40}]).to_csv(tmp_path / "scored.csv", index=False)
+    bundle = load_early_response_timing_qc(fish_id=FISH_ID, fish_dir=fish_dir, diagnostic_root=qa, scored_windows_path=tmp_path / "scored.csv")
+    assert not bool(bundle["timing_audit"].loc[0, "rounding_within_tolerance"])
+    assert any("rounding tolerance" in warning for warning in bundle["warnings"])
+
+
+def test_early_response_timing_qc_reports_absent_legacy_artifacts_without_throwing(tmp_path: Path) -> None:
+    fish_dir = tmp_path / FISH_ID
+    (fish_dir / "01_raw" / "2p" / "metadata").mkdir(parents=True)
+    qa = tmp_path / "qa"
+    qa.mkdir()
+
+    bundle = load_early_response_timing_qc(
+        fish_id=FISH_ID,
+        fish_dir=fish_dir,
+        diagnostic_root=qa,
+        scored_windows_path=tmp_path / "scored_stimulus_windows.csv",
+    )
+
+    assert bundle["source_df"].empty
+    assert bundle["timing_audit"].empty
+    assert any("[23b]" in warning for warning in bundle["warnings"])
+    assert any("not persisted" in warning for warning in bundle["warnings"])
+
+
 def _make_registration_bundle(tmp_path: Path) -> dict[str, Path]:
     manifests = {}
     for stage in (
@@ -188,6 +263,8 @@ def _make_registration_bundle(tmp_path: Path) -> dict[str, Path]:
 
 def test_functional_registration_qc_loads_all_stage_evidence(tmp_path: Path) -> None:
     paths = _make_registration_bundle(tmp_path)
+    sidecar = paths["transformed_root"] / "functional" / "anatomy" / f"._{FISH_ID}_plane0_func_mask_in_2p.tif"
+    sidecar.write_bytes(b"not a TIFF")
     bundle = load_functional_registration_qc(
         fish_id=FISH_ID,
         anatomy_preparation_manifest_path=paths["prepare-in-vivo-anatomy-stack"],
@@ -201,6 +278,7 @@ def test_functional_registration_qc_loads_all_stage_evidence(tmp_path: Path) -> 
     )
 
     assert set(bundle["manifest_inventory"]["status"]) == {"pass"}
+    assert [Path(path).name for path in bundle["transformed_labels"]["path"]] == [f"{FISH_ID}_plane0_func_mask_in_2p.tif"]
     plane_review = functional_registration_plane_review(bundle, plane_index=0)
     assert {"plane_refs", "transforms", "ncc_profiles", "transformed_labels"}.issubset(set(plane_review["source"]))
     plane_figure = render_functional_registration_plane(bundle, plane_index=0)

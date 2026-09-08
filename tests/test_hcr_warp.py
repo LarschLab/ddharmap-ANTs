@@ -7,7 +7,11 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from codeants_2pf_hcr.hcr_warp import build_direct_ants_hcr_transform_chain, run_direct_ants_hcr_label_warp
+from codeants_2pf_hcr.hcr_warp import (
+    build_direct_ants_hcr_transform_chain,
+    build_ex_vivo_bridge_hcr_transform_chain,
+    run_direct_ants_hcr_label_warp,
+)
 
 
 def test_build_direct_ants_hcr_transform_chain_appends_rn_to_rbest(tmp_path: Path) -> None:
@@ -32,7 +36,50 @@ def test_build_direct_ants_hcr_transform_chain_appends_rn_to_rbest(tmp_path: Pat
     assert chain == (best_warp, best_affine, rn_warp, rn_affine)
 
 
-def test_run_direct_ants_hcr_label_warp_transposes_zyx_and_writes_metadata(
+def test_build_ex_vivo_bridge_hcr_transform_chain_selects_direct_or_rbest_route(tmp_path: Path) -> None:
+    exvivo_to_2p = tmp_path / "04_exvivo-2p" / "transMatrices"
+    rbest_to_exvivo = tmp_path / "03_rbest-exvivo" / "transMatrices"
+    rn_to_exvivo = tmp_path / "05_rn-exvivo" / "transMatrices"
+    rn_to_rbest = tmp_path / "02_rn-rbest" / "transMatrices"
+    for directory in (exvivo_to_2p, rbest_to_exvivo, rn_to_exvivo, rn_to_rbest):
+        directory.mkdir(parents=True)
+
+    def pair(directory: Path, stem: str) -> tuple[Path, Path]:
+        warp = directory / f"{stem}_1Warp.nii.gz"
+        affine = directory / f"{stem}_0GenericAffine.mat"
+        warp.write_text("warp\n")
+        affine.write_text("affine\n")
+        return warp, affine
+
+    exvivo_pair = pair(exvivo_to_2p, "L000_f00_exvivo_GCaMP_to_2p")
+    rbest_pair = pair(rbest_to_exvivo, "L000_f00_rbest_GCaMP_to_exvivo")
+    r2_pair = pair(rn_to_exvivo, "L000_f00_r2_GCaMP_to_exvivo")
+    r3_pair = pair(rn_to_rbest, "L000_f00_r3_GCaMP_to_rbest")
+    kwargs = {
+        "exvivo_to_2p_transform_dir": exvivo_to_2p,
+        "rbest_to_exvivo_transform_dir": rbest_to_exvivo,
+        "rn_to_exvivo_transform_dir": rn_to_exvivo,
+        "rn_to_rbest_transform_dir": rn_to_rbest,
+    }
+
+    assert build_ex_vivo_bridge_hcr_transform_chain(
+        mask_path=tmp_path / "L000_f00_rbest_channel2_gene_cp_masks.tif",
+        round_idx=None,
+        **kwargs,
+    ) == (*exvivo_pair, *rbest_pair)
+    assert build_ex_vivo_bridge_hcr_transform_chain(
+        mask_path=tmp_path / "L000_f00_r2_channel2_gene_cp_masks.tif",
+        round_idx=2,
+        **kwargs,
+    ) == (*exvivo_pair, *r2_pair)
+    assert build_ex_vivo_bridge_hcr_transform_chain(
+        mask_path=tmp_path / "L000_f00_r3_channel2_gene_cp_masks.tif",
+        round_idx=3,
+        **kwargs,
+    ) == (*exvivo_pair, *rbest_pair, *r3_pair)
+
+
+def test_run_direct_ants_hcr_label_warp_writes_ex_vivo_bridge_metadata(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -85,7 +132,10 @@ def test_run_direct_ants_hcr_label_warp_transposes_zyx_and_writes_metadata(
     aligned = tmp_path / "aligned"
     rbest_to_2p = tmp_path / fish_id / "02_reg" / "01_rbest-2p" / "transMatrices"
     rn_to_rbest = tmp_path / fish_id / "02_reg" / "02_rn-rbest" / "transMatrices"
-    for directory in (preproc / "rbest", raw_masks, rbest_to_2p, rn_to_rbest):
+    exvivo_to_2p = tmp_path / fish_id / "02_reg" / "04_exvivo-2p" / "transMatrices"
+    rbest_to_exvivo = tmp_path / fish_id / "02_reg" / "03_rbest-exvivo" / "transMatrices"
+    rn_to_exvivo = tmp_path / fish_id / "02_reg" / "05_rn-exvivo" / "transMatrices"
+    for directory in (preproc / "rbest", raw_masks, rbest_to_2p, rn_to_rbest, exvivo_to_2p, rbest_to_exvivo, rn_to_exvivo):
         directory.mkdir(parents=True, exist_ok=True)
     mask_path = raw_masks / f"{fish_id}_round2_channel2_sst1_2_cp_masks.tif"
     labels = np.zeros((2, 3, 4), dtype=np.uint16)
@@ -95,10 +145,12 @@ def test_run_direct_ants_hcr_label_warp_transposes_zyx_and_writes_metadata(
     anatomy = preproc / "2p_anatomy" / f"{fish_id}_anatomy_2P_GCaMP.nrrd"
     anatomy.parent.mkdir(parents=True)
     anatomy.write_text("nrrd\n")
-    best_warp = rbest_to_2p / f"{fish_id}_round2_GCaMP_to_2p_1Warp.nii.gz"
-    best_affine = rbest_to_2p / f"{fish_id}_round2_GCaMP_to_2p_0GenericAffine.mat"
-    best_warp.write_text("warp\n")
-    best_affine.write_text("affine\n")
+    exvivo_warp = exvivo_to_2p / f"{fish_id}_exvivo_GCaMP_to_2p_1Warp.nii.gz"
+    exvivo_affine = exvivo_to_2p / f"{fish_id}_exvivo_GCaMP_to_2p_0GenericAffine.mat"
+    rn_warp = rn_to_exvivo / f"{fish_id}_r2_GCaMP_to_exvivo_1Warp.nii.gz"
+    rn_affine = rn_to_exvivo / f"{fish_id}_r2_GCaMP_to_exvivo_0GenericAffine.mat"
+    for path in (exvivo_warp, exvivo_affine, rn_warp, rn_affine):
+        path.write_text("transform\n")
 
     results = run_direct_ants_hcr_label_warp(
         fish_id=fish_id,
@@ -109,16 +161,21 @@ def test_run_direct_ants_hcr_label_warp_transposes_zyx_and_writes_metadata(
         best_round_idx=2,
         rbest_to_2p_transform_dir=rbest_to_2p,
         rn_to_rbest_transform_dir=rn_to_rbest,
+        warp_route="exvivo_bridge",
+        exvivo_to_2p_transform_dir=exvivo_to_2p,
+        rbest_to_exvivo_transform_dir=rbest_to_exvivo,
+        rn_to_exvivo_transform_dir=rn_to_exvivo,
         min_component_voxels=1,
     )
 
     assert len(results) == 1
     assert calls["from_numpy_shape"] == (4, 3, 2)
-    assert calls["transformlist"] == (str(best_warp), str(best_affine))
-    assert calls["whichtoinvert"] == (False, False)
+    assert calls["transformlist"] == (str(exvivo_warp), str(exvivo_affine), str(rn_warp), str(rn_affine))
+    assert calls["whichtoinvert"] == (False, False, False, False)
     assert calls["interpolator"] == "nearestNeighbor"
     assert Path(results[0].output_label_path).exists()
     assert Path(results[0].output_metadata_path).exists()
+    assert __import__("json").loads(Path(results[0].output_metadata_path).read_text())["route"] == "direct_rn_to_exvivo_then_exvivo_to_2p"
     assert np.array_equal(tifffile.imread(results[0].output_label_path), labels)
 
 

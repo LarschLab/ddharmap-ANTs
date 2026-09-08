@@ -25,6 +25,7 @@ from .stimulus import (
 )
 from .suite2p import infer_frame_rate_from_detail
 from .single_fish_notebook_stages import run_single_fish_cell_51_stage
+from .midline_review import load_accepted_anatomy_midline_context
 
 
 def _as_bool_series(series_in: Any) -> pd.Series:
@@ -642,6 +643,7 @@ def build_single_fish_motion_auc_plot_tables(
     detail_csv: str | Path | None = None,
     hcr_status_csv: str | Path | None = None,
     midline_json: str | Path | None = None,
+    accepted_midline_sidecar: str | Path | None = None,
     experiment_log_csv: str | Path | None = None,
     experiment_meta_csv: str | Path | None = None,
     points_csv: str | Path | None = None,
@@ -680,9 +682,18 @@ def build_single_fish_motion_auc_plot_tables(
     if status_df.empty:
         raise RuntimeError("[56i] hcr_activity_status.csv is empty for the current fish.")
 
-    midline_context = load_midline_context(midline_json_p, fish_id=fish_id)
-    bundle_path = Path(midline_context["bundle_path"])
-    coord_space = str(midline_context["midline_space"])
+    if accepted_midline_sidecar is not None:
+        midline_context = load_accepted_anatomy_midline_context(
+            accepted_midline_sidecar,
+            fish_id=fish_id,
+            required_planes=sorted(pd.to_numeric(detail_df["plane_idx"], errors="coerce").dropna().astype(int).unique()),
+        )
+        bundle_path = Path(midline_context["bundle_path"])
+        coord_space = "anat"
+    else:
+        midline_context = load_midline_context(midline_json_p, fish_id=fish_id)
+        bundle_path = Path(midline_context["bundle_path"])
+        coord_space = str(midline_context["midline_space"])
     if coord_space == "anat" and {"centroid_x_anat", "centroid_y_anat"}.issubset(detail_df.columns):
         x_col = "centroid_x_anat"
         y_col = "centroid_y_anat"
@@ -885,10 +896,16 @@ def build_single_fish_motion_auc_plot_tables(
         axis=1,
     )
 
+    all_count_rois = detail_side_df[
+        ["plane_idx", "func_label", "response_class", "response_is_active", "roi_side", "roi_side_valid"]
+    ].copy()
+    if accepted_midline_sidecar is not None:
+        # The accepted Q7 global panel is a left/right-only analysis.  Midline
+        # and unknown rows remain visible in the spatial Q2 grids but cannot
+        # inflate its ipsi/contra denominator.
+        all_count_rois = all_count_rois.loc[all_count_rois["roi_side_valid"]].copy()
     all_counts_base = (
-        detail_side_df[
-            ["plane_idx", "func_label", "response_class", "response_is_active", "roi_side", "roi_side_valid"]
-        ]
+        all_count_rois
         .drop_duplicates(subset=["plane_idx", "func_label"])
         .assign(_join_key=1)
         .merge(panel_keys.assign(_join_key=1), on="_join_key", how="inner")
@@ -1026,6 +1043,8 @@ def build_single_fish_motion_auc_plot_tables(
     )
     plot_df["group"] = pd.Categorical(plot_df["group"], categories=group_order, ordered=True)
     plot_df["bpi_category"] = plot_df["bpi_category"].fillna(cfg.response_unavailable_class).astype(str)
+    if accepted_midline_sidecar is not None:
+        plot_df["accepted_midline_sidecar_sha256"] = str(midline_context["sidecar_sha256"])
     plot_df = plot_df.sort_values(
         ["laterality", "stim_mode", "group", "response_class", "plane_idx", "func_label"]
     ).reset_index(drop=True)
@@ -1044,6 +1063,8 @@ def build_single_fish_motion_auc_plot_tables(
     counts_df["frac_responsive_used"] = np.where(counts_df["n_total"] > 0, counts_df["n_responsive_used"] / counts_df["n_total"], 0.0)
     counts_df["frac_low_used"] = np.where(counts_df["n_total"] > 0, counts_df["n_low_used"] / counts_df["n_total"], 0.0)
     counts_df["frac_other"] = np.where(counts_df["n_total"] > 0, counts_df["n_other"] / counts_df["n_total"], 0.0)
+    if accepted_midline_sidecar is not None:
+        counts_df["accepted_midline_sidecar_sha256"] = str(midline_context["sidecar_sha256"])
 
     if write_csv:
         out_reg_p.mkdir(parents=True, exist_ok=True)

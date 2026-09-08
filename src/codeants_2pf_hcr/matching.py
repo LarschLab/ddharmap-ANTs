@@ -99,15 +99,35 @@ def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
     if plane_ref.get("tform_src") == "ants_rigid_affine":
         ants_transform = plane_ref.get("ants_transform")
         if isinstance(ants_transform, dict) and ants_transform.get("type") == "ants_transformlist":
+            if not isinstance(ants_transform.get("ncc_preplacement"), dict):
+                ncc_xy = plane_ref.get("ncc_xy")
+                if isinstance(ncc_xy, dict) and "x0" in ncc_xy and "y0" in ncc_xy:
+                    resolved = dict(ants_transform)
+                    resolved["ncc_preplacement"] = {
+                        "x0": int(ncc_xy["x0"]),
+                        "y0": int(ncc_xy["y0"]),
+                        "score": ncc_xy.get("score"),
+                        "source_shape": tuple(plane_ref.get("ref_scaled_shape", ())),
+                    }
+                    return resolved
             return ants_transform
         transformlist = plane_ref.get("ants_transformlist")
         if transformlist:
-            return {
+            resolved = {
                 "type": "ants_transformlist",
                 "method": "ants_rigid_affine",
                 "transformlist": list(transformlist),
                 "moving_shape": tuple(plane_ref.get("ref_scaled_shape", ())),
             }
+            ncc_xy = plane_ref.get("ncc_xy")
+            if isinstance(ncc_xy, dict) and "x0" in ncc_xy and "y0" in ncc_xy:
+                resolved["ncc_preplacement"] = {
+                    "x0": int(ncc_xy["x0"]),
+                    "y0": int(ncc_xy["y0"]),
+                    "score": ncc_xy.get("score"),
+                    "source_shape": tuple(plane_ref.get("ref_scaled_shape", ())),
+                }
+            return resolved
     affine_transform = plane_ref.get("affine_transform")
     if isinstance(affine_transform, dict) and affine_transform.get("type") == "skimage_affine":
         return affine_transform
@@ -1031,6 +1051,16 @@ def build_hcr_anatomy_match_tables(
 
     conf_vol = _label_volumes(conf_arr)
     twop_vol = _label_volumes(anat_arr)
+    # Review-only XY reference. Confocal axial PSF broadening makes Z centroid
+    # displacement less diagnostic than lateral displacement. This never
+    # changes ``within_gate``, quality, or membership in final_pairs.
+    xy_pixel_area_um2 = float(vox_anat_um.get("dy", 1.0)) * float(vox_anat_um.get("dx", 1.0))
+    radii_xy_um = []
+    for label in twop_vol:
+        max_area_px = max((int(np.count_nonzero(anat_arr[z] == label)) for z in range(anat_arr.shape[0])), default=0)
+        if max_area_px > 0:
+            radii_xy_um.append(float(np.sqrt((max_area_px * xy_pixel_area_um2) / np.pi)))
+    median_anatomy_xy_radius_um = float(np.median(radii_xy_um)) if radii_xy_um else np.nan
     matches["conf_vol"] = matches["conf_label"].map(conf_vol).fillna(0).astype(int)
     matches["twoP_vol"] = matches["twoP_label"].map(twop_vol).fillna(0).astype(int)
     den = matches["conf_vol"] + matches["twoP_vol"] - matches["overlap_voxels"]
@@ -1047,6 +1077,12 @@ def build_hcr_anatomy_match_tables(
         out=np.zeros_like(matches["twoP_vol"], dtype=float),
         where=(matches["twoP_vol"] > 0),
     )
+    matches["centroid_xy_distance_um"] = np.sqrt(
+        (matches["conf_label"].map(dict(zip(labels_conf, p_conf_um[:, 2]))).astype(float) - matches["twoP_label"].map(dict(zip(labels_twop, p_twop_um[:, 2]))).astype(float)) ** 2
+        + (matches["conf_label"].map(dict(zip(labels_conf, p_conf_um[:, 1]))).astype(float) - matches["twoP_label"].map(dict(zip(labels_twop, p_twop_um[:, 1]))).astype(float)) ** 2
+    )
+    matches["median_anatomy_xy_radius_um"] = median_anatomy_xy_radius_um
+    matches["is_centroid_xy_offset_over_median_anatomy_radius"] = matches["centroid_xy_distance_um"] > median_anatomy_xy_radius_um
     acc = matches.loc[matches["within_gate"]].copy()
     conf_counts = acc["conf_label"].value_counts()
     twop_counts = acc["twoP_label"].value_counts()
@@ -1879,6 +1915,8 @@ def build_functional_roi_master_df(
                         "roi_idx": int(rr.roi_idx),
                         "centroid_x_func": float(getattr(rr, "raw_cx", np.nan)),
                         "centroid_y_func": float(getattr(rr, "raw_cy", np.nan)),
+                        "centroid_x_func_anat": np.nan,
+                        "centroid_y_func_anat": np.nan,
                         "centroid_x_anat": np.nan,
                         "centroid_y_anat": np.nan,
                         "selected_anat_label": pd.NA,
@@ -2002,6 +2040,8 @@ def build_functional_roi_master_df(
                 "roi_idx": roi_idx,
                 "centroid_x_func": float(getattr(rr, "raw_cx", np.nan)),
                 "centroid_y_func": float(getattr(rr, "raw_cy", np.nan)),
+                "centroid_x_func_anat": float(getattr(rr, "anat_cx", np.nan)),
+                "centroid_y_func_anat": float(getattr(rr, "anat_cy", np.nan)),
                 "centroid_x_anat": np.nan,
                 "centroid_y_anat": np.nan,
                 "selected_anat_label": pd.NA,

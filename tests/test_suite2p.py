@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 
-from codeants_2pf_hcr.suite2p import Suite2pStageConfig, load_suite2p_stage
+from codeants_2pf_hcr.suite2p import Suite2pStageConfig, build_suite2p_all_roi_labels, load_suite2p_stage
 
 
 class Suite2pStageTests(unittest.TestCase):
@@ -56,6 +56,18 @@ class Suite2pStageTests(unittest.TestCase):
             self.assertTrue(np.allclose(dff[0], expected, atol=1e-6))
             self.assertEqual(result["df_sum"]["key"].tolist(), ["SUITE2P_ROOT", "SUITE2P_PLANE_GLOB", "N_PLANE_DIRS"])
             self.assertEqual(result["df_src"].loc[0, "status"], "loaded")
+
+    def test_build_all_roi_labels_includes_non_cell_stats(self) -> None:
+        stat = np.asarray(
+            [
+                {"ypix": np.asarray([0]), "xpix": np.asarray([0])},
+                {"ypix": np.asarray([2]), "xpix": np.asarray([3])},
+            ],
+            dtype=object,
+        )
+        labels = build_suite2p_all_roi_labels(stat, {"Ly": 4, "Lx": 5})
+        self.assertEqual(int(labels[0, 0]), 1)
+        self.assertEqual(int(labels[2, 3]), 2)
 
     def test_load_suite2p_stage_can_run_before_functional_reference_preprocessing(self) -> None:
         with TemporaryDirectory() as tmpdir:

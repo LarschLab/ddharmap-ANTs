@@ -27,9 +27,10 @@ def classify_stim_type(stype: str) -> str | None:
         return None
     tags: list[str] = []
     for part in parts:
-        if part.endswith("LB"):
+        token = re.split(r"[_\s]", part, maxsplit=1)[0]
+        if token.endswith("LB"):
             tags.append("B")
-        elif part.endswith("LC"):
+        elif token.endswith("LC"):
             tags.append("C")
         else:
             return None

@@ -18,6 +18,7 @@ import pandas as pd
 import tifffile
 
 from ..spatial import imread_any, norm01
+from ..stimulus import StimulusConfig, resolve_plane_stimulus_contexts
 
 
 _FISH_ID_RE = re.compile(r"^[A-Z][0-9]{3}_f[0-9]{2}$")
@@ -260,6 +261,257 @@ def render_functional_reference_artifacts(bundle: Mapping[str, Any]) -> plt.Figu
     return fig
 
 
+def load_early_response_timing_qc(
+    *,
+    fish_id: str,
+    fish_dir: str | Path,
+    diagnostic_root: str | Path,
+    scored_windows_path: str | Path,
+    rounding_tolerance_frames: float = 0.5,
+) -> dict[str, Any]:
+    """Load Q1 evidence via independent recorded and scoring-window paths.
+
+    The recorded events are re-resolved from raw session logs.  They are never
+    reconstructed from the scoring sidecar, so a shared timing defect remains
+    visible to the reviewer.
+    """
+    fish = _validate_fish_id(fish_id)
+    root = _path(diagnostic_root, label="early-response diagnostic root")
+    score_path = Path(scored_windows_path)
+    warnings: list[str] = []
+    source_path = root / "suite2p_stimulus_locked_sources_23b.csv"
+    source_df = pd.DataFrame()
+    if source_path.is_file():
+        source_path, source_df = _csv(source_path, label="early-response sources")
+        _validate_table_fish(source_df, fish, source_path)
+    else:
+        warnings.append(
+            "Persisted [23b] source metadata is missing; raw-log timing can only be "
+            "resolved when scored-window provenance supplies plane/session keys."
+        )
+    matrix_path = root / "suite2p_full_session_heatmap_matrix_23c.npy"
+    rows_path = root / "suite2p_full_session_heatmap_rows_23c.csv"
+    if matrix_path.is_file() and rows_path.is_file():
+        heatmap_matrix = np.load(matrix_path, allow_pickle=False)
+        _, heatmap_rows = _csv(rows_path, label="persisted full-session heatmap rows")
+    else:
+        heatmap_matrix = np.empty((0, 0), dtype=float)
+        heatmap_rows = pd.DataFrame()
+        warnings.append("Persisted full-session heatmap payload is missing; rerun [23c] to render independent recorded/scored overlays.")
+    if score_path.is_file():
+        score_path, scored_df = _csv(score_path, label="scored stimulus-window provenance")
+        _validate_table_fish(scored_df, fish, score_path)
+    else:
+        scored_df = pd.DataFrame()
+        warnings.append("Exact score-activity-bpi event windows are not persisted; rerun that writer before accepting timing alignment.")
+
+    if source_df.empty and not scored_df.empty:
+        fallback_columns = [column for column in ("fish_id", "plane_idx", "session_label") if column in scored_df]
+        source_df = scored_df.loc[:, fallback_columns].drop_duplicates().copy()
+        source_df["source_provenance"] = "score-window plane/session keys only; events resolved independently from raw logs"
+        warnings.append(
+            "Using score-window plane/session keys only because [23b] metadata is absent; "
+            "recorded events are still reloaded from raw logs."
+        )
+
+    plane_values = source_df.get("plane_idx", pd.Series(dtype=float))
+    plane_indices = pd.to_numeric(plane_values, errors="coerce").dropna().astype(int).unique().tolist()
+    contexts = (
+        resolve_plane_stimulus_contexts(
+            fish_dir=Path(fish_dir), fish_id=fish, plane_indices=plane_indices, config=StimulusConfig()
+        )
+        if plane_indices
+        else {}
+    )
+    recorded_rows: list[pd.DataFrame] = []
+    for plane_idx, context in contexts.items():
+        events = context.get("df_stim")
+        if not isinstance(events, pd.DataFrame) or events.empty:
+            warnings.append(f"No recorded stimulus events resolved for plane {plane_idx}.")
+            continue
+        frame = events.copy()
+        frame["plane_idx"] = int(plane_idx)
+        frame["session_label"] = str(context.get("session_label", ""))
+        frame["recorded_fps"] = pd.to_numeric(context.get("frame_rate", np.nan), errors="coerce")
+        frame["recorded_log_path"] = str(context.get("log_path", ""))
+        recorded_rows.append(frame)
+    recorded_df = pd.concat(recorded_rows, ignore_index=True) if recorded_rows else pd.DataFrame()
+    if not recorded_df.empty:
+        recorded_df["recorded_onset_frame"] = (pd.to_numeric(recorded_df["start"], errors="coerce") * recorded_df["recorded_fps"]).round().astype("Int64")
+        recorded_df["recorded_offset_frame"] = (pd.to_numeric(recorded_df["end"], errors="coerce") * recorded_df["recorded_fps"]).round().astype("Int64")
+    if not scored_df.empty and not recorded_df.empty:
+        keys = [key for key in ("plane_idx", "session_label", "block", "stim_idx", "stim_type") if key in scored_df and (key in recorded_df or key == "stim_type" and "type" in recorded_df)]
+        recorded_for_join = recorded_df.rename(columns={"type": "stim_type", "start": "recorded_log_onset_sec", "end": "recorded_log_offset_sec"})
+        keys = [key for key in keys if key in recorded_for_join]
+        timing_audit = scored_df.merge(
+            recorded_for_join[[*keys, "recorded_log_onset_sec", "recorded_log_offset_sec", "recorded_fps", "recorded_log_path"]],
+            on=keys, how="outer", indicator=True,
+        )
+        timing_audit["onset_delta_sec"] = pd.to_numeric(timing_audit.get("scored_onset_sec"), errors="coerce") - pd.to_numeric(timing_audit.get("recorded_log_onset_sec"), errors="coerce")
+        timing_audit["offset_delta_sec"] = pd.to_numeric(timing_audit.get("scored_offset_sec"), errors="coerce") - pd.to_numeric(timing_audit.get("recorded_log_offset_sec"), errors="coerce")
+        timing_audit["onset_delta_frames"] = timing_audit["onset_delta_sec"] * pd.to_numeric(timing_audit.get("recorded_fps"), errors="coerce")
+        timing_audit["offset_delta_frames"] = timing_audit["offset_delta_sec"] * pd.to_numeric(timing_audit.get("recorded_fps"), errors="coerce")
+        timing_audit["rounding_tolerance_frames"] = float(rounding_tolerance_frames)
+        timing_audit["event_key_status"] = np.where(timing_audit["_merge"] == "both", "matched", timing_audit["_merge"])
+        timing_audit["rounding_within_tolerance"] = (timing_audit[["onset_delta_frames", "offset_delta_frames"]].abs().max(axis=1) <= float(rounding_tolerance_frames))
+        if (timing_audit["event_key_status"] == "matched").any() and not timing_audit.loc[timing_audit["event_key_status"] == "matched", "rounding_within_tolerance"].all():
+            warnings.append("Recorded/scored onset or offset differs by more than the documented rounding tolerance.")
+        if (timing_audit["_merge"] != "both").any():
+            warnings.append("Recorded/scored event keys disagree; inspect unmatched rows before interpreting responses.")
+    else:
+        timing_audit = pd.DataFrame()
+    return {
+        "source_df": source_df,
+        "heatmap_matrix": heatmap_matrix,
+        "heatmap_rows": heatmap_rows,
+        "recorded_events": recorded_df,
+        "scored_windows": scored_df,
+        "timing_audit": timing_audit,
+        "warnings": tuple(warnings),
+        "heatmap_path": root / "suite2p_stimulus_locked_heatmaps_23b.png",
+        "traces_path": root / "suite2p_stimulus_locked_traces_23b.png",
+    }
+
+
+def build_early_response_qc_from_raw(*, fish_id: str, fish_dir: str | Path) -> dict[str, Any]:
+    """Rebuild the legacy [23c] review payload in memory from canonical inputs.
+
+    This is a read-only QC fallback for older runs which completed response/BPI
+    scoring but did not retain the separate [23b]/[23c] diagnostic files.  It
+    does not write a diagnostic, score, or canonical table.
+    """
+    fish = _validate_fish_id(fish_id)
+    resolved_fish_dir = _path(fish_dir, label="fish directory")
+    suite2p_root = resolved_fish_dir / "03_analysis" / "functional" / "suite2P"
+    from ..suite2p import (
+        Suite2pStimulusLockedDiagnosticConfig,
+        build_suite2p_stimulus_locked_diagnostic,
+        load_suite2p_stage,
+    )
+
+    loaded = load_suite2p_stage(
+        plane_refs=[], suite2p_root=suite2p_root, fish_id=fish,
+    )
+    diagnostic = build_suite2p_stimulus_locked_diagnostic(
+        fish_dir=resolved_fish_dir,
+        fish_id=fish,
+        suite2p_by_ref_idx=loaded["suite2p_by_ref_idx"],
+        config=Suite2pStimulusLockedDiagnosticConfig(save_figures=False, show_figures=False, verbose=False),
+    )
+    return {
+        "source_df": diagnostic["source_df"],
+        "heatmap_matrix": diagnostic["full_session_heatmap_matrix"],
+        "heatmap_rows": diagnostic["full_session_heatmap_rows"],
+        "stimulus_spans": diagnostic["full_session_stimulus_spans"],
+        "block_starts": diagnostic["full_session_block_starts"],
+        "trace_df": diagnostic["trace_df"],
+        "tvec": diagnostic["tvec"],
+        "stim_order": diagnostic["stim_order"],
+        "session_colors": diagnostic["session_colors"],
+        "duration_by_stim": diagnostic["duration_by_stim"],
+        "suite2p_sources": loaded["df_src"],
+        "warnings": (
+            "Legacy [23b]/[23c] diagnostic files are absent; this view was rebuilt in memory "
+            "from the canonical Suite2p arrays and raw stimulus logs without writing outputs.",
+        ),
+    }
+
+
+def render_early_response_timing_audit(bundle: Mapping[str, Any]) -> plt.Figure:
+    """Render the Q1 event-level recorded-versus-scored timing audit."""
+    audit = bundle.get("timing_audit")
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.2))
+    if not isinstance(audit, pd.DataFrame) or audit.empty:
+        axes[0].text(0.5, 0.5, "No persisted scoring-window provenance", ha="center", va="center")
+        axes[1].axis("off")
+    else:
+        matched = audit[audit["event_key_status"] == "matched"].copy()
+        colors = pd.Categorical(matched.get("session_label", pd.Series(dtype=str))).codes
+        axes[0].scatter(matched["recorded_log_onset_sec"], matched["scored_onset_sec"], c=colors, cmap="tab10", s=30)
+        finite = pd.concat([matched["recorded_log_onset_sec"], matched["scored_onset_sec"]]).dropna()
+        if not finite.empty:
+            axes[0].plot([finite.min(), finite.max()], [finite.min(), finite.max()], "k--", linewidth=0.8, label="recorded onset")
+        axes[0].set(xlabel="Recorded onset (s)", ylabel="Scored-window onset (s)", title="Recorded and scored event timing")
+        axes[0].legend(frameon=False)
+        axes[1].axhline(0, color="black", linewidth=0.8)
+        axes[1].scatter(np.arange(len(matched)), matched["onset_delta_frames"], c=colors, cmap="tab10", s=30)
+        axes[1].set(xlabel="Matched event", ylabel="Scored − recorded onset (frames)", title="Analysis delay and rounding are explicit")
+    fig.suptitle("Early response timing audit: raw logs are loaded independently of scoring provenance")
+    fig.tight_layout()
+    return fig
+
+
+def render_early_response_full_session_heatmap(bundle: Mapping[str, Any]) -> plt.Figure:
+    """Render persisted Suite2p heatmap with independent recorded/scored spans."""
+    matrix = np.asarray(bundle.get("heatmap_matrix"), dtype=float)
+    rows = bundle.get("heatmap_rows")
+    fig, ax = plt.subplots(figsize=(12.5, max(4.0, 2.6 + 0.018 * len(rows))))
+    if matrix.ndim != 2 or matrix.size == 0 or not isinstance(rows, pd.DataFrame) or rows.empty:
+        ax.text(0.5, 0.5, "Persisted heatmap payload unavailable", transform=ax.transAxes, ha="center", va="center")
+        return fig
+    stimulus_spans = bundle.get("stimulus_spans")
+    block_starts = bundle.get("block_starts")
+    if isinstance(stimulus_spans, pd.DataFrame) and isinstance(block_starts, pd.DataFrame):
+        from .analysis import render_suite2p_full_session_heatmap
+
+        return render_suite2p_full_session_heatmap(
+            matrix=matrix,
+            row_df=rows,
+            stimulus_spans=stimulus_spans,
+            block_starts=block_starts,
+            session_colors={},
+        )
+    cmap = plt.get_cmap("gray_r").copy(); cmap.set_bad("white")
+    ax.imshow(np.ma.masked_invalid(matrix), aspect="auto", interpolation="nearest", cmap=cmap,
+              vmin=0.0, vmax=5.0, extent=[0, matrix.shape[1], len(rows), 0])
+    row_ranges = rows.reset_index().groupby("plane_idx", sort=False)["index"].agg(["min", "max"])
+    for frame, color, label in ((bundle.get("recorded_events"), "#2ca25f", "recorded window"), (bundle.get("scored_windows"), "#d7301f", "scored window")):
+        if not isinstance(frame, pd.DataFrame) or frame.empty or "plane_idx" not in frame:
+            continue
+        starts = "recorded_onset_frame" if label.startswith("recorded") else "scored_onset_frame"
+        ends = "recorded_offset_frame" if label.startswith("recorded") else "scored_offset_frame"
+        for event in frame.itertuples(index=False):
+            plane = getattr(event, "plane_idx", None)
+            if plane not in row_ranges.index:
+                continue
+            start, end = getattr(event, starts, np.nan), getattr(event, ends, np.nan)
+            if pd.isna(start) or pd.isna(end) or end <= start:
+                continue
+            bounds = row_ranges.loc[plane]
+            ax.axvspan(float(start), float(end), ymin=float(bounds["min"]) / len(rows), ymax=float(bounds["max"] + 1) / len(rows), color=color, alpha=0.22, label=label if not ax.get_legend_handles_labels()[1].count(label) else None)
+    ax.set(xlabel="Frame", ylabel="Suite2p cell", title="Full-session activity with independent recorded and scored windows")
+    ax.legend(frameon=False, loc="lower right")
+    fig.tight_layout()
+    return fig
+
+
+def render_stimulus_type_mean_dff(summary_path: str | Path, *, fish_id: str) -> plt.Figure:
+    """Render legacy-[23c] all-Suite2p-cell mean post-stimulus dF/F by type."""
+    path, summary = _csv(summary_path, label="stimulus-locked response summary")
+    _validate_table_fish(summary, _validate_fish_id(fish_id), path)
+    return render_stimulus_type_mean_dff_frame(summary, fish_id=fish_id)
+
+
+def render_stimulus_type_mean_dff_frame(summary: pd.DataFrame, *, fish_id: str) -> plt.Figure:
+    """Render mean post-stimulus dF/F from a persisted or in-memory [23c] table."""
+    fish = _validate_fish_id(fish_id)
+    fig, ax = plt.subplots(figsize=(max(6.0, 1.2 * summary.get("stim_type", pd.Series()).nunique()), 4.5))
+    if not {"stim_type", "mean_dff_post"}.issubset(summary.columns):
+        ax.text(0.5, 0.5, "Persisted mean dF/F is unavailable; rerun [23c] with current code.", ha="center", va="center", transform=ax.transAxes)
+        ax.set_axis_off()
+        return fig
+    grouped = summary.groupby("stim_type", sort=True)["mean_dff_post"].agg(["mean", "sem", "count"]).reset_index()
+    ax.bar(grouped["stim_type"], grouped["mean"], yerr=grouped["sem"].fillna(0), color="#4c78a8", capsize=3)
+    for index, row in grouped.iterrows():
+        ax.text(index, row["mean"], f"n={int(row['count'])}", ha="center", va="bottom", fontsize=8)
+    ax.axhline(0, color="#444444", linewidth=0.8)
+    ax.set(xlabel="Stimulus type", ylabel="Mean post-stimulus dF/F", title="All Suite2p cells; per-cell stimulus means")
+    ax.tick_params(axis="x", rotation=30)
+    fig.suptitle(f"{fish}: mean dF/F by stimulus type", fontweight="bold")
+    fig.tight_layout()
+    return fig
+
+
 def load_functional_registration_qc(
     *,
     fish_id: str,
@@ -333,7 +585,11 @@ def load_functional_registration_qc(
     )
     qc_pngs = {name: _path(qc_dir / "qa" / name, label=f"registration QC PNG {name}") for name in qc_png_names}
     anatomy_label_dir = _path(transformed_dir / "functional" / "anatomy", label="anatomy-space transformed ROI labels")
-    transformed_labels = tuple(sorted(anatomy_label_dir.glob("*.tif"))) + tuple(sorted(anatomy_label_dir.glob("*.tiff")))
+    transformed_labels = tuple(
+        path
+        for path in (tuple(sorted(anatomy_label_dir.glob("*.tif"))) + tuple(sorted(anatomy_label_dir.glob("*.tiff"))))
+        if not path.name.startswith("._")
+    )
     if not transformed_labels:
         raise FileNotFoundError(f"No anatomy-space transformed ROI label TIFFs found: {anatomy_label_dir}")
 
@@ -579,10 +835,15 @@ def render_functional_registration_artifacts(
 
 
 __all__ = [
+    "build_early_response_qc_from_raw",
     "functional_registration_plane_review",
     "load_functional_reference_drift_qc",
     "load_functional_registration_qc",
     "render_functional_reference_drift_summary",
+    "render_early_response_timing_audit",
+    "render_early_response_full_session_heatmap",
+    "render_stimulus_type_mean_dff",
+    "render_stimulus_type_mean_dff_frame",
     "render_functional_reference_artifacts",
     "render_functional_registration_plane",
     "render_functional_registration_all_planes",

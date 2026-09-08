@@ -1,5 +1,14 @@
 # Agentic Workflow Roadmap
 
+The dedicated single-fish QC implementation backlog is maintained in
+`single-fish-qc-suite-todo.md`. It records the required legacy-cell scientific
+checks, including early stimulus timing, midline review/automation, molecular
+fate categories, mask-size distributions, and activity/BPI diagnostics.
+The 2026-09-02 Johannes review adds an interpretation priority within that
+register: direct stimulus-resolved response views and molecular-functional tile
+QC precede BPI/AUC interpretation; laterality remains gated by accepted
+midline provenance.
+
 **Purpose:** living status board for the mixed agentic workflow migration.
 
 **Use this file when:** starting or resuming work on the staged single-fish pipeline, agent-facing commands, manifests, provenance, validation, or notebook-to-pipeline migration.
@@ -22,6 +31,20 @@ The immediate priority is to harden the durable workflow surface before broad be
 4. Add contract tests.
 5. Use the existing `L395_f11` staged outputs as the first baseline/control for parity checks before enabling any staged output writer.
 
+## Latest L765_f04 Read-Only Inventory (2026-09-01)
+
+- Audited `/Volumes/dataDrive/dataProcessing/2p_processing/L765_f04` and the approved isolated root `.../_staged_pipeline_runs/20260803T112035Z_functional_registration_ants_no_fallback/L765_f04` without writing data or manifests.
+- Retain `01_raw/` (41 GB) and `02_reg/` (60 GB) as canonical/required inputs and registration provenance. The current spatial manifest lives under `02_reg/00_preprocessing/`; neither root is a cleanup candidate.
+- The staged root is 101 MB and has current manifests for functional registration, functional ROI transformation, registration QC, and ROI/anatomy geometry. It has no HCR-registration, identity, activity/BPI, export, report, or figure stage outputs.
+- Confirmed byte-identical staged copies of all ten ANTs matrices, twenty in-plane warped references, NCC caches/comparison CSVs, registration plane references, and registration-QC CSV/PNGs. The corresponding fish-local locations remain required legacy/current consumers until the numbered-path compatibility contract and an external-consumer review are complete.
+- Same-named transformed ROI-label and native Suite2p-label TIFFs differ between fish-local and staged locations; they are not safe duplicate candidates. `segmentation/` and `hcr_in_func/` are empty placeholders.
+- Current software gate: classify each path's package, notebook, CLI, and external consumers and define compatibility reads. No promotion, move, or deletion is authorized.
+
+## Latest L765_f04 Explicit Ex-Vivo HCR Bridge (2026-09-01)
+
+- `register-hcr-to-anatomy --recompute-direct-ants` now defaults to an explicit per-mask ex-vivo bridge rather than the legacy direct rbest-to-2P discovery. It selects direct rn→ex-vivo when available and otherwise rn→rbest→ex-vivo, then composes ex-vivo→2P before the unchanged HCR/anatomy matcher.
+- In isolated Linnaeus staging, the selector reproduced all four available accepted L765_f04 rbest/r2 metadata transform lists exactly. The accepted excluded r3 `gad2` chain remains unavailable because its r3→rbest transforms are absent from both mounted roots; the new writer fails closed and did not recompute masks.
+
 ## Working
 
 - Current workflow branch is `codex/agentic-workflow-hybrid`; this branch may be intentionally dirty while staged pipeline migration work is in progress.
@@ -40,7 +63,7 @@ The immediate priority is to harden the durable workflow surface before broad be
 - `audit-hcr-activity-replay` is a read-only replay audit for HCR-centric `[50]` identified-cell activity tables with local and `L395_f11` real-data validation. It loads staged `plane_refs_summary.json`, Suite2p, anatomy labels, staged HCR final pairs, and a response-aware ROI master used only as lookup, overlays selected accepted `ants_rigid_affine` transformlists when available, checks AntsPyx (`ants`) availability/transform coverage, runs a read-only transform-variant scoreboard for selected ANTs plus persisted affine CSV variants, then runs `matching.build_hcr_activity_tables` plus `matching.finalize_hcr_activity_export_tables` in memory and compares row/key counts to accepted HCR outputs without writing staged HCR CSVs or enabling promotion.
 - `assign-hcr-identity` is now a package-owned hybrid writer stage with focused local and `L395_f11` real-data validation. It requires staged ROI/anatomy geometry, staged functional/anatomy plane refs, Suite2p, anatomy labels, and staged HCR/anatomy artifacts, recomputes `anatomy_identity_lookup.csv` from staged HCR final-pair CSVs using the accepted gene order, recomputes `functional_roi_activity_identity.csv` by attaching that lookup to staged ROI/anatomy geometry while carrying through trace-quality/response fields, recomputes the HCR-centric activity/status/candidate CSV family through the label-first replay, regenerates `hcr_activity_status_summary.csv`, refuses overwrite without `--force-recompute`, and checks geometry-before-identity plus accepted HCR final-pair and accepted-control parity.
 - The response-aware HCR activity export finalizer from notebook `[50]` is package-owned as `matching.finalize_hcr_activity_export_tables` and is wired into both `audit-hcr-activity-replay` and `assign-hcr-identity`. On `L395_f11`, the selected-ANTs replay has exact accepted-control row and candidate-key parity for `hcr_activity_status.csv`, `conf_to_func_pairs_raw.csv`, `conf_to_func_pairs.csv`, and `hcr_func_candidates.csv`; byte differences remain warning-only for recomputed staged CSVs.
-- `score-activity-bpi` is now a package-owned writer stage. It defaults to the staged `assign-hcr-identity` ROI master, accepts an explicit `--identity-input-path` for controlled validation/bootstrap, refuses to overwrite existing staged score CSVs without `--force-recompute`, and hard-codes `precomputed_scored_bpi_df=None`.
+- `score-activity-bpi` is now a package-owned writer stage. It defaults to frozen staged ROI/anatomy geometry plus Suite2p traces and functional experiment logs, accepts an explicit `--geometry-input-path` for controlled validation/bootstrap, refuses to overwrite existing staged score CSVs without `--force-recompute`, and hard-codes `precomputed_scored_bpi_df=None`.
 - `export-canonical-tables` is now a package-owned writer stage with focused local and `L395_f11` real-data validation. It assembles the 8 canonical registration CSVs from staged score outputs for ROI/BPI tables and staged or explicit HCR/identity roots for HCR-centric tables, and refuses to overwrite existing staged canonical CSVs without `--force-recompute`.
 - `make-qa-report` is now a package-owned generated report writer stage with focused local and `L395_f11` real-data validation. It requires staged canonical export CSV inputs, writes `qa_report.md`, `qa_report.html`, `qa_report.pdf`, and `qa_report_summary.json` under `make-qa-report/`, includes registration/matching QA tables from staged functional/anatomy overlay and ROI/anatomy geometry CSVs, a biologist review guide with concrete review questions/actions, a manual review checklist, and inline previews for existing QA/figure PNG artifacts, and refuses overwrite without `--force-recompute`.
 - `make-figures` is now a package-owned render writer stage. It requires staged canonical export CSV inputs plus declared `[56i]` AUC CSV inputs, renders `compound_50j_56i_unified.*`, `bpi_all_pairs.*`, `per_gene_stimulus_trace_with_hcr_status_56h.*`, `single_fish_50l_responsive_identity_donut.*`, and `single_fish_hcr_anatomy_coexpression_summary.*`, and refuses overwrite without `--force-recompute`.

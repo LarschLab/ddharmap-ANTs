@@ -26,6 +26,7 @@ class HcrDirectWarpResult:
     transformlist: tuple[str, ...]
     whichtoinvert: tuple[bool, ...]
     max_label: int
+    route: str
 
 
 def _parse_round_from_name(path: Path | str) -> int | None:
@@ -157,6 +158,108 @@ def build_direct_ants_hcr_transform_chain(
     return tuple(path for path in chain if path is not None)
 
 
+def _is_rbest_mask(path: Path | str) -> bool:
+    return bool(re.search(r"(^|[_-])rbest(?=([_.-]|$))", Path(path).name.lower()))
+
+
+def _bridge_transform_pair(
+    transform_dir: Path,
+    *,
+    source_tokens: tuple[str, ...],
+    target_tag: str,
+) -> tuple[Path, Path] | None:
+    if not transform_dir.exists():
+        return None
+    target_aliases = {
+        "to_2p": ("to_2p", "in_2p", "to2p"),
+        "to_exvivo": ("to_exvivo", "in_exvivo", "toexvivo"),
+        "to_rbest": ("to_rbest", "in_rbest"),
+    }.get(target_tag, (target_tag,))
+    source_pattern = "|".join(re.escape(token) for token in source_tokens)
+
+    def find_one(suffix: str) -> Path | None:
+        candidates = [
+            path
+            for path in sorted(transform_dir.glob(f"*{suffix}"))
+            if re.search(rf"(^|[_-])(?:{source_pattern})(?=([_.-]|$))", path.name.lower())
+            and any(alias in path.name.lower() for alias in target_aliases)
+        ]
+        return candidates[0] if len(candidates) == 1 else None
+
+    warp = find_one("1Warp.nii.gz")
+    affine = find_one("0GenericAffine.mat")
+    return None if warp is None or affine is None else (warp, affine)
+
+
+def _build_ex_vivo_bridge_hcr_transform_chain(
+    *,
+    mask_path: Path,
+    round_idx: int | None,
+    exvivo_to_2p_transform_dir: Path,
+    rbest_to_exvivo_transform_dir: Path,
+    rn_to_exvivo_transform_dir: Path,
+    rn_to_rbest_transform_dir: Path,
+) -> tuple[tuple[Path, ...], str]:
+    exvivo_to_2p = _bridge_transform_pair(
+        exvivo_to_2p_transform_dir,
+        source_tokens=("exvivo", "ex_vivo", "ex-vivo"),
+        target_tag="to_2p",
+    )
+    if exvivo_to_2p is None:
+        raise FileNotFoundError(f"Missing ex vivo->2P transform pair: {exvivo_to_2p_transform_dir}")
+    rbest_to_exvivo = _bridge_transform_pair(
+        rbest_to_exvivo_transform_dir,
+        source_tokens=("rbest",),
+        target_tag="to_exvivo",
+    )
+    if _is_rbest_mask(mask_path):
+        if rbest_to_exvivo is None:
+            raise FileNotFoundError(f"Missing rbest->ex vivo transform pair: {rbest_to_exvivo_transform_dir}")
+        return (*exvivo_to_2p, *rbest_to_exvivo), "rbest_to_exvivo_then_exvivo_to_2p"
+    if round_idx is None:
+        raise ValueError(f"Cannot determine HCR round from mask path: {mask_path}")
+    rn_to_exvivo = _bridge_transform_pair(
+        rn_to_exvivo_transform_dir,
+        source_tokens=(f"r{round_idx}", f"round{round_idx}"),
+        target_tag="to_exvivo",
+    )
+    if rn_to_exvivo is not None:
+        return (*exvivo_to_2p, *rn_to_exvivo), "direct_rn_to_exvivo_then_exvivo_to_2p"
+    rn_to_rbest = _bridge_transform_pair(
+        rn_to_rbest_transform_dir,
+        source_tokens=(f"r{round_idx}", f"round{round_idx}"),
+        target_tag="to_rbest",
+    )
+    if rbest_to_exvivo is None or rn_to_rbest is None:
+        raise FileNotFoundError(
+            "Missing bridge transforms for "
+            f"{mask_path.name}: direct rn->ex vivo={rn_to_exvivo_transform_dir}; "
+            f"rn->rbest={rn_to_rbest_transform_dir}; rbest->ex vivo={rbest_to_exvivo_transform_dir}"
+        )
+    return (*exvivo_to_2p, *rbest_to_exvivo, *rn_to_rbest), "rn_via_rbest_to_exvivo_then_exvivo_to_2p"
+
+
+def build_ex_vivo_bridge_hcr_transform_chain(
+    *,
+    mask_path: Path,
+    round_idx: int | None,
+    exvivo_to_2p_transform_dir: Path,
+    rbest_to_exvivo_transform_dir: Path,
+    rn_to_exvivo_transform_dir: Path,
+    rn_to_rbest_transform_dir: Path,
+) -> tuple[Path, ...]:
+    """Build a target-to-source ANTs chain through ex vivo anatomy."""
+    chain, _route = _build_ex_vivo_bridge_hcr_transform_chain(
+        mask_path=mask_path,
+        round_idx=round_idx,
+        exvivo_to_2p_transform_dir=exvivo_to_2p_transform_dir,
+        rbest_to_exvivo_transform_dir=rbest_to_exvivo_transform_dir,
+        rn_to_exvivo_transform_dir=rn_to_exvivo_transform_dir,
+        rn_to_rbest_transform_dir=rn_to_rbest_transform_dir,
+    )
+    return chain
+
+
 def _ants_clone_geometry(dst_img: Any, like_img: Any) -> Any:
     dst_img.set_spacing(like_img.spacing)
     dst_img.set_origin(like_img.origin)
@@ -275,6 +378,10 @@ def run_direct_ants_hcr_label_warp(
     best_round_idx: int,
     rbest_to_2p_transform_dir: Path,
     rn_to_rbest_transform_dir: Path,
+    warp_route: str = "legacy_direct",
+    exvivo_to_2p_transform_dir: Path | None = None,
+    rbest_to_exvivo_transform_dir: Path | None = None,
+    rn_to_exvivo_transform_dir: Path | None = None,
     min_component_voxels: int = 200,
 ) -> tuple[HcrDirectWarpResult, ...]:
     import numpy as np
@@ -282,9 +389,11 @@ def run_direct_ants_hcr_label_warp(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     results: list[HcrDirectWarpResult] = []
+    if warp_route not in {"legacy_direct", "exvivo_bridge"}:
+        raise ValueError(f"Unknown HCR warp route: {warp_route!r}")
     for mask_path in mask_paths:
         round_idx = _parse_round_from_name(mask_path)
-        if round_idx is None:
+        if round_idx is None and not _is_rbest_mask(mask_path):
             continue
         labels_zyx = tifffile.imread(mask_path)
         if np.asarray(labels_zyx).ndim != 3:
@@ -298,12 +407,26 @@ def run_direct_ants_hcr_label_warp(
             moving_intensity = _find_intensity_for_round(preproc_dir, round_idx)
         if moving_intensity is None or not moving_intensity.exists():
             raise FileNotFoundError(f"Missing moving HCR intensity for {mask_path.name} round r{round_idx}")
-        transform_chain = build_direct_ants_hcr_transform_chain(
-            round_idx=round_idx,
-            best_round_idx=best_round_idx,
-            rbest_to_2p_transform_dir=rbest_to_2p_transform_dir,
-            rn_to_rbest_transform_dir=rn_to_rbest_transform_dir,
-        )
+        if warp_route == "exvivo_bridge":
+            if any(path is None for path in (exvivo_to_2p_transform_dir, rbest_to_exvivo_transform_dir, rn_to_exvivo_transform_dir)):
+                raise ValueError("Ex-vivo bridge route requires exvivo->2P, rbest->ex vivo, and rn->ex vivo transform directories")
+            transform_chain, route = _build_ex_vivo_bridge_hcr_transform_chain(
+                mask_path=mask_path,
+                round_idx=round_idx,
+                exvivo_to_2p_transform_dir=Path(exvivo_to_2p_transform_dir),
+                rbest_to_exvivo_transform_dir=Path(rbest_to_exvivo_transform_dir),
+                rn_to_exvivo_transform_dir=Path(rn_to_exvivo_transform_dir),
+                rn_to_rbest_transform_dir=rn_to_rbest_transform_dir,
+            )
+        else:
+            effective_round = best_round_idx if round_idx is None else round_idx
+            transform_chain = build_direct_ants_hcr_transform_chain(
+                round_idx=effective_round,
+                best_round_idx=best_round_idx,
+                rbest_to_2p_transform_dir=rbest_to_2p_transform_dir,
+                rn_to_rbest_transform_dir=rn_to_rbest_transform_dir,
+            )
+            route = "legacy_direct_to_2p"
         warped_zyx, fixed_img = _warp_zyx_labels_with_ants(
             labels_zyx=filtered_labels_zyx,
             moving_intensity_path=moving_intensity,
@@ -318,8 +441,9 @@ def run_direct_ants_hcr_label_warp(
         metadata = {
             "round": int(round_idx),
             "mask": str(mask_path),
-            "method": "ants_direct_to_2p",
+            "method": "ants_same_fish_labels_to_2p",
             "output_space": "2p",
+            "route": route,
             "moving_intensity": str(moving_intensity),
             "fixed_intensity": str(anatomy_intensity_path),
             "transformlist": [str(path) for path in transform_chain],
@@ -333,11 +457,12 @@ def run_direct_ants_hcr_label_warp(
                 mask_path=str(mask_path),
                 output_label_path=str(label_path),
                 output_metadata_path=str(metadata_path),
-                round_idx=int(round_idx),
+                round_idx=int(best_round_idx if round_idx is None else round_idx),
                 moving_intensity_path=str(moving_intensity),
                 transformlist=tuple(str(path) for path in transform_chain),
                 whichtoinvert=tuple(False for _ in transform_chain),
                 max_label=max_label,
+                route=route,
             )
         )
     return tuple(results)
@@ -367,6 +492,7 @@ def run_hcr_external_bigwarp_intensity_stage(*, env: dict[str, Any] | None = Non
 __all__ = [
     "HcrDirectWarpResult",
     "build_direct_ants_hcr_transform_chain",
+    "build_ex_vivo_bridge_hcr_transform_chain",
     "run_direct_ants_hcr_label_warp",
     "run_single_fish_cell_38_stage",
     "run_single_fish_cell_40_stage",

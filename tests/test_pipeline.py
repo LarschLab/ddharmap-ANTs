@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import pandas as pd
 
 from codeants_2pf_hcr.pipeline import (
     GRANULAR_PREPROCESSING_STAGE_NAMES,
@@ -1289,8 +1290,11 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     )
     assert qc_manifest.status == "pass"
     qc_dir = functional_registration_qc_root(pipeline_paths) / "qa"
-    assert len(tuple(qc_dir.glob("*.png"))) == 4
-    assert len(tuple(qc_dir.glob("*.csv"))) == 4
+    assert len(tuple(qc_dir.glob("*.png"))) == 5
+    assert (qc_dir / "functional_automatic_midline_proposals.png").exists()
+    automatic_midlines = pd.read_csv(qc_dir / "functional_automatic_midline_proposals.csv")
+    assert automatic_midlines["requires_manual_acceptance"].tolist() == [True]
+    assert len(tuple(qc_dir.glob("*.csv"))) == 5
 
 
 def test_register_functional_to_anatomy_stage_can_limit_reference_planes(tmp_path: Path) -> None:
@@ -1705,6 +1709,7 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
         source_root=source_root,
         force_recompute=True,
         recompute_direct_ants=True,
+        hcr_warp_route="legacy_direct",
     )
 
     out_root = hcr_to_anatomy_registration_root(resolve_pipeline_paths(config)) / "confocal" / "aligned"
@@ -1713,7 +1718,8 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_matches.csv").exists()
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_review.csv").exists()
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_final_pairs.csv").exists()
-    assert manifest.parameters["hcr_recompute_mode"] == "direct_ants_label_warp_and_match_tables"
+    assert manifest.parameters["hcr_recompute_mode"] == "legacy_direct_ants_label_warp_and_match_tables"
+    assert manifest.parameters["hcr_warp_route"] == "legacy_direct"
     assert manifest.parameters["recompute_direct_ants"] is True
     assert manifest.parameters["direct_ants_warp_result_count"] == 1
     assert manifest.parameters["direct_ants_filter_stats_overlay_count"] == 0
@@ -2855,6 +2861,37 @@ def test_downstream_stage_manifests_are_read_only_and_pass_when_outputs_exist(tm
     assert all(manifest.status == "pass" for manifest in manifests)
     assert all(manifest.outputs for manifest in manifests)
     assert all(any(check.label.startswith("required output exists") for check in manifest.checks) for manifest in manifests)
+
+
+def test_downstream_score_activity_manifest_allows_missing_optional_timing_provenance(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_staged_outputs(fish_dir)
+
+    manifest = build_single_fish_downstream_stage_manifest(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "score-activity-bpi",
+    )
+
+    timing_output = next(
+        output for output in manifest.outputs if output.label == "scored stimulus-window provenance"
+    )
+    assert timing_output.required is False
+    assert timing_output.exists is False
+    assert manifest.status == "pass"
+    assert not any(
+        check.label == "required output exists: scored stimulus-window provenance"
+        for check in manifest.checks
+    )
+    comparison = compare_single_fish_staged_outputs(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        "score-activity-bpi",
+    )
+    assert comparison["status"] == "pass"
+    checks = comparison["comparisons"][0]["manifest"]["checks"]
+    assert not any(
+        check["label"] == "comparison output exists: scored stimulus-window provenance"
+        for check in checks
+    )
 
 
 def test_downstream_stage_manifest_fails_missing_required_stage_outputs(tmp_path: Path) -> None:
@@ -4176,7 +4213,7 @@ def test_score_activity_bpi_recompute_audit_compares_mocked_real_recompute(tmp_p
     )
     after = sorted(path.relative_to(tmp_path) for path in tmp_path.rglob("*"))
     assert before == after
-    assert manifest.status == "pass"
+    assert manifest.status == "pass", manifest.to_dict()
     assert calls
     assert calls[0]["precomputed_scored_bpi_df"] is None
     assert calls[0]["suite2p_root"] == fish_dir / "03_analysis" / "functional" / "suite2P"
@@ -4190,7 +4227,7 @@ def test_score_activity_bpi_recompute_audit_compares_mocked_real_recompute(tmp_p
     )
 
 
-def test_score_activity_bpi_writer_requires_staged_identity_by_default(tmp_path: Path) -> None:
+def test_score_activity_bpi_writer_requires_staged_geometry_by_default(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     output_root = tmp_path / "staged-output-root"
     manifest = run_single_fish_score_activity_bpi_stage(
@@ -4204,8 +4241,8 @@ def test_score_activity_bpi_writer_requires_staged_identity_by_default(tmp_path:
     assert manifest.status == "fail"
     assert manifest.dry_run is False
     assert manifest.parameters is not None
-    assert manifest.parameters["identity_input_is_explicit"] is False
-    assert any("assign-hcr-identity" in error for error in manifest.errors)
+    assert manifest.parameters["geometry_input_is_explicit"] is False
+    assert any("match-roi-to-anatomy" in error for error in manifest.errors)
     assert not output_root.exists()
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_outputs").exists()
 
@@ -4214,12 +4251,16 @@ def test_score_activity_bpi_writer_writes_recomputed_tables_to_custom_pipeline_r
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    import numpy as np
     import pandas as pd
 
     fish_dir = _make_minimal_fish(tmp_path)
     registration_dir = fish_dir / "03_analysis" / "functional" / "registration"
-    identity_path = registration_dir / "functional_roi_activity_identity.csv"
-    _write_recompute_identity_csv(identity_path, [_roi_identity_row("1")])
+    geometry_path = registration_dir / "functional_roi_anatomy_matches.csv"
+    _write_recompute_identity_csv(geometry_path, [_roi_identity_row("1")])
+    suite2p_plane = fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0"
+    suite2p_plane.mkdir(parents=True, exist_ok=True)
+    np.save(suite2p_plane / "F.npy", np.zeros((1, 8), dtype=np.float32))
     output_root = tmp_path / "staged-output-root"
     calls: list[dict[str, object]] = []
 
@@ -4259,6 +4300,11 @@ def test_score_activity_bpi_writer_writes_recomputed_tables_to_custom_pipeline_r
         }
 
     monkeypatch.setattr("codeants_2pf_hcr.activity.build_response_bpi_tables", fake_build_response_bpi_tables)
+    monkeypatch.setattr(
+        "codeants_2pf_hcr.pipeline._build_activity_detail_from_geometry",
+        lambda **_: (pd.read_csv(geometry_path), {}),
+    )
+    monkeypatch.setattr("codeants_2pf_hcr.pipeline._build_staged_comparison_checks", lambda *args, **kwargs: [])
     manifest = run_single_fish_score_activity_bpi_stage(
         SingleFishPipelineConfig(
             fish_id=fish_dir.name,
@@ -4266,7 +4312,7 @@ def test_score_activity_bpi_writer_writes_recomputed_tables_to_custom_pipeline_r
             pipeline_root=output_root,
             strict=True,
         ),
-        identity_input_path=identity_path,
+        geometry_input_path=geometry_path,
     )
     score_dir = output_root / "score-activity-bpi" / "registration"
     assert manifest.status == "pass"
@@ -4276,6 +4322,7 @@ def test_score_activity_bpi_writer_writes_recomputed_tables_to_custom_pipeline_r
     assert (score_dir / "functional_roi_activity_identity.csv").exists()
     assert (score_dir / "functional_roi_activity_bpi_cells.csv").exists()
     assert (score_dir / "functional_roi_activity_bpi_summary.csv").exists()
+    assert (score_dir / "scored_stimulus_windows.csv").exists()
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_outputs").exists()
     payload = (score_dir / "functional_roi_activity_bpi_cells.csv").read_text()
     assert "bout-responsive" in payload
@@ -4287,8 +4334,8 @@ def test_score_activity_bpi_writer_writes_recomputed_tables_to_custom_pipeline_r
 
 def test_score_activity_bpi_writer_refuses_existing_outputs_without_force(tmp_path: Path, monkeypatch) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
-    identity_path = fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_activity_identity.csv"
-    _write_recompute_identity_csv(identity_path, [_roi_identity_row("1")])
+    geometry_path = fish_dir / "03_analysis" / "functional" / "registration" / "functional_roi_anatomy_matches.csv"
+    _write_recompute_identity_csv(geometry_path, [_roi_identity_row("1")])
     output_root = tmp_path / "staged-output-root"
     existing = output_root / "score-activity-bpi" / "registration" / "functional_roi_activity_identity.csv"
     existing.parent.mkdir(parents=True)
@@ -4300,7 +4347,7 @@ def test_score_activity_bpi_writer_refuses_existing_outputs_without_force(tmp_pa
     monkeypatch.setattr("codeants_2pf_hcr.activity.build_response_bpi_tables", fail_if_called)
     manifest = run_single_fish_score_activity_bpi_stage(
         SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, pipeline_root=output_root),
-        identity_input_path=identity_path,
+        geometry_input_path=geometry_path,
     )
     assert manifest.status == "fail"
     assert existing.read_text() == "sentinel\n"

@@ -1,5 +1,7 @@
 import unittest
 import os
+import hashlib
+import json
 from tempfile import TemporaryDirectory
 from pathlib import Path
 
@@ -20,11 +22,89 @@ from codeants_2pf_hcr.plots.analysis import (
     render_single_fish_50l_composite,
     render_single_fish_50l_gene_auc_panel,
     render_single_fish_50l_global_auc_panel,
+    render_accepted_global_laterality_auc_qc,
 )
 from codeants_2pf_hcr.plots.qa import render_single_fish_hcr_anatomy_coexpression_summary
 
 
 class PlotsAnalysisTests(unittest.TestCase):
+    def test_q7_global_auc_blocks_without_accepted_sidecar(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            master = root / "master.csv"
+            pd.DataFrame({"fish_id": ["fishA"], "plane_idx": [0]}).to_csv(master, index=False)
+            result = render_accepted_global_laterality_auc_qc(
+                fish_id="fishA", master_roi_csv=master, points_csv=root / "points.csv",
+                counts_csv=root / "counts.csv", accepted_midline_sidecar=root / "missing.json",
+            )
+            try:
+                self.assertEqual(result["status"], "blocked")
+                self.assertIn("Missing persisted prerequisite", result["reason"])
+            finally:
+                plt.close(result["fig"])
+
+    def test_q7_global_auc_requires_matching_accepted_sidecar_hash(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "review-source.txt"; source.write_text("reviewed")
+            sidecar = root / "accepted.json"
+            sidecar.write_text(json.dumps({
+                "schema": "codeants_midline_annotation_review_v1", "fish_id": "fishA", "accepted": True,
+                "coordinate_space": "anatomy pixel grid",
+                "source_artifacts": [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}],
+                "lines_by_plane": {"0": {"x0": 5, "y0": 5, "theta_deg": 90}},
+            }))
+            sidecar_hash = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+            master = root / "master.csv"
+            pd.DataFrame({"fish_id": ["fishA"], "plane_idx": [0]}).to_csv(master, index=False)
+            point_rows, count_rows = [], []
+            for laterality in ("ipsi", "contra"):
+                for mode, value in (("bout", 0.3), ("continuous", 0.2)):
+                    point_rows.append({"group": "All neurons", "laterality": laterality, "stim_mode": mode, "auc_dff": value, "response_class": "responsive", "response_is_active": True, "bpi_category": "bout-responsive", "point_label_id": f"{laterality}-{mode}", "accepted_midline_sidecar_sha256": sidecar_hash})
+                    count_rows.append({"group": "All neurons", "laterality": laterality, "stim_mode": mode, "n_total": 1, "frac_responsive_used": 1.0, "frac_low_used": 0.0, "frac_other": 0.0, "accepted_midline_sidecar_sha256": sidecar_hash})
+            points, counts = root / "points.csv", root / "counts.csv"
+            pd.DataFrame(point_rows).to_csv(points, index=False); pd.DataFrame(count_rows).to_csv(counts, index=False)
+            result = render_accepted_global_laterality_auc_qc(fish_id="fishA", master_roi_csv=master, points_csv=points, counts_csv=counts, accepted_midline_sidecar=sidecar)
+            try:
+                self.assertEqual(result["status"], "ready")
+                self.assertEqual(result["panel_results"]["ipsi"]["n_plotted"], 2)
+            finally:
+                plt.close(result["fig"])
+
+    def test_q7_global_auc_blocks_when_response_master_is_newer_than_auc_cache(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "review-source.txt"; source.write_text("reviewed")
+            sidecar = root / "accepted.json"
+            sidecar.write_text(json.dumps({
+                "schema": "codeants_midline_annotation_review_v1", "fish_id": "fishA", "accepted": True,
+                "coordinate_space": "anatomy pixel grid",
+                "source_artifacts": [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}],
+                "lines_by_plane": {"0": {"x0": 5, "y0": 5, "theta_deg": 90}},
+            }))
+            sidecar_hash = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+            points, counts = root / "points.csv", root / "counts.csv"
+            rows = []
+            count_rows = []
+            for laterality in ("ipsi", "contra"):
+                for mode in ("bout", "continuous"):
+                    rows.append({"group": "All neurons", "laterality": laterality, "stim_mode": mode, "auc_dff": 0.3, "response_class": "responsive", "response_is_active": True, "bpi_category": "bout-responsive", "point_label_id": f"{laterality}-{mode}", "accepted_midline_sidecar_sha256": sidecar_hash})
+                    count_rows.append({"group": "All neurons", "laterality": laterality, "stim_mode": mode, "n_total": 1, "frac_responsive_used": 1.0, "frac_low_used": 0.0, "frac_other": 0.0, "accepted_midline_sidecar_sha256": sidecar_hash})
+            pd.DataFrame(rows).to_csv(points, index=False)
+            pd.DataFrame(count_rows).to_csv(counts, index=False)
+            master = root / "master.csv"
+            pd.DataFrame({"fish_id": ["fishA"], "plane_idx": [0]}).to_csv(master, index=False)
+            newer = max(points.stat().st_mtime_ns, counts.stat().st_mtime_ns, master.stat().st_mtime_ns) + 1_000_000
+            os.utime(master, ns=(newer, newer))
+            result = render_accepted_global_laterality_auc_qc(
+                fish_id="fishA", master_roi_csv=master, points_csv=points, counts_csv=counts,
+                accepted_midline_sidecar=sidecar,
+            )
+            try:
+                self.assertEqual(result["status"], "blocked")
+                self.assertIn("newer", result["reason"])
+            finally:
+                plt.close(result["fig"])
     def test_single_fish_50l_auc_cache_stale_reasons_tracks_missing_and_newer_inputs(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -836,7 +916,7 @@ class PlotsAnalysisTests(unittest.TestCase):
                 self.assertEqual(out["group_order"], ["All neurons", "sst1.1"])
                 self.assertGreater(out["all_y_limits"][1], 0.66)
                 self.assertEqual(out["panel_results"]["bpi"]["n_plotted"], 2)
-                self.assertEqual(out["panel_results"]["global_ipsi"]["n_plotted"], 2)
+                self.assertEqual(out["panel_results"]["status"], "blocked")
                 self.assertEqual(out["panel_results"]["gene_contra"]["n_plotted"], 2)
             finally:
                 plt.close(out["fig"])

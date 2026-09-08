@@ -3380,6 +3380,63 @@
 - Both NCC placement materialization and ANTs initialization accept the validated upstream XY placement. ANTs remains the downstream residual-refinement stage, and failed/review-required drift candidates fail closed before static registration.
 - Focused handoff and spatial-contract coverage passes, including a registration-stage contract proving that the legacy NCC cache files are absent on the handoff path.
 
+### 2026-08-11 - add gate-oriented read-only QC notebook suite
+
+- Added seven notebooks under `notebooks/qc/`: pipeline overview;
+  functional-reference/drift; functional registration; ROI/anatomy geometry;
+  molecular geometry; molecular identity; and activity/export QC.
+- Added shared `qc_notebooks.py` context/provenance validation and a sole
+  explicit review-sidecar writer. Review JSONs are hash-bound to persisted
+  artifacts, restricted to the reviewed stage's `reviews/` directory, refuse
+  overwrite/cross-stage inputs, and never promote outputs.
+- Added package-owned read-only loaders, filters, and figures in
+  `plots.qc_functional`, `plots.qc_geometry`, and `plots.qc_molecular`.
+  Notebook cells remain configuration/package-call/display orchestration with
+  no local helper definitions or analysis writers.
+- 2026-09-02: Notebook `04_molecular_geometry_qc.ipynb` now reads retained
+  fish-local aligned label TIFFs directly rather than treating an older
+  functional-only staged root as a missing molecular configuration. Its
+  package-owned interactive viewer preloads same-grid in-vivo anatomy and any
+  number of selected masks, supports dynamic per-mask checkboxes and Z-plane
+  review, and records candidate matching as not started until a candidate table
+  is actually written. The viewer is read-only and does not assign identity.
+- Preserved scientific ordering and scope: drift before static registration;
+  geometry before identity; activity/BPI after frozen geometry; ROI-centric
+  whole-population authority separate from HCR-centric identified-cell views;
+  molecular bridge-registration tracks remain distinct.
+- The initial L765_f04 geometry notebook points at the existing isolated
+  full-fish staged run and reviews the 3,553-row geometry-only table without
+  invoking legacy `[34]` recomputation or `[50i]`.
+
+### 2026-09-01 - improve functional-registration and geometry QC views
+
+- Notebook `02` now renders one large all-plane figure with transformed ROI
+  outlines over each plane's actual matched anatomy slice. Its three persisted
+  registration PNGs are displayed separately, while a read-only plane chooser
+  provides scroll-wheel zoom for anatomy-space ROI inspection instead of the
+  small center-overlay PNG.
+- Notebook `03` now includes an all-plane centroid-offset figure. It draws
+  stored functional-to-anatomy centroid links directly from the geometry-only
+  match table and does not recompute transforms or assignments.
+- Focused QC tests passed (`20 passed`), and live L765_f04 rendering produced
+  ten anatomy-overlay, ten zoom-selectable, and ten centroid-offset panels.
+
+### 2026-09-01 - add anatomy-context geometry review
+
+- Notebook `02` no longer opens a zoom viewer; Cell 11 now shows only the
+  three remaining persisted registration figures separately.
+- Notebook `03` now reads saved anatomy intensity, anatomy labels, best-Z
+  plane references, and transformed functional labels alongside the
+  geometry-only table. Its new all-plane view overlays anatomy-label and
+  functional-ROI outlines on each actual best-Z anatomy slice.
+- The centroid review now pairs a selected plane's anatomy/outline/centroid
+  context with all-plane unique-match XY-offset violins and the median radius
+  of the selected anatomy labels, measured from saved NRRD physical spacing.
+  It does not recompute registration or matching.
+- Both notebooks executed successfully in the registrations kernel against
+  L765_f04. The rendered figures were checked visually; focused QC coverage
+  passed (`21 passed`).
+
 ### 2026-09-01 - make anatomy-label Z provenance geometry-owned
 
 - Diagnosed L765_f04 notebook `03` against the saved stacks: functional plane
@@ -3397,9 +3454,376 @@
 - Identity, activity/BPI, exports, reports, and figures remain downstream of
   the corrected geometry and must not reuse outputs derived from the old
   direct-page match table.
-- A shared fail-closed validator blocks identity assignment and standalone HCR
-  activity replay when the geometry sidecar has missing, inconsistent,
+- A shared fail-closed validator now blocks identity assignment and standalone
+  HCR activity replay when the geometry sidecar has missing, inconsistent,
   out-of-range, duplicate, or incomplete plane provenance; the geometry writer
-  runs it before writing metrics, and identity also checks selected-label
+  runs it before writing metrics, and identity also checks selected anatomy-label
   membership against the persisted pages.
-- Automatic direct/reverse inference requires positive boundary evidence and a
+- Automatic direct/reverse inference now requires positive boundary evidence
+  and a meaningful score margin. Weak or nearly tied evidence is review-blocking
+  rather than silently selecting a convention.
+
+### 2026-09-01 - restore composed functional geometry for L765_f04
+
+- L765_f04 selected ANTs in-plane transforms are residual refinements after
+  NCC placement. Reloaded plane references had retained the transform list but
+  dropped that NCC preplacement, so replayed ROI geometry and saved ROI TIFFs
+  could use different coordinate frames.
+- The shared transform resolver now restores NCC preplacement from persisted
+  plane references, and the staged overlay preserves it. This fish's Suite2p
+  `stat.npy` coordinates are explicitly recorded as acquisition-framed even
+  though `ops.npy` points at canonical TIFFs; the transform and geometry
+  writers apply the same required orientation.
+- Transformed ROI TIFFs now rasterize every Suite2p ROI, matching the
+  whole-population geometry table rather than hiding non-`iscell` functional
+  endpoints. Functional-registration and geometry QC ignore macOS `._*`
+  sidecars on mounted drives.
+- Recomputed the isolated `transform-functional-rois-to-anatomy` and
+  `match-roi-to-anatomy` stages. Geometry now has 3,419 unique matches of
+  3,553 ROIs; the displayed centroid segments and violin values use the same
+  anatomy-space points and agree numerically. Notebook `03` ran in the
+  registrations kernel and its rendered centroid panel was visually checked.
+
+### 2026-09-01 - inventory L765_f04 pipeline roots without mutation
+
+- Read-only inventory covered the fish-local data root and the approved
+  `20260803T112035Z_functional_registration_ants_no_fallback` staged root;
+  no code, data, manifests, promotion, or cleanup state changed.
+- `01_raw/` (41 GB) and `02_reg/` (60 GB) remain canonical/required source and
+  registration provenance. The staged root is 101 MB and has current manifests
+  for functional registration, functional ROI transformation, registration QC,
+  and ROI/anatomy geometry only.
+- SHA-256 checks found byte-identical staged copies of ten ANTs matrices,
+  twenty registration warped references, NCC cache/comparison files, plane
+  references, and registration-QC artifacts. The fish-local copies remain
+  required legacy/current inputs until path compatibility and external consumer
+  review are complete. Same-named transformed ROI/native-label TIFFs differ and
+  are not cleanup candidates.
+- The next no-code gate is consumer classification; no move or deletion is
+  authorized.
+
+### 2026-09-01 - identify L765_f04 ex-vivo bridge recompute gap
+
+- Read-only provenance inspection confirms that the accepted L765_f04 HCR
+  label masks already use the intended composed bridge: rbest or r2 -> ex vivo
+  -> in-vivo 2P, followed by the existing HCR/anatomy geometry matcher.
+- The optional package recompute route still discovers legacy direct
+  `01_rbest-2p` and `02_rn-rbest` transforms. It therefore cannot recreate the
+  accepted bridge provenance for this fish; do not use
+  `register-hcr-to-anatomy --recompute-direct-ants` for L765_f04 until the
+  bridge route is package-owned and validated.
+- Required future slice: explicit per-round bridge transform discovery,
+  target-to-source ANTs chain construction, manifest route/provenance, and
+  tests against the accepted four-transform rbest/r2 and six-transform later
+  round chains. Existing accepted aligned masks remain the source of truth.
+
+### 2026-09-01 - make the HCR recompute route explicitly ex-vivo bridged
+
+- `register-hcr-to-anatomy --recompute-direct-ants` now defaults to
+  `--hcr-warp-route exvivo_bridge`. It composes the existing target-to-source
+  ANTs pairs as rbest→ex-vivo→2P, direct rn→ex-vivo→2P when available, or
+  rn→rbest→ex-vivo→2P otherwise. `legacy_direct` remains explicit
+  compatibility only.
+- The warp metadata records the selected route and exact transform list; the
+  final HCR/anatomy one-to-one matching criteria are unchanged. Focused local
+  coverage passed (19 selected tests), and the isolated Linnaeus staging copy
+  reproduced all four available accepted L765_f04 rbest/r2 bridge chains from
+  their metadata exactly.
+- L765_f04's accepted excluded r3 `gad2` metadata refers to the longer
+  r3→rbest→ex-vivo→2P chain, but the r3→rbest files are absent from both
+  mounted roots. The new route fails closed; no fallback registration or mask
+  recompute was run.
+
+### 2026-09-02 - add XY-only HCR/anatomy centroid review flag
+
+- HCR/anatomy matching now records `centroid_xy_distance_um`,
+  `median_anatomy_xy_radius_um`, and
+  `is_centroid_xy_offset_over_median_anatomy_radius` for review only.
+- The flag uses each anatomy label's largest XY cross-section and physical XY
+  spacing. It deliberately does not use Z centroid displacement because the
+  confocal PSF is broader axially; it changes neither overlap gating, one-to-one
+  pairing, IoU quality, nor final-pair membership.
+- L765_f04 retains only `sst1.2`, `cort`, `sst1.1`, and `pth2`; `gad2`,
+  `slc17a6b`, and R4 remain excluded.
+
+### 2026-09-02 - add accepted-pair centroid-offset review to QC Notebook 05
+
+- Notebook `05_molecular_identity_qc.ipynb` now reads the staged accepted
+  HCR/anatomy final-pair CSVs and renders per-pair lateral XY distances plus
+  signed Z-offset violins by gene. Faint jittered points retain the individual
+  pair values. It is a read-only review surface: it neither discovers nor
+  changes molecular/anatomy pairs.
+- The package-owned builder takes physical TIFF spacing from the anatomy label
+  stack, including ImageJ Z spacing. The L765_f04 render contained the four
+  retained genes with 43 `cort`, 42 `pth2`, 251 `sst1.1`, and 98 `sst1.2`
+  accepted pairs per axis; its visual layout was checked from the rendered PNG.
+
+### 2026-09-02 - make response/BPI scoring geometry-first and run L765_f04
+
+- `score-activity-bpi` now depends on frozen ROI/anatomy geometry rather than
+  molecular identity. It loads Suite2p directly, attaches trace-quality
+  provenance one-to-one to geometry rows, leaves identity fields blank, and
+  passes the in-memory dF/F map to the response/BPI scorer. Canonical export
+  remains the point where the independent identity and activity branches meet.
+- Stimulus classification now recognizes planned labels such as
+  `LB_trajectory` and `LC_trajectory`, as well as legacy compact labels.
+- The isolated L765_f04 stage used both raw session logs and wrote 3,553-row
+  ROI-master and BPI-cell outputs plus a five-row summary. It is computed and
+  unreviewed: the only manifest warnings are the expected absence of older
+  canonical activity controls, and no promotion occurred.
+
+### 2026-09-02 - refine molecular and activity QC review surfaces
+
+- Notebook 05's accepted HCR/anatomy centroid-offset review now reports the
+  accepted-pair sample size for every gene and labels each violin accordingly.
+  Its lateral-XY panel reuses the established physical median anatomy-label
+  radius: each label's largest XY cross-section is converted with TIFF spacing,
+  then radii are medianed. The L765_f04 reference is 6.02 µm.
+- Notebook 06 is the dedicated independent activity/BPI QC notebook: it reads
+  `score-activity-bpi` outputs directly, treats HCR identity artifacts as
+  separate optional context, and does not require canonical export or figures.
+- The real L765_f04 figure was rendered on Linnaeus and visually checked; it
+  contained cort n=43, pth2 n=42, sst1.1 n=251, and sst1.2 n=98 accepted pairs.
+
+### 2026-09-02 - add first read-only L765_f04 activity/BPI review panels
+
+- Notebook 06 now has a package-owned Q7 activity/BPI gate. It reads the
+  persisted `bpi_zero_band` and `bpi_activity_threshold` from
+  `score-activity-bpi`, renders `[56g]` response, BPI/activity, binned |BPI|,
+  and class-distribution panels plus the selected `[50l]` strength/BPI and
+  population donut panels, and never writes or promotes activity outputs.
+- The real L765_f04 render used all 3,553 ROI rows for the donut: 16
+  bout-responsive, 47 continuous-responsive, 20 weak-response, 2,367 low
+  activity, and 1,103 response-unavailable. Finite response metrics were
+  available for 2,450 rows; unavailable rows remain visibly counted rather
+  than treated as inactive.
+- A temporary read-only `[23c]` run used both raw r1/r2 logs, the planned
+  schedules, and preprocessing session mapping. It produced stimulus-locked
+  traces for 83 response-active Suite2p cells and was saved only under
+  `/tmp/L765_f04_23c_review`; it is review evidence, not a canonical output.
+- The laterality-dependent `[50l]` global ipsilateral/contralateral AUC panel
+  remains blocked until the Notebook 02/06 manual midline review is accepted.
+
+### 2026-09-02 - clarify the response-pass prerequisite in the Q7 BPI view
+
+- The real L765_f04 Q7 review exposed 183 finite low-activity rows with raw
+  `|BPI| > 0.5`. This is expected under the current two-stage `[50ia]`
+  semantics: BPI is measurable for a trace, but a directional response call
+  additionally requires a condition-specific AUC/bootstrap-null pass.
+- Legacy `oldScripts/2PF_to_HCR_legacy.ipynb` `[50ia]` likewise classified low
+  activity before BPI direction, though its old activity-magnitude gate was
+  simpler. The scorer and exported response labels were therefore preserved.
+- Notebook 06 now renders response-passing directional points in colour and
+  finite nonresponsive rows as faint grey `x` diagnostics; both BPI panels
+  state the combined gate and the extreme nonresponsive count. The L765_f04
+  rendered count is `n=183`; no stage output was recomputed or promoted.
+
+### 2026-09-02 - align the single-fish QC register with Johannes review priorities
+
+- The 2026-09-02 meeting is now reflected in
+  `single-fish-qc-suite-todo.md`: direct stimulus-resolved response evidence
+  precedes BPI/AUC interpretation, midline acceptance remains a laterality
+  gate, and molecular-functional matches require review-only tiles before any
+  manual-exclusion workflow.
+- Q1 now explicitly includes individual-stimulus population summaries and an
+  optional identity-independent response-similarity clustering view; Q6 adds
+  a per-correspondence anatomy/GCaMP/HCR/ROI/trace tile grid; Q7 explicitly
+  follows Q1 and distinguishes response calls from raw BPI diagnostics.
+- The meeting did not approve a segmentation method, a manual exclusion rule,
+  a crossing-versus-non-crossing inference, or a canonical promotion. Those
+  remain deferred or exploratory as recorded in the register.
+
+### 2026-09-03 - compare native-functional dark-corridor midline proposals
+
+- Added a review-only native-functional proposal model that constrains its
+  angle and normal-offset search from manually accepted training planes, then
+  chooses the darkest sampled line. The identical candidate set can optionally
+  add an equal-weight reflection-symmetry penalty; neither mode writes a
+  canonical midline or assigns laterality.
+- The training-only prior used 35 planes from L395/L396/L765. On the held-out
+  50 L758 planes, dark-only proposals had median/p95 perpendicular error of
+  3.21/9.01 px and axial-angle error of 1.01/11.37 degrees. Adding symmetry
+  yielded 3.13/7.55 px and 0.86/2.49 degrees respectively. Per-fish rendered
+  overlays live under `/tmp/native_midline_dark_models_qc/` for manual review;
+  this remains a proposal comparison, not an accepted midline update.
+
+### 2026-09-03 - recover legacy Suite2p functional references for midline QC
+
+- `load_suite2p_meanimg_midline_session` now provides a read-only fallback for
+  fish with no persisted native `*_ref_norm.tif`: it reads Suite2p `ops.npy`
+  `meanImg`, handles legacy Windows-path pickle metadata, and applies the
+  fish-metadata polarity transform before exposing the native-functional plane.
+- On the Matilde NAS the only additional usable Suite2p source was L427_f01,
+  with five 512x512 planes and metadata polarity `north` (therefore a Y flip).
+  The all-fish atlas now has 90 planes: 85 curated planes plus L427_f01 as a
+  clearly labelled proposal-only row. No annotation sidecar, canonical midline,
+  or laterality output was written for L427_f01.
+
+### 2026-09-03 - extend the native-functional midline atlas across Matilde sources
+
+- Added a bounded motion-corrected fallback that averages evenly sampled TIFF
+  pages before applying validated native-functional orientation. It fails
+  closed without north/south metadata unless an explicit legacy override is
+  supplied.
+- The Matilde atlas now covers every fish with a comparable functional
+  reference: 10 fish / 50 planes. It includes five persisted-reference
+  training fish, L427_f01 Suite2p meanImg, and motion-corrected means for
+  L395_f06, L395_f10, L427_f02, and L500_f09. L395 legacy X orientation was
+  verified against L395_f11 persisted references (per-plane correlation
+  0.85--0.93); L427/L500 use raw metadata north/Y orientation.
+- The remaining 32 Matilde fish have raw movies only, with no persisted
+  reference, Suite2p mean image, or motion-corrected per-plane movies. They
+  were excluded rather than silently deriving unregistered raw references.
+
+### 2026-09-08 - add the Q0.1 legacy `[53a]` / Notebook 03 XY-offset parity gate
+
+- Notebook 03 now performs a read-only L765_f04 parity audit: it applies the
+  legacy `[53a]` anatomy-match and unique-match filter to the legacy ROI master
+  and to frozen geometry, inner-joins exact `(plane_idx, func_label)` keys,
+  and compares legacy `selected_dist_um` with a physical remeasurement from
+  saved anatomy-space centroids and prepared-anatomy X/Y spacing.
+- The audit renders side-by-side distance distributions and a row-level
+  legacy-versus-QC scatter, plus overall/per-plane sample sizes and medians.
+  It displays the legacy source path, spacing, and an explicit transform
+  direction statement; it never rematches, transforms, promotes, or changes
+  a scientific table.
+- Focused synthetic geometry tests and Notebook 03 parsing passed. A real
+  L765_f04 render plus the requested L395_f11 sanity repeat remains required
+  on Linnaeus because `/Volumes/dataDrive/dataProcessing/2p_processing` was
+  not mounted in this implementation session. Q0.1 therefore remains open.
+- Follow-up validation made the audit fail closed when either source lacks
+  `plane_match_outcome`; both sources must explicitly be `anatomy match` and
+  unique matched before their exact-key intersection. The optional review
+  writer now defaults to `SAVE_REVIEW = False` and `review_required`, so
+  opening or running Notebook 03 cannot prefill an acceptance sidecar.
+
+### 2026-09-08 - add Q1 scored-window provenance and early timing review
+
+- `score-activity-bpi` now writes an optional `scored_stimulus_windows.csv`
+  provenance sidecar alongside its staged response/BPI tables. It preserves
+  each parsed recorded event and the exact delayed, rounded frame interval
+  consumed by scoring; it does not alter response, BPI, geometry, or identity.
+- Notebook 01 now loads its full-session and stimulus-aligned Suite2p evidence
+  read-only, independently resolves recorded events from raw session logs, and
+  compares them to the score-window sidecar with an explicit 0.5-frame rounding
+  tolerance column. Missing sidecar or unmatched event keys are visible review
+  warnings, not evidence of biological non-response.
+- Focused synthetic QC and writer tests passed. A real L765_f04 render remains
+  required on Linnaeus because the configured data volume was unavailable in
+  this implementation session.
+- Follow-up validation tightened the artifact contract: `[23c]` now also
+  persists the full-session heatmap matrix and row keys, and Notebook 01 draws
+  raw-log recorded spans (green) and exact score-window spans (red) itself.
+  The audit includes onset and offset seconds/frames, a 0.5-frame tolerance,
+  visible mismatch warnings, and `(plane_idx, session, block, stim_idx, type)`
+  keys so same-session multi-plane evidence cannot multiply during comparison.
+
+### 2026-09-08 - complete Notebook 04 Q4/Q5 read-only molecular QC surfaces
+
+- Notebook 04 now computes the legacy `[53]` bounding-box metrics directly
+  from persisted anatomy, transformed functional, and retained HCR label
+  masks: `x_um=(xmax-xmin)*dx`, `y_um=(ymax-ymin)*dy`,
+  `z_um=(zmax-zmin)*dz`, and `xy_um=(x_um+y_um)/2`. It separately applies
+  each modality's XY q05 hard drop and q95 retained low-confidence flag, and
+  displays before/after counts, cut-offs, individual retained observations,
+  medians, standard deviations, and sample sizes for primary XY/Z and
+  HCR gene/round panels. No Z cut-off is applied.
+- The existing persisted HCR matching-flow panel now has a companion
+  anatomy-space accepted/rejected overlay. It derives green accepted labels
+  only from saved final-pair `conf_label` values and orange rejected labels
+  only from saved review rows absent from those final pairs. The controls
+  toggle visibility only; they do not regenerate candidates, edit masks, or
+  update pair membership.
+- Focused synthetic package/notebook-contract tests passed, and a 300-dpi
+  rendered mask-size QC figure passed nonblank/dimension checks. Real
+  L765_f04 rendering and manual gate review remain required on Linnaeus:
+  `/Volumes/dataDrive/dataProcessing/2p_processing` was not mounted here.
+
+### 2026-09-08 - Q7 laterality-safe global AUC review gate
+
+- Added a shared accepted anatomy-midline review-sidecar validator. It requires
+  the complete per-plane manual review, exact fish ID and anatomy-grid space,
+  and unchanged hashes for every review artifact. Legacy
+  `midline_params_func_ref.json` bundles and automatic proposals cannot satisfy
+  this contract.
+- `[56i]` motion-AUC table construction can now be explicitly bound to that
+  accepted sidecar. In that mode it assigns ROI side from anatomy centroids,
+  retains only valid left/right rows for ipsi/contra calculation, and persists
+  the exact sidecar SHA-256 on point and count outputs. Notebook 06 reads those
+  persisted outputs; a missing/stale/unaccepted sidecar or hash mismatch shows
+  a clear blocked panel rather than a global laterality result.
+- The legacy `[50l]` composite now blocks its global ipsi/contra panel unless
+  its cached all-neuron AUC rows carry the current accepted-sidecar hash. Its
+  ROI-centric BPI and response panels remain separate from this gate.
+- Focused synthetic tests passed (`tests/test_qc_midline.py`,
+  `tests/test_traces.py`, `tests/test_plots_analysis.py`, and package exports).
+  A real L765_f04 render/rebuild with the accepted Notebook 02 sidecar remains
+  required on Linnaeus before manual Q7 acceptance.
+
+### 2026-09-08 - consolidate functional QC and restore legacy molecular flow review
+
+- Notebook 01 now owns the contiguous functional review sequence: reference
+  construction, depth stability/NCC profiles, functional-to-anatomy overlays,
+  and the hash-bound manual midline GUI. Notebook 02 is retained only as a
+  no-writer redirect, preventing duplicated NCC depth-profile interpretation.
+- Q1 timing loading now treats absent legacy `[23b]`/`[23c]` artifacts and
+  absent scored-window provenance as explicit availability warnings rather
+  than a `FileNotFoundError`. When scored provenance is present but `[23b]` is
+  absent, it uses only its plane/session keys and still resolves recorded
+  events independently from raw logs. A missing trace PNG is likewise shown
+  as unavailable rather than raising after the timing report.
+- Notebook 03 Q0.1 now selects the frozen staged ROI master from
+  `assign-hcr-identity/registration/functional_roi_activity_identity.csv`
+  (falling back to the score stage) instead of the nonexistent fish-local
+  registration path. It continues to audit only geometry fields.
+- Notebook 04 Cell 10 now uses a legacy-style per-gene/round two-ring donut:
+  inner final acceptance versus non-acceptance and outer mutually exclusive
+  persisted terminal matching outcomes. The full stage-count table remains an
+  audit companion; no pairs are recomputed or changed.
+- Focused local tests passed (25 tests); direct Linnaeus package checks passed
+  with the scientific Python environment. The selected L765_f04 staged run
+  still lacks `[23b]`, `[23c]`, and scored-window artifacts, so Q1 correctly
+  remains unavailable for manual timing acceptance until those persisted
+  outputs are created in an approved writer run.
+
+### 2026-09-08 - L765_f04 QC artifact-resolution repair
+
+- Corrected Notebook 01's stale `20260803T085432Z_first_block_exclusion_remaining`
+  selection. It now reads the completed registration/QC evidence from the
+  `20260803T112035Z_functional_registration_ants_no_fallback` staged run and
+  its canonical fish-local manifests. The all-plane registration review now
+  loads the ten saved plane records and transform table without an artificial
+  missing-manifest block.
+- L765_f04's response/BPI result tables are present (3,553 ROI rows), while
+  the old `[23b]`/`[23c]` diagnostic sidecars were not retained. Notebook 02
+  now rebuilds the legacy early-functional heatmap and mean post-stimulus dF/F
+  read-only in memory from the canonical raw Suite2p arrays plus recorded
+  stimulus logs; it writes no analysis outputs and therefore no longer treats
+  the absent diagnostic copies as absent analysis.
+- Notebook 06 now labels absent HCR-centric exports and trace metadata as
+  optional downstream outputs when the selected run did not produce them.
+  It continues to block only the real provenance gap: the saved L765_f04
+  response/BPI tables lack a session-aware scoring-window sidecar.
+- Focused local tests passed (25 tests) and real Linnaeus execution of
+  Notebooks 01, 02, and 06 completed with zero cell errors.
+
+### 2026-09-08 - automatic midline QC and legacy dF/F trace restoration
+
+- `make-functional-registration-qc` now owns the automatic midline
+  computation. The original anatomy-slice/global-depth implementation was
+  rejected after comparison with the independently run mounted-drive QC.
+  The stage now exactly reproduces that native-functional method: a
+  dark-corridor-plus-symmetry local proposal on persisted normalized functional
+  references, then a single fixed angle and separate robust depth translation
+  for r1 and r2. Notebook 01 Cell 16 reads and renders that pipeline output.
+  The proposal does not write an accepted sidecar or unblock laterality without
+  a separately accepted review.
+- Notebook 02 Cell 05 now renders the legacy-style, individual all-Suite2p
+  stimulus-locked dF/F traces against time for each stimulus type, in addition
+  to the full-session heatmap and mean dF/F summary. The diagnostic keeps the
+  dF/F trace vector in memory only; persisted `[23b]` summaries remain scalar.
+- Removed individual and flagged-point scatters from Notebook 04's violin
+  panels; medians, counts, SDs, and Q05/Q95 annotations remain visible.
+- Real L765_f04 Linnaeus execution of Notebooks 01, 02, and 04 completed
+  without cell errors. Rendered automatic-midline, stimulus-trace, and
+  mask-size figures passed nonblank/dimension checks and visual inspection.

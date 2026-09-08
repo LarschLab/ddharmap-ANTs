@@ -159,13 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     score_writer = subparsers.add_parser(
         "score-activity-bpi",
-        help="Writer stage: recompute response/BPI scoring and write staged score CSVs.",
+        help="Writer stage: score frozen ROI/anatomy geometry with Suite2p traces and write staged response/BPI CSVs.",
     )
     _add_common_fish_args(score_writer)
     score_writer.add_argument(
-        "--identity-input-path",
+        "--geometry-input-path",
         type=Path,
-        help="Explicit ROI identity input CSV. Defaults to staged assign-hcr-identity output.",
+        help="Explicit frozen ROI/anatomy geometry CSV. Defaults to staged match-roi-to-anatomy output.",
     )
     score_writer.add_argument("--force-recompute", action="store_true")
 
@@ -292,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     transform_func_rois.add_argument("--plane-refs-summary-path", type=Path)
     transform_func_rois.add_argument("--anatomy-stack-path", type=Path)
     transform_func_rois.add_argument("--output-root", type=Path)
+    transform_func_rois.add_argument("--suite2p-stat-xy-frame")
     transform_func_rois.add_argument("--force-recompute", action="store_true")
 
     func_qc = subparsers.add_parser(
@@ -309,12 +310,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_hcr = subparsers.add_parser(
         "register-hcr-to-anatomy",
-        help="Writer stage: stage accepted HCR-to-anatomy aligned artifacts.",
+        help="Writer stage: stage accepted HCR-to-anatomy aligned artifacts or recompute them through a declared ANTs route.",
     )
     _add_common_fish_args(register_hcr)
     register_hcr.add_argument("--source-root", type=Path)
     register_hcr.add_argument("--output-root", type=Path)
     register_hcr.add_argument("--recompute-direct-ants", action="store_true")
+    register_hcr.add_argument(
+        "--hcr-warp-route",
+        choices=("exvivo_bridge", "legacy_direct"),
+        default="exvivo_bridge",
+        help="ANTs recompute route. The default composes each HCR round through ex-vivo anatomy.",
+    )
     register_hcr.add_argument("--force-recompute", action="store_true")
 
     match_roi = subparsers.add_parser(
@@ -328,6 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
     match_roi.add_argument("--anatomy-labels-path", type=Path)
     match_roi.add_argument("--anatomy-label-z-mode", choices=("auto", "direct", "reverse"), default="auto")
     match_roi.add_argument("--output-root", type=Path)
+    match_roi.add_argument("--suite2p-stat-xy-frame")
     match_roi.add_argument("--force-recompute", action="store_true")
 
     prepare_ex_vivo = subparsers.add_parser(
@@ -538,7 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         manifest = run_single_fish_score_activity_bpi_stage(
             config,
-            identity_input_path=args.identity_input_path,
+            geometry_input_path=args.geometry_input_path,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:
@@ -675,6 +683,7 @@ def main(argv: list[str] | None = None) -> int:
             plane_refs_summary_path=args.plane_refs_summary_path,
             anatomy_stack_path=args.anatomy_stack_path,
             output_root=args.output_root,
+            suite2p_stat_xy_frame=args.suite2p_stat_xy_frame,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:
@@ -721,6 +730,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output_root,
             force_recompute=args.force_recompute,
             recompute_direct_ants=args.recompute_direct_ants,
+            hcr_warp_route=args.hcr_warp_route,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -744,6 +754,7 @@ def main(argv: list[str] | None = None) -> int:
             anatomy_labels_path=args.anatomy_labels_path,
             anatomy_label_z_mode=args.anatomy_label_z_mode,
             output_root=args.output_root,
+            suite2p_stat_xy_frame=args.suite2p_stat_xy_frame,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:

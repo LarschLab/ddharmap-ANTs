@@ -196,11 +196,16 @@ def _infer_voxels_nrrd(path: str | Path) -> dict[str, float]:
                         arr = np.asarray(axis, dtype=float)
                         lengths.append(float(np.linalg.norm(arr)))
                 if len(lengths) >= 3:
-                    return {"X": lengths[-1], "Y": lengths[-2], "Z": lengths[0]}
+                    # pynrrd exposes ``space directions`` in NRRD storage-axis
+                    # order (X, Y, Z).  ``index_order='C'`` only changes the
+                    # returned array order; it does not reverse this header.
+                    # Keeping this mapping aligned with the header is essential
+                    # for physical-distance gates downstream.
+                    return {"X": lengths[0], "Y": lengths[1], "Z": lengths[2]}
             spacings = header.get("spacings")
             if spacings is not None and len(spacings) >= 3:
                 vals = [float(v) for v in spacings]
-                return {"X": vals[-1], "Y": vals[-2], "Z": vals[0]}
+                return {"X": vals[0], "Y": vals[1], "Z": vals[2]}
         except Exception:
             pass
     if sitk is not None:
@@ -223,7 +228,7 @@ def _infer_voxels_nrrd(path: str | Path) -> dict[str, float]:
             parts = [float(piece.strip()) for piece in item.split(",")]
             vals.append(float(np.linalg.norm(np.asarray(parts, dtype=float))))
         if len(vals) >= 3:
-            return {"X": vals[-1], "Y": vals[-2], "Z": vals[0]}
+            return {"X": vals[0], "Y": vals[1], "Z": vals[2]}
     return {}
 
 

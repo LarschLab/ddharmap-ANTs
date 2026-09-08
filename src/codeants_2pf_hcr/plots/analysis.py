@@ -26,6 +26,7 @@ from ..single_fish_notebook_stages import (
 )
 from ..stimulus import StimulusConfig, build_stim_tables, load_events_df, load_metadata_params, parse_float, parse_unilateral_stim
 from ..traces import build_single_fish_motion_auc_plot_tables, prepare_pairs_for_unique_cells
+from ..midline_review import load_accepted_anatomy_midline_context
 
 
 STIM_PALETTE = {
@@ -321,6 +322,9 @@ def render_suite2p_stimulus_locked_trace_panels(
     duration_by_stim: dict[str, float] | None = None,
     line_alpha: float = 0.22,
     line_width: float = 0.8,
+    trace_column: str = "mean_trace",
+    y_label: str = "z-scored dF/F",
+    title: str = "All Suite2p cells show stimulus-locked structure across imaging sessions",
 ) -> Any:
     if not isinstance(trace_df, pd.DataFrame) or trace_df.empty:
         raise RuntimeError("[23b] trace_df is empty")
@@ -342,20 +346,20 @@ def render_suite2p_stimulus_locked_trace_panels(
         for row in sub.itertuples(index=False):
             session = str(getattr(row, "session_label"))
             color = session_colors.get(session, "#666666")
-            mean = np.asarray(getattr(row, "mean_trace"), dtype=float)
+            mean = np.asarray(getattr(row, trace_column), dtype=float)
             if mean.shape == tvec_arr.shape:
                 ax.plot(tvec_arr, mean, color=color, alpha=float(line_alpha), linewidth=float(line_width))
         ax.axvline(0.0, color="black", linestyle="--", linewidth=0.8, alpha=0.75)
         ax.axhline(0.0, color="black", linewidth=0.6, alpha=0.5)
         ax.set_title(f"{stim_type} (neurons n={sub[['plane_idx', 'func_label']].drop_duplicates().shape[0]})", fontsize=10)
         ax.set_xlabel("Time from stimulus start (s)")
-        ax.set_ylabel("z-scored dF/F")
+        ax.set_ylabel(y_label)
 
     for row_idx, row_key in enumerate(row_keys):
         left_has_data = axes[row_idx, 0].has_data()
         right_has_data = axes[row_idx, 1].has_data()
         label_ax = axes[row_idx, 0] if left_has_data or not right_has_data else axes[row_idx, 1]
-        label_ax.set_ylabel(f"{_suite2p_stim_row_label(row_key)}\nz-scored dF/F")
+        label_ax.set_ylabel(f"{_suite2p_stim_row_label(row_key)}\n{y_label}")
         for col_idx in range(2):
             ax = axes[row_idx, col_idx]
             if not ax.has_data():
@@ -365,7 +369,7 @@ def render_suite2p_stimulus_locked_trace_panels(
     handles = [Line2D([0], [0], color=color, linewidth=2.0, label=str(session)) for session, color in session_colors.items()]
     if handles:
         fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
-    fig.suptitle("Responsive Suite2p neurons show stimulus-locked structure across imaging sessions", y=0.995)
+    fig.suptitle(title, y=0.995)
     fig.tight_layout(rect=[0, 0.05, 1, 0.94])
     return fig
 
@@ -864,6 +868,7 @@ def _single_fish_50l_auc_cache_stale_reasons(
     detail_csv: Path | None = None,
     hcr_status_csv: Path | None = None,
     midline_json: Path | None = None,
+    accepted_midline_sidecar: Path | None = None,
 ) -> list[str]:
     cache_paths = {
         "motion_auc_plot_points.csv": Path(points_csv),
@@ -873,6 +878,7 @@ def _single_fish_50l_auc_cache_stale_reasons(
         Path(detail_csv) if detail_csv is not None else None,
         Path(hcr_status_csv) if hcr_status_csv is not None else None,
         Path(midline_json) if midline_json is not None else None,
+        Path(accepted_midline_sidecar) if accepted_midline_sidecar is not None else None,
     ]
 
     reasons: list[str] = []
@@ -1315,6 +1321,86 @@ def render_single_fish_50l_global_auc_panel(
     }
 
 
+def render_accepted_global_laterality_auc_qc(
+    *, fish_id: str, master_roi_csv: str | Path, points_csv: str | Path,
+    counts_csv: str | Path, accepted_midline_sidecar: str | Path,
+) -> dict[str, Any]:
+    """Render Q7 global AUC only with exact accepted-sidecar provenance.
+
+    Legacy midline bundles and caches without the current review hash are
+    intentionally blocked rather than relabelled at display time.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 4.8), sharey=True)
+
+    def blocked(reason: str) -> dict[str, Any]:
+        for axis in axes:
+            axis.clear(); axis.axis("off")
+        fig.text(0.5, 0.55, "Global ipsilateral/contralateral AUC is blocked", ha="center", va="center", fontsize=13, fontweight="bold")
+        fig.text(0.5, 0.43, reason, ha="center", va="center", fontsize=9, wrap=True)
+        fig.suptitle("Q7 laterality-dependent AUC — awaiting accepted anatomy-midline provenance", fontweight="bold")
+        return {"status": "blocked", "reason": reason, "fig": fig, "panel_results": {}}
+
+    master_path, points_path, counts_path = map(Path, (master_roi_csv, points_csv, counts_csv))
+    missing = [str(path) for path in (master_path, points_path, counts_path) if not path.is_file()]
+    if missing:
+        return blocked("Missing persisted prerequisite table(s): " + "; ".join(missing))
+    stale_auc_paths = [
+        path.name
+        for path in (points_path, counts_path)
+        if master_path.stat().st_mtime_ns > path.stat().st_mtime_ns
+    ]
+    if stale_auc_paths:
+        return blocked(
+            "The ROI-centric response/master table is newer than "
+            + ", ".join(stale_auc_paths)
+            + "; rebuild [56i] before interpreting laterality."
+        )
+    try:
+        master = pd.read_csv(master_path)
+        if not {"fish_id", "plane_idx"}.issubset(master.columns):
+            return blocked("The ROI-centric master table lacks fish_id or plane_idx provenance.")
+        master = master.loc[master["fish_id"].astype(str).eq(str(fish_id))].copy()
+        if master.empty:
+            return blocked(f"The ROI-centric master table has no rows for {fish_id}.")
+        context = load_accepted_anatomy_midline_context(
+            accepted_midline_sidecar, fish_id=fish_id,
+            required_planes=sorted(pd.to_numeric(master["plane_idx"], errors="coerce").dropna().astype(int).unique()),
+        )
+    except Exception as exc:
+        return blocked(str(exc))
+    points, counts = pd.read_csv(points_path), pd.read_csv(counts_path)
+    point_cols = {"group", "laterality", "stim_mode", "auc_dff", "response_class", "response_is_active", "bpi_category", "point_label_id", "accepted_midline_sidecar_sha256"}
+    count_cols = {"group", "laterality", "stim_mode", "n_total", "frac_responsive_used", "frac_low_used", "frac_other", "accepted_midline_sidecar_sha256"}
+    missing_cols = sorted((point_cols - set(points.columns)) | (count_cols - set(counts.columns)))
+    if missing_cols:
+        return blocked("Persisted AUC tables lack accepted-sidecar provenance; rebuild [56i] with accepted_midline_sidecar. Missing: " + ", ".join(missing_cols))
+    expected_hash = str(context["sidecar_sha256"])
+    for label, table in (("points", points), ("counts", counts)):
+        hashes = set(table.loc[table["group"].astype(str).eq("All neurons"), "accepted_midline_sidecar_sha256"].dropna().astype(str))
+        if hashes != {expected_hash}:
+            return blocked(f"Persisted global AUC {label} do not match the current accepted midline review; rebuild [56i].")
+    points = points.loc[points["group"].astype(str).eq("All neurons")].copy()
+    counts = counts.loc[counts["group"].astype(str).eq("All neurons")].copy()
+    points["laterality"] = points["laterality"].astype(str).str.strip().str.lower()
+    counts["laterality"] = counts["laterality"].astype(str).str.strip().str.lower()
+    points = points.loc[points["laterality"].isin({"ipsi", "contra"})].copy()
+    counts = counts.loc[counts["laterality"].isin({"ipsi", "contra"})].copy()
+    if points.empty or counts.empty:
+        return blocked("Accepted-sidecar AUC outputs contain no valid left/right ROI rows.")
+    fig.clear()
+    grid = fig.add_gridspec(4, 2, height_ratios=(4, 4, 4, 1), hspace=0.08, wspace=0.06)
+    ipsi, contra = fig.add_subplot(grid[:3, 0]), fig.add_subplot(grid[:3, 1])
+    contra.sharey(ipsi)
+    ipsi_strip, contra_strip = fig.add_subplot(grid[3, 0], sharex=ipsi), fig.add_subplot(grid[3, 1], sharex=contra)
+    limits = _resolve_single_fish_50l_y_limits(points, 0.0, None)
+    results = {
+        "ipsi": render_single_fish_50l_global_auc_panel(ipsi, ipsi_strip, points, counts, "ipsi", "Ipsi", limits, show_ylabel=True, show_count_ylabel=True),
+        "contra": render_single_fish_50l_global_auc_panel(contra, contra_strip, points, counts, "contra", "Contra", limits, hide_y_ticklabels=True),
+    }
+    fig.suptitle("Global AUC by stimulus laterality — accepted anatomy-midline review", fontweight="bold")
+    return {"status": "ready", "fig": fig, "panel_results": results, "midline_context": context}
+
+
 def render_single_fish_50l_gene_auc_panel(
     ax: plt.Axes,
     strip_ax: plt.Axes,
@@ -1746,6 +1832,7 @@ def render_single_fish_50l_composite(
     bpi_cells_df: pd.DataFrame | None = None,
     hcr_status_csv: str | Path | None = None,
     midline_json: str | Path | None = None,
+    accepted_midline_sidecar: str | Path | None = None,
     gene_order: list[str] | None = None,
     gene_colors: dict[str, str] | None = None,
     save: bool = True,
@@ -1759,6 +1846,7 @@ def render_single_fish_50l_composite(
     counts_csv_p = Path(counts_csv) if counts_csv is not None else out_reg_p / "motion_auc_plot_counts.csv"
     hcr_status_csv_p = Path(hcr_status_csv) if hcr_status_csv is not None else out_reg_p / "hcr_activity_status.csv"
     midline_json_p = Path(midline_json) if midline_json is not None else out_reg_p / "midline_params_func_ref.json"
+    accepted_midline_sidecar_p = Path(accepted_midline_sidecar) if accepted_midline_sidecar is not None else None
 
     stale_reasons = _single_fish_50l_auc_cache_stale_reasons(
         points_csv_p,
@@ -1766,6 +1854,7 @@ def render_single_fish_50l_composite(
         detail_csv=detail_csv_p,
         hcr_status_csv=hcr_status_csv_p,
         midline_json=midline_json_p,
+        accepted_midline_sidecar=accepted_midline_sidecar_p,
     )
     auc_build_result: dict[str, Any] | None = None
     if stale_reasons and fish_dir is not None and fish_id is not None and suite2p_root is not None:
@@ -1778,6 +1867,7 @@ def render_single_fish_50l_composite(
             detail_csv=detail_csv_p,
             hcr_status_csv=hcr_status_csv_p,
             midline_json=midline_json_p,
+            accepted_midline_sidecar=accepted_midline_sidecar_p,
             points_csv=points_csv_p,
             counts_csv=counts_csv_p,
             roi_panel_csv=out_reg_p / "motion_auc_roi_panels.csv",
@@ -2096,10 +2186,36 @@ def render_single_fish_50l_composite(
         run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MIN", 0.0),
         run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MAX", None),
     )
+    global_sidecar_hash = None
+    global_block_reason = "No accepted anatomy-midline review sidecar was supplied."
+    if accepted_midline_sidecar_p is not None:
+        try:
+            context = load_accepted_anatomy_midline_context(
+                accepted_midline_sidecar_p, fish_id=str(fish_id or ""),
+                required_planes=sorted(pd.to_numeric(detail_df.get("plane_idx", pd.Series(dtype=float)), errors="coerce").dropna().astype(int).unique()),
+            )
+            global_sidecar_hash = str(context["sidecar_sha256"])
+            cached_hashes = set(all_points_df.get("accepted_midline_sidecar_sha256", pd.Series(dtype=str)).dropna().astype(str))
+            cached_hashes |= set(all_counts_df.get("accepted_midline_sidecar_sha256", pd.Series(dtype=str)).dropna().astype(str))
+            if cached_hashes != {global_sidecar_hash}:
+                global_block_reason = "AUC cache does not match the current accepted anatomy-midline review; rebuild [56i]."
+                global_sidecar_hash = None
+        except Exception as exc:
+            global_block_reason = str(exc)
+    if global_sidecar_hash is None:
+        for axis in (ax_all_ipsi, ax_all_contra, ax_all_strip_ipsi, ax_all_strip_contra):
+            axis.clear(); axis.axis("off")
+        ax_all_ipsi.text(0.5, 0.54, "Global ipsi/contra AUC blocked", ha="center", va="center", transform=ax_all_ipsi.transAxes, fontweight="bold", wrap=True)
+        ax_all_ipsi.text(0.5, 0.38, global_block_reason, ha="center", va="center", transform=ax_all_ipsi.transAxes, fontsize=7, wrap=True)
+        global_results = {"status": "blocked", "reason": global_block_reason}
+    else:
+        global_results = {
+            "global_ipsi": render_single_fish_50l_global_auc_panel(ax_all_ipsi, ax_all_strip_ipsi, all_points_df, all_counts_df, "ipsi", "Ipsi", all_y_limits, show_ylabel=True, show_count_ylabel=True),
+            "global_contra": render_single_fish_50l_global_auc_panel(ax_all_contra, ax_all_strip_contra, all_points_df, all_counts_df, "contra", "Contra", all_y_limits, hide_y_ticklabels=True),
+        }
     panel_results = {
         "bpi": bpi_panel_result,
-        "global_ipsi": render_single_fish_50l_global_auc_panel(ax_all_ipsi, ax_all_strip_ipsi, all_points_df, all_counts_df, "ipsi", "Ipsi", all_y_limits, show_ylabel=True, show_count_ylabel=True),
-        "global_contra": render_single_fish_50l_global_auc_panel(ax_all_contra, ax_all_strip_contra, all_points_df, all_counts_df, "contra", "Contra", all_y_limits, hide_y_ticklabels=True),
+        **global_results,
         "gene_ipsi": render_single_fish_50l_gene_auc_panel(ax_gene_ipsi, ax_gene_strip_ipsi, gene_points_df, gene_counts_df, ordered_genes, np.arange(len(ordered_genes), dtype=float), "ipsi", "Ipsi", gene_y_limits, gene_colors=gene_colors_d),
         "gene_contra": render_single_fish_50l_gene_auc_panel(ax_gene_contra, ax_gene_strip_contra, gene_points_df, gene_counts_df, ordered_genes, np.arange(len(ordered_genes), dtype=float), "contra", "Contra", gene_y_limits, gene_colors=gene_colors_d, hide_y_ticklabels=True),
     }
@@ -2126,7 +2242,8 @@ def render_single_fish_50l_composite(
             ax.set_position([pos.x0, pos.y0 - count_shift_y, pos.width, pos.height])
 
     label_offset = float(run_config_d.get("COMPOSITE_50L_AUC_GROUP_LABEL_Y_OFFSET", 0.022))
-    fig.text(0.5 * (ax_all_ipsi.get_position().x0 + ax_all_contra.get_position().x1), max(ax_all_ipsi.get_position().y1, ax_all_contra.get_position().y1) + label_offset, "Global activity bout-like vs. continuous", ha="center", va="bottom", fontsize=panel_fs)
+    global_label = "Global activity bout-like vs. continuous" if global_sidecar_hash is not None else "Global laterality AUC — blocked pending accepted anatomy-midline review"
+    fig.text(0.5 * (ax_all_ipsi.get_position().x0 + ax_all_contra.get_position().x1), max(ax_all_ipsi.get_position().y1, ax_all_contra.get_position().y1) + label_offset, global_label, ha="center", va="bottom", fontsize=panel_fs)
     fig.text(0.5 * (ax_gene_ipsi.get_position().x0 + ax_gene_contra.get_position().x1), max(ax_gene_ipsi.get_position().y1, ax_gene_contra.get_position().y1) + label_offset, "Population activity bout-like vs. continuous", ha="center", va="bottom", fontsize=panel_fs)
 
     legend_auc = fig.legend(
@@ -5089,6 +5206,7 @@ __all__ = [
     "render_single_fish_bpi_all_pairs_diagnostics",
     "render_single_fish_50l_bpi_panel",
     "render_single_fish_50l_composite",
+    "render_accepted_global_laterality_auc_qc",
     "render_single_fish_50l_gene_auc_panel",
     "render_single_fish_50l_global_auc_panel",
     "render_single_fish_50l_population_response_donut_poster",

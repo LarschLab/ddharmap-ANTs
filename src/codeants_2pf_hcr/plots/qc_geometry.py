@@ -27,6 +27,8 @@ REQUIRED_GEOMETRY_COLUMNS = (
     "plane_idx",
     "func_label",
     "selected_anat_label",
+    "centroid_x_func_anat",
+    "centroid_y_func_anat",
     "has_unique_anat_match",
     "plane_match_outcome",
     "claim_outcome",
@@ -130,7 +132,11 @@ def load_geometry_review_bundle(
         for path, label in ((anatomy_stack, "anatomy stack"), (anatomy_labels, "anatomy labels"), (refs, "plane references")):
             if not path.is_file():
                 raise FileNotFoundError(f"Missing {label}: {path}")
-        label_paths = tuple(sorted(transformed_dir.glob("*.tif"))) + tuple(sorted(transformed_dir.glob("*.tiff")))
+        label_paths = tuple(
+            path
+            for path in (tuple(sorted(transformed_dir.glob("*.tif"))) + tuple(sorted(transformed_dir.glob("*.tiff"))))
+            if not path.name.startswith("._")
+        )
         if not label_paths:
             raise FileNotFoundError(f"No anatomy-space transformed ROI labels found: {transformed_dir}")
         transformed_labels = pd.DataFrame(
@@ -223,7 +229,7 @@ def summarize_geometry_review(matches: pd.DataFrame) -> pd.DataFrame:
                 "n_competition_lost": int(group["_competition_lost"].sum()),
                 "n_other_unmatched": int(group["_other_unmatched"].sum()),
                 "unique_match_fraction": float(matched.mean()) if len(group) else np.nan,
-                "median_selected_dist_um": float(group.loc[matched, "_distance"].median()) if matched.any() else np.nan,
+                "median_stored_selected_distance": float(group.loc[matched, "_distance"].median()) if matched.any() else np.nan,
                 "median_selected_overlap_px": float(group.loc[matched, "_overlap"].median()) if matched.any() else np.nan,
             }
         )
@@ -305,15 +311,17 @@ def render_geometry_review_summary(summary: pd.DataFrame, *, title: str = "ROI/a
 def render_centroid_offset_review(matches: pd.DataFrame, *, title: str = "Centroid offsets in anatomy space") -> plt.Figure:
     """Draw matched functional-to-anatomy centroid offsets for every functional plane.
 
-    The geometry table already stores both centroids in anatomy-space pixels.
+    The geometry table stores native functional centroids separately from the
+    transformed functional centroids used here; both plotted endpoints are in
+    anatomy-space pixels.
     This view therefore reports the accepted stage output directly and does not
     recompute transforms or matches.
     """
     required = {
         "plane_idx",
         "has_unique_anat_match",
-        "centroid_x_func",
-        "centroid_y_func",
+        "centroid_x_func_anat",
+        "centroid_y_func_anat",
         "centroid_x_anat",
         "centroid_y_anat",
     }
@@ -338,7 +346,7 @@ def render_centroid_offset_review(matches: pd.DataFrame, *, title: str = "Centro
             ax.set_title(f"Plane {plane}")
             ax.set_axis_off()
             continue
-        starts = subset[["centroid_x_func", "centroid_y_func"]].to_numpy(dtype=float)
+        starts = subset[["centroid_x_func_anat", "centroid_y_func_anat"]].to_numpy(dtype=float)
         ends = subset[["centroid_x_anat", "centroid_y_anat"]].to_numpy(dtype=float)
         ax.add_collection(LineCollection(np.stack([starts, ends], axis=1), colors="#7f8c8d", linewidths=0.5, alpha=0.35))
         ax.scatter(starts[:, 0], starts[:, 1], s=8, color="#0072B2", alpha=0.65, label="Functional ROI centroid")
@@ -348,7 +356,7 @@ def render_centroid_offset_review(matches: pd.DataFrame, *, title: str = "Centro
         ax.set_xlabel("Anatomy-space X (pixels)")
         ax.set_ylabel("Anatomy-space Y (pixels)")
         median = pd.to_numeric(subset.get("selected_dist_um"), errors="coerce").median()
-        median_text = f"; median {median:.2f} µm" if pd.notna(median) else ""
+        median_text = f"; stored distance {median:.2f} (verify physical units in Q0.1)" if pd.notna(median) else ""
         ax.set_title(f"Plane {plane}: {len(subset)} unique pairs{median_text}", fontsize=10)
         ax.grid(alpha=0.2)
         if plane == planes[0]:
@@ -400,7 +408,7 @@ def _label_boundaries(labels: np.ndarray) -> np.ndarray:
 
 def _draw_label_context(ax: plt.Axes, anatomy: np.ndarray, anatomy_labels: np.ndarray, functional_labels: np.ndarray, *, title: str) -> None:
     ax.imshow(norm01(anatomy), cmap="gray", interpolation="nearest")
-    for labels, color in ((anatomy_labels, "#00A6D6"), (functional_labels, "#D81B60")):
+    for labels, color in ((anatomy_labels, "#00A651"), (functional_labels, "#D81B60")):
         boundaries = _label_boundaries(labels)
         ax.contour(boundaries, levels=[0.5], colors=[color], linewidths=0.55)
     ax.set_title(title, fontsize=10)
@@ -427,7 +435,7 @@ def render_geometry_placement_overview(bundle: GeometryReviewBundle) -> plt.Figu
     for ax in axes.flat[len(planes) :]:
         ax.axis("off")
     fig.legend(
-        handles=[Line2D([], [], color="#00A6D6", label="Anatomy-label outline"), Line2D([], [], color="#D81B60", label="Functional ROI outline")],
+        handles=[Line2D([], [], color="#00A651", label="Anatomy-label outline"), Line2D([], [], color="#D81B60", label="Functional ROI outline")],
         loc="lower center", ncol=2, frameon=False,
     )
     fig.suptitle(f"{bundle.fish_id}: in-plane placement at each best anatomy Z", fontsize=13, fontweight="bold")
@@ -435,9 +443,9 @@ def render_geometry_placement_overview(bundle: GeometryReviewBundle) -> plt.Figu
 
 
 def _anatomy_radius_reference_um(bundle: GeometryReviewBundle) -> float | None:
-    """Estimate the median visible anatomy-label radius using the match table's µm scale."""
+    """Estimate the median visible anatomy-label radius from verified image geometry."""
     matches = bundle.matches[_as_bool(bundle.matches["has_unique_anat_match"])].copy()
-    columns = ("centroid_x_func", "centroid_y_func", "centroid_x_anat", "centroid_y_anat", "selected_dist_um")
+    columns = ("centroid_x_func_anat", "centroid_y_func_anat", "centroid_x_anat", "centroid_y_anat", "selected_dist_um")
     if any(column not in matches for column in columns):
         return None
     values = matches.loc[:, columns].apply(pd.to_numeric, errors="coerce").dropna()
@@ -447,11 +455,7 @@ def _anatomy_radius_reference_um(bundle: GeometryReviewBundle) -> float | None:
         spacing_x, spacing_y, _ = sitk.ReadImage(str(bundle.anatomy_stack_path)).GetSpacing()
         pixel_area_um2 = float(spacing_x) * float(spacing_y)
     except Exception:
-        pixel_distance = np.hypot(values["centroid_x_func"] - values["centroid_x_anat"], values["centroid_y_func"] - values["centroid_y_anat"])
-        scale = (values["selected_dist_um"] / pixel_distance).replace([np.inf, -np.inf], np.nan).dropna()
-        if scale.empty:
-            return None
-        pixel_area_um2 = float(np.median(scale) ** 2)
+        return None
     if "selected_anat_label" not in matches:
         return None
     radii_um: list[float] = []
@@ -479,18 +483,22 @@ def render_centroid_offset_detail(bundle: GeometryReviewBundle, *, plane_idx: in
         functional_labels,
         title=f"Plane {plane_idx}: anatomy Z={best_z}, label Z={anatomy_label_z}",
     )
-    required = ("centroid_x_func", "centroid_y_func", "centroid_x_anat", "centroid_y_anat")
+    required = ("centroid_x_func_anat", "centroid_y_func_anat", "centroid_x_anat", "centroid_y_anat")
     if all(column in selected for column in required):
         selected.loc[:, list(required)] = selected.loc[:, list(required)].apply(pd.to_numeric, errors="coerce")
         selected = selected.dropna(subset=list(required))
         segments = np.stack(
-            [selected[["centroid_x_func", "centroid_y_func"]].to_numpy(), selected[["centroid_x_anat", "centroid_y_anat"]].to_numpy()], axis=1
+            [selected[["centroid_x_func_anat", "centroid_y_func_anat"]].to_numpy(), selected[["centroid_x_anat", "centroid_y_anat"]].to_numpy()], axis=1
         ) if not selected.empty else np.empty((0, 2, 2))
         if len(segments):
-            context_ax.add_collection(LineCollection(segments, colors="#F4B400", linewidths=0.65, alpha=0.55))
+            # Keep the true segment length.  A high-contrast, foreground stroke
+            # makes sub-cellular but valid offsets visible at full-plane scale.
+            context_ax.add_collection(
+                LineCollection(segments, colors="#FFD60A", linewidths=1.15, alpha=0.95, zorder=6)
+            )
     context_ax.legend(
         handles=[
-            Line2D([], [], color="#00A6D6", label="Anatomy-label outline"),
+            Line2D([], [], color="#00A651", label="Anatomy-label outline"),
             Line2D([], [], color="#D81B60", label="Functional ROI outline"),
             Line2D([], [], color="#F4B400", label="Unique-match centroid offset"),
         ],
@@ -522,8 +530,8 @@ def render_centroid_offset_detail(bundle: GeometryReviewBundle, *, plane_idx: in
         violin_ax.axhline(radius, color="#D55E00", linestyle="--", linewidth=1.5, label=f"Median anatomy-label radius ({radius:.2f} µm)")
     violin_ax.set_xticks(np.arange(len(planes)), [str(plane) for plane in planes])
     violin_ax.set_xlabel("Functional plane")
-    violin_ax.set_ylabel("Unique-match XY centroid offset (µm)")
-    violin_ax.set_title("All-plane offset distribution; selected plane highlighted", fontsize=10)
+    violin_ax.set_ylabel("Stored selected_dist_um (unit pending Q0.1 audit)")
+    violin_ax.set_title("All-plane stored-distance distribution; selected plane highlighted", fontsize=10)
     violin_ax.grid(axis="y", alpha=0.2)
     if radius is not None:
         violin_ax.legend(frameon=False, fontsize=8)
@@ -587,6 +595,178 @@ def show_geometry_review_dashboard(bundle: GeometryReviewBundle, *, max_rows: in
     return result
 
 
+def audit_xy_offset_units(
+    matches: pd.DataFrame,
+    *,
+    dx_um: float,
+    dy_um: float,
+) -> pd.DataFrame:
+    """Recompute physical XY offsets from frozen geometry centroids.
+
+    This is deliberately an audit, not a replacement matcher.  It intersects
+    the geometry-stage unique matches and makes the coordinate conversion
+    explicit so a mislabeled pixel distance cannot be mistaken for microns.
+    """
+    required = {
+        "plane_idx", "func_label", "has_unique_anat_match",
+        "centroid_x_func_anat", "centroid_y_func_anat",
+        "centroid_x_anat", "centroid_y_anat",
+    }
+    missing = sorted(required.difference(matches.columns))
+    if missing:
+        raise ValueError(f"Geometry table lacks XY-offset audit columns: {missing}")
+    if not (np.isfinite(dx_um) and dx_um > 0 and np.isfinite(dy_um) and dy_um > 0):
+        raise ValueError("dx_um and dy_um must be finite positive physical spacings")
+    out = matches.loc[_as_bool(matches["has_unique_anat_match"])].copy()
+    out["dx_px"] = pd.to_numeric(out["centroid_x_func_anat"], errors="coerce") - pd.to_numeric(out["centroid_x_anat"], errors="coerce")
+    out["dy_px"] = pd.to_numeric(out["centroid_y_func_anat"], errors="coerce") - pd.to_numeric(out["centroid_y_anat"], errors="coerce")
+    out["physical_xy_offset_um"] = np.hypot(out["dx_px"] * float(dx_um), out["dy_px"] * float(dy_um))
+    out["reported_selected_dist_um"] = pd.to_numeric(out.get("selected_dist_um"), errors="coerce")
+    out["reported_to_physical_ratio"] = out["reported_selected_dist_um"] / out["physical_xy_offset_um"]
+    return out.dropna(subset=["physical_xy_offset_um"]).reset_index(drop=True)
+
+
+def render_xy_offset_unit_audit(audit: pd.DataFrame, *, fish_id: str) -> plt.Figure:
+    """Render reported-versus-physical offset checks for the Q0.1 review gate."""
+    if audit.empty:
+        raise ValueError("No unique matches with finite centroids for XY-offset audit")
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.5), constrained_layout=True)
+    reported = pd.to_numeric(audit["reported_selected_dist_um"], errors="coerce")
+    physical = pd.to_numeric(audit["physical_xy_offset_um"], errors="coerce")
+    finite = np.isfinite(reported) & np.isfinite(physical)
+    upper = float(np.nanmax(np.r_[reported[finite], physical[finite]])) if finite.any() else 1.0
+    axes[0].scatter(physical[finite], reported[finite], s=8, alpha=0.35, color="#0072B2", rasterized=True)
+    axes[0].plot([0, upper], [0, upper], "--", color="#444444", linewidth=1)
+    axes[0].set(
+        xlabel="Physical centroid remeasurement (µm)",
+        ylabel="Stored selected_dist_um\n(historically pixel-valued)",
+        title="Row-level distance comparison",
+    )
+    axes[0].grid(alpha=0.2)
+    axes[1].hist(physical[finite], bins=40, alpha=0.65, color="#009E73", label=f"physical (median {np.nanmedian(physical):.2f} µm)")
+    axes[1].hist(reported[finite], bins=40, histtype="step", linewidth=1.8, color="#CC79A7", label=f"stored pixel-valued (median {np.nanmedian(reported):.2f})")
+    axes[1].set(xlabel="XY centroid distance", ylabel="Unique matches", title=f"n = {int(finite.sum())}; same frozen (plane, ROI) keys")
+    axes[1].legend(frameon=False, fontsize=8)
+    fig.suptitle(f"{fish_id}: Q0.1 XY-offset unit audit", fontweight="bold")
+    return fig
+
+
+def build_legacy_qc_xy_offset_audit(
+    legacy_rows: pd.DataFrame,
+    qc_rows: pd.DataFrame,
+    *,
+    dx_um: float,
+    dy_um: float,
+) -> pd.DataFrame:
+    """Compare legacy ``[53a]`` and notebook-03 XY offsets on identical ROI keys.
+
+    The legacy panel's functional-to-anatomy XY series is the finite
+    ``selected_dist_um`` field after its anatomy-match and unique-match filter.
+    Notebook 03 instead measures the same two saved anatomy-space centroid
+    columns in physical units.  This helper applies the *same* filter to both
+    sources, rejects duplicate keys, and inner-joins the exact
+    ``(plane_idx, func_label)`` intersection.  It never rematches or transforms
+    an ROI.
+    """
+    if not (np.isfinite(dx_um) and dx_um > 0 and np.isfinite(dy_um) and dy_um > 0):
+        raise ValueError("dx_um and dy_um must be finite positive physical spacings")
+
+    key_columns = ("plane_idx", "func_label")
+    centroid_columns = (
+        "centroid_x_func_anat",
+        "centroid_y_func_anat",
+        "centroid_x_anat",
+        "centroid_y_anat",
+    )
+    required = set(key_columns) | {
+        "has_unique_anat_match",
+        "plane_match_outcome",
+        "selected_dist_um",
+    } | set(centroid_columns)
+
+    def _filtered(source: pd.DataFrame, name: str) -> pd.DataFrame:
+        missing = sorted(required.difference(source.columns))
+        if missing:
+            raise ValueError(f"{name} XY-offset audit lacks columns: {', '.join(missing)}")
+        out = source.copy()
+        out = out[out["plane_match_outcome"].astype(str).eq("anatomy match")].copy()
+        out = out[_as_bool(out["has_unique_anat_match"])].copy()
+        for column in (*key_columns, *centroid_columns, "selected_dist_um"):
+            out[column] = pd.to_numeric(out[column], errors="coerce")
+        out = out.dropna(subset=[*key_columns, *centroid_columns, "selected_dist_um"])
+        out["plane_idx"] = out["plane_idx"].astype(int)
+        out["func_label"] = out["func_label"].astype(int)
+        if out.duplicated(list(key_columns)).any():
+            raise ValueError(f"{name} XY-offset audit has duplicate unique-match keys")
+        return out.loc[:, [*key_columns, *centroid_columns, "selected_dist_um"]]
+
+    legacy = _filtered(legacy_rows, "Legacy [53a]")
+    qc = _filtered(qc_rows, "Notebook 03")
+    legacy = legacy.rename(columns={
+        **{column: f"legacy_{column}" for column in centroid_columns},
+        "selected_dist_um": "legacy_53a_xy_offset_um",
+    })
+    qc = qc.rename(columns={
+        **{column: f"qc_{column}" for column in centroid_columns},
+        "selected_dist_um": "qc_stored_selected_dist_um",
+    })
+    joined = legacy.merge(qc, on=list(key_columns), how="inner", validate="one_to_one")
+    if joined.empty:
+        raise ValueError("Legacy [53a] and Notebook 03 have no intersected unique-match ROI keys")
+    joined["qc_dx_px"] = joined["qc_centroid_x_func_anat"] - joined["qc_centroid_x_anat"]
+    joined["qc_dy_px"] = joined["qc_centroid_y_func_anat"] - joined["qc_centroid_y_anat"]
+    joined["qc_xy_offset_um"] = np.hypot(joined["qc_dx_px"] * float(dx_um), joined["qc_dy_px"] * float(dy_um))
+    joined["xy_offset_delta_um"] = joined["qc_xy_offset_um"] - joined["legacy_53a_xy_offset_um"]
+    return joined.sort_values(list(key_columns)).reset_index(drop=True)
+
+
+def summarize_legacy_qc_xy_offset_audit(audit: pd.DataFrame) -> pd.DataFrame:
+    """Return overall and per-plane sample sizes and medians for Q0.1."""
+    required = {"plane_idx", "legacy_53a_xy_offset_um", "qc_xy_offset_um"}
+    missing = sorted(required.difference(audit.columns))
+    if missing:
+        raise ValueError(f"XY-offset parity summary lacks columns: {', '.join(missing)}")
+    rows: list[dict[str, float | int | str]] = []
+    for label, subset in [("overall", audit), *[(str(int(p)), g) for p, g in audit.groupby("plane_idx", sort=True)]]:
+        rows.append({
+            "scope": label,
+            "n": int(len(subset)),
+            "legacy_53a_median_xy_offset_um": float(np.median(subset["legacy_53a_xy_offset_um"])),
+            "qc_median_xy_offset_um": float(np.median(subset["qc_xy_offset_um"])),
+            "median_delta_um": float(np.median(subset["xy_offset_delta_um"])),
+        })
+    return pd.DataFrame(rows)
+
+
+def render_legacy_qc_xy_offset_audit(audit: pd.DataFrame, *, fish_id: str) -> plt.Figure:
+    """Render Q0.1 side-by-side distance distributions and row-level scatter."""
+    if audit.empty:
+        raise ValueError("No intersected unique matches available for XY-offset parity audit")
+    legacy = pd.to_numeric(audit["legacy_53a_xy_offset_um"], errors="coerce").to_numpy(dtype=float)
+    qc = pd.to_numeric(audit["qc_xy_offset_um"], errors="coerce").to_numpy(dtype=float)
+    finite = np.isfinite(legacy) & np.isfinite(qc)
+    if not finite.any():
+        raise ValueError("XY-offset parity audit has no finite matched distances")
+    legacy, qc = legacy[finite], qc[finite]
+    upper = max(float(np.max(np.r_[legacy, qc])), 1.0)
+    fig, (distribution_ax, scatter_ax) = plt.subplots(1, 2, figsize=(12.5, 4.8), constrained_layout=True)
+    bins = np.linspace(0.0, upper, min(41, max(11, int(np.sqrt(len(legacy))) * 3)))
+    distribution_ax.hist(legacy, bins=bins, alpha=0.60, color="#CC79A7", label=f"legacy [53a] (median {np.median(legacy):.3f} µm)")
+    distribution_ax.hist(qc, bins=bins, histtype="step", linewidth=2.0, color="#0072B2", label=f"Notebook 03 (median {np.median(qc):.3f} µm)")
+    distribution_ax.set(xlabel="Functional-to-anatomy XY centroid distance (µm)", ylabel="Intersected unique-match ROIs", title=f"Same keys, n={len(legacy)}")
+    distribution_ax.legend(frameon=False, fontsize=8)
+    distribution_ax.grid(axis="y", alpha=0.2)
+    scatter_ax.scatter(legacy, qc, s=10, alpha=0.38, color="#0072B2", rasterized=True)
+    scatter_ax.plot([0, upper], [0, upper], "--", color="#444444", linewidth=1)
+    scatter_ax.set(xlabel="legacy [53a] selected_dist_um (µm)", ylabel="Notebook 03 centroid remeasurement (µm)", title="Row-level exact-key comparison")
+    scatter_ax.set_aspect("equal", adjustable="box")
+    scatter_ax.set_xlim(0, upper)
+    scatter_ax.set_ylim(0, upper)
+    scatter_ax.grid(alpha=0.2)
+    fig.suptitle(f"{fish_id}: Q0.1 legacy [53a] versus Notebook 03 XY-offset parity", fontweight="bold")
+    return fig
+
+
 __all__ = [
     "FORBIDDEN_POST_GEOMETRY_COLUMNS",
     "GeometryReviewBundle",
@@ -595,8 +775,13 @@ __all__ = [
     "load_geometry_review_bundle",
     "render_centroid_offset_review",
     "render_centroid_offset_detail",
+    "audit_xy_offset_units",
+    "build_legacy_qc_xy_offset_audit",
+    "render_xy_offset_unit_audit",
+    "render_legacy_qc_xy_offset_audit",
     "render_geometry_placement_overview",
     "render_geometry_review_summary",
     "show_geometry_review_dashboard",
     "summarize_geometry_review",
+    "summarize_legacy_qc_xy_offset_audit",
 ]

@@ -14,13 +14,32 @@ from codeants_2pf_hcr.matching import (
     build_hcr_anatomy_match_tables,
     build_hcr_mask_fate_df,
     build_functional_anatomy_debug_stage,
+    build_functional_roi_master_df,
     infer_anatomy_label_z_mode,
     resample_image,
+    resolve_plane_transform,
     resolve_anatomy_label_z,
     summarize_functional_anatomy_geometry_metrics,
     validate_anatomy_label_z_provenance,
     transform_points_between_spaces,
 )
+
+
+def test_resolve_selected_ants_transform_restores_ncc_preplacement() -> None:
+    resolved = resolve_plane_transform(
+        {
+            "tform_src": "ants_rigid_affine",
+            "ants_transform": {"type": "ants_transformlist", "transformlist": ["plane0.mat"]},
+            "ref_scaled_shape": (512, 512),
+            "ncc_xy": {"x0": 80, "y0": 82, "score": 0.9},
+        }
+    )
+    assert resolved["ncc_preplacement"] == {
+        "x0": 80,
+        "y0": 82,
+        "score": 0.9,
+        "source_shape": (512, 512),
+    }
 
 
 def test_build_hcr_anatomy_match_tables_classifies_final_and_review_pairs() -> None:
@@ -53,9 +72,13 @@ def test_build_hcr_anatomy_match_tables_classifies_final_and_review_pairs() -> N
         "iou",
         "overlap_frac_conf",
         "overlap_frac_twoP",
+        "centroid_xy_distance_um",
+        "median_anatomy_xy_radius_um",
+        "is_centroid_xy_offset_over_median_anatomy_radius",
         "pair_type",
         "quality",
     ]
+    assert matches["is_centroid_xy_offset_over_median_anatomy_radius"].dtype == bool
     assert final_pairs[["conf_label", "twoP_label", "pair_type", "quality"]].to_dict("records") == [
         {"conf_label": 1, "twoP_label": 10, "pair_type": "1-1", "quality": "good"}
     ]
@@ -99,6 +122,31 @@ def test_resample_image_uses_plane_transform_for_intensity_exports() -> None:
 
     assert out.shape == (6, 6)
     assert np.isclose(float(out[2, 3]), 5.0)
+
+
+def test_functional_roi_master_persists_transformed_centroid_in_anatomy_space() -> None:
+    anatomy_labels = np.zeros((1, 8, 8), dtype=np.uint16)
+    anatomy_labels[0, 3:5, 4:6] = 7
+    detail, _ = build_functional_roi_master_df(
+        {
+            0: {
+                "stat": [{"ypix": np.asarray([1]), "xpix": np.asarray([1])}],
+                "ops": {"Ly": 8, "Lx": 8},
+                "iscell": np.asarray([[1.0, 1.0]]),
+            }
+        },
+        [{"index": 0, "best_z": 0, "ncc_xy": {"x0": 3, "y0": 2}}],
+        anatomy_labels,
+        fish_id="L765_f04",
+    )
+
+    row = detail.iloc[0]
+    assert row["centroid_x_func"] == 1.0
+    assert row["centroid_y_func"] == 1.0
+    assert row["centroid_x_func_anat"] == 4.0
+    assert row["centroid_y_func_anat"] == 3.0
+    assert row["centroid_x_anat"] == 4.5
+    assert row["centroid_y_anat"] == 3.5
 
 
 def test_resolve_anatomy_label_z_supports_reversed_label_stacks() -> None:

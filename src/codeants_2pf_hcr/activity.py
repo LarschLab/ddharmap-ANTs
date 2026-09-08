@@ -378,6 +378,69 @@ def _build_activity_stimulus_context(
     }
 
 
+def build_scored_stimulus_windows_table(
+    *,
+    fish_id: str,
+    df_stim: pd.DataFrame,
+    stim_events: Sequence[Mapping[str, Any]],
+    fps_by_session: Mapping[str, float] | None = None,
+    stim_events_by_plane: Mapping[int, Sequence[Mapping[str, Any]]] | None = None,
+    df_stim_by_plane: Mapping[int, pd.DataFrame] | None = None,
+    fps_by_plane: Mapping[int, float] | None = None,
+) -> pd.DataFrame:
+    """Record the exact response-scoring windows without changing scoring.
+
+    This is provenance for read-only QC: the recorded window comes from the
+    parsed stimulus table and the scored window is the frame interval consumed
+    by :func:`build_response_bpi_tables` after its onset-delay rule.
+    """
+    rows: list[dict[str, Any]] = []
+    source = df_stim.copy() if isinstance(df_stim, pd.DataFrame) else pd.DataFrame()
+    fps_lookup = dict(fps_by_session or {})
+    event_groups = (
+        [(int(plane), event) for plane, events in stim_events_by_plane.items() for event in events]
+        if stim_events_by_plane else [(None, event) for event in stim_events]
+    )
+    for plane_idx, event in event_groups:
+        session = str(event.get("session_label", ""))
+        block = event.get("block", pd.NA)
+        stim_idx = event.get("stim_idx", -1)
+        candidates = (df_stim_by_plane or {}).get(plane_idx, source).copy()
+        if "session_label" in candidates:
+            candidates = candidates[candidates["session_label"].astype(str) == session]
+        if "block" in candidates and pd.notna(block):
+            candidates = candidates[candidates["block"].astype(str) == str(block)]
+        if "stim_idx" in candidates and pd.notna(stim_idx):
+            candidates = candidates[pd.to_numeric(candidates["stim_idx"], errors="coerce") == int(stim_idx)]
+        if "type" in candidates:
+            candidates = candidates[candidates["type"].astype(str) == str(event.get("stim_type", ""))]
+        recorded = candidates.iloc[0] if not candidates.empty else pd.Series(dtype=object)
+        fps = float((fps_by_plane or {}).get(plane_idx, fps_lookup.get(session, np.nan)))
+        idx0 = int(event["idx0"])
+        idx1 = int(event["idx1"])
+        rows.append(
+            {
+                "fish_id": str(fish_id),
+                "plane_idx": plane_idx,
+                "session_label": session,
+                "block": block,
+                "stim_idx": int(stim_idx),
+                "stim_type": str(event.get("stim_type", "")),
+                "stim_class": str(event.get("stim_class", "")),
+                "recorded_onset_sec": pd.to_numeric(recorded.get("start", np.nan), errors="coerce"),
+                "recorded_offset_sec": pd.to_numeric(recorded.get("end", np.nan), errors="coerce"),
+                "scored_onset_frame": idx0,
+                "scored_offset_frame": idx1,
+                "scored_onset_sec": idx0 / fps if np.isfinite(fps) and fps > 0 else np.nan,
+                "scored_offset_sec": idx1 / fps if np.isfinite(fps) and fps > 0 else np.nan,
+                "fps": fps,
+                "scored_duration_frames": int(event["duration_frames"]),
+                "scored_duration_sec": float(event["duration_s"]),
+            }
+        )
+    return pd.DataFrame.from_records(rows)
+
+
 def build_response_bpi_tables(
     detail_df: pd.DataFrame,
     *,
@@ -447,6 +510,7 @@ def build_response_bpi_tables(
             "scored_bpi_df": precomputed_scored_bpi_df.copy(),
             "summary_df": summary_df,
             "fps": float(frame_rate) if frame_rate is not None else float("nan"),
+            "fps_by_session": {},
             "df_evt": pd.DataFrame(),
             "df_stim": pd.DataFrame(),
             "stim_events": [],
@@ -869,6 +933,10 @@ def build_response_bpi_tables(
         "scored_bpi_df": scored_bpi_df,
         "summary_df": summary_df,
         "fps": float(fps),
+        "fps_by_session": {str(ctx.get("session_label", "")): float(ctx["fps"]) for ctx in unique_contexts},
+        "stim_events_by_plane": {plane: context["stim_events"] for plane, context in prepared_contexts.items()},
+        "df_stim_by_plane": {plane: context["df_stim"] for plane, context in prepared_contexts.items()},
+        "fps_by_plane": {plane: float(context["fps"]) for plane, context in prepared_contexts.items()},
         "df_evt": df_evt,
         "df_stim": df_stim,
         "stim_events": stim_events,

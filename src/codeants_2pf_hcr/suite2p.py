@@ -76,11 +76,22 @@ def _build_labels_from_stat(stat: np.ndarray, iscell: np.ndarray, ops: dict[str,
     return labels, keep
 
 
+def build_suite2p_all_roi_labels(stat: np.ndarray, ops: dict[str, Any]) -> np.ndarray:
+    """Rasterize every Suite2p ROI, preserving its one-based stat.npy label."""
+    include_all = np.ones((len(stat), 1), dtype=bool)
+    labels, _ = _build_labels_from_stat(stat, include_all, ops)
+    return labels
+
+
 @dataclass(frozen=True)
 class Suite2pStageConfig:
     use_suite2p_labels: bool = True
     plane_glob: str = "plane*"
     flip_x: bool | None = None
+    # Suite2p's stat.npy pixel coordinates may predate a later canonical-TIFF
+    # preprocessing run.  This is deliberately independent of the frame of
+    # the TIFF paths recorded in ops.npy.
+    stat_xy_frame: str | None = None
     dfof_baseline_pct: float = 10.0
     dfof_eps: float = 1e-6
     verbose: bool = True
@@ -489,7 +500,9 @@ def build_suite2p_stimulus_locked_diagnostic(
                 continue
             for roi_idx in np.where(valid_roi)[0]:
                 segs: list[np.ndarray] = []
+                dff_segs: list[np.ndarray] = []
                 trace = z[int(roi_idx)]
+                dff_trace = dff_arr[int(roi_idx)]
                 for start_s in trial_starts:
                     onset_idx = int(round(float(start_s) * fps))
                     seg = _extract_trace_window(
@@ -501,10 +514,20 @@ def build_suite2p_stimulus_locked_diagnostic(
                     )
                     if seg is not None:
                         segs.append(seg)
+                        dff_seg = _extract_trace_window(
+                            dff_trace,
+                            onset_idx - n_pre,
+                            onset_idx + n_post,
+                            mode=cfg.window_edge_policy,
+                            min_valid_frac=float(cfg.min_valid_frac),
+                        )
+                        if dff_seg is not None:
+                            dff_segs.append(dff_seg)
                 if len(segs) < int(cfg.min_trials_per_stimulus):
                     continue
                 stack = np.vstack(segs).astype(np.float32, copy=False)
                 mean_trace = np.nanmean(stack, axis=0).astype(np.float32, copy=False)
+                mean_dff_trace = np.nanmean(np.vstack(dff_segs), axis=0) if dff_segs else np.full_like(mean_trace, np.nan)
                 post_mask = tvec >= 0
                 trace_rows.append(
                     {
@@ -517,8 +540,10 @@ def build_suite2p_stimulus_locked_diagnostic(
                         "n_trials": int(len(trial_starts)),
                         "n_valid_trials": int(len(segs)),
                         "mean_trace": mean_trace,
+                        "mean_dff_trace": mean_dff_trace.astype(np.float32, copy=False),
                         "mean_z_pre": float(np.nanmean(mean_trace[~post_mask])) if np.any(~post_mask) else np.nan,
                         "mean_z_post": float(np.nanmean(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
+                        "mean_dff_post": float(np.nanmean(mean_dff_trace[post_mask])) if np.any(post_mask) else np.nan,
                         "peak_z_post": float(np.nanmax(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
                     }
                 )
@@ -662,9 +687,13 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         fig_heatmaps.savefig(heat_png.with_suffix(".pdf"), bbox_inches="tight")
         summary_csv = out_dir / "suite2p_stimulus_locked_summary_23b.csv"
         source_csv = out_dir / "suite2p_stimulus_locked_sources_23b.csv"
-        summary_out = result["trace_df"].drop(columns=["mean_trace"]).copy()
+        heatmap_matrix_npy = out_dir / "suite2p_full_session_heatmap_matrix_23c.npy"
+        heatmap_rows_csv = out_dir / "suite2p_full_session_heatmap_rows_23c.csv"
+        summary_out = result["trace_df"].drop(columns=["mean_trace", "mean_dff_trace"]).copy()
         summary_out.to_csv(summary_csv, index=False)
         result["source_df"].to_csv(source_csv, index=False)
+        np.save(heatmap_matrix_npy, result["full_session_heatmap_matrix"])
+        result["full_session_heatmap_rows"].to_csv(heatmap_rows_csv, index=False)
         response_csv = out_dir / "suite2p_response_bpi_cells_23c.csv"
         response_summary_csv = out_dir / "suite2p_response_bpi_summary_23c.csv"
         if response_result is not None:
@@ -677,6 +706,8 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
             "heatmap_pdf": str(heat_png.with_suffix(".pdf")),
             "summary_csv": str(summary_csv),
             "source_csv": str(source_csv),
+            "heatmap_matrix_npy": str(heatmap_matrix_npy),
+            "heatmap_rows_csv": str(heatmap_rows_csv),
         }
         if response_result is not None:
             out_paths["response_csv"] = str(response_csv)
@@ -770,7 +801,7 @@ def load_suite2p_stage(
     declared_frame = CANONICAL_XY_FRAME if manifest is not None else None
     if input_xy_frame is not None and declared_frame is not None and input_xy_frame != declared_frame:
         raise ValueError(f"Suite2P frame {input_xy_frame!r} conflicts with canonical manifest {declared_frame!r}")
-    frame = input_xy_frame or declared_frame or LEGACY_ACQUISITION_XY_FRAME
+    frame = cfg.stat_xy_frame or input_xy_frame or declared_frame or LEGACY_ACQUISITION_XY_FRAME
     if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
         raise ValueError(f"Unknown Suite2P input XY frame: {frame!r}")
     canonical_plane_paths = {
@@ -966,6 +997,7 @@ def load_suite2p_stage(
         "func_labels": func_labels,
         "suite2p_fish_id": fish_id,
         "input_xy_frame": frame,
+        "stat_xy_frame": frame,
         "output_xy_frame": CANONICAL_XY_FRAME,
         "df_sum": df_sum,
         "df_src": df_src,
@@ -998,6 +1030,7 @@ def load_suite2p_dff_map(
 __all__ = [
     "Suite2pStageConfig",
     "Suite2pStimulusLockedDiagnosticConfig",
+    "build_suite2p_all_roi_labels",
     "build_suite2p_stimulus_locked_diagnostic",
     "infer_frame_rate_from_detail",
     "load_suite2p_stage",

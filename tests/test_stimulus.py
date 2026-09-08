@@ -33,6 +33,8 @@ class StimulusTests(unittest.TestCase):
         self.assertEqual(classify_stim_type("LLB"), "bout")
         self.assertEqual(classify_stim_type("RLC"), "continuous")
         self.assertEqual(classify_stim_type("LLB+RLC"), "mixed")
+        self.assertEqual(classify_stim_type("LB_trajectory"), "bout")
+        self.assertEqual(classify_stim_type("LC_trajectory"), "continuous")
 
     def test_effective_motion_window_uses_onset_delay(self) -> None:
         start, end, duration = effective_motion_window(5.0, 10.0, None, 2.0)

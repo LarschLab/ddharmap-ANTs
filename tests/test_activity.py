@@ -10,12 +10,20 @@ from codeants_2pf_hcr.activity import (
     ActivityConfig,
     SingleFishBpiDiagnosticsConfig,
     build_response_bpi_tables,
+    build_scored_stimulus_windows_table,
     build_suite2p_response_seed_table,
     prepare_single_fish_bpi_diagnostics_stage,
 )
 
 
 class ActivityTests(unittest.TestCase):
+    def test_scored_window_provenance_retains_plane_keys_for_shared_sessions(self) -> None:
+        events = {0: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}], 1: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}]}
+        source = {plane: pd.DataFrame([{"block": "B1", "stim_idx": 0, "type": "LLB", "start": 2.0, "end": 4.0}]) for plane in events}
+        table = build_scored_stimulus_windows_table(fish_id="L758_f02", df_stim=pd.DataFrame(), stim_events=[], stim_events_by_plane=events, df_stim_by_plane=source, fps_by_plane={0: 2.0, 1: 2.0})
+        self.assertEqual(table["plane_idx"].tolist(), [0, 1])
+        self.assertEqual(len(table), 2)
+
     def test_build_response_bpi_tables_uses_plane_session_stimulus_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
