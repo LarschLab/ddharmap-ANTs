@@ -18,7 +18,7 @@
 | --- | --- |
 | `notebooks/singleFish.ipynb` and single-fish stage ownership | `.agents/workflows/2pf-hcr-single-fish-router.md` |
 | `notebooks/qc/`, `notebooks/hcr_activity_replay_qa.ipynb`, or their package-owned review surfaces | `.agents/workflows/2pf-hcr-single-fish-router.md` |
-| `registrations/` or the root compatibility paths for maintained registration utilities | `.agents/workflows/2pf-hcr-single-fish-router.md` |
+| `registrations/` and its maintained manual registration utilities | `.agents/workflows/2pf-hcr-single-fish-router.md` |
 | `notebooks/multi_fish_56h_56g.ipynb`, `notebooks/multiFish.ipynb`, and cohort/multi-fish aggregation or orchestration ownership | `.agents/workflows/2pf-hcr-cohort-router.md` |
 | `legacy/` comparison or reproduction | Read `legacy/README.md`, then use the single-fish or cohort router matching the historical artifact. Legacy material is never default authority. |
 

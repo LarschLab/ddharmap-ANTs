@@ -208,16 +208,12 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("external confocal registration uses current rbest/rn names", completed.stdout)
 
 
-    def test_root_file_allowlist_and_registration_compatibility_links(self) -> None:
+    def test_root_file_allowlist_and_registration_entrypoints(self) -> None:
         allowed = {
             ".gitattributes",
             ".gitignore",
             "AGENTS.md",
             "pyproject.toml",
-            "ants_toRef.sh",
-            "applyTransform.py",
-            "bigwarp_loop.groovy",
-            "sync.sh",
         }
         tracked_root_files = {
             path.name
@@ -233,9 +229,9 @@ class AgentDocsTests(unittest.TestCase):
         }
         self.assertEqual(tracked_root_files, allowed)
         for name in ("ants_toRef.sh", "applyTransform.py", "bigwarp_loop.groovy", "sync.sh"):
-            path = REPO_ROOT / name
-            self.assertTrue(path.is_symlink(), name)
-            self.assertEqual(path.resolve(), (REPO_ROOT / "registrations" / name).resolve())
+            self.assertFalse((REPO_ROOT / name).exists(), name)
+            path = REPO_ROOT / "registrations" / name
+            self.assertTrue(path.is_file(), name)
 
     def test_generated_and_temporary_artifacts_are_not_tracked_as_current_files(self) -> None:
         completed = subprocess.run(

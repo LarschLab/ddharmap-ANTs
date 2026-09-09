@@ -1,1 +1,0 @@
-registrations/bigwarp_loop.groovy
