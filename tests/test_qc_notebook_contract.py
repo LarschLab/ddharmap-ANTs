@@ -74,3 +74,28 @@ def test_qc_notebook_public_apis_are_exported() -> None:
         "inspect_activity_export_qc",
     ):
         assert callable(getattr(codeants, name)), name
+
+def test_qc_notebook_titles_match_their_declared_review_gates() -> None:
+    expected = {
+        "00_single_fish_pipeline_overview.ipynb": "Pipeline overview",
+        "01_functional_reference_and_drift_qc.ipynb": "Functional reference and depth-stability review",
+        "02_functional_registration_qc.ipynb": "Functional-to-anatomy registration review",
+        "03_roi_anatomy_geometry_qc.ipynb": "ROI-to-anatomy geometry review",
+        "04_molecular_geometry_qc.ipynb": "Molecular geometry review",
+        "05_molecular_identity_qc.ipynb": "Molecular identity review",
+        "06_activity_and_export_qc.ipynb": "Activity and BPI review",
+    }
+    for notebook_path in QC_NOTEBOOKS:
+        notebook = nbformat.read(notebook_path, as_version=4)
+        first_markdown = next(cell.source for cell in notebook.cells if cell.cell_type == "markdown")
+        assert expected[notebook_path.name] in first_markdown, notebook_path
+
+
+def test_functional_registration_notebook_uses_registration_review_owners() -> None:
+    notebook_path = REPO_ROOT / "notebooks" / "qc" / "02_functional_registration_qc.ipynb"
+    source = _code_source(notebook_path)
+    assert "load_functional_registration_qc" in source
+    assert "render_functional_registration_all_planes" in source
+    assert "render_functional_registration_artifacts" in source
+    assert "build_early_response_qc_from_raw" not in source
+    assert "score-activity-bpi" not in source

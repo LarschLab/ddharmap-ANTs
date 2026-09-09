@@ -43,6 +43,7 @@ Use repo/vault routing only when the request requires local files, durable updat
 - Keep geometry matching independent of activity/BPI/gene identity.
 - Assign identity after geometry; add response/BPI after geometry is fixed.
 - Figures should filter authoritative tables, not rebuild identity in plotting cells.
+- Accepted high-risk table and figure semantics are executable contracts in `.agents/contracts/scientific-artifacts.json`; update them only with an explicit scientific-change decision.
 - ROI-centric master table is authoritative for whole-population analyses.
 - HCR-centric exports are for identified-cell activity analyses only and must not silently replace ROI-centric authoritative outputs.
 - Consult `.agents/workflows/2pf-hcr-router.md` before opening large notebook regions.

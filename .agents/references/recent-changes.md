@@ -33,3 +33,11 @@ python3 .agents/scripts/query_recent_changes.py --repo <repo-name> --query <term
 ```
 
 Open the full log only when the compact result points to an entry that needs detailed reading.
+
+### 2026-09-09 - repository authority and layout cleanup
+
+- Scope:
+  - normalized single-fish/cohort routing, classified reference authority, separated maintained `registrations/` from `legacy/`, removed tracked generated caches, and added executable location and scientific-artifact contracts
+- Pointers:
+  - `recent-changes-single-fish.md` entry for the restored QC notebook 02 registration gate and contract validation
+  - commits on `codex/repository-cleanup` following `e4683d7` (`pre-cleanup`)

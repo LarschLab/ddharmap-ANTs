@@ -157,9 +157,9 @@ def test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent(tm
     scored = tmp_path / "scored_stimulus_windows.csv"
     pd.DataFrame([
         {"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1", "block": "B1", "stim_idx": 0,
-         "stim_type": "LLB", "recorded_onset_sec": 2.0, "recorded_offset_sec": 4.0,
-         "scored_onset_sec": 12.0, "scored_offset_sec": 4.0,
-         "scored_onset_frame": 4, "scored_offset_frame": 8}
+         "stim_type": "LLB", "recorded_onset_sec": 2.0, "recorded_offset_sec": 6.0,
+         "scored_onset_sec": 12.0, "scored_offset_sec": 16.0,
+         "scored_onset_frame": 24, "scored_offset_frame": 32}
     ]).to_csv(scored, index=False)
 
     bundle = load_early_response_timing_qc(
