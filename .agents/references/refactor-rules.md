@@ -6,7 +6,7 @@
 2. Cohort workflow notebooks should also avoid new notebook-local reusable helpers; promote reusable logic to package owners.
 3. Notebook orchestration lives in notebook cells only.
 4. Reusable logic lives in `src/codeants_2pf_hcr/`.
-5. CLI behavior lives in `tools/` wrappers only; `tools/` is not business-logic authority.
+5. General CLI behavior lives in `tools/` wrappers. Maintained manual registration entrypoints live in `registrations/`. Neither location is business-logic authority.
 6. Figure construction lives in `plots.*`.
 7. Table semantics are owned by the stage that writes the table, not downstream consumers.
 
@@ -52,4 +52,5 @@
 - `activity.py` = response/BPI stage-owned semantics pattern.
 - `traces.py` = trace export and trace-ready mapping pattern.
 - `plots.*` = deterministic figure-builder pattern.
-- `tools/` = wrapper pattern only.
+- `tools/` = general wrapper pattern only.
+- `registrations/` = maintained external registration entrypoints only.

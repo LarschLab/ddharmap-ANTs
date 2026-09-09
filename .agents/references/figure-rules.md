@@ -4,6 +4,8 @@
 
 **Use this file when:** adding/refactoring plots or trace-summary panels.
 
+Machine-readable contracts for accepted high-risk tables and figures live in `.agents/contracts/scientific-artifacts.json`. A renderer change must preserve its question, source, population, filters, denominator, units, grouping, thresholds, and forbidden reinterpretations or record an explicit scientific-change decision.
+
 ## Data source rules
 
 1. Start from the authoritative ROI-centric table unless the figure is explicitly HCR-centric.

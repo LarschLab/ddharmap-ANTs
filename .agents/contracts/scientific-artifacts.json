@@ -1,0 +1,248 @@
+{
+  "contract_version": 1,
+  "artifacts": [
+    {
+      "artifact_id": "functional_roi_activity_identity.csv",
+      "artifact_kind": "table",
+      "renderer_owner": "codeants_2pf_hcr.activity",
+      "question": "What geometry, molecular identity, response state, and BPI annotation belongs to every functional ROI after geometry is frozen?",
+      "scope": "roi-centric whole-population",
+      "authoritative_sources": [
+        "match-roi-to-anatomy geometry tables",
+        "anatomy_identity_lookup.csv",
+        "Suite2p traces and session-specific stimulus logs"
+      ],
+      "population": "All segmented functional ROIs, including suite2p_is_cell false rows retained as response unavailable.",
+      "filters": [
+        "No population filter at the master-table level.",
+        "Geometry is fixed before identity or activity is attached."
+      ],
+      "denominator": "One row per fish_id, plane_idx, and func_label key.",
+      "units": {
+        "BPI": "unitless ratio",
+        "geometry": "Inherited unchanged from the geometry writer; unit corrections require a schema decision.",
+        "response_AUC": "Stage-owned activity units recorded with stimulus timing provenance."
+      },
+      "grouping": [
+        "fish_id",
+        "plane_idx",
+        "func_label"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Threshold values are owned by the activity writer and must be persisted in provenance."
+      },
+      "forbidden_reinterpretations": [
+        "Do not drop suite2p_is_cell false rows from the ROI inventory.",
+        "Do not use identity, response, or BPI to change geometry.",
+        "Do not replace this whole-population authority with HCR-centric exports."
+      ],
+      "validation_tests": [
+        "tests/test_pipeline.py::test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_source_identity",
+        "tests/test_activity.py::test_build_response_bpi_tables_uses_plane_session_stimulus_metadata"
+      ]
+    },
+    {
+      "artifact_id": "hcr_activity_status.csv",
+      "artifact_kind": "table",
+      "renderer_owner": "codeants_2pf_hcr.matching",
+      "question": "Which accepted HCR-identified labels have local functional candidates and response evidence?",
+      "scope": "hcr-centric identified-cell",
+      "authoritative_sources": [
+        "accepted HCR-to-anatomy final pairs",
+        "frozen functional ROI geometry used only for response lookup",
+        "Suite2p response annotations"
+      ],
+      "population": "Accepted HCR-to-anatomy labels, including labels without a selected functional response candidate.",
+      "filters": [
+        "HCR label-first candidate universe.",
+        "Response selection occurs after label geometry is accepted."
+      ],
+      "denominator": "Accepted HCR labels in the explicitly selected gene and fish scope.",
+      "units": {
+        "distance": "Geometry-writer physical units",
+        "response": "Activity-writer units"
+      },
+      "grouping": [
+        "fish_id",
+        "gene",
+        "conf_label",
+        "anat_label"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Response gates are inherited; they are not defined by HCR matching."
+      },
+      "forbidden_reinterpretations": [
+        "Do not use this table for whole-population identity fractions.",
+        "Do not use response evidence to select HCR-to-anatomy geometry."
+      ],
+      "validation_tests": [
+        "tests/test_pipeline.py::test_finalize_hcr_activity_export_tables_adds_response_selection_contract_columns"
+      ]
+    },
+    {
+      "artifact_id": "compound_50j_56i_unified.png",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.analysis",
+      "question": "How do whole-population response and BPI patterns compare with laterality-aware motion AUC summaries?",
+      "scope": "hybrid with panel-specific denominators",
+      "authoritative_sources": [
+        "functional_roi_activity_identity.csv",
+        "functional_roi_activity_bpi_cells.csv",
+        "motion_auc_plot_points.csv",
+        "motion_auc_plot_counts.csv"
+      ],
+      "population": "Each panel uses the population declared by its source table; ROI-centric and HCR-centric panels remain labeled separately.",
+      "filters": [
+        "Response-unavailable rows remain visible in counts but not as finite BPI points.",
+        "Laterality panels require an accepted hash-bound anatomy-midline sidecar."
+      ],
+      "denominator": "Explicit per panel from the corresponding persisted counts table; never inferred from plotted points alone.",
+      "units": {
+        "BPI": "unitless ratio",
+        "AUC": "persisted motion-response AUC units",
+        "laterality": "accepted anatomy-space midline classification"
+      },
+      "grouping": [
+        "panel",
+        "fish_id",
+        "response class",
+        "BPI category",
+        "stimulus mode",
+        "laterality"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Persisted response and BPI thresholds only."
+      },
+      "forbidden_reinterpretations": [
+        "Do not rebuild response, BPI, identity, or laterality in plotting code.",
+        "Do not merge panel denominators.",
+        "Do not render laterality without accepted midline provenance."
+      ],
+      "validation_tests": [
+        "tests/test_plots_analysis.py::test_render_single_fish_50l_composite_saves_legacy_outputs_and_keys",
+        "tests/test_plots_analysis.py::test_q7_global_auc_requires_matching_accepted_sidecar_hash"
+      ]
+    },
+    {
+      "artifact_id": "bpi_all_pairs.png",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.analysis",
+      "question": "How are persisted response and BPI categories distributed across ROI pairs and attached identities?",
+      "scope": "roi-centric whole-population",
+      "authoritative_sources": [
+        "functional_roi_activity_bpi_cells.csv",
+        "functional_roi_activity_identity.csv"
+      ],
+      "population": "ROI-centric BPI rows joined to identity by the canonical functional ROI key.",
+      "filters": [
+        "Finite plotting coordinates for scatter panels.",
+        "Response-unavailable rows remain counted separately."
+      ],
+      "denominator": "All canonical ROI/BPI rows in scope, with plotted and unavailable counts reported separately.",
+      "units": {
+        "BPI": "unitless ratio",
+        "AUC": "persisted response AUC units"
+      },
+      "grouping": [
+        "fish_id",
+        "response class",
+        "BPI category",
+        "identity label"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Renderer consumes persisted categories and does not recalculate thresholds."
+      },
+      "forbidden_reinterpretations": [
+        "Do not treat low-quality traces as biological inactivity.",
+        "Do not derive identity from HCR candidate competition in the renderer.",
+        "Do not alter geometry."
+      ],
+      "validation_tests": [
+        "tests/test_plots_analysis.py::test_render_single_fish_bpi_all_pairs_diagnostics_outputs_png",
+        "tests/test_plots_analysis.py::test_render_single_fish_bpi_all_pairs_diagnostics_joins_identity_gene"
+      ]
+    },
+    {
+      "artifact_id": "single_fish_50l_responsive_identity_donut.png",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.analysis",
+      "question": "Among responsive ROI-centric cells, what BPI categories and exact HCR-derived identity combinations are represented?",
+      "scope": "hybrid responsive-only",
+      "authoritative_sources": [
+        "functional_roi_activity_identity.csv",
+        "conf_to_func_pairs.csv"
+      ],
+      "population": "ROI-centric responsive rows; identity is attached only for exact selected HCR-to-functional pairs.",
+      "filters": [
+        "response_is_active is true",
+        "BPI category is responsive",
+        "Selected HCR pairs are collapsed to exact per-ROI gene combinations."
+      ],
+      "denominator": "Responsive ROI-centric rows only; unidentified remains an explicit outer-ring category.",
+      "units": {
+        "BPI": "categorical from persisted unitless ratio",
+        "identity": "exact gene-combination label"
+      },
+      "grouping": [
+        "fish_id",
+        "BPI category",
+        "exact identity combination"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Use persisted responsive and BPI categories."
+      },
+      "forbidden_reinterpretations": [
+        "Do not use HCR pairs as the denominator.",
+        "Do not silently drop unidentified responsive ROIs.",
+        "Do not infer identity from plotting labels."
+      ],
+      "validation_tests": [
+        "tests/test_plots_analysis.py::test_render_single_fish_50l_responsive_identity_donut_counts_and_outputs"
+      ]
+    },
+    {
+      "artifact_id": "cohort_50l_responsive_identity_donut_row.png",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.analysis",
+      "question": "How do responsive ROI-centric BPI and exact identity proportions compare across fish?",
+      "scope": "hybrid responsive-only cohort",
+      "authoritative_sources": [
+        "per-fish functional_roi_activity_identity.csv",
+        "per-fish conf_to_func_pairs.csv"
+      ],
+      "population": "Responsive ROI-centric rows within each fish, preserving fish-specific denominators.",
+      "filters": [
+        "response_is_active is true",
+        "BPI category is responsive",
+        "Selected HCR pairs collapse to exact per-ROI gene combinations."
+      ],
+      "denominator": "Responsive ROI-centric rows separately for each fish.",
+      "units": {
+        "BPI": "categorical from persisted unitless ratio",
+        "identity": "exact gene-combination label"
+      },
+      "grouping": [
+        "fish_id",
+        "BPI category",
+        "exact identity combination"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Use persisted per-fish response and BPI categories."
+      },
+      "forbidden_reinterpretations": [
+        "Do not pool ROI rows before computing fish-level proportions.",
+        "Do not use HCR pairs as the denominator.",
+        "Do not silently drop unidentified responsive ROIs."
+      ],
+      "validation_tests": [
+        "tests/test_plots_analysis.py::test_render_cohort_50l_responsive_identity_donut_row_counts"
+      ]
+    }
+  ]
+}

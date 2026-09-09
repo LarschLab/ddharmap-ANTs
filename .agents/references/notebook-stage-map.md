@@ -118,4 +118,5 @@ explicit save may write a hash-bound review JSON beneath the reviewed stage's
 - For module ownership and functions: see `symbol-index.md`.
 - For table meaning and allowed usage: see `canonical-tables.md`.
 - For migration caveats in downstream cells: see `current-state.md`.
+- Maintained manual ANTs, transform, BigWarp, and registration-sync entrypoints live under `registrations/`; they do not own stage or table semantics.
 - `notebooks/hcr_activity_replay_qa.ipynb` is a recall/QA notebook for read-only HCR activity replay manifests, candidate tables, and historical warped-label artifacts. It is not a stage owner; reusable replay logic remains package-owned.

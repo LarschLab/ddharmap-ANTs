@@ -72,3 +72,5 @@
   - ROI-centric for whole-population inference
   - HCR-centric for identified-cell activity reporting/export
 - Avoid implicit hybrids in plotting cells.
+- Maintained manual registration and transform entrypoints live under `registrations/`; the retired root compatibility names have been removed. They are orchestration surfaces, not scientific authority.
+- QC notebook `02_functional_registration_qc.ipynb` is restored to its documented read-only functional-to-anatomy registration gate; title and owner-call tests prevent another content swap with early functional activity review.

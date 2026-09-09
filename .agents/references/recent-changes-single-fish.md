@@ -3883,3 +3883,18 @@
   lack `pytest`, so validation used `py_compile` plus the real L765_f04
   render/load path. The generated timing, heatmap, trace, and Q0 audit PNGs
   are isolated under `/tmp/codeants-l765-f04-q1-audit-20260908/` on Linnaeus.
+
+### 2026-09-09 - restore QC registration ownership and executable semantic contracts
+
+- Slice goal:
+  - prevent repository cleanup or later refactors from silently changing notebook ownership, table populations, figure denominators, units, or scientific ordering.
+- Passes completed in this session:
+  - restored `notebooks/qc/02_functional_registration_qc.ipynb` to the prior package-owned read-only functional-registration review surface after detecting that its contents had been replaced by an early-activity notebook.
+  - added title and owner-call checks for all seven QC notebooks.
+  - added `.agents/contracts/scientific-artifacts.json` with required question, source, population, filters, denominator, units, grouping, thresholds, forbidden reinterpretations, owner, and regression-test bindings.
+- What changed:
+  - routing, location, and semantic ownership failures now fail automated tests instead of relying only on prose.
+- What remains broken:
+  - none in this cleanup slice; notebook cell-ID normalization remains a future compatibility task because nbformat currently emits warnings.
+- Validation:
+  - focused agent-document, notebook-contract, and scientific-artifact contract tests pass on Linnaeus with bytecode and pytest caches disabled.

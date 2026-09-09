@@ -47,7 +47,7 @@ The immediate priority is to harden the durable workflow surface before broad be
 
 ## Working
 
-- Current workflow branch is `codex/agentic-workflow-hybrid`; this branch may be intentionally dirty while staged pipeline migration work is in progress.
+- The active workflow branch is determined from Git at runtime; branch names recorded in historical logs are not normative.
 - Existing package modules already own many notebook stage behaviors under `src/codeants_2pf_hcr/`.
 - `single-fish-pipeline-roadmap.md` defines the target stage order and migration strategy.
 - `notebooks/singleFish.ipynb` remains the reference/control path during migration.
