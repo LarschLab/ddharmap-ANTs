@@ -9,7 +9,8 @@ Generated manually for the current extracted package surface.
 - `activity.py`: response/BPI stage-owned semantics pattern.
 - `pipeline.py`: staged single-fish pipeline contract/manifest pattern.
 - `plots.*`: deterministic figure-builder pattern.
-- `tools/`: wrapper pattern only, not business-logic authority.
+- `tools/`: general wrapper pattern only, not business-logic authority.
+- `registrations/`: maintained manual registration entrypoints only, not business-logic authority.
 
 ## `codeants_2pf_hcr.qc_notebooks`
 

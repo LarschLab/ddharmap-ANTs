@@ -72,3 +72,4 @@
   - ROI-centric for whole-population inference
   - HCR-centric for identified-cell activity reporting/export
 - Avoid implicit hybrids in plotting cells.
+- Maintained manual registration and transform entrypoints live under `registrations/`; root-level names are transition-only compatibility paths pending an external-consumer review. They are orchestration surfaces, not scientific authority.

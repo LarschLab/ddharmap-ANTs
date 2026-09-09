@@ -9,7 +9,7 @@ Start here, then read only what your task needs.
 Do not open workflow-specific `recent-changes-*.md` logs wholesale just to find context. First query them with:
 
 ```bash
-python3 /Users/ddharmap/gitRepo/agenticWorkflow/scripts/query_recent_changes.py --repo <repo-name> --query <term> --limit 5
+python3 .agents/scripts/query_recent_changes.py --repo <repo-name> --query <term> --limit 5
 ```
 
 Open the full log only when the compact query shows that exact entries are needed.
@@ -33,7 +33,8 @@ Use repo/vault routing only when the request requires local files, durable updat
 - Ownership:
   - notebook orchestration lives in notebook cells only
   - reusable logic lives in `src/codeants_2pf_hcr/`
-  - CLI behavior lives in `tools/` wrappers only
+  - general CLI behavior lives in `tools/` wrappers
+  - maintained manual registration entrypoints live in `registrations/`
   - figure construction lives in `plots.*`
   - table semantics are owned by the stage that writes them, not downstream consumers
 - Prefer package edits over notebook edits.
@@ -48,7 +49,7 @@ Use repo/vault routing only when the request requires local files, durable updat
 - Search order:
   - router first, then the smallest relevant reference doc, then `symbol-index.md` or `notebook-stage-map.md` only if needed, then the owning module, then notebook cells
   - do not open large notebook regions first
-  - do not use `tools/` as business-logic authority
+  - do not use `tools/`, `registrations/`, or `legacy/` as business-logic authority
 - Edit scope:
   - fix at the narrowest owning layer
   - do not patch downstream figures to compensate for upstream semantic bugs

@@ -1,3 +1,6 @@
+import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -46,7 +49,8 @@ class AgentDocsTests(unittest.TestCase):
         source = _read(".agents/references/refactor-rules.md")
         self.assertIn("Notebook orchestration lives in notebook cells only.", source)
         self.assertIn("Reusable logic lives in `src/codeants_2pf_hcr/`.", source)
-        self.assertIn("CLI behavior lives in `tools/` wrappers only", source)
+        self.assertIn("General CLI behavior lives in `tools/` wrappers.", source)
+        self.assertIn("Maintained manual registration entrypoints live in `registrations/`.", source)
         self.assertIn("Figure construction lives in `plots.*`.", source)
         self.assertIn("Table semantics are owned by the stage that writes the table", source)
         self.assertIn("Fix at the narrowest owning layer.", source)
@@ -82,7 +86,8 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("`context.py`: path/config normalization pattern.", source)
         self.assertIn("`stimulus.py`: explicit stage input/output pattern.", source)
         self.assertIn("`activity.py`: response/BPI stage-owned semantics pattern.", source)
-        self.assertIn("`tools/`: wrapper pattern only, not business-logic authority.", source)
+        self.assertIn("`tools/`: general wrapper pattern only, not business-logic authority.", source)
+        self.assertIn("`registrations/`: maintained manual registration entrypoints only", source)
 
     def test_cache_policy_includes_smallest_smoke_first_validation(self) -> None:
         source = _read(".agents/references/cache-rerun-policy.md")
@@ -144,6 +149,63 @@ class AgentDocsTests(unittest.TestCase):
         for source in (current_state, stage_map):
             self.assertNotIn("staged CLI path now stages", source)
             self.assertNotIn("promotes staged identity/score outputs", source)
+
+
+    def test_router_markdown_paths_resolve_from_repo_root(self) -> None:
+        for router in (REPO_ROOT / ".agents" / "workflows").glob("*.md"):
+            source = router.read_text()
+            paths = {
+                token
+                for token in re.findall(r"`([^`]+\.md)`", source)
+                if token.startswith((".agents/", "notebooks/", "legacy/"))
+            }
+            unresolved = sorted(path for path in paths if not (REPO_ROOT / path).is_file())
+            self.assertEqual(unresolved, [], f"{router}: unresolved paths")
+
+    def test_reference_classification_lists_every_reference(self) -> None:
+        references = REPO_ROOT / ".agents" / "references"
+        expected = {path.name for path in references.glob("*.md")} - {"README.md"}
+        source = _read(".agents/references/README.md")
+        listed = set(re.findall(r"^\| `([^/`]+\.md)` \|", source, re.MULTILINE))
+        self.assertEqual(listed, expected)
+        self.assertIn("## Authority order", source)
+        self.assertIn("Historical and compatibility documents are never current scientific authority.", source)
+
+    def test_router_covers_qc_replay_registration_and_legacy_tasks(self) -> None:
+        top = _read(".agents/workflows/2pf-hcr-router.md")
+        single = _read(".agents/workflows/2pf-hcr-single-fish-router.md")
+        self.assertIn("notebooks/qc/", top)
+        self.assertIn("notebooks/hcr_activity_replay_qa.ipynb", top)
+        self.assertIn("registrations/", top)
+        self.assertIn("legacy/", top)
+        self.assertIn("QC notebook review or refactor", single)
+        self.assertIn("HCR activity replay QA", single)
+        self.assertIn("maintained manual registration utility", single)
+        self.assertIn("explicit legacy comparison or reproduction", single)
+        self.assertIn("legacy behavior is evidence, not current authority", single)
+
+    def test_recent_change_query_is_repo_owned_and_runnable(self) -> None:
+        script = REPO_ROOT / ".agents" / "scripts" / "query_recent_changes.py"
+        self.assertTrue(script.is_file())
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                "--repo",
+                "codeANTs",
+                "--query",
+                "external confocal registration",
+                "--limit",
+                "1",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("recent-changes-single-fish.md", completed.stdout)
+        self.assertIn("external confocal registration uses current rbest/rn names", completed.stdout)
 
 
 if __name__ == "__main__":
