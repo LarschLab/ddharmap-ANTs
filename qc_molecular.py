@@ -7,17 +7,14 @@ registration, segmentation, matching, scoring, export, or promotion stage.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import re
 from typing import Mapping, Sequence
 
 import matplotlib.pyplot as plt
-from matplotlib import patheffects
 import numpy as np
 import pandas as pd
 import tifffile
-from scipy import ndimage as ndi
 
 from ..matching import compute_centroids, gene_from_mask, idx_to_um
 from ..spatial import imread_any, infer_voxels_tiff, load_or_cache_voxels, norm01
@@ -28,7 +25,6 @@ __all__ = [
     "inspect_molecular_geometry_qc",
     "plot_molecular_geometry_qc",
     "load_molecular_label_viewer",
-    "load_hcr_match_overlay_viewer",
     "show_molecular_label_viewer",
     "build_hcr_anatomy_centroid_offset_table",
     "plot_hcr_anatomy_centroid_offsets",
@@ -36,15 +32,8 @@ __all__ = [
     "plot_molecular_identity_qc",
     "inspect_activity_export_qc",
     "plot_activity_export_qc",
-    "resolve_hcr_matching_artifact_root",
-    "build_hcr_anatomy_match_outcome_table",
-    "plot_hcr_anatomy_match_outcome_donuts",
-    "build_hcr_functional_plane_status_donut_table",
-    "plot_hcr_functional_plane_status_donuts",
     "build_hcr_matching_flow_table",
     "plot_hcr_matching_flow",
-    "build_hcr_matching_flow_donut_table",
-    "plot_hcr_matching_flow_donuts",
     "build_cross_modality_mask_size_table",
     "plot_cross_modality_mask_sizes",
     "build_molecular_identity_fate_table",
@@ -92,7 +81,6 @@ class MolecularLabelViewerData:
     anatomy_zyx: np.ndarray
     label_masks_zyx: Mapping[str, np.ndarray]
     label_sources: Mapping[str, Path]
-    label_categories: Mapping[str, str] | None = None
 
 
 def _validate_fish(fish_id: str) -> None:
@@ -277,50 +265,6 @@ def load_molecular_label_viewer(
     return MolecularLabelViewerData(anatomy_zyx=anatomy, label_masks_zyx=masks, label_sources=sources)
 
 
-def load_hcr_match_overlay_viewer(
-    anatomy_path: str | Path,
-    label_paths: Sequence[str | Path],
-    review_paths: Sequence[str | Path],
-    final_pair_paths: Sequence[str | Path],
-) -> MolecularLabelViewerData:
-    """Load accepted and rejected persisted HCR labels for anatomy-space review.
-
-    This is a display-only classification of each mask's existing label IDs:
-    accepted IDs come from its saved final-pair table; rejected IDs are IDs
-    recorded in its saved review table but absent from that final table.  It
-    neither regenerates candidates nor changes pair membership.
-    """
-    if not (len(label_paths) == len(review_paths) == len(final_pair_paths)):
-        raise ValueError("Provide one review and final-pair table for each selected HCR label mask.")
-    base = load_molecular_label_viewer(anatomy_path, label_paths)
-    masks: dict[str, np.ndarray] = {}
-    sources: dict[str, Path] = {}
-    categories: dict[str, str] = {}
-    for name, raw_label, raw_review, raw_final in zip(base.label_masks_zyx, label_paths, review_paths, final_pair_paths):
-        label_path, review_path, final_path = _path(raw_label), _path(raw_review), _path(raw_final)
-        if review_path is None or not review_path.is_file():
-            raise FileNotFoundError(f"Persisted HCR review table does not exist: {raw_review}")
-        if final_path is None or not final_path.is_file():
-            raise FileNotFoundError(f"Persisted HCR final-pair table does not exist: {raw_final}")
-        review, final = pd.read_csv(review_path), pd.read_csv(final_path)
-        if "conf_label" not in review or "conf_label" not in final:
-            raise ValueError(f"Review and final-pair tables require conf_label: {review_path.name}, {final_path.name}")
-        accepted = set(final["conf_label"].dropna().astype(int))
-        reviewed = set(review["conf_label"].dropna().astype(int))
-        labels = base.label_masks_zyx[name]
-        for category, ids in (("accepted", accepted), ("rejected", reviewed - accepted)):
-            key = f"{category} · {name}"
-            masks[key] = np.where(np.isin(labels, list(ids)), labels, 0).astype(labels.dtype, copy=False)
-            sources[key] = label_path
-            categories[key] = category
-    return MolecularLabelViewerData(
-        anatomy_zyx=base.anatomy_zyx,
-        label_masks_zyx=masks,
-        label_sources=sources,
-        label_categories=categories,
-    )
-
-
 def show_molecular_label_viewer(
     viewer_data: MolecularLabelViewerData,
     *,
@@ -388,11 +332,7 @@ def show_molecular_label_viewer(
         ),
     )
     status = widgets.HTML()
-    categories = viewer_data.label_categories or {}
-    colors = {
-        name: np.asarray(to_rgb({"accepted": "#00A651", "rejected": "#D55E00"}.get(categories.get(name), _VIEWER_COLORS[index % len(_VIEWER_COLORS)])), dtype=np.float32)
-        for index, name in enumerate(names)
-    }
+    colors = {name: np.asarray(to_rgb(_VIEWER_COLORS[index % len(_VIEWER_COLORS)]), dtype=np.float32) for index, name in enumerate(names)}
 
     def update(_change=None) -> None:
         z_index = int(plane_slider.value)
@@ -412,7 +352,7 @@ def show_molecular_label_viewer(
         anatomy_artist.set_data(anatomy_display[z_index])
         overlay_artist.set_data(rgba)
         ax.set_title(f"In-vivo anatomy Z {z_index + 1}/{anatomy.shape[0]} · {len(selected)} selected mask(s)")
-        status.value = "<small>Loaded once; plane and checkbox changes perform no disk I/O, matching, or pair updates.</small>"
+        status.value = "<small>Loaded once; plane and checkbox changes perform no disk I/O or matching.</small>"
         fig.canvas.draw_idle()
 
     plane_slider.observe(update, names="value")
@@ -607,16 +547,16 @@ def _bbox_size_rows(
         raise ValueError("voxel_zyx_um must provide finite positive Z, Y, and X spacings in µm.")
     round_name, gene = _mask_source_metadata(path) if modality == "hcr" else (None, None)
     rows: list[dict] = []
-    objects = ndi.find_objects(labels)
-    for label, object_slice in enumerate(objects, start=1):
-        if object_slice is None:
+    for label in np.unique(labels):
+        if int(label) <= 0:
             continue
-        # ``find_objects`` returns the minimal inclusive bounding box as Python
-        # slices.  The legacy [53] metric is explicitly max-index minus
-        # min-index, hence one less than the slice length (and zero for a
-        # one-voxel extent); do not substitute an inclusive physical width.
-        z_px, y_px, x_px = (item.stop - item.start - 1 for item in object_slice)
-        # ``xy_um`` is the mean of the legacy physical X/Y extents.
+        zyx = np.argwhere(labels == label)
+        lower = zyx.min(axis=0)
+        upper = zyx.max(axis=0)
+        # Inclusive voxel extents are physical object dimensions, including a
+        # single-pixel ROI's non-zero physical width.  ``xy_um`` is the
+        # geometric mean of X/Y extents, an area-equivalent linear XY size.
+        z_px, y_px, x_px = (upper - lower + 1).astype(int)
         x_um, y_um, z_um = x_px * dx, y_px * dy, z_px * dz
         rows.append(
             {
@@ -632,7 +572,7 @@ def _bbox_size_rows(
                 "x_um": x_um,
                 "y_um": y_um,
                 "z_um": z_um,
-                "xy_um": float((x_um + y_um) / 2.0),
+                "xy_um": float(np.sqrt(x_um * y_um)),
             }
         )
     return rows
@@ -651,7 +591,7 @@ def build_cross_modality_mask_size_table(
     spacing is read from ``reference_anatomy_path`` (normally the prepared
     anatomy NRRD), because transformed TIFF masks do not reliably preserve XY
     resolution metadata.  Q05 and Q95 are calculated independently for each
-    modality from the mean X/Y ``xy_um`` extent: Q05 rows are
+    modality from the area-equivalent linear ``xy_um`` extent: Q05 rows are
     marked as hard drops and Q95 rows are retained but visibly flagged.
     """
     reference = _path(reference_anatomy_path)
@@ -687,26 +627,17 @@ def build_cross_modality_mask_size_table(
 def _plot_size_distribution(ax: plt.Axes, table: pd.DataFrame, value_col: str, title: str, ylabel: str) -> None:
     modalities = [name for name in ("anatomy", "functional", "hcr") if name in set(table["modality"])]
     data = [table.loc[(table["modality"] == name) & table["included_in_distribution"], value_col].to_numpy(dtype=float) for name in modalities]
-    violin = ax.violinplot(data, positions=np.arange(1, len(modalities) + 1), showextrema=False, showmedians=True)
-    for body in violin["bodies"]:
-        body.set_facecolor("#9ecae1"); body.set_edgecolor("#2171b5"); body.set_alpha(0.76)
-    ax.set_xticks(np.arange(1, len(modalities) + 1), modalities)
+    ax.boxplot(data, labels=modalities, showfliers=False, patch_artist=True, boxprops={"facecolor": "#9ecae1"})
     for idx, modality in enumerate(modalities, start=1):
-        kept_values = table.loc[(table["modality"] == modality) & table["included_in_distribution"], value_col].to_numpy(dtype=float)
+        flagged = table.loc[(table["modality"] == modality) & table["included_in_distribution"] & table["is_xy_q95_flag"], value_col]
+        if not flagged.empty:
+            ax.scatter(np.full(len(flagged), idx), flagged, color="#D55E00", marker="^", s=20, zorder=3, label="Q95 XY flag" if idx == 1 else None)
         kept = int(((table["modality"] == modality) & table["included_in_distribution"]).sum())
         total = int((table["modality"] == modality).sum())
-        q05 = float(table.loc[table["modality"] == modality, "xy_q05_um"].iloc[0])
-        q95 = float(table.loc[table["modality"] == modality, "xy_q95_um"].iloc[0])
-        mean, sd = (np.mean(kept_values), np.std(kept_values, ddof=1)) if len(kept_values) > 1 else ((kept_values[0], 0.0) if len(kept_values) else (np.nan, np.nan))
-        median = float(np.median(kept_values)) if len(kept_values) else np.nan
-        ax.text(idx, 0.01, f"n={kept}/{total}\nmed={median:.2g}; SD={sd:.2g}\nXY q05={q05:.2g}, q95={q95:.2g}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
+        ax.text(idx, 0.01, f"n={kept}/{total}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=8)
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.grid(axis="y", alpha=0.22)
-    plotted = table.loc[table["included_in_distribution"], value_col].to_numpy(dtype=float)
-    if len(plotted):
-        span = max(float(np.ptp(plotted)), max(float(np.max(plotted)), 1.0) * 0.1)
-        ax.set_ylim(float(np.min(plotted)) - 0.34 * span, float(np.max(plotted)) + 0.12 * span)
     if ax.get_legend_handles_labels()[0]:
         ax.legend(fontsize=8)
 
@@ -719,13 +650,13 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
         raise ValueError(f"Size table lacks required columns: {missing}")
     _validate_fish(fish_id)
     fig, axes = plt.subplots(2, 2, figsize=(12, 8.5), constrained_layout=True)
-    _plot_size_distribution(axes[0, 0], size_table, "xy_um", "All masks: XY bounding-box size", "Mean X/Y extent (µm)")
+    _plot_size_distribution(axes[0, 0], size_table, "xy_um", "All masks: XY bounding-box size", "XY equivalent size (µm)")
     _plot_size_distribution(axes[0, 1], size_table, "z_um", "All masks: Z bounding-box size", "Z extent (µm)")
     hcr = size_table.loc[(size_table["modality"] == "hcr") & size_table["included_in_distribution"]].copy()
     hcr["hcr_group"] = hcr[["round", "gene"]].fillna("unknown").astype(str).agg(" · ".join, axis=1)
     groups = sorted(hcr["hcr_group"].unique())
     for ax, value_col, title, ylabel in (
-        (axes[1, 0], "xy_um", "HCR masks: XY by gene / round", "Mean X/Y extent (µm)"),
+        (axes[1, 0], "xy_um", "HCR masks: XY by gene / round", "XY equivalent size (µm)"),
         (axes[1, 1], "z_um", "HCR masks: Z by gene / round", "Z extent (µm)"),
     ):
         if not groups:
@@ -733,23 +664,16 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
             ax.set_axis_off()
             continue
         values = [hcr.loc[hcr["hcr_group"] == group, value_col].to_numpy(dtype=float) for group in groups]
-        violin = ax.violinplot(values, positions=np.arange(1, len(groups) + 1), showextrema=False, showmedians=True)
-        for body in violin["bodies"]:
-            body.set_facecolor("#c7e9c0"); body.set_edgecolor("#238b45"); body.set_alpha(0.76)
-        ax.set_xticks(np.arange(1, len(groups) + 1), groups)
+        ax.boxplot(values, labels=groups, showfliers=False, patch_artist=True, boxprops={"facecolor": "#c7e9c0"})
         for idx, group in enumerate(groups, start=1):
-            group_values = hcr.loc[hcr["hcr_group"] == group, value_col].to_numpy(dtype=float)
-            median = float(np.median(group_values)) if len(group_values) else np.nan
-            sd = float(np.std(group_values, ddof=1)) if len(group_values) > 1 else 0.0
-            ax.text(idx, 0.01, f"n={len(group_values)}\nmed={median:.2g}; SD={sd:.2g}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
+            flagged = hcr.loc[(hcr["hcr_group"] == group) & hcr["is_xy_q95_flag"], value_col]
+            if not flagged.empty:
+                ax.scatter(np.full(len(flagged), idx), flagged, color="#D55E00", marker="^", s=20, zorder=3)
         ax.set_title(title)
         ax.set_ylabel(ylabel)
         ax.tick_params(axis="x", rotation=25)
         ax.grid(axis="y", alpha=0.22)
-        plotted = hcr[value_col].to_numpy(dtype=float)
-        span = max(float(np.ptp(plotted)), max(float(np.max(plotted)), 1.0) * 0.1)
-        ax.set_ylim(float(np.min(plotted)) - 0.34 * span, float(np.max(plotted)) + 0.12 * span)
-    fig.suptitle(f"{fish_id} cross-modality mask bounding boxes · Q05 XY drops excluded; Q95 limits annotated")
+    fig.suptitle(f"{fish_id} cross-modality mask bounding boxes · Q05 XY drops excluded; Q95 XY flags shown")
     return fig
 
 
@@ -983,8 +907,6 @@ def inspect_activity_export_qc(
     hcr_status_path: str | Path | None,
     hcr_pairs_path: str | Path | None,
     trace_meta_path: str | Path | None = None,
-    require_hcr_exports: bool = True,
-    require_trace_meta: bool = True,
     expected_figure_paths: Sequence[str | Path] = (),
 ) -> dict:
     """Review response/BPI provenance and canonical ROI/HCR export scopes."""
@@ -993,17 +915,13 @@ def inspect_activity_export_qc(
     roots = _review_roots(root, fish_dir)
     issues: list[dict] = []
     tables: dict[str, pd.DataFrame | None] = {}
-    for name, path, required in (
-        ("roi_master", roi_master_path, True),
-        ("bpi_cells", bpi_cells_path, True),
-        ("hcr_status", hcr_status_path, require_hcr_exports),
-        ("hcr_pairs", hcr_pairs_path, require_hcr_exports),
-        ("trace_meta", trace_meta_path, require_trace_meta),
+    for name, path in (
+        ("roi_master", roi_master_path),
+        ("bpi_cells", bpi_cells_path),
+        ("hcr_status", hcr_status_path),
+        ("hcr_pairs", hcr_pairs_path),
+        ("trace_meta", trace_meta_path),
     ):
-        if not required and (path is None or not _path(path).is_file()):
-            tables[name] = None
-            _issue(issues, name, "not_applicable", "Optional downstream export was not produced for this selected run.")
-            continue
         table_path, tables[name] = _load_csv(path, area=name, issues=issues)
         _check_root(table_path, roots, area=name, issues=issues)
         _fish_check(tables[name], fish_id, area=name, issues=issues)
@@ -1014,23 +932,20 @@ def inspect_activity_export_qc(
     hcr_pairs = tables["hcr_pairs"]
     _require_columns(master, (*_ROI_KEYS, "response_is_active", "response_class", "bpi", "bpi_category"), area="roi_master", issues=issues)
     _require_columns(bpi, (*_ROI_KEYS, "response_is_active", "bpi", "bpi_category"), area="bpi_cells", issues=issues)
-    if hcr_status is not None:
-        _require_columns(
-            hcr_status,
-            ("fish_id", "gene", "anat_label", "functional_status", "represented_on_func_plane", "selection_rule", "match_policy_version"),
-            area="hcr_status",
-            issues=issues,
-        )
-    if hcr_pairs is not None:
-        _require_columns(
-            hcr_pairs,
-            ("fish_id", "gene", "conf_label", "anat_label", "func_label", "plane", "response_is_active", "response_class", "is_selected_for_analysis", "match_policy_version"),
-            area="hcr_pairs",
-            issues=issues,
-        )
+    _require_columns(
+        hcr_status,
+        ("fish_id", "gene", "anat_label", "functional_status", "represented_on_func_plane", "selection_rule", "match_policy_version"),
+        area="hcr_status",
+        issues=issues,
+    )
+    _require_columns(
+        hcr_pairs,
+        ("fish_id", "gene", "conf_label", "anat_label", "func_label", "plane", "response_is_active", "response_class", "is_selected_for_analysis", "match_policy_version"),
+        area="hcr_pairs",
+        issues=issues,
+    )
     trace_meta = tables["trace_meta"]
-    if trace_meta is not None:
-        _require_columns(trace_meta, _ROI_KEYS, area="trace_meta", issues=issues)
+    _require_columns(trace_meta, _ROI_KEYS, area="trace_meta", issues=issues)
 
     for name, table in (("roi_master", master), ("bpi_cells", bpi)):
         if table is None:
@@ -1214,29 +1129,10 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
 def _gene_round(path: str | Path) -> tuple[str, str]:
     """Return stable display keys from a persisted HCR artifact name."""
     name = Path(path).name
-    match = re.search(r"_(rbest|r\d+|round\d+)_channel\d+_(.+?)_cp_masks", name, flags=re.IGNORECASE)
+    match = re.search(r"_(rbest|r\d+)_channel\d+_(.+?)_cp_masks", name, flags=re.IGNORECASE)
     if not match:
         return gene_from_mask(path), "unknown round"
     return match.group(2).replace("_", "."), match.group(1)
-
-
-def resolve_hcr_matching_artifact_root(
-    *, staged_root: str | Path, fish_dir: str | Path,
-) -> Path:
-    """Prefer staged HCR matching artifacts, with an explicit fish-local fallback.
-
-    Legacy control fish can have persisted, reviewable HCR artifacts without a
-    staged writer root. This resolver selects one existing artifact set only;
-    it never combines roots or recomputes matching.
-    """
-    staged = Path(staged_root)
-    pattern = "*_cp_masks_in_2p_labels_uint16.tif"
-    if any(not path.name.startswith("._") for path in staged.glob(pattern)):
-        return staged
-    legacy = Path(fish_dir) / "03_analysis" / "confocal" / "aligned"
-    if any(not path.name.startswith("._") for path in legacy.glob(pattern)):
-        return legacy
-    return staged
 
 
 def build_hcr_matching_flow_table(
@@ -1277,9 +1173,7 @@ def plot_hcr_matching_flow(flow: pd.DataFrame, *, fish_id: str) -> plt.Figure:
         raise ValueError("No persisted HCR matching artifacts were supplied")
     groups = flow[["gene", "round"]].drop_duplicates().itertuples(index=False, name=None)
     groups = list(groups)
-    # A single gene/round still needs enough room for the fish-qualified
-    # read-only provenance title; the old one-panel width clipped it.
-    fig, axes = plt.subplots(1, len(groups), figsize=(max(6.5, 4.2 * len(groups)), 4.2), squeeze=False, constrained_layout=True)
+    fig, axes = plt.subplots(1, len(groups), figsize=(4.2 * len(groups), 4.2), squeeze=False, constrained_layout=True)
     order = ["segmented", "candidate", "within gate", "ambiguous", "quality good", "rejected/iffy review", "accepted 1:1"]
     for ax, (gene, round_name) in zip(axes.flat, groups):
         part = flow[(flow.gene == gene) & (flow["round"] == round_name)].set_index("stage").n_labels.reindex(order, fill_value=0)
@@ -1288,422 +1182,6 @@ def plot_hcr_matching_flow(flow: pd.DataFrame, *, fish_id: str) -> plt.Figure:
         ax.set_ylabel("HCR labels (n)"); ax.set_title(f"{gene} ({round_name})")
         for x, value in enumerate(part): ax.text(x, value, str(int(value)), ha="center", va="bottom", fontsize=8)
     fig.suptitle(f"{fish_id}: persisted HCR→anatomy matching flow", fontweight="bold")
-    return fig
-
-
-_HCR_FLOW_OUTER_ORDER = (
-    "not candidate",
-    "gate failure",
-    "ambiguous relation",
-    "quality/review rejection",
-    "accepted 1:1",
-)
-_HCR_FLOW_OUTER_COLORS = {
-    "not candidate": "#bdbdbd",
-    "gate failure": "#e69f00",
-    "ambiguous relation": "#cc79a7",
-    "quality/review rejection": "#d55e00",
-    "accepted 1:1": "#00A651",
-}
-
-
-# This is deliberately the legacy [50]-aligned vocabulary.  It represents the
-# terminal anatomical outcome of every *segmented HCR label*, rather than the
-# later manual-review/acceptance process.  The latter remains available via the
-# flow functions above for cases where it is the question being reviewed.
-_HCR_ANATOMY_OUTCOME_ORDER = (
-    "in-plane anatomy match",
-    "out-of-plane anatomy match",
-    ">q95 large mask",
-    "too far / no overlap anatomy",
-    "split anatomy relation",
-    "merged anatomy relation",
-    "complex anatomy relation",
-    "1-to-1 anatomy relation, IoU below threshold",
-    "other anatomy rejection",
-)
-_HCR_ANATOMY_OUTCOME_COLORS = {
-    "in-plane anatomy match": "#2ca02c",
-    "out-of-plane anatomy match": "#ff7f0e",
-    ">q95 large mask": "#8c564b",
-    "too far / no overlap anatomy": "#d62728",
-    "split anatomy relation": "#17becf",
-    "merged anatomy relation": "#9467bd",
-    "complex anatomy relation": "#7f7f7f",
-    "1-to-1 anatomy relation, IoU below threshold": "#bcbd22",
-    "other anatomy rejection": "#1f77b4",
-}
-
-_HCR_FUNCTIONAL_SCOPE_ORDER = ("within plane", "outside plane", "unmatched")
-_HCR_FUNCTIONAL_SCOPE_COLORS = {
-    "within plane": "#4daf4a",
-    "outside plane": "#377eb8",
-    "unmatched": "#bdbdbd",
-}
-_HCR_FUNCTIONAL_OUTER_ORDER = (
-    "responsive ROI", "low-activity ROI", "response unavailable", "no functional match", "out of plane", "unmatched",
-)
-_HCR_FUNCTIONAL_OUTER_COLORS = {
-    "responsive ROI": "#1b9e77",
-    "low-activity ROI": "#666666",
-    "response unavailable": "#fdb462",
-    "no functional match": "#d73027",
-    "out of plane": "#80b1d3",
-    "unmatched": "#bdbdbd",
-}
-
-
-def _as_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None or (isinstance(value, float) and not np.isfinite(value)):
-        return False
-    return str(value).strip().lower() in {"1", "true", "t", "yes", "y"}
-
-
-def _hcr_status_plane_lookup(path: str | Path | None) -> dict[tuple[str, str, int], bool]:
-    """Read legacy HCR status plane representation, if it was persisted."""
-    if path is None or not Path(path).is_file():
-        return {}
-    status = pd.read_csv(path)
-    required = {"gene", "conf_label", "represented_on_func_plane"}
-    if not required.issubset(status.columns):
-        return {}
-    columns = ["gene", "conf_label", "represented_on_func_plane"]
-    has_mask = "conf_mask" in status.columns
-    if has_mask:
-        columns.append("conf_mask")
-    lookup: dict[tuple[str, str, int], bool] = {}
-    for row in status.loc[:, columns].itertuples(index=False):
-        label = pd.to_numeric(pd.Series([row.conf_label]), errors="coerce").iloc[0]
-        if pd.notna(label):
-            gene = str(row.gene).strip().lower()
-            # The filename-specific key prevents a label ID reused by another
-            # round/mask from silently inheriting the wrong plane status.  The
-            # empty-name fallback supports older status tables without a path.
-            mask_name = Path(str(row.conf_mask)).name if has_mask else ""
-            lookup[(mask_name, gene, int(label))] = _as_bool(row.represented_on_func_plane)
-    return lookup
-
-
-def build_hcr_functional_plane_status_donut_table(
-    *, label_paths: Sequence[str | Path], activity_status_path: str | Path,
-) -> pd.DataFrame:
-    """Build the legacy two-ring functional-plane representation audit.
-
-    The inner ring partitions post-q95 HCR labels into within-plane,
-    outside-plane, and unmatched.  The outer ring retains the saved functional
-    status for within-plane labels, and explicitly labels the other two scope
-    outcomes.  It is a read-only view of persisted labels, q95 metadata, and
-    ``hcr_activity_status.csv``; it does not redo HCR/anatomy/ROI matching.
-    """
-    status_path = Path(activity_status_path)
-    if not status_path.is_file():
-        raise FileNotFoundError(f"Persisted HCR activity status is missing: {status_path}")
-    status = pd.read_csv(status_path)
-    required = {"conf_mask", "conf_label", "gene", "represented_on_func_plane", "functional_status"}
-    missing = sorted(required.difference(status.columns))
-    if missing:
-        raise ValueError(f"HCR activity status lacks columns: {missing}")
-    status = status.copy()
-    status["conf_mask_name"] = status["conf_mask"].map(lambda value: Path(str(value)).name)
-    status["conf_label"] = pd.to_numeric(status["conf_label"], errors="coerce")
-    status = status.dropna(subset=["conf_label"]).copy()
-    status["conf_label"] = status["conf_label"].astype(int)
-    status_by_key = {
-        (str(row.conf_mask_name), int(row.conf_label)): row
-        for row in status.sort_values(["conf_mask_name", "conf_label"]).drop_duplicates(["conf_mask_name", "conf_label"]).itertuples(index=False)
-    }
-
-    def _within_outer(functional_status: object) -> str:
-        value = str(functional_status).strip().lower()
-        if "response unavailable" in value:
-            return "response unavailable"
-        if "low-activity" in value:
-            return "low-activity ROI"
-        if "responsive" in value:
-            return "responsive ROI"
-        return "no functional match"
-
-    rows: list[dict] = []
-    for raw_path in label_paths:
-        path = Path(raw_path)
-        labels = set(np.unique(imread_any(path)).astype(int)) - {0}
-        meta_path = path.with_name(path.name.replace("_labels_uint16.tif", "_warp_meta.json"))
-        q95_labels: set[int] = set()
-        if meta_path.is_file():
-            try:
-                q95_labels = {int(value) for value in json.loads(meta_path.read_text()).get("filter_stats", {}).get("low_conf_labels", [])}
-            except (OSError, ValueError, TypeError):
-                pass
-        gene, round_name = _gene_round(path)
-        raw_mask_name = path.name.replace("_in_2p_labels_uint16.tif", ".tif")
-        for label in sorted(labels - q95_labels):
-            row = status_by_key.get((raw_mask_name, int(label)))
-            if row is None:
-                scope, outer = "unmatched", "unmatched"
-            elif _as_bool(row.represented_on_func_plane):
-                scope, outer = "within plane", _within_outer(row.functional_status)
-            else:
-                scope, outer = "outside plane", "out of plane"
-            rows.append({"gene": gene, "round": round_name, "scope": scope, "outer_category": outer, "conf_label": int(label)})
-    if not rows:
-        return pd.DataFrame(columns=["panel", "gene", "round", "ring", "category", "n_labels"])
-    label_rows = pd.DataFrame(rows)
-    panels: list[tuple[str, pd.DataFrame]] = [("All genes", label_rows)]
-    order = {"pth2": 0, "sst1.1": 1, "sst1.2": 2, "tac3b": 3}
-    for gene in sorted(label_rows["gene"].unique(), key=lambda value: (order.get(str(value).lower(), len(order)), str(value))):
-        panels.append((str(gene), label_rows[label_rows["gene"].eq(gene)]))
-    out_rows: list[dict] = []
-    for panel, subset in panels:
-        panel_gene = "all" if panel == "All genes" else panel
-        panel_round = "all" if panel == "All genes" else ",".join(sorted(subset["round"].astype(str).unique()))
-        for category in _HCR_FUNCTIONAL_SCOPE_ORDER:
-            out_rows.append({"panel": panel, "gene": panel_gene, "round": panel_round, "ring": "inner", "category": category, "n_labels": int(subset["scope"].eq(category).sum())})
-        for category in _HCR_FUNCTIONAL_OUTER_ORDER:
-            out_rows.append({"panel": panel, "gene": panel_gene, "round": panel_round, "ring": "outer", "category": category, "n_labels": int(subset["outer_category"].eq(category).sum())})
-    return pd.DataFrame(out_rows)
-
-
-def plot_hcr_functional_plane_status_donuts(donuts: pd.DataFrame, *, fish_id: str) -> plt.Figure:
-    """Render the legacy inner-scope / outer-functional-status donut layout."""
-    required = {"panel", "ring", "category", "n_labels"}
-    missing = sorted(required.difference(donuts.columns))
-    if missing:
-        raise ValueError(f"HCR functional-plane donut table lacks columns: {missing}")
-    panels = donuts["panel"].drop_duplicates().tolist()
-    if not panels:
-        raise ValueError("No persisted HCR activity-status rows were supplied")
-    ncols, nrows = 3, int(np.ceil(len(panels) / 3))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(13.8, 5.5 * nrows), squeeze=False)
-    for axis in axes.flat[len(panels):]:
-        axis.set_visible(False)
-    for axis, panel in zip(axes.flat, panels):
-        subset = donuts[donuts["panel"].eq(panel)]
-        inner = subset[subset["ring"].eq("inner")].set_index("category")["n_labels"].reindex(_HCR_FUNCTIONAL_SCOPE_ORDER, fill_value=0)
-        outer = subset[subset["ring"].eq("outer")].set_index("category")["n_labels"].reindex(_HCR_FUNCTIONAL_OUTER_ORDER, fill_value=0)
-        total = int(inner.sum())
-        axis.pie(inner, radius=0.98, startangle=90, counterclock=False, colors=[_HCR_FUNCTIONAL_SCOPE_COLORS[item] for item in inner.index], wedgeprops={"width": 0.40, "edgecolor": "white", "linewidth": 1.0})
-        axis.pie(outer, radius=1.17, startangle=90, counterclock=False, colors=[_HCR_FUNCTIONAL_OUTER_COLORS[item] for item in outer.index], wedgeprops={"width": 0.15, "edgecolor": "white", "linewidth": 1.0})
-        for wedge, value in zip(axis.patches[len(inner):], outer):
-            if int(value) == 0:
-                continue
-            angle = np.deg2rad((wedge.theta1 + wedge.theta2) / 2.0)
-            axis.text(1.10 * np.cos(angle), 1.10 * np.sin(angle), str(int(value)), ha="center", va="center", fontsize=8, color="black")
-        # Scope labels are useful at the scale of the legacy panels, but only
-        # for non-zero sectors so they do not obscure the small outer labels.
-        for wedge, category, value in zip(axis.patches[:len(inner)], inner.index, inner):
-            if int(value) == 0:
-                continue
-            angle = np.deg2rad((wedge.theta1 + wedge.theta2) / 2.0)
-            axis.text(0.56 * np.cos(angle), 0.56 * np.sin(angle), f"{category}\n{int(value)}", ha="center", va="center", fontsize=8, rotation=np.rad2deg(angle) - 90, color="white" if category == "outside plane" else "black")
-        axis.text(0, 0, f"n = {total}", ha="center", va="center", fontsize=10, fontweight="bold")
-        axis.set_title(str(panel), fontsize=11)
-    handles = [plt.matplotlib.patches.Patch(color=_HCR_FUNCTIONAL_OUTER_COLORS[item], label=item) for item in _HCR_FUNCTIONAL_OUTER_ORDER[:-1]]
-    fig.legend(handles=handles, title="Outer ring", loc="lower center", ncol=5, frameon=False, fontsize=8)
-    fig.suptitle("Gene-linked anatomy labels are not equally represented on the functional planes", y=0.985, fontsize=14)
-    fig.subplots_adjust(top=0.88, bottom=0.12, hspace=0.25, wspace=0.35)
-    return fig
-
-
-def build_hcr_anatomy_match_outcome_table(
-    *,
-    label_paths: Sequence[str | Path],
-    match_paths: Sequence[str | Path],
-    activity_status_path: str | Path | None = None,
-) -> pd.DataFrame:
-    """Partition persisted HCR labels by the legacy anatomical-match outcome.
-
-    This mirrors the legacy single-fish ``hcr_anat_match_overview_by_gene_pie``:
-    q95 size flags come from each mask's persisted warp metadata; match quality
-    comes from the persisted ``*_matches.csv``; and in-/out-of-plane status is
-    read from the existing HCR status table when present.  No matching or plane
-    assignment is recomputed here.
-    """
-    matches_by_stem = {Path(path).name.replace("_matches.csv", ""): Path(path) for path in match_paths}
-    plane_lookup = _hcr_status_plane_lookup(activity_status_path)
-    rows: list[dict] = []
-    for raw_path in label_paths:
-        path = Path(raw_path)
-        stem = path.name.replace("_labels_uint16.tif", "")
-        labels = set(np.unique(imread_any(path)).astype(int)) - {0}
-        match_path = matches_by_stem.get(stem)
-        matches = pd.read_csv(match_path) if match_path is not None and match_path.is_file() else pd.DataFrame()
-        if not matches.empty and "conf_label" in matches:
-            matches["conf_label"] = pd.to_numeric(matches["conf_label"], errors="coerce")
-            matches = matches.dropna(subset=["conf_label"]).copy()
-            matches["conf_label"] = matches["conf_label"].astype(int)
-        else:
-            matches = pd.DataFrame(columns=["conf_label"])
-        by_label = {int(label): group.iloc[0] for label, group in matches.groupby("conf_label", sort=False)}
-        meta_path = path.with_name(path.name.replace("_labels_uint16.tif", "_warp_meta.json"))
-        large_labels: set[int] = set()
-        if meta_path.is_file():
-            try:
-                large_labels = {int(value) for value in json.loads(meta_path.read_text()).get("filter_stats", {}).get("low_conf_labels", [])}
-            except (OSError, ValueError, TypeError):
-                pass
-        gene, round_name = _gene_round(path)
-        gene_key = str(gene).strip().lower()
-        raw_mask_name = path.name.replace("_in_2p_labels_uint16.tif", ".tif")
-        for label in sorted(labels):
-            row = by_label.get(label)
-            quality = "" if row is None else str(row.get("quality", "")).strip().lower()
-            pair_type = "" if row is None else str(row.get("pair_type", "")).strip().lower()
-            within_gate = False if row is None else _as_bool(row.get("within_gate", False))
-            if quality == "good":
-                represented = plane_lookup.get((raw_mask_name, gene_key, label), plane_lookup.get(("", gene_key, label)))
-                outcome = "in-plane anatomy match" if represented else "out-of-plane anatomy match"
-            elif label in large_labels:
-                outcome = ">q95 large mask"
-            elif pair_type in {"1-many", "split", "one-to-many"}:
-                outcome = "split anatomy relation"
-            elif pair_type in {"many-1", "merged", "many-to-one"}:
-                outcome = "merged anatomy relation"
-            elif pair_type in {"many-many", "complex", "many-to-many"}:
-                outcome = "complex anatomy relation"
-            elif quality == "iffy" and within_gate and pair_type in {"1-1", "one-to-one"}:
-                outcome = "1-to-1 anatomy relation, IoU below threshold"
-            elif row is None or not within_gate or quality == "rejected" or pair_type == "rejected":
-                outcome = "too far / no overlap anatomy"
-            else:
-                outcome = "other anatomy rejection"
-            rows.append({"gene": gene, "round": round_name, "category": outcome, "conf_label": int(label)})
-    if not rows:
-        return pd.DataFrame(columns=["gene", "round", "category", "n_labels"])
-    observed = pd.DataFrame(rows)
-    grouped = observed.groupby(["gene", "round", "category"], sort=False).size().rename("n_labels").reset_index()
-    groups = observed[["gene", "round"]].drop_duplicates()
-    full = groups.merge(pd.DataFrame({"category": _HCR_ANATOMY_OUTCOME_ORDER}), how="cross")
-    return full.merge(grouped, on=["gene", "round", "category"], how="left").fillna({"n_labels": 0}).astype({"n_labels": int})
-
-
-def plot_hcr_anatomy_match_outcome_donuts(outcomes: pd.DataFrame, *, fish_id: str) -> plt.Figure:
-    """Render the legacy one-ring HCR→anatomy outcome donuts by gene/round."""
-    required = {"gene", "round", "category", "n_labels"}
-    missing = sorted(required.difference(outcomes.columns))
-    if missing:
-        raise ValueError(f"HCR anatomy-outcome table lacks columns: {missing}")
-    groups = list(outcomes[["gene", "round"]].drop_duplicates().itertuples(index=False, name=None))
-    legacy_gene_order = {"sst1.1": 0, "sst1.2": 1, "tac3b": 2, "pth2": 3}
-    groups.sort(key=lambda item: (legacy_gene_order.get(str(item[0]).lower(), len(legacy_gene_order)), str(item[0]), str(item[1])))
-    if not groups:
-        raise ValueError("No persisted HCR matching artifacts were supplied")
-    ncols = min(2, len(groups))
-    nrows = int(np.ceil(len(groups) / ncols))
-    # Keep a dedicated header band: the legacy panel has a long category key
-    # and letting constrained_layout negotiate it causes it to collide with
-    # the top-row subplot titles.
-    fig, axes = plt.subplots(nrows, ncols, figsize=(12.5, 5.8 * nrows), squeeze=False)
-    for axis in axes.flat[len(groups):]:
-        axis.set_visible(False)
-    for axis, (gene, round_name) in zip(axes.flat, groups):
-        part = outcomes[(outcomes.gene == gene) & (outcomes["round"] == round_name)].set_index("category").n_labels.reindex(_HCR_ANATOMY_OUTCOME_ORDER, fill_value=0)
-        total = int(part.sum())
-        nonzero = part[part.gt(0)]
-        wedges, _, autotexts = axis.pie(
-            nonzero.to_numpy(), startangle=90, counterclock=False,
-            colors=[_HCR_ANATOMY_OUTCOME_COLORS[item] for item in nonzero.index],
-            autopct=lambda pct: f"{pct:.0f}%" if pct >= 10 else (f"{pct:.1f}%" if pct > 0 else ""),
-            wedgeprops={"width": 0.46, "edgecolor": "black", "linewidth": 0.8},
-            textprops={"fontsize": 9, "color": "white"},
-        )
-        for wedge, text, value in zip(wedges, autotexts, nonzero.to_numpy()):
-            text.set_path_effects([patheffects.withStroke(linewidth=2.0, foreground="black")])
-            pct = 100.0 * float(value) / total if total else 0.0
-            if 0 < pct <= 7.5:
-                angle = np.deg2rad((wedge.theta1 + wedge.theta2) / 2.0)
-                x, y = np.cos(angle), np.sin(angle)
-                text.set_visible(False)
-                axis.annotate(
-                    f"{pct:.1f}%", xy=(0.88 * x, 0.88 * y), xytext=(1.32 * np.sign(x), 1.16 * y),
-                    ha="left" if x >= 0 else "right", va="center", fontsize=9, color="white",
-                    path_effects=[patheffects.withStroke(linewidth=2.0, foreground="black")],
-                    arrowprops={"arrowstyle": "-", "color": "black", "connectionstyle": "angle3"},
-                )
-        axis.set_title(f"{gene}\n(n={total})", fontsize=12)
-    handles = [plt.matplotlib.patches.Patch(color=_HCR_ANATOMY_OUTCOME_COLORS[item], label=item) for item in _HCR_ANATOMY_OUTCOME_ORDER]
-    fig.legend(handles=handles, title="Fill = category", loc="upper center", bbox_to_anchor=(0.5, 0.935), ncol=3, frameon=False, fontsize=9)
-    fig.suptitle(f"{fish_id}: HCR masks by gene — anatomical match outcome (legacy [50]-aligned)", y=0.995, fontsize=14)
-    fig.subplots_adjust(top=0.80, hspace=0.35, wspace=0.18)
-    return fig
-
-
-def build_hcr_matching_flow_donut_table(
-    *, label_paths: Sequence[str | Path], review_paths: Sequence[str | Path], final_pair_paths: Sequence[str | Path]
-) -> pd.DataFrame:
-    """Build mutually exclusive HCR label fates for the legacy-style two-ring flow view.
-
-    The inner ring distinguishes final one-to-one acceptance from all other
-    segmented labels.  The outer ring partitions the latter by the first
-    persisted terminal matching outcome.  It only reads saved labels, review
-    rows, and final pairs; it never recomputes candidates or assignments.
-    """
-    final_by_stem = {Path(p).name.replace("_final_pairs.csv", ""): Path(p) for p in final_pair_paths}
-    review_by_stem = {Path(p).name.replace("_review.csv", ""): Path(p) for p in review_paths}
-    rows: list[dict] = []
-    for raw_path in label_paths:
-        path = Path(raw_path)
-        stem = path.name.replace("_labels_uint16.tif", "")
-        labels = set(np.asarray(imread_any(path)).ravel().astype(int)) - {0}
-        review = pd.read_csv(review_by_stem[stem]) if stem in review_by_stem else pd.DataFrame()
-        final = pd.read_csv(final_by_stem[stem]) if stem in final_by_stem else pd.DataFrame()
-        review_labels = set(pd.to_numeric(review.get("conf_label", pd.Series(dtype=float)), errors="coerce").dropna().astype(int))
-        accepted_rows = final.loc[final["pair_type"].astype(str).eq("1-1")] if "pair_type" in final else final
-        accepted = set(pd.to_numeric(accepted_rows.get("conf_label", pd.Series(dtype=float)), errors="coerce").dropna().astype(int)) & labels
-        gate = review.get("within_gate", pd.Series(False, index=review.index)).astype(str).str.strip().str.lower().isin(("true", "1", "yes"))
-        gated = set(pd.to_numeric(review.loc[gate, "conf_label"], errors="coerce").dropna().astype(int)) if "conf_label" in review else set()
-        ambiguous = set(pd.to_numeric(review.loc[review.get("pair_type", pd.Series("", index=review.index)).astype(str).ne("1-1"), "conf_label"], errors="coerce").dropna().astype(int)) if "conf_label" in review else set()
-        candidates = (review_labels | accepted) & labels
-        terminal = {
-            "not candidate": labels - candidates,
-            "gate failure": (candidates - gated) - ambiguous - accepted,
-            "ambiguous relation": (ambiguous & candidates) - accepted,
-        }
-        terminal["quality/review rejection"] = labels - accepted - set().union(*terminal.values())
-        terminal["accepted 1:1"] = accepted
-        gene, round_name = _gene_round(path)
-        for ring, category, values in (
-            ("inner", "not accepted", labels - accepted),
-            ("inner", "accepted 1:1", accepted),
-            *(("outer", category, terminal[category]) for category in _HCR_FLOW_OUTER_ORDER),
-        ):
-            rows.append({"gene": gene, "round": round_name, "ring": ring, "category": category, "n_labels": len(values)})
-    return pd.DataFrame(rows)
-
-
-def plot_hcr_matching_flow_donuts(donuts: pd.DataFrame, *, fish_id: str) -> plt.Figure:
-    """Render the legacy-style two-ring persisted HCR matching flow by gene/round."""
-    required = {"gene", "round", "ring", "category", "n_labels"}
-    missing = sorted(required.difference(donuts.columns))
-    if missing:
-        raise ValueError(f"HCR matching donut table lacks columns: {missing}")
-    groups = list(donuts[["gene", "round"]].drop_duplicates().itertuples(index=False, name=None))
-    if not groups:
-        raise ValueError("No persisted HCR matching artifacts were supplied")
-    fig, axes = plt.subplots(1, len(groups), figsize=(max(7.2, 5.0 * len(groups)), 5.8), squeeze=False, constrained_layout=True)
-    for ax, (gene, round_name) in zip(axes.flat, groups):
-        part = donuts[(donuts.gene == gene) & (donuts["round"] == round_name)]
-        inner = part[part.ring.eq("inner")].set_index("category").n_labels.reindex(["not accepted", "accepted 1:1"], fill_value=0)
-        outer = part[part.ring.eq("outer")].set_index("category").n_labels.reindex(_HCR_FLOW_OUTER_ORDER, fill_value=0)
-        total = int(inner.sum())
-        inner_wedges, _ = ax.pie(inner, radius=0.72, startangle=90, counterclock=False,
-                                 colors=["#bdbdbd", _HCR_FLOW_OUTER_COLORS["accepted 1:1"]],
-                                 wedgeprops={"width": 0.28, "edgecolor": "black", "linewidth": 0.7})
-        outer_wedges, _ = ax.pie(outer, radius=1.0, startangle=90, counterclock=False,
-                                 colors=[_HCR_FLOW_OUTER_COLORS[item] for item in outer.index],
-                                 wedgeprops={"width": 0.18, "edgecolor": "white", "linewidth": 0.7})
-        for wedges, values, radius in ((inner_wedges, inner, 0.58), (outer_wedges, outer, 0.91)):
-            for wedge, value in zip(wedges, values):
-                if int(value) <= 0:
-                    continue
-                angle = np.deg2rad((wedge.theta1 + wedge.theta2) / 2.0)
-                ax.text(radius * np.cos(angle), radius * np.sin(angle), str(int(value)), ha="center", va="center", fontsize=8)
-        ax.text(0, 0, f"{gene}\n{round_name}\nn={total}", ha="center", va="center", fontsize=10, fontweight="bold")
-        ax.set_title("inner: final acceptance\nouter: terminal persisted outcome", fontsize=9)
-    handles = [plt.matplotlib.patches.Patch(color=_HCR_FLOW_OUTER_COLORS[item], label=item) for item in _HCR_FLOW_OUTER_ORDER]
-    fig.legend(handles=handles, loc="lower center", ncol=min(3, len(handles)), frameon=False, fontsize=8)
-    fig.suptitle(f"{fish_id}: persisted HCR→anatomy matching flow (two-ring review)", fontweight="bold")
     return fig
 
 
@@ -1767,134 +1245,30 @@ def plot_molecular_identity_fate(fates: pd.DataFrame, *, fish_id: str) -> plt.Fi
 
 
 def plot_molecular_correspondence_tiles(
-    *,
-    anatomy_path: str | Path,
-    anatomy_labels_path: str | Path,
-    hcr_label_paths: Sequence[str | Path],
-    final_pair_paths: Sequence[str | Path],
-    identity_table_path: str | Path,
-    functional_label_dir: str | Path,
-    fish_id: str,
-    genes: Sequence[str] | None = None,
-    response_statuses: Sequence[str] | None = None,
-    flagged_only: bool = False,
-    max_tiles: int | None = None,
-    crop_px: int = 36,
+    *, anatomy_path: str | Path, anatomy_labels_path: str | Path, hcr_label_paths: Sequence[str | Path], final_pair_paths: Sequence[str | Path], identity_table_path: str | Path, functional_label_dir: str | Path, fish_id: str, max_tiles: int = 24, crop_px: int = 36
 ) -> plt.Figure:
-    """Render read-only tiles for persisted HCR/anatomy/functional links.
+    """Read-only tiles for accepted HCR/anatomy/functional correspondences.
 
-    Each tile is a frozen anatomy-space crop: green is the accepted HCR-label
-    boundary, magenta is the selected functional ROI boundary, and white is
-    the linked anatomy-label boundary.  ``genes``, ``response_statuses``, and
-    ``flagged_only`` are display filters only.  They never write exclusions or
-    modify HCR final-pair membership.  By default all persisted selected links
-    are shown; ``max_tiles`` is an explicit bounded inspection subset.
+    Each tile is a frozen anatomy-space crop.  Green marks the accepted HCR
+    label, magenta the matched functional ROI, and white the anatomy label.
+    ``max_tiles`` is an explicit inspection subset, never a selection rule.
     """
-    _validate_fish(fish_id)
-    if crop_px < 1:
-        raise ValueError("crop_px must be positive")
-    if max_tiles is not None and max_tiles < 1:
-        raise ValueError("max_tiles must be positive when supplied")
-    anatomy = np.asarray(imread_any(anatomy_path))
-    anatomy_labels = np.asarray(imread_any(anatomy_labels_path))
-    if anatomy.ndim != 3 or anatomy_labels.shape != anatomy.shape:
-        raise ValueError("Anatomy intensity and anatomy labels must be same-grid 3D ZYX arrays")
+    anatomy = imread_any(anatomy_path); anatomy_labels = imread_any(anatomy_labels_path)
     identity = pd.read_csv(identity_table_path)
-    required_identity = {"anat_label", "plane_idx", "func_label", "best_z"}
-    missing_identity = sorted(required_identity.difference(identity.columns))
-    if missing_identity:
-        raise ValueError(f"Identity table is missing required frozen-geometry columns: {missing_identity}")
     finals = {Path(p).name.replace("_final_pairs.csv", ""): pd.read_csv(p) for p in final_pair_paths}
     functional_dir = Path(functional_label_dir)
-    if not functional_dir.is_dir():
-        raise FileNotFoundError(f"Functional anatomy-label directory does not exist: {functional_dir}")
-
-    def _truthy(value: object) -> bool:
-        if value is None or (isinstance(value, float) and np.isnan(value)):
-            return False
-        if isinstance(value, (bool, np.bool_)):
-            return bool(value)
-        if isinstance(value, (int, np.integer, float, np.floating)):
-            return bool(value)
-        return str(value).strip().lower() in {"1", "true", "yes", "y", "flagged", "fail", "failed", "iffy"}
-
-    def _flags(row: pd.Series) -> tuple[str, ...]:
-        # Flag fields are optional provenance.  Absence is deliberately shown
-        # as "none recorded", not interpreted as proof of high quality.
-        names = [
-            name for name in row.index
-            if ("flag" in name.lower() or "segmentation" in name.lower() or "geometry" in name.lower())
-            and name.lower() not in {"geometry_state", "segmentation_source"}
-        ]
-        return tuple(name for name in names if _truthy(row[name]))
-
-    wanted_genes = None if genes is None else {str(gene) for gene in genes}
-    wanted_statuses = None if response_statuses is None else {str(status) for status in response_statuses}
-    functional_masks: dict[int, np.ndarray] = {}
-
-    def _functional_mask(plane_idx: int) -> np.ndarray:
-        if plane_idx not in functional_masks:
-            candidates = sorted(
-                path for path in functional_dir.glob(f"*plane{plane_idx}*func_mask_in_2p.tif")
-                if path.is_file() and not path.name.startswith("._")
-            )
-            path = candidates[0] if candidates else None
-            if path is None:
-                raise FileNotFoundError(f"No persisted functional anatomy mask for plane {plane_idx} in {functional_dir}")
-            mask = np.asarray(imread_any(path))
-            if mask.ndim not in {2, 3}:
-                raise ValueError(f"Functional mask must be 2D or 3D, got {mask.shape}: {path}")
-            if mask.ndim == 2 and mask.shape != anatomy.shape[1:]:
-                raise ValueError(f"Functional mask grid differs from anatomy XY grid: {path}")
-            if mask.ndim == 3 and mask.shape != anatomy.shape:
-                raise ValueError(f"Functional mask grid differs from anatomy grid: {path}")
-            functional_masks[plane_idx] = mask
-        return functional_masks[plane_idx]
-
     records: list[dict] = []
     for hcr_path in hcr_label_paths:
         path = Path(hcr_path); stem = path.name.replace("_labels_uint16.tif", "")
-        hcr = np.asarray(imread_any(path)); gene, round_name = _gene_round(path)
-        if hcr.shape != anatomy.shape:
-            raise ValueError(f"HCR label grid differs from anatomy grid: {path}")
+        hcr = imread_any(path); gene, round_name = _gene_round(path)
         for pair in finals.get(stem, pd.DataFrame()).itertuples(index=False):
-            pair_row = pd.Series(pair._asdict())
-            if "twoP_label" not in pair_row or "conf_label" not in pair_row:
-                raise ValueError(f"Final-pair artifact needs conf_label and twoP_label: {stem}")
-            anat_label = int(pair_row.twoP_label); conf_label = int(pair_row.conf_label)
-            linked = identity[identity["anat_label"].eq(anat_label)].copy()
-            if "has_unique_anat_match" in linked:
-                linked = linked[linked["has_unique_anat_match"].fillna(False)]
-            # The identity table can validly contain more than one selected
-            # functional correspondence for an accepted HCR/anatomy label.
-            # Keep each persisted row rather than choosing one in plot code.
-            for _, row in linked.iterrows():
-                response_value = row.get("response_class", row.get("response_summary_class", "response unavailable"))
-                response = "response unavailable" if pd.isna(response_value) else str(response_value)
-                if "bpi_data_available" in row.index:
-                    trace_status = "trace/BPI available" if _truthy(row["bpi_data_available"]) else "trace/BPI unavailable"
-                elif "bpi_status" in row.index:
-                    trace_status = f"BPI status: {row['bpi_status']}"
-                else:
-                    trace_status = "trace/BPI status not recorded"
-                flags = tuple(sorted(set(_flags(pair_row)).union(_flags(row))))
-                records.append({
-                    "gene": gene, "round": round_name, "hcr": hcr,
-                    "conf_label": conf_label, "anat_label": anat_label,
-                    "plane_idx": int(row.plane_idx), "func_label": int(row.func_label),
-                    "best_z": int(row.best_z), "response": response,
-                    "trace_status": trace_status, "flags": flags,
-                })
-    records.sort(key=lambda item: (item["gene"], item["round"], item["response"], item["plane_idx"], item["func_label"], item["conf_label"]))
-    total_selected_links = len(records)
-    if wanted_genes is not None:
-        records = [record for record in records if record["gene"] in wanted_genes]
-    if wanted_statuses is not None:
-        records = [record for record in records if record["response"] in wanted_statuses]
-    if flagged_only:
-        records = [record for record in records if record["flags"]]
-    if max_tiles is not None:
-        records = records[:max_tiles]
+            anat_label = int(pair.twoP_label); conf_label = int(pair.conf_label)
+            linked = identity[identity.get("anat_label", pd.Series(index=identity.index)).eq(anat_label)]
+            linked = linked[linked.get("has_unique_anat_match", pd.Series(False, index=linked.index)).fillna(False)]
+            if linked.empty: continue
+            row = linked.iloc[0]
+            records.append({"gene": gene, "round": round_name, "hcr": hcr, "conf_label": conf_label, "anat_label": anat_label, "plane_idx": int(row.plane_idx), "func_label": int(row.func_label), "best_z": int(row.best_z), "response": str(row.get("response_class", "unavailable"))})
+    records = records[:max_tiles]
     if not records: raise ValueError("No accepted molecular-to-functional correspondences available for tiles")
     cols = min(4, len(records)); rows = int(np.ceil(len(records) / cols))
     fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows), squeeze=False, constrained_layout=True)
@@ -1904,29 +1278,17 @@ def plot_molecular_correspondence_tiles(
             anatomy_counts = np.count_nonzero(anatomy_labels == record["anat_label"], axis=(1, 2))
             hcr_counts = np.count_nonzero(record["hcr"] == record["conf_label"], axis=(1, 2))
             z = int(np.argmax(anatomy_counts if anatomy_counts.max() else hcr_counts))
-        func = _functional_mask(record["plane_idx"])
-        func_plane = func[z] if func.ndim == 3 else func
+        func_path = next(functional_dir.glob(f"*plane{record['plane_idx']}*func_mask_in_2p.tif"), None)
+        func = imread_any(func_path) if func_path else np.zeros_like(anatomy_labels[z])
         anatomy_plane = norm01(anatomy[z]); ay, axx = np.where(anatomy_labels[z] == record["anat_label"])
         if len(ay) == 0: ay, axx = np.where(record["hcr"][z] == record["conf_label"])
         if len(ay) == 0: continue
         cy, cx = int(np.median(ay)), int(np.median(axx)); y0, y1 = max(0, cy-crop_px), min(anatomy_plane.shape[0], cy+crop_px); x0, x1 = max(0, cx-crop_px), min(anatomy_plane.shape[1], cx+crop_px)
         rgb = np.dstack([anatomy_plane]*3)[y0:y1, x0:x1].copy()
-        ax.imshow(rgb)
-        anatomy_boundary = anatomy_labels[z, y0:y1, x0:x1] == record["anat_label"]
-        # Draw anatomy first.  The coloured, narrower top contours remain
-        # visible even when all three labels coincide exactly; a white flank
-        # still identifies the anatomy boundary on bright GCaMP context.
-        ax.contour(anatomy_boundary, levels=[.5], colors="#202020", linewidths=3.2)
-        ax.contour(anatomy_boundary, levels=[.5], colors="white", linewidths=2.1)
-        ax.contour(record["hcr"][z, y0:y1, x0:x1] == record["conf_label"], levels=[.5], colors="#00c853", linewidths=1.45, linestyles="--")
-        ax.contour(func_plane[y0:y1, x0:x1] == record["func_label"], levels=[.5], colors="#ff00ff", linewidths=.75)
-        flag_text = ", ".join(record["flags"]) if record["flags"] else "none recorded"
-        ax.set_title(f"{record['gene']} {record['round']} | H{record['conf_label']}→A{record['anat_label']}→R{record['func_label']}\n{record['response']} · {record['trace_status']} | flags: {flag_text}", fontsize=7); ax.axis("off")
+        rgb[(record["hcr"][z, y0:y1, x0:x1] == record["conf_label"])] = (0, 1, 0)
+        rgb[(func[y0:y1, x0:x1] == record["func_label"])] = (1, 0, 1)
+        ax.imshow(rgb); ax.contour(anatomy_labels[z, y0:y1, x0:x1] == record["anat_label"], levels=[.5], colors="white", linewidths=.8)
+        ax.set_title(f"{record['gene']} {record['round']} | H{record['conf_label']}→A{record['anat_label']}→R{record['func_label']}\n{record['response']}", fontsize=7); ax.axis("off")
     for ax in axes.flat[len(records):]: ax.axis("off")
-    fig.suptitle(
-        f"{fish_id}: persisted HCR→anatomy→functional correspondence tiles\n"
-        f"HCR-centric review: showing {len(records)} of {total_selected_links} persisted selected links\n"
-        "green HCR boundary · magenta ROI boundary · white anatomy-label boundary",
-        fontweight="bold", fontsize=11,
-    )
+    fig.suptitle(f"{fish_id}: accepted molecular-to-functional tiles (green HCR, magenta ROI, white anatomy)", fontweight="bold")
     return fig

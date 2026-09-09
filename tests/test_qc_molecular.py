@@ -9,6 +9,8 @@ import tifffile
 from codeants_2pf_hcr.plots.qc_molecular import (
     MOLECULAR_GEOMETRY_TRACKS,
     build_hcr_anatomy_centroid_offset_table,
+    build_hcr_anatomy_match_outcome_table,
+    build_hcr_functional_plane_status_donut_table,
     build_hcr_matching_flow_donut_table,
     build_activity_bpi_gate_table,
     inspect_activity_export_qc,
@@ -19,6 +21,8 @@ from codeants_2pf_hcr.plots.qc_molecular import (
     plot_activity_export_qc,
     plot_activity_bpi_gate,
     plot_hcr_anatomy_centroid_offsets,
+    plot_hcr_anatomy_match_outcome_donuts,
+    plot_hcr_functional_plane_status_donuts,
     plot_hcr_matching_flow_donuts,
     plot_molecular_geometry_qc,
     plot_molecular_identity_qc,
@@ -182,6 +186,64 @@ def test_hcr_matching_flow_donuts_partition_segmented_labels(tmp_path: Path) -> 
     assert outer.set_index("category").loc["accepted 1:1", "n_labels"] == 1
     figure = plot_hcr_matching_flow_donuts(donuts, fish_id=FISH_ID)
     assert len(figure.axes) == 1
+    plt.close(figure)
+
+
+def test_hcr_anatomy_match_outcomes_match_legacy_category_precedence(tmp_path: Path) -> None:
+    label = tmp_path / "L765_f04_round2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"
+    matches = tmp_path / "L765_f04_round2_channel2_sst1_2_cp_masks_in_2p_matches.csv"
+    meta = tmp_path / "L765_f04_round2_channel2_sst1_2_cp_masks_in_2p_warp_meta.json"
+    status = tmp_path / "hcr_activity_status.csv"
+    tifffile.imwrite(label, np.array([[[1, 2, 3, 4, 5, 6]]], dtype="uint16"))
+    _csv(matches, [
+        {"conf_label": 1, "within_gate": True, "pair_type": "1-1", "quality": "good"},
+        {"conf_label": 2, "within_gate": True, "pair_type": "1-1", "quality": "good"},
+        {"conf_label": 3, "within_gate": True, "pair_type": "1-1", "quality": "iffy"},
+        {"conf_label": 4, "within_gate": False, "pair_type": "rejected", "quality": "rejected"},
+        {"conf_label": 5, "within_gate": True, "pair_type": "1-many", "quality": "iffy"},
+    ])
+    meta.write_text('{"filter_stats": {"low_conf_labels": [2, 6]}}')
+    _csv(status, [
+        {"gene": "sst1.2", "conf_label": 1, "represented_on_func_plane": True},
+        {"gene": "sst1.2", "conf_label": 2, "represented_on_func_plane": False},
+    ])
+
+    outcomes = build_hcr_anatomy_match_outcome_table(
+        label_paths=[label], match_paths=[matches], activity_status_path=status,
+    )
+    counts = outcomes.set_index("category")["n_labels"]
+    assert counts["in-plane anatomy match"] == 1
+    assert counts["out-of-plane anatomy match"] == 1  # good match precedes its size flag
+    assert counts[">q95 large mask"] == 1
+    assert counts["1-to-1 anatomy relation, IoU below threshold"] == 1
+    assert counts["too far / no overlap anatomy"] == 1
+    assert counts["split anatomy relation"] == 1
+    assert int(counts.sum()) == 6
+    figure = plot_hcr_anatomy_match_outcome_donuts(outcomes, fish_id=FISH_ID)
+    assert len(figure.axes) == 1
+    plt.close(figure)
+
+
+def test_hcr_functional_plane_status_donuts_use_legacy_two_ring_partition(tmp_path: Path) -> None:
+    label = tmp_path / "L765_f04_round2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"
+    meta = tmp_path / "L765_f04_round2_channel2_sst1_2_cp_masks_in_2p_warp_meta.json"
+    status = tmp_path / "hcr_activity_status.csv"
+    tifffile.imwrite(label, np.array([[[1, 2, 3, 4, 5, 6]]], dtype="uint16"))
+    meta.write_text('{"filter_stats": {"low_conf_labels": [6]}}')
+    _csv(status, [
+        {"conf_mask": "L765_f04_round2_channel2_sst1_2_cp_masks.tif", "conf_label": 1, "gene": "sst1.2", "represented_on_func_plane": True, "functional_status": "in-plane responsive ROI"},
+        {"conf_mask": "L765_f04_round2_channel2_sst1_2_cp_masks.tif", "conf_label": 2, "gene": "sst1.2", "represented_on_func_plane": True, "functional_status": "in-plane low-activity ROI"},
+        {"conf_mask": "L765_f04_round2_channel2_sst1_2_cp_masks.tif", "conf_label": 3, "gene": "sst1.2", "represented_on_func_plane": True, "functional_status": "in-plane no functional ROI candidate"},
+        {"conf_mask": "L765_f04_round2_channel2_sst1_2_cp_masks.tif", "conf_label": 4, "gene": "sst1.2", "represented_on_func_plane": False, "functional_status": "out-of-plane anatomy label"},
+    ])
+    donuts = build_hcr_functional_plane_status_donut_table(label_paths=[label], activity_status_path=status)
+    panel = donuts.query("panel == 'sst1.2'")
+    inner = panel.query("ring == 'inner'").set_index("category")["n_labels"]
+    outer = panel.query("ring == 'outer'").set_index("category")["n_labels"]
+    assert inner.to_dict() == {"within plane": 3, "outside plane": 1, "unmatched": 1}
+    assert outer.to_dict() == {"responsive ROI": 1, "low-activity ROI": 1, "response unavailable": 0, "no functional match": 1, "out of plane": 1, "unmatched": 1}
+    figure = plot_hcr_functional_plane_status_donuts(donuts, fish_id=FISH_ID)
+    assert len(figure.axes) == 3  # one data panel plus two hidden slots in the legacy 3-column grid
     plt.close(figure)
 
 
