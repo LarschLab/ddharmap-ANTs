@@ -9,16 +9,16 @@ import pytest
 import tifffile
 
 from codeants_2pf_hcr.plots.qc_geometry import (
-    build_legacy_qc_xy_offset_audit,
+    build_stored_vs_physical_xy_offset_audit,
     geometry_review_queue,
     load_geometry_review_bundle,
     render_centroid_offset_review,
     render_centroid_offset_detail,
-    render_legacy_qc_xy_offset_audit,
+    render_stored_vs_physical_xy_offset_audit,
     render_geometry_placement_overview,
     render_geometry_review_summary,
     summarize_geometry_review,
-    summarize_legacy_qc_xy_offset_audit,
+    summarize_stored_vs_physical_xy_offset_audit,
 )
 
 
@@ -205,7 +205,7 @@ def test_geometry_loader_rejects_fish_mismatch(tmp_path: Path) -> None:
         load_geometry_review_bundle(root, expected_fish_id="L765_f03")
 
 
-def test_legacy_qc_xy_offset_audit_intersects_keys_and_uses_physical_centroids(tmp_path: Path) -> None:
+def test_stored_vs_physical_xy_offset_audit_intersects_keys_and_uses_physical_centroids(tmp_path: Path) -> None:
     root = tmp_path / "registration"
     _write_geometry(root)
     qc = pd.read_csv(root / "functional_roi_anatomy_matches.csv")
@@ -225,43 +225,43 @@ def test_legacy_qc_xy_offset_audit_intersects_keys_and_uses_physical_centroids(t
         ],
         ignore_index=True,
     )
-    audit = build_legacy_qc_xy_offset_audit(legacy, qc, dx_um=0.5, dy_um=0.25)
+    audit = build_stored_vs_physical_xy_offset_audit(legacy, qc, dx_um=0.5, dy_um=0.25)
 
     assert audit[["plane_idx", "func_label"]].to_dict("records") == [{"plane_idx": 0, "func_label": 1}]
-    assert audit.loc[0, "legacy_53a_xy_offset_um"] == pytest.approx(1.5)
-    assert audit.loc[0, "qc_xy_offset_um"] == pytest.approx(np.hypot(0.5, 0.25))
-    summary = summarize_legacy_qc_xy_offset_audit(audit)
+    assert audit.loc[0, "stored_xy_offset_value"] == pytest.approx(1.5)
+    assert audit.loc[0, "physical_xy_offset_um"] == pytest.approx(np.hypot(0.5, 0.25))
+    summary = summarize_stored_vs_physical_xy_offset_audit(audit)
     assert summary.loc[summary["scope"].eq("overall"), "n"].item() == 1
-    figure = render_legacy_qc_xy_offset_audit(audit, fish_id="L765_f04")
+    figure = render_stored_vs_physical_xy_offset_audit(audit, fish_id="L765_f04")
     assert len(figure.axes) == 2
     plt.close(figure)
 
 
-def test_legacy_qc_xy_offset_audit_rejects_duplicate_unique_keys(tmp_path: Path) -> None:
+def test_stored_vs_physical_xy_offset_audit_rejects_duplicate_unique_keys(tmp_path: Path) -> None:
     root = tmp_path / "registration"
     _write_geometry(root)
     qc = pd.read_csv(root / "functional_roi_anatomy_matches.csv")
     legacy = pd.concat([qc, qc.iloc[[0]]], ignore_index=True)
     with pytest.raises(ValueError, match="duplicate unique-match keys"):
-        build_legacy_qc_xy_offset_audit(legacy, qc, dx_um=1.0, dy_um=1.0)
+        build_stored_vs_physical_xy_offset_audit(legacy, qc, dx_um=1.0, dy_um=1.0)
 
 
-def test_legacy_qc_xy_offset_audit_fails_closed_without_plane_match_outcome(tmp_path: Path) -> None:
+def test_stored_vs_physical_xy_offset_audit_fails_closed_without_plane_match_outcome(tmp_path: Path) -> None:
     root = tmp_path / "registration"
     _write_geometry(root)
     qc = pd.read_csv(root / "functional_roi_anatomy_matches.csv")
     with pytest.raises(ValueError, match="plane_match_outcome"):
-        build_legacy_qc_xy_offset_audit(qc.drop(columns=["plane_match_outcome"]), qc, dx_um=1.0, dy_um=1.0)
+        build_stored_vs_physical_xy_offset_audit(qc.drop(columns=["plane_match_outcome"]), qc, dx_um=1.0, dy_um=1.0)
 
 
-def test_legacy_qc_xy_offset_audit_requires_anatomy_match_outcome(tmp_path: Path) -> None:
+def test_stored_vs_physical_xy_offset_audit_requires_anatomy_match_outcome(tmp_path: Path) -> None:
     root = tmp_path / "registration"
     _write_geometry(root)
     qc = pd.read_csv(root / "functional_roi_anatomy_matches.csv")
     legacy = qc.copy()
     legacy.loc[legacy["func_label"].eq(1), "plane_match_outcome"] = "no anatomy overlap candidate"
     with pytest.raises(ValueError, match="no intersected unique-match"):
-        build_legacy_qc_xy_offset_audit(legacy, qc, dx_um=1.0, dy_um=1.0)
+        build_stored_vs_physical_xy_offset_audit(legacy, qc, dx_um=1.0, dy_um=1.0)
 
 
 def test_notebook_03_review_writer_is_opt_in() -> None:

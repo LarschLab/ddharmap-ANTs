@@ -336,6 +336,13 @@ def render_suite2p_stimulus_locked_trace_panels(
     nrows, ncols = len(row_keys), 2
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 2.8 * nrows + 0.7), sharex=True, sharey=True, squeeze=False)
     durations = duration_by_stim or {}
+    all_trial_counts = pd.to_numeric(trace_df.get("n_valid_trials", pd.Series(dtype=float)), errors="coerce").dropna()
+    all_blocks = sorted({block.strip() for value in trace_df.get("blocks_used", pd.Series(dtype=str)).dropna() for block in str(value).split(",") if block.strip()})
+    trial_context = "Stimulus-present trials only"
+    if all_blocks:
+        trial_context += f" ({','.join(all_blocks)})"
+    if not all_trial_counts.empty:
+        trial_context += f"; {int(all_trial_counts.min())} valid trials/stimulus/session"
 
     for stim_type in stim_types:
         row_idx, col_idx = slots[str(stim_type)]
@@ -349,9 +356,27 @@ def render_suite2p_stimulus_locked_trace_panels(
             mean = np.asarray(getattr(row, trace_column), dtype=float)
             if mean.shape == tvec_arr.shape:
                 ax.plot(tvec_arr, mean, color=color, alpha=float(line_alpha), linewidth=float(line_width))
+        for session, session_sub in sub.groupby("session_label", sort=False):
+            session_traces = [
+                np.asarray(value, dtype=float)
+                for value in session_sub[trace_column].tolist()
+                if np.asarray(value).shape == tvec_arr.shape
+            ]
+            if session_traces:
+                ax.plot(
+                    tvec_arr,
+                    np.nanmean(np.vstack(session_traces), axis=0),
+                    color=session_colors.get(str(session), "#666666"),
+                    linewidth=2.2,
+                    alpha=1.0,
+                    zorder=4,
+                )
         ax.axvline(0.0, color="black", linestyle="--", linewidth=0.8, alpha=0.75)
         ax.axhline(0.0, color="black", linewidth=0.6, alpha=0.5)
-        ax.set_title(f"{stim_type} (neurons n={sub[['plane_idx', 'func_label']].drop_duplicates().shape[0]})", fontsize=10)
+        ax.set_title(
+            f"{stim_type} (neurons n={sub[['plane_idx', 'func_label']].drop_duplicates().shape[0]})",
+            fontsize=10,
+        )
         ax.set_xlabel("Time from stimulus start (s)")
         ax.set_ylabel(y_label)
 
@@ -366,10 +391,10 @@ def render_suite2p_stimulus_locked_trace_panels(
                 ax.axis("off")
     axes[0, 0].set_title(axes[0, 0].get_title() or "Left", fontsize=10)
     axes[0, 1].set_title(axes[0, 1].get_title() or "Right", fontsize=10)
-    handles = [Line2D([0], [0], color=color, linewidth=2.0, label=str(session)) for session, color in session_colors.items()]
+    handles = [Line2D([0], [0], color=color, linewidth=2.2, label=f"{session}: population mean") for session, color in session_colors.items()]
     if handles:
         fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
-    fig.suptitle(title, y=0.995)
+    fig.suptitle(f"{title}\n{trial_context}; bold traces are session population means", y=0.995)
     fig.tight_layout(rect=[0, 0.05, 1, 0.94])
     return fig
 
@@ -435,6 +460,7 @@ def render_suite2p_full_session_heatmap(
                 stim_labels_seen.add(stim_type)
 
     drew_block_start = False
+    no_stimulus_block_end: float | None = None
     if not blocks.empty:
         required = {"frame", "row_start", "row_end"}
         if required.issubset(blocks.columns):
@@ -456,6 +482,26 @@ def render_suite2p_full_session_heatmap(
                     zorder=3,
                 )
                 drew_block_start = True
+        if {"block", "frame"}.issubset(blocks.columns):
+            block_frames = blocks.loc[:, ["block", "frame"]].copy()
+            block_frames["frame"] = pd.to_numeric(block_frames["frame"], errors="coerce")
+            block_frames = block_frames.dropna().drop_duplicates()
+            b0 = block_frames.loc[block_frames["block"].astype(str).eq("B0"), "frame"]
+            later = block_frames.loc[block_frames["frame"].gt(float(b0.min())) if not b0.empty else [], "frame"]
+            if not b0.empty and not later.empty:
+                no_stimulus_block_end = float(later.min())
+                ax.axvspan(0.0, no_stimulus_block_end, color="#9e9e9e", alpha=0.16, zorder=1)
+                ax.text(
+                    no_stimulus_block_end / 2.0,
+                    0.01,
+                    "B0: no visual stimuli\n(baseline context only)",
+                    transform=ax.get_xaxis_transform(),
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    color="#333333",
+                    zorder=4,
+                )
 
     if not rows.empty and {"session_label", "plane_idx", "func_label"}.issubset(rows.columns):
         rows_for_lines = rows.reset_index(drop=True)
@@ -470,7 +516,10 @@ def render_suite2p_full_session_heatmap(
 
     ax.set_xlim(0, int(n_frames))
     ax.set_ylim(int(n_rows), 0)
-    ax.set_title("Suite2p activity across the full experiment", fontsize=11)
+    title = "Suite2p activity across the full experiment; colored spans are the trials used in stimulus averages"
+    if no_stimulus_block_end is not None:
+        title += "; B0 is baseline context, B1+ contain presented stimuli"
+    ax.set_title(title, fontsize=11)
     ax.set_xlabel("Frame")
     ax.set_ylabel("Suite2p cell")
     cbar = fig.colorbar(image, ax=ax, shrink=0.82)
@@ -483,6 +532,8 @@ def render_suite2p_full_session_heatmap(
     ]
     if drew_block_start:
         stim_handles.append(Line2D([0], [0], color="black", linestyle="--", linewidth=0.9, alpha=0.85, label="Block start"))
+    if no_stimulus_block_end is not None:
+        stim_handles.append(Patch(facecolor="#9e9e9e", edgecolor="none", alpha=0.16, label="B0: no visual stimuli"))
     if session_handles:
         session_legend = ax.legend(handles=session_handles, loc="upper right", frameon=False, title="Imaging session")
         ax.add_artist(session_legend)

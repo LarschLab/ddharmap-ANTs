@@ -651,22 +651,21 @@ def render_xy_offset_unit_audit(audit: pd.DataFrame, *, fish_id: str) -> plt.Fig
     return fig
 
 
-def build_legacy_qc_xy_offset_audit(
-    legacy_rows: pd.DataFrame,
+def build_stored_vs_physical_xy_offset_audit(
+    stored_rows: pd.DataFrame,
     qc_rows: pd.DataFrame,
     *,
     dx_um: float,
     dy_um: float,
 ) -> pd.DataFrame:
-    """Compare legacy ``[53a]`` and notebook-03 XY offsets on identical ROI keys.
+    """Compare a stored centroid-distance field with a physical remeasurement.
 
-    The legacy panel's functional-to-anatomy XY series is the finite
-    ``selected_dist_um`` field after its anatomy-match and unique-match filter.
-    Notebook 03 instead measures the same two saved anatomy-space centroid
-    columns in physical units.  This helper applies the *same* filter to both
-    sources, rejects duplicate keys, and inner-joins the exact
-    ``(plane_idx, func_label)`` intersection.  It never rematches or transforms
-    an ROI.
+    ``selected_dist_um`` is a historical schema name.  The caller must establish
+    its units before interpreting it; this helper intentionally reports it as a
+    stored value and never relabels it as micrometres.  The remeasurement uses
+    the same saved anatomy-space centroids in physical units.  It applies the
+    same filter to both sources, rejects duplicate keys, and inner-joins exact
+    ``(plane_idx, func_label)`` keys without rematching or transforming an ROI.
     """
     if not (np.isfinite(dx_um) and dx_um > 0 and np.isfinite(dy_um) and dy_um > 0):
         raise ValueError("dx_um and dy_um must be finite positive physical spacings")
@@ -700,29 +699,28 @@ def build_legacy_qc_xy_offset_audit(
             raise ValueError(f"{name} XY-offset audit has duplicate unique-match keys")
         return out.loc[:, [*key_columns, *centroid_columns, "selected_dist_um"]]
 
-    legacy = _filtered(legacy_rows, "Legacy [53a]")
+    stored = _filtered(stored_rows, "Stored-distance source")
     qc = _filtered(qc_rows, "Notebook 03")
-    legacy = legacy.rename(columns={
-        **{column: f"legacy_{column}" for column in centroid_columns},
-        "selected_dist_um": "legacy_53a_xy_offset_um",
+    stored = stored.rename(columns={
+        **{column: f"stored_{column}" for column in centroid_columns},
+        "selected_dist_um": "stored_xy_offset_value",
     })
     qc = qc.rename(columns={
         **{column: f"qc_{column}" for column in centroid_columns},
         "selected_dist_um": "qc_stored_selected_dist_um",
     })
-    joined = legacy.merge(qc, on=list(key_columns), how="inner", validate="one_to_one")
+    joined = stored.merge(qc, on=list(key_columns), how="inner", validate="one_to_one")
     if joined.empty:
-        raise ValueError("Legacy [53a] and Notebook 03 have no intersected unique-match ROI keys")
+        raise ValueError("Stored-distance source and Notebook 03 have no intersected unique-match ROI keys")
     joined["qc_dx_px"] = joined["qc_centroid_x_func_anat"] - joined["qc_centroid_x_anat"]
     joined["qc_dy_px"] = joined["qc_centroid_y_func_anat"] - joined["qc_centroid_y_anat"]
-    joined["qc_xy_offset_um"] = np.hypot(joined["qc_dx_px"] * float(dx_um), joined["qc_dy_px"] * float(dy_um))
-    joined["xy_offset_delta_um"] = joined["qc_xy_offset_um"] - joined["legacy_53a_xy_offset_um"]
+    joined["physical_xy_offset_um"] = np.hypot(joined["qc_dx_px"] * float(dx_um), joined["qc_dy_px"] * float(dy_um))
     return joined.sort_values(list(key_columns)).reset_index(drop=True)
 
 
-def summarize_legacy_qc_xy_offset_audit(audit: pd.DataFrame) -> pd.DataFrame:
+def summarize_stored_vs_physical_xy_offset_audit(audit: pd.DataFrame) -> pd.DataFrame:
     """Return overall and per-plane sample sizes and medians for Q0.1."""
-    required = {"plane_idx", "legacy_53a_xy_offset_um", "qc_xy_offset_um"}
+    required = {"plane_idx", "stored_xy_offset_value", "physical_xy_offset_um"}
     missing = sorted(required.difference(audit.columns))
     if missing:
         raise ValueError(f"XY-offset parity summary lacks columns: {', '.join(missing)}")
@@ -731,39 +729,36 @@ def summarize_legacy_qc_xy_offset_audit(audit: pd.DataFrame) -> pd.DataFrame:
         rows.append({
             "scope": label,
             "n": int(len(subset)),
-            "legacy_53a_median_xy_offset_um": float(np.median(subset["legacy_53a_xy_offset_um"])),
-            "qc_median_xy_offset_um": float(np.median(subset["qc_xy_offset_um"])),
-            "median_delta_um": float(np.median(subset["xy_offset_delta_um"])),
+            "stored_median_xy_offset_value": float(np.median(subset["stored_xy_offset_value"])),
+            "physical_median_xy_offset_um": float(np.median(subset["physical_xy_offset_um"])),
         })
     return pd.DataFrame(rows)
 
 
-def render_legacy_qc_xy_offset_audit(audit: pd.DataFrame, *, fish_id: str) -> plt.Figure:
-    """Render Q0.1 side-by-side distance distributions and row-level scatter."""
+def render_stored_vs_physical_xy_offset_audit(audit: pd.DataFrame, *, fish_id: str) -> plt.Figure:
+    """Render the stored-value and physical-distance audit without conflating units."""
     if audit.empty:
         raise ValueError("No intersected unique matches available for XY-offset parity audit")
-    legacy = pd.to_numeric(audit["legacy_53a_xy_offset_um"], errors="coerce").to_numpy(dtype=float)
-    qc = pd.to_numeric(audit["qc_xy_offset_um"], errors="coerce").to_numpy(dtype=float)
-    finite = np.isfinite(legacy) & np.isfinite(qc)
+    stored = pd.to_numeric(audit["stored_xy_offset_value"], errors="coerce").to_numpy(dtype=float)
+    physical = pd.to_numeric(audit["physical_xy_offset_um"], errors="coerce").to_numpy(dtype=float)
+    finite = np.isfinite(stored) & np.isfinite(physical)
     if not finite.any():
         raise ValueError("XY-offset parity audit has no finite matched distances")
-    legacy, qc = legacy[finite], qc[finite]
-    upper = max(float(np.max(np.r_[legacy, qc])), 1.0)
+    stored, physical = stored[finite], physical[finite]
+    upper = max(float(np.max(np.r_[stored, physical])), 1.0)
     fig, (distribution_ax, scatter_ax) = plt.subplots(1, 2, figsize=(12.5, 4.8), constrained_layout=True)
-    bins = np.linspace(0.0, upper, min(41, max(11, int(np.sqrt(len(legacy))) * 3)))
-    distribution_ax.hist(legacy, bins=bins, alpha=0.60, color="#CC79A7", label=f"legacy [53a] (median {np.median(legacy):.3f} µm)")
-    distribution_ax.hist(qc, bins=bins, histtype="step", linewidth=2.0, color="#0072B2", label=f"Notebook 03 (median {np.median(qc):.3f} µm)")
-    distribution_ax.set(xlabel="Functional-to-anatomy XY centroid distance (µm)", ylabel="Intersected unique-match ROIs", title=f"Same keys, n={len(legacy)}")
+    bins = np.linspace(0.0, upper, min(41, max(11, int(np.sqrt(len(stored))) * 3)))
+    distribution_ax.hist(stored, bins=bins, alpha=0.60, color="#CC79A7", label=f"stored value (median {np.median(stored):.3f}; pixels for L765_f04)")
+    distribution_ax.hist(physical, bins=bins, histtype="step", linewidth=2.0, color="#0072B2", label=f"physical remeasurement (median {np.median(physical):.3f} µm)")
+    distribution_ax.set(xlabel="Centroid distance (stored values and µm are not commensurate)", ylabel="Intersected unique-match ROIs", title=f"Same keys, n={len(stored)}")
     distribution_ax.legend(frameon=False, fontsize=8)
     distribution_ax.grid(axis="y", alpha=0.2)
-    scatter_ax.scatter(legacy, qc, s=10, alpha=0.38, color="#0072B2", rasterized=True)
-    scatter_ax.plot([0, upper], [0, upper], "--", color="#444444", linewidth=1)
-    scatter_ax.set(xlabel="legacy [53a] selected_dist_um (µm)", ylabel="Notebook 03 centroid remeasurement (µm)", title="Row-level exact-key comparison")
-    scatter_ax.set_aspect("equal", adjustable="box")
+    scatter_ax.scatter(stored, physical, s=10, alpha=0.38, color="#0072B2", rasterized=True)
+    scatter_ax.set(xlabel="Stored selected_dist_um value (pixels for L765_f04)", ylabel="Physical centroid remeasurement (µm)", title="Row-level exact-key unit audit")
     scatter_ax.set_xlim(0, upper)
     scatter_ax.set_ylim(0, upper)
     scatter_ax.grid(alpha=0.2)
-    fig.suptitle(f"{fish_id}: Q0.1 legacy [53a] versus Notebook 03 XY-offset parity", fontweight="bold")
+    fig.suptitle(f"{fish_id}: Q0.1 stored-distance versus physical XY-offset audit", fontweight="bold")
     return fig
 
 
@@ -776,12 +771,12 @@ __all__ = [
     "render_centroid_offset_review",
     "render_centroid_offset_detail",
     "audit_xy_offset_units",
-    "build_legacy_qc_xy_offset_audit",
+    "build_stored_vs_physical_xy_offset_audit",
     "render_xy_offset_unit_audit",
-    "render_legacy_qc_xy_offset_audit",
+    "render_stored_vs_physical_xy_offset_audit",
     "render_geometry_placement_overview",
     "render_geometry_review_summary",
     "show_geometry_review_dashboard",
     "summarize_geometry_review",
-    "summarize_legacy_qc_xy_offset_audit",
+    "summarize_stored_vs_physical_xy_offset_audit",
 ]

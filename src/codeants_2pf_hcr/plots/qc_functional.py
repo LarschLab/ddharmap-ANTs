@@ -347,17 +347,33 @@ def load_early_response_timing_qc(
             recorded_for_join[[*keys, "recorded_log_onset_sec", "recorded_log_offset_sec", "recorded_fps", "recorded_log_path"]],
             on=keys, how="outer", indicator=True,
         )
+        scored_input_onset = (
+            timing_audit["recorded_onset_sec"]
+            if "recorded_onset_sec" in timing_audit
+            else timing_audit["scored_onset_sec"]
+        )
+        scored_input_offset = (
+            timing_audit["recorded_offset_sec"]
+            if "recorded_offset_sec" in timing_audit
+            else timing_audit["scored_offset_sec"]
+        )
+        timing_audit["provenance_onset_sec"] = pd.to_numeric(scored_input_onset, errors="coerce")
+        timing_audit["provenance_offset_sec"] = pd.to_numeric(scored_input_offset, errors="coerce")
+        timing_audit["provenance_onset_delta_sec"] = timing_audit["provenance_onset_sec"] - pd.to_numeric(timing_audit.get("recorded_log_onset_sec"), errors="coerce")
+        timing_audit["provenance_offset_delta_sec"] = timing_audit["provenance_offset_sec"] - pd.to_numeric(timing_audit.get("recorded_log_offset_sec"), errors="coerce")
         timing_audit["onset_delta_sec"] = pd.to_numeric(timing_audit.get("scored_onset_sec"), errors="coerce") - pd.to_numeric(timing_audit.get("recorded_log_onset_sec"), errors="coerce")
         timing_audit["offset_delta_sec"] = pd.to_numeric(timing_audit.get("scored_offset_sec"), errors="coerce") - pd.to_numeric(timing_audit.get("recorded_log_offset_sec"), errors="coerce")
         timing_audit["onset_delta_frames"] = timing_audit["onset_delta_sec"] * pd.to_numeric(timing_audit.get("recorded_fps"), errors="coerce")
         timing_audit["offset_delta_frames"] = timing_audit["offset_delta_sec"] * pd.to_numeric(timing_audit.get("recorded_fps"), errors="coerce")
+        timing_audit["provenance_onset_delta_frames"] = timing_audit["provenance_onset_delta_sec"] * pd.to_numeric(timing_audit.get("recorded_fps"), errors="coerce")
+        timing_audit["provenance_offset_delta_frames"] = timing_audit["provenance_offset_delta_sec"] * pd.to_numeric(timing_audit.get("recorded_fps"), errors="coerce")
         timing_audit["rounding_tolerance_frames"] = float(rounding_tolerance_frames)
         timing_audit["event_key_status"] = np.where(timing_audit["_merge"] == "both", "matched", timing_audit["_merge"])
-        timing_audit["rounding_within_tolerance"] = (timing_audit[["onset_delta_frames", "offset_delta_frames"]].abs().max(axis=1) <= float(rounding_tolerance_frames))
+        timing_audit["rounding_within_tolerance"] = (timing_audit[["provenance_onset_delta_frames", "provenance_offset_delta_frames"]].abs().max(axis=1) <= float(rounding_tolerance_frames))
         if (timing_audit["event_key_status"] == "matched").any() and not timing_audit.loc[timing_audit["event_key_status"] == "matched", "rounding_within_tolerance"].all():
-            warnings.append("Recorded/scored onset or offset differs by more than the documented rounding tolerance.")
+            warnings.append("Score-provenance input onset or offset differs from the independently loaded raw log by more than the documented rounding tolerance.")
         if (timing_audit["_merge"] != "both").any():
-            warnings.append("Recorded/scored event keys disagree; inspect unmatched rows before interpreting responses.")
+            warnings.append("Some raw-log event types are outside the persisted score-window selection; inspect those explicit unscored rows before interpreting responses.")
     else:
         timing_audit = pd.DataFrame()
     return {
@@ -427,15 +443,14 @@ def render_early_response_timing_audit(bundle: Mapping[str, Any]) -> plt.Figure:
     else:
         matched = audit[audit["event_key_status"] == "matched"].copy()
         colors = pd.Categorical(matched.get("session_label", pd.Series(dtype=str))).codes
-        axes[0].scatter(matched["recorded_log_onset_sec"], matched["scored_onset_sec"], c=colors, cmap="tab10", s=30)
-        finite = pd.concat([matched["recorded_log_onset_sec"], matched["scored_onset_sec"]]).dropna()
+        axes[0].scatter(matched["recorded_log_onset_sec"], matched["provenance_onset_sec"], c=colors, cmap="tab10", s=30)
+        finite = pd.concat([matched["recorded_log_onset_sec"], matched["provenance_onset_sec"]]).dropna()
         if not finite.empty:
             axes[0].plot([finite.min(), finite.max()], [finite.min(), finite.max()], "k--", linewidth=0.8, label="recorded onset")
-        axes[0].set(xlabel="Recorded onset (s)", ylabel="Scored-window onset (s)", title="Recorded and scored event timing")
+        axes[0].set(xlabel="Raw-log onset (s)", ylabel="Score-provenance input onset (s)", title="Independent raw-log versus score input")
         axes[0].legend(frameon=False)
-        axes[1].axhline(0, color="black", linewidth=0.8)
         axes[1].scatter(np.arange(len(matched)), matched["onset_delta_frames"], c=colors, cmap="tab10", s=30)
-        axes[1].set(xlabel="Matched event", ylabel="Scored − recorded onset (frames)", title="Analysis delay and rounding are explicit")
+        axes[1].set(xlabel="Matched event", ylabel="Analysis onset delay (frames)", title="Scored window starts after documented delay")
     fig.suptitle("Early response timing audit: raw logs are loaded independently of scoring provenance")
     fig.tight_layout()
     return fig

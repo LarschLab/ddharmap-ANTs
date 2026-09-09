@@ -157,7 +157,8 @@ def test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent(tm
     scored = tmp_path / "scored_stimulus_windows.csv"
     pd.DataFrame([
         {"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1", "block": "B1", "stim_idx": 0,
-         "stim_type": "LLB", "scored_onset_sec": 2.0, "scored_offset_sec": 4.0,
+         "stim_type": "LLB", "recorded_onset_sec": 2.0, "recorded_offset_sec": 4.0,
+         "scored_onset_sec": 12.0, "scored_offset_sec": 4.0,
          "scored_onset_frame": 4, "scored_offset_frame": 8}
     ]).to_csv(scored, index=False)
 
@@ -166,7 +167,8 @@ def test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent(tm
     )
     assert len(bundle["recorded_events"]) == 1
     assert bundle["timing_audit"].loc[0, "event_key_status"] == "matched"
-    assert {"onset_delta_frames", "offset_delta_frames", "rounding_within_tolerance"}.issubset(bundle["timing_audit"].columns)
+    assert {"onset_delta_frames", "offset_delta_frames", "provenance_onset_delta_frames", "provenance_offset_delta_frames", "rounding_within_tolerance"}.issubset(bundle["timing_audit"].columns)
+    assert bool(bundle["timing_audit"].loc[0, "rounding_within_tolerance"])
     assert bundle["timing_audit"].loc[0, "recorded_log_path"].endswith("experiment_log.csv")
     figure = render_early_response_timing_audit(bundle)
     assert figure.axes

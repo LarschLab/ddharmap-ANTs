@@ -66,6 +66,18 @@ or incorrect pixel-to-micron conversion.
 calculations agree or the intended semantic difference is documented and
 accepted.
 
+**Approved resolution (2026-09-09):** The retained artifact does not preserve
+an independently runnable legacy `[53a]` table/transform, so this is not an
+ANTs-versus-NCC performance comparison. On the same frozen 3,419 unique
+ROI/anatomy pairs, the stored field `selected_dist_um` is exactly the raw
+centroid displacement in pixels; the physical remeasurement is its linear
+conversion using anatomy XY spacing (about `0.477123 µm/px`). The non-unit
+slope in the audit is therefore the missing pixel-to-micrometre conversion,
+not a disagreement in pair geometry. Treat the stored field as pixel-valued
+until its schema/name is repaired; Q0.1 is accepted as a units-semantics
+resolution. L395_f11 historical equivalence remains unavailable and is not
+needed to reopen this resolved L765_f04 display-metric question.
+
 ## Required QC work
 
 ### Q1. Early functional responsiveness and stimulus timing — Notebook 01
@@ -95,6 +107,15 @@ paths. Plotting the scoring table twice would reproduce a timing bug rather than
 detect it. If Step 06 does not persist the exact event windows it used, add a
 read-only provenance output to `score-activity-bpi` before implementing this QC
 view.
+
+**Accepted timing review (2026-09-09):** Q1 independently matched all 80
+score-provenance input windows to the raw logs within the declared 0.5-frame
+tolerance. The approximately 10-second analysis onset shift is the documented
+scoring delay. The heatmap now marks B0 as planned no-stimulus baseline context
+and draws only B1/B2 spans that feed the paired complete-Suite2p averages;
+every stimulus/session average has four valid B1/B2 trials. Timing alignment is
+accepted for this selected scoring universe. This does not promote the
+response/BPI tables or accept downstream BPI/laterality interpretation.
 
 **Placement:** extend Notebook 01 because it already owns functional-reference,
 drift, and early-response evidence. This review must precede molecular geometry.
@@ -210,11 +231,28 @@ review rows absent from those pairs; the green/orange visibility toggles are
 read-only and cannot alter pair membership. Manual placement review remains
 required.
 
-**Two-ring review update (2026-09-08):** the Cell 10 flow surface now uses the
-legacy two-ring donut grammar for each gene/round: inner ring final one-to-one
-acceptance versus non-acceptance, outer ring a mutually exclusive persisted
-terminal outcome partition. The full stage-count table remains visible for
-auditing, but the bar-chart substitute is no longer the primary review figure.
+**Current Cell 12 two-ring functional-plane audit (2026-09-08):** replaced the
+earlier acceptance-flow donut, which was not the requested legacy surface. The
+read-only Cell 12 now reproduces the `hcr_activity_status_overview` grammar:
+the inner ring is `within plane`, `outside plane`, or `unmatched`; the outer
+ring partitions within-plane labels as responsive, low-activity, response
+unavailable, or no-functional-match, and represents outside/unmatched labels
+explicitly. It reads only persisted HCR labels, their q95 warp metadata, and
+`hcr_activity_status.csv`. q95 labels are excluded from this legacy
+representation denominator; no HCR/anatomy/ROI matching is recomputed or
+changed.
+
+**L395_f11 validation and handoff (2026-09-08):** real Linnaeus rendering
+reproduced the legacy five-panel layout and denominator (`n=263` total; pth2
+20, sst1.1 153, sst1.2 13, tac3b 77). Focused QC-molecular tests passed 17/17
+locally and on Linnaeus. The current persisted tac3b sources split the 77
+labels as 19 within-plane, 41 outside-plane, and 17 unmatched, whereas the
+historical PNG shows 19/43/15. This is preserved as a provenance discrepancy:
+the historical figure and current q95/status artifacts are not jointly
+reconstructible for those two labels. Do not fabricate historical assignments
+to force visual parity. Next session: visually review the Cell 12 L395 output;
+if exact historical tac3b parity is required, locate the historical status/q95
+writer inputs before changing the read-only QC classifier.
 
 ### Q6. Molecular identity fate — Notebook 05
 

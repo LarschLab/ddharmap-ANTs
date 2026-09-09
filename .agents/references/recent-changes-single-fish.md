@@ -28,6 +28,27 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-09-09 - link Q1 full-session heatmap to stimulus-average inclusion
+
+- Slice goal:
+  - make the full-session heatmap an unambiguous audit of which trials feed the complete-population stimulus averages.
+- Passes completed in this session:
+  - carried block and stimulus identifiers into the raw-rebuilt Q1 diagnostic spans and recorded the contributing blocks on every trace-average row.
+  - shaded and labelled B0 as baseline/no-visual-stimulus context; the coloured heatmap spans are now explicitly the B1/B2 trials used by the trace averages.
+  - moved the shared trial-selection statement out of individual subplot titles and into the trace figure heading; added bold r1/r2 population means over the individual ROI averages.
+- What changed:
+  - the Q1 heatmap and trace panel now state the same inclusion rule rather than leaving B0 visually indistinguishable from presented-stimulus blocks.
+- Validation:
+  - real L765_f04 rebuild on Linnaeus confirmed `blocks_used == B1, B2`, coloured spans from B1/B2 only, and four valid trials per stimulus/session; both linked PNGs were rendered and visually reviewed.
+- Review decision:
+  - on 2026-09-09, Danin accepted timing alignment for the reviewed scoring universe. This remains read-only QC evidence and does not alter persisted scoring tables or promote response/BPI interpretation.
+- Remaining in-slice work:
+  - direct response/BPI scientific review remains separate from the accepted timing gate.
+- Next likely breakpoint:
+  - continue the remaining QC-register gates, beginning with the direct response/BPI review surfaces.
+- Rerun implications:
+  - regenerate the Q1 raw diagnostic figures after changes to stimulus logs, trial-selection semantics, or Suite2p trace inputs.
+
 ### 2026-07-09 - add QA report image readability metadata
 
 - Slice goal:
@@ -3697,6 +3718,24 @@
   writer now defaults to `SAVE_REVIEW = False` and `review_required`, so
   opening or running Notebook 03 cannot prefill an acceptance sidecar.
 
+### 2026-09-09 - correct Q0.1 stored-distance unit semantics
+
+- Real L765_f04 inspection established that all 3,419 retained
+  `selected_dist_um` values equal the unscaled anatomy-space centroid distance
+  in pixels (maximum absolute residual `1.3e-13`). The field was therefore
+  historical pixel-valued data under a micrometre schema name, not a legacy
+  NCC result.
+- Replaced the Notebook 03 Q0.1 helper and labels with the explicit
+  stored-value-versus-physical-offset audit. It reports the stored value without
+  a unit, labels L765_f04 as pixel-valued, and removes the invalid cross-unit
+  delta and identity-line parity framing. The physical remeasurement remains
+  derived from saved transformed functional/anatomy centroids and anatomy NRRD
+  X/Y spacing; it does not rerun matching or registration.
+- Linnaeus rendered the corrected L765_f04 figure at
+  `/tmp/codeants-l765-f04-q1-audit-20260908/q0_xy_offset_audit/q0_l765f04_stored_vs_physical_xy_offsets.png`
+  (2250×864 px; nonblank). The historical writer/transform was not recovered,
+  so this remains a units correction rather than a legacy-NCC-versus-ANTs test.
+
 ### 2026-09-08 - add Q1 scored-window provenance and early timing review
 
 - `score-activity-bpi` now writes an optional `scored_stimulus_windows.csv`
@@ -3827,3 +3866,20 @@
 - Real L765_f04 Linnaeus execution of Notebooks 01, 02, and 04 completed
   without cell errors. Rendered automatic-midline, stimulus-trace, and
   mask-size figures passed nonblank/dimension checks and visual inspection.
+
+### 2026-09-09 - correct Q1 timing audit semantics after real L765_f04 review
+
+- `load_early_response_timing_qc` now compares independently reloaded raw-log
+  timing to the score provenance's recorded input timing, not to the later
+  delayed analysis window. It retains the analysis-window delta as an explicit
+  display field and labels it as the scoring delay.
+- The real isolated L765_f04 Q1 run contains 80 scored windows. All 80 source
+  onset/offset events match the independent raw-log path within the 0.5-frame
+  tolerance. The roughly 10-second onset shift is the documented analysis
+  delay. Its 320 additional raw-log rows are unscored event types, not timing
+  duplicates; the QC surface preserves them for selection review.
+- `tests/test_qc_functional.py` now covers a delayed scored window whose
+  provenance input still matches its raw log. Local and Linnaeus environments
+  lack `pytest`, so validation used `py_compile` plus the real L765_f04
+  render/load path. The generated timing, heatmap, trace, and Q0 audit PNGs
+  are isolated under `/tmp/codeants-l765-f04-q1-audit-20260908/` on Linnaeus.

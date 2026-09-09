@@ -463,6 +463,8 @@ def build_suite2p_stimulus_locked_diagnostic(
                     )
             for stim_row in df_stim.itertuples(index=False):
                 stim_type_value = str(getattr(stim_row, "type"))
+                block_value = str(getattr(stim_row, "block", ""))
+                stim_idx_value = pd.to_numeric(getattr(stim_row, "stim_idx", np.nan), errors="coerce")
                 start_s = pd.to_numeric(getattr(stim_row, "start", np.nan), errors="coerce")
                 end_s = pd.to_numeric(getattr(stim_row, "end", np.nan), errors="coerce")
                 duration_s = pd.to_numeric(getattr(stim_row, "duration", np.nan), errors="coerce")
@@ -481,6 +483,8 @@ def build_suite2p_stimulus_locked_diagnostic(
                 full_session_spans.append(
                     {
                         "stim_type": stim_type_value,
+                        "block": block_value,
+                        "stim_idx": int(stim_idx_value) if np.isfinite(stim_idx_value) else pd.NA,
                         "session_label": session_label,
                         "plane_idx": int(plane_idx),
                         "frame_start": int(start_frame),
@@ -503,7 +507,11 @@ def build_suite2p_stimulus_locked_diagnostic(
                 dff_segs: list[np.ndarray] = []
                 trace = z[int(roi_idx)]
                 dff_trace = dff_arr[int(roi_idx)]
-                for start_s in trial_starts:
+                valid_trial_blocks: list[str] = []
+                for stim_record in stim_sub.itertuples(index=False):
+                    start_s = pd.to_numeric(getattr(stim_record, "start", np.nan), errors="coerce")
+                    if not np.isfinite(start_s):
+                        continue
                     onset_idx = int(round(float(start_s) * fps))
                     seg = _extract_trace_window(
                         trace,
@@ -514,6 +522,7 @@ def build_suite2p_stimulus_locked_diagnostic(
                     )
                     if seg is not None:
                         segs.append(seg)
+                        valid_trial_blocks.append(str(getattr(stim_record, "block", "")))
                         dff_seg = _extract_trace_window(
                             dff_trace,
                             onset_idx - n_pre,
@@ -539,6 +548,7 @@ def build_suite2p_stimulus_locked_diagnostic(
                         "stim_type": str(stim_type),
                         "n_trials": int(len(trial_starts)),
                         "n_valid_trials": int(len(segs)),
+                        "blocks_used": ", ".join(sorted({block for block in valid_trial_blocks if block})),
                         "mean_trace": mean_trace,
                         "mean_dff_trace": mean_dff_trace.astype(np.float32, copy=False),
                         "mean_z_pre": float(np.nanmean(mean_trace[~post_mask])) if np.any(~post_mask) else np.nan,

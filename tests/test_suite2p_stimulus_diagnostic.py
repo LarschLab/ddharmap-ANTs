@@ -391,6 +391,7 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
         try:
             ax = fig.axes[0]
             self.assertEqual(ax.get_xlabel(), "Frame")
+            self.assertIn("colored spans are the trials used", ax.get_title())
             self.assertEqual(len(ax.images), 1)
             cmap = ax.images[0].cmap
             low_rgb = np.asarray(cmap(0.0)[:3])
@@ -403,6 +404,28 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             block_lines = [line for line in ax.lines if line.get_linestyle() == "--"]
             self.assertEqual(len(block_lines), 2)
             self.assertEqual([tuple(line.get_xdata()) for line in block_lines], [(0.0, 0.0), (2.0, 2.0)])
+        finally:
+            plt.close(fig)
+
+    def test_full_session_heatmap_marks_b0_as_no_stimulus_context(self) -> None:
+        fig = render_suite2p_full_session_heatmap(
+            matrix=np.ones((1, 6), dtype=np.float32),
+            row_df=pd.DataFrame({"session_label": ["r1"], "plane_idx": [0], "func_label": [1]}),
+            stimulus_spans=pd.DataFrame(),
+            block_starts=pd.DataFrame(
+                {
+                    "block": ["B0", "B1", "B2"],
+                    "frame": [0, 2, 4],
+                    "row_start": [0, 0, 0],
+                    "row_end": [1, 1, 1],
+                }
+            ),
+            session_colors={"r1": "#111111"},
+        )
+        try:
+            ax = fig.axes[0]
+            self.assertIn("B0 is baseline context", ax.get_title())
+            self.assertTrue(any("B0: no visual stimuli" in text.get_text() for text in ax.texts))
         finally:
             plt.close(fig)
 
