@@ -208,5 +208,71 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("external confocal registration uses current rbest/rn names", completed.stdout)
 
 
+    def test_root_file_allowlist_and_registration_compatibility_links(self) -> None:
+        allowed = {
+            ".gitattributes",
+            ".gitignore",
+            "AGENTS.md",
+            "pyproject.toml",
+            "ants_toRef.sh",
+            "applyTransform.py",
+            "bigwarp_loop.groovy",
+            "sync.sh",
+        }
+        tracked_root_files = {
+            path.name
+            for path in REPO_ROOT.iterdir()
+            if path.is_file() or path.is_symlink()
+            if subprocess.run(
+                ["git", "ls-files", "--error-unmatch", path.name],
+                cwd=REPO_ROOT,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            ).returncode == 0
+        }
+        self.assertEqual(tracked_root_files, allowed)
+        for name in ("ants_toRef.sh", "applyTransform.py", "bigwarp_loop.groovy", "sync.sh"):
+            path = REPO_ROOT / name
+            self.assertTrue(path.is_symlink(), name)
+            self.assertEqual(path.resolve(), (REPO_ROOT / "registrations" / name).resolve())
+
+    def test_generated_and_temporary_artifacts_are_not_tracked_as_current_files(self) -> None:
+        completed = subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        tracked = completed.stdout.splitlines()
+        forbidden = [
+            path
+            for path in tracked
+            if "__pycache__/" in path
+            or path.endswith((".pyc", ".pyo", ".DS_Store"))
+            or "/.pytest_cache/" in path
+            or (Path(path).name.startswith("tmp_") and not path.startswith("legacy/"))
+        ]
+        self.assertEqual(forbidden, [])
+
+    def test_notebooks_are_not_tracked_at_root_or_inside_package_source(self) -> None:
+        completed = subprocess.run(
+            ["git", "ls-files", "*.ipynb"],
+            cwd=REPO_ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        misplaced = [
+            path
+            for path in completed.stdout.splitlines()
+            if "/" not in path or path.startswith("src/")
+        ]
+        self.assertEqual(misplaced, [])
+        self.assertFalse((REPO_ROOT / "notebooks" / "antsQC.ipynb").exists())
+        self.assertTrue((REPO_ROOT / "legacy" / "notebooks" / "antsQC.ipynb").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()
