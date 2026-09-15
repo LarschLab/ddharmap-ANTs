@@ -4033,3 +4033,16 @@
   expected post-stimulus responses. Notebook 01 and Notebook 06 both execute
   end-to-end on Linnaeus. The focused local suite passes 169 tests; the added
   contract and targeted timing test pass separately.
+- A final status audit found that rewriting the functional references had made
+  the registration manifest stale. The first freshness rerun failed closed
+  because this root has no saved `[19a]` fixed-mask JSON. After preserving the
+  prior 48 MB registration result under `source-provenance/`, the supported
+  unmasked deterministic ANTs compatibility route reused the accepted NCC
+  cache and refreshed registration, transformed ROIs, registration QC,
+  geometry, activity, identity, canonical export, and QA. Registration tables
+  retained the same selected transforms; score changes were at most
+  `0.000551` post-NCC. The `3976x6845` plane grid passed nonblank and visual
+  review, including the intensity/label Z correspondence. All completed stage
+  manifests are now current, and all seven QC notebooks execute end-to-end.
+  Only `make-figures` remains stale/not started because the declared L765_f04
+  motion-AUC inputs are absent.

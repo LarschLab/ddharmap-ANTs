@@ -30,7 +30,9 @@ and preserving pre-existing remote work. Read data from
   cleared when the root changes so an old rendered path cannot masquerade as
   current evidence.
 - The full fresh writer chain currently reaches canonical export and QA report,
-  and all seven QC notebooks execute without cell errors. Keep the root active:
+  and all seven QC notebooks execute without cell errors after the final
+  functional-registration-through-export freshness rerun. All completed stage
+  manifests are current. Keep the root active:
   `make-figures` is still blocked because L765_f04 has no
   `motion_auc_plot_points.csv` or `motion_auc_plot_counts.csv`; do not fill that
   gap with another fish's files.
