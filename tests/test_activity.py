@@ -24,6 +24,61 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(table["plane_idx"].tolist(), [0, 1])
         self.assertEqual(len(table), 2)
 
+    def test_response_scoring_maps_b1_b2_after_full_trace_b0(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish_id = "L758_f02"
+            fish_dir = Path(tmpdir) / fish_id
+            metadata = fish_dir / "01_raw" / "2p" / "metadata"
+            metadata.mkdir(parents=True)
+            (metadata / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (metadata / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B0_start,0\nB0_end,10\n"
+                "B1_start,10\nB1_prestim0_pause,10\nB1_stim0_LLB,12\nB1_poststim0_pause,14\nB1_end,20\n"
+                "B2_start,20\nB2_prestim1_pause,20\nB2_stim1_RLC,22\nB2_poststim1_pause,24\nB2_end,30\n"
+            )
+            (metadata / f"2026_f{fish_id}_planned_schedule.csv").write_text(
+                "kind,label,start_sec,duration_sec,end_sec,trial_index,block_num,stimulus_name\n"
+                "rest,Baseline rest,0,10,10,,0,\n"
+                "trigger,B1_start,10,0,10,,1,\n"
+                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,LLB\n"
+                "stimulus,LLB,12,2,14,0,1,LLB\n"
+                "trigger,B2_start,20,0,20,,2,\n"
+                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RLC\n"
+                "stimulus,RLC,22,2,24,1,2,RLC\n"
+            )
+            dff = np.ones((1, 30), dtype=np.float32)
+            dff[0, 12:14] = 4.0
+            dff[0, 22:24] = 3.0
+            detail = pd.DataFrame(
+                {
+                    "plane_idx": [0],
+                    "func_label": [1],
+                    "activity_class": ["Active neurons"],
+                    "is_active": [True],
+                }
+            )
+
+            result = build_response_bpi_tables(
+                detail,
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_dff_map={0: {"dff": dff}},
+                config=ActivityConfig(
+                    min_trials_per_class=1,
+                    stim_onset_delay_sec=0.0,
+                    response_null_min_windows=1,
+                    response_null_bootstrap_n=5,
+                    zscore_min_points=1,
+                ),
+            )
+
+            events = result["stim_events_by_plane"][0]
+            self.assertEqual([event["block"] for event in events], ["B1", "B2"])
+            self.assertEqual([event["idx0"] for event in events], [12, 22])
+            self.assertGreater(result["scored_bpi_df"].loc[0, "mean_bout_dff"], 3.0)
+            self.assertGreater(result["scored_bpi_df"].loc[0, "mean_cont_dff"], 2.0)
+
     def test_build_response_bpi_tables_uses_plane_session_stimulus_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

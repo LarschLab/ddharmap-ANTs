@@ -81,6 +81,11 @@
 - The 2026-09-08/09 early functional review is restored under its declared
   owner, Notebook 01. `prepare-functional-reference-stacks --run-23c` persists
   its stage-owned Suite2p heatmap/trace/table payload in the selected pipeline
-  root, and Notebook 01 compares independently reloaded raw-log timing with the
-  same-root `score-activity-bpi/scored_stimulus_windows.csv`. Notebook 02 remains
-  registration-only; neither notebook rebuilds Q1 from raw inputs in memory.
+  root. A 2026-09-15 correction found that prior B1-relative event frames had
+  been applied directly to full Suite2p traces that still contained B0. The
+  central mapper now places complete blocks on the trace grid before both
+  `[23c]` and `[50ia]` scoring. Notebook 01 displays one persisted full-session
+  heatmap whose colored spans are its exact scorer windows and audits those
+  against the same-root `score-activity-bpi/scored_stimulus_windows.csv`.
+  Notebook 02 remains registration-only; neither notebook rebuilds Q1 from raw
+  inputs in memory.

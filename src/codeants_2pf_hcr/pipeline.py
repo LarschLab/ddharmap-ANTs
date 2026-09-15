@@ -7335,7 +7335,7 @@ def run_prepare_functional_reference_stacks_stage(
             diagnostic_inputs = [paths.functional_suite2p_dir]
             source_df = diagnostic.get("source_df")
             if isinstance(source_df, pd.DataFrame):
-                for column in ("log_path", "meta_path"):
+                for column in ("log_path", "meta_path", "stimulus_metadata_path"):
                     if column in source_df:
                         diagnostic_inputs.extend(
                             Path(str(value))

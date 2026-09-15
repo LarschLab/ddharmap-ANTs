@@ -3994,3 +3994,42 @@
   writer manifests and recomputes their signatures, so freshly written stages
   are not falsely labelled stale while a later file change still is. The
   expanded focused suite passes 163 tests.
+
+### 2026-09-15 - correct Q1 and response/BPI timing onto the full Suite2p trace
+
+- Re-audited L765_f04 after the restored Q1 plots showed no expected responses.
+  Each Suite2p trace has 5,502 frames: three equal 1,834-frame acquisition
+  blocks at 2 Hz. The response scorer had parsed B1/B2 after dropping B0, then
+  used those B1-relative frames directly on the full trace. All 80 persisted
+  windows were therefore one block early; the 2026-09-09 timing acceptance had
+  compared two tables in the same relative coordinate system and did not test
+  physical trace placement.
+- Added a central stimulus-context-to-trace-grid mapper in `stimulus.py` and
+  made both `activity.build_response_bpi_tables` and the `[23c]` diagnostic use
+  it. The mapper uses the complete planned acquisition-block schedule when
+  available, preserves within-block event offsets, fails closed when the full
+  trace cannot be divided across the known blocks, and records block-start,
+  frames-per-block, source, and full-trace coordinate provenance.
+- Retired Notebook 01's separate reconstructed full-session overlay. The one
+  retained persisted Suite2p heatmap now overlays only the exact windows used
+  by its scorer and writes them to
+  `suite2p_scored_stimulus_windows_23c.csv`. The timing audit still reloads raw
+  logs separately, but the figure is now a literal visualization of the
+  computation under review.
+- Preserved the invalid pre-fix tables and figures under the active root's
+  `source-provenance/pre-trace-grid-timing-fix-20260915/` directory with an
+  explicit superseded marker, then freshly reran `[23c]`,
+  `score-activity-bpi`, `assign-hcr-identity`, canonical export, and QA report
+  in the unchanged working root.
+- The 80 `[23c]` windows exactly equal the persisted score-stage windows. B1
+  scored onsets now occupy frames 2,247–3,441 and B2 onsets frames
+  4,373–5,342 across the two sessions, after B0. Response-active ROIs changed
+  from 83 to 225; all 2,450 finite BPI values were recomputed and old/new BPI
+  correlation is 0.02857, confirming that Notebook 06 interpretation was
+  materially affected.
+- The corrected `3610x4165` heatmap passed nonblank/dimension checks and visual
+  inspection; its B0 interval is uncolored and response structure aligns with
+  the exact scored spans. The corrected stimulus-locked panels visibly recover
+  expected post-stimulus responses. Notebook 01 and Notebook 06 both execute
+  end-to-end on Linnaeus. The focused local suite passes 169 tests; the added
+  contract and targeted timing test pass separately.

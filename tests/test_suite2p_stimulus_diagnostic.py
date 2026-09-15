@@ -346,6 +346,8 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(set(result["trace_df"]["func_label"]), {1, 2})
             self.assertEqual(set(result["trace_panel_df"]["func_label"]), {1})
             self.assertEqual(set(result["full_session_heatmap_rows"]["func_label"]), {1, 2})
+            self.assertEqual(result["scored_heatmap_spans"]["frame_start"].tolist(), [2, 7])
+            self.assertEqual(result["scored_heatmap_spans"]["frame_end"].tolist(), [4, 9])
 
     def test_full_session_heatmap_renderer_uses_frame_axis_gray_r_and_stimulus_spans(self) -> None:
         matrix = np.asarray([[0.0, 1.0, 5.0], [np.nan, 2.0, 4.0]], dtype=np.float32)
@@ -391,7 +393,7 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
         try:
             ax = fig.axes[0]
             self.assertEqual(ax.get_xlabel(), "Frame")
-            self.assertIn("colored spans are the trials used", ax.get_title())
+            self.assertIn("colored spans are exact score-activity-bpi windows", ax.get_title())
             self.assertEqual(len(ax.images), 1)
             cmap = ax.images[0].cmap
             low_rgb = np.asarray(cmap(0.0)[:3])

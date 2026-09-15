@@ -19,6 +19,14 @@
 
 ## Two-stage classification in `[50ia]`
 
+Before either classification stage, every session-specific stimulus context is
+mapped onto the complete concatenated Suite2p trace. Acquisition block `B0`
+therefore remains present as baseline context, while only `B1` and `B2` event
+windows are scored. The shared mapping preserves within-block log offsets and
+uses the planned schedule to locate complete acquisition blocks when available.
+`scored_stimulus_windows.csv` records the resulting full-trace coordinates and
+is the timing authority for response/BPI figures.
+
 ### Stage 1: response-state classification
 
 - **Responsive**: passes AUC null-threshold test in bout and/or continuous condition.
@@ -58,6 +66,7 @@ Primary fields:
 
 - `[50ia]` owns the exported BPI/activity thresholds used to interpret downstream plots.
 - `[23c]` may compute pre-identity Suite2p response/BPI calls with the same threshold knobs so early diagnostics can filter trace panels before HCR geometry exists; those outputs are diagnostic until merged by `[50ia]`.
+- `[23c]` and `[50ia]` must use the same full-trace block mapper. The `[23c]` full-session heatmap may overlay only the exact windows returned by its response scorer; a separately reconstructed B1-relative overlay is forbidden.
 - `functional_roi_activity_bpi_cells.csv` is a response/BPI diagnostic helper table. It may carry an `anat_label` column for schema compatibility, but identity should remain blank there; use the ROI master table for authoritative anatomy identity.
 - Downstream figures should reuse `bpi_zero_band` for near-zero BPI guide lines and `bpi_activity_threshold` for low-activity guide lines when those columns are present.
 - Do not hard-code duplicate threshold constants in downstream cohort or figure stages when the authoritative `[50ia]` columns are available.

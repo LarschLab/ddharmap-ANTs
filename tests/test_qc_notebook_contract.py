@@ -106,7 +106,8 @@ def test_functional_reference_notebook_owns_persisted_early_response_review() ->
     source = _code_source(notebook_path)
     assert "load_early_response_timing_qc" in source
     assert "render_early_response_timing_audit" in source
-    assert "render_early_response_full_session_heatmap" in source
+    assert "render_early_response_full_session_heatmap" not in source
+    assert 'EARLY_RESPONSE_QC["heatmap_path"]' in source
     assert "suite2p_stimulus_locked_summary_23b.csv" in source
     assert "score-activity-bpi" in source
     assert "build_early_response_qc_from_raw" not in source

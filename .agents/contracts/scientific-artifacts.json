@@ -248,19 +248,19 @@
       "artifact_id": "suite2p_stimulus_locked_heatmaps_23b.png",
       "artifact_kind": "figure",
       "renderer_owner": "codeants_2pf_hcr.plots.analysis",
-      "question": "Is early functional activity aligned to recorded stimuli, and which blocks and trials contribute to the stimulus averages before molecular or BPI interpretation?",
+      "question": "Is early functional activity aligned to the exact full-trace windows consumed by score-activity-bpi before molecular or BPI interpretation?",
       "scope": "all Suite2p-classified cells before geometry and identity",
       "authoritative_sources": [
         "raw Suite2p fluorescence arrays",
         "session-specific raw stimulus logs",
         "planned_schedule.csv block semantics",
-        "scored_stimulus_windows.csv as a separate analysis-window overlay"
+        "score-activity-bpi full-trace window mapping"
       ],
       "population": "All Suite2p-classified cells across every functional plane in the selected fish and run.",
       "filters": [
         "B0 remains visible as no-visual-stimulus baseline context.",
-        "Only presented-stimulus trials from B1/B2 contribute to the stimulus-aligned averages.",
-        "Recorded events and scored analysis windows are loaded through independent paths."
+        "Only the exact B1/B2 windows consumed by score-activity-bpi are colored on the full-session heatmap.",
+        "Independent raw-log review maps acquisition blocks onto the full Suite2p trace before comparing score provenance."
       ],
       "denominator": "One heatmap row per Suite2p-classified cell; per-stimulus summaries report valid trials separately for every session and stimulus type.",
       "units": {
@@ -278,16 +278,18 @@
       ],
       "thresholds": {
         "authority": "codeants_2pf_hcr.suite2p.Suite2pStimulusLockedDiagnosticConfig",
-        "rule": "Use persisted diagnostic settings and the separately persisted score-window provenance; this early QC does not define the canonical response/BPI gate."
+        "rule": "Map complete acquisition blocks onto the concatenated Suite2p trace before response extraction; the heatmap and response/BPI writer must use the same scored frame windows."
       },
       "forbidden_reinterpretations": [
         "Do not include B0 in stimulus averages.",
+        "Do not plot B1-relative log seconds directly on a full trace that still contains B0.",
         "Do not use the score-window table as the source of recorded raw-log timing.",
         "Do not select heatmap or trace rows by molecular identity or BPI.",
         "Do not move this review into Notebook 02 and displace the registration gate."
       ],
       "validation_tests": [
         "tests/test_qc_functional.py::test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent",
+        "tests/test_activity.py::test_response_scoring_maps_b1_b2_after_full_trace_b0",
         "tests/test_qc_notebook_contract.py::test_functional_reference_notebook_owns_persisted_early_response_review"
       ]
     }

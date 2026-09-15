@@ -11,7 +11,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .stimulus import StimulusConfig, build_prestim_baseline_windows, compute_zscore_stats, resolve_plane_stimulus_contexts
+from .stimulus import (
+    StimulusConfig,
+    build_prestim_baseline_windows,
+    compute_zscore_stats,
+    map_stimulus_context_to_trace_grid,
+    remap_stimulus_tables_to_frame_grid,
+    resolve_plane_stimulus_contexts,
+)
+
+
+_remap_stimulus_tables_to_frame_grid = remap_stimulus_tables_to_frame_grid
 
 
 def _find_suite2p_file(plane_dir: str | Path, kind: str) -> Path | None:
@@ -163,134 +173,6 @@ def _session_palette(session_labels: list[str]) -> dict[str, Any]:
     return {label: cmap(idx % cmap.N) for idx, label in enumerate(labels)}
 
 
-def _block_key(block: str) -> tuple[int, str]:
-    match = re.match(r"^B(\d+)$", str(block).strip())
-    if match:
-        return int(match.group(1)), str(block)
-    return 10**9, str(block)
-
-
-def _logged_block_starts(df_evt: pd.DataFrame, blocks: list[str]) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for block in blocks:
-        block_events = df_evt[df_evt["event"].astype(str).str.startswith(f"{block}_")].copy()
-        if block_events.empty:
-            continue
-        start_rows = block_events.loc[block_events["event"].astype(str) == f"{block}_start", "time"]
-        if len(start_rows):
-            out[str(block)] = float(start_rows.iloc[0])
-        else:
-            out[str(block)] = float(pd.to_numeric(block_events["time"], errors="coerce").min())
-    return out
-
-
-def _event_blocks(df_evt: pd.DataFrame) -> list[str]:
-    if df_evt.empty or "event" not in df_evt.columns:
-        return []
-    blocks: list[str] = []
-    for event in df_evt["event"].astype(str):
-        match = re.match(r"^(B\d+)_", event)
-        if match:
-            blocks.append(match.group(1))
-    return sorted(set(blocks), key=_block_key)
-
-
-def _schedule_block_starts(block_table: pd.DataFrame | None) -> tuple[list[str], dict[str, float]]:
-    if not isinstance(block_table, pd.DataFrame) or block_table.empty:
-        return [], {}
-    required = {"block", "start"}
-    if not required.issubset(block_table.columns):
-        return [], {}
-    work = block_table.copy()
-    work["block"] = work["block"].astype(str)
-    work["start"] = pd.to_numeric(work["start"], errors="coerce")
-    work = work[work["block"].ne("") & work["start"].notna()].copy()
-    if work.empty:
-        return [], {}
-    work = work.sort_values("block", key=lambda col: col.map(_block_key))
-    blocks = list(dict.fromkeys(work["block"].tolist()))
-    starts = {str(row.block): float(row.start) for row in work.itertuples(index=False)}
-    return blocks, starts
-
-
-def _remap_stimulus_tables_to_frame_grid(
-    df_evt: pd.DataFrame,
-    df_stim: pd.DataFrame,
-    *,
-    n_frames: int,
-    fps: float,
-    block_table: pd.DataFrame | None = None,
-    tag: str = "[23c]",
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Place parsed stimulus blocks on equal Suite2p frame-count boundaries."""
-    schedule_blocks, schedule_starts = _schedule_block_starts(block_table)
-    if df_stim.empty or "block" not in df_stim.columns:
-        return df_evt.copy(), df_stim.copy(), {"timing_mode": "frame_grid", "n_blocks": 0}
-    if schedule_blocks:
-        blocks = schedule_blocks
-        logged_starts = schedule_starts
-        timing_source = "planned_schedule"
-    else:
-        event_blocks = _event_blocks(df_evt)
-        stim_blocks = sorted({str(value) for value in df_stim["block"].dropna().astype(str)}, key=_block_key)
-        blocks = event_blocks or stim_blocks
-        logged_starts = _logged_block_starts(df_evt, blocks)
-        timing_source = "experiment_log"
-    n_blocks = len(blocks)
-    if n_blocks <= 0:
-        return df_evt.copy(), df_stim.copy(), {"timing_mode": "frame_grid", "n_blocks": 0}
-    if int(n_frames) <= 0:
-        raise RuntimeError(f"{tag} cannot compute frame-grid block starts from empty Suite2p traces")
-    if int(n_frames) % int(n_blocks) != 0:
-        raise RuntimeError(
-            f"{tag} Suite2p frame count ({int(n_frames)}) is not divisible by parsed block count ({int(n_blocks)}); "
-            "cannot place block starts on an equal frame grid."
-        )
-    frames_per_block = int(n_frames) // int(n_blocks)
-    missing = [block for block in blocks if block not in logged_starts or not np.isfinite(logged_starts[block])]
-    if missing:
-        raise RuntimeError(f"{tag} could not resolve logged start time for block(s): {', '.join(missing)}")
-
-    block_start_frames = {block: idx * frames_per_block for idx, block in enumerate(blocks)}
-    block_start_seconds = {block: float(frame) / float(fps) for block, frame in block_start_frames.items()}
-
-    evt = df_evt.copy()
-
-    def remap_event_time(row: pd.Series) -> float:
-        match = re.match(r"^(B\d+)_", str(row["event"]))
-        if not match:
-            return float(row["time"])
-        block = match.group(1)
-        if block not in block_start_seconds:
-            return float(row["time"])
-        return block_start_seconds[block] + (float(row["time"]) - float(logged_starts[block]))
-
-    evt["time"] = evt.apply(remap_event_time, axis=1)
-    evt = evt.sort_values("time").reset_index(drop=True)
-
-    stim = df_stim.copy()
-    for col in ("start", "end", "motion_start", "motion_end"):
-        if col not in stim.columns:
-            continue
-        remapped: list[float] = []
-        for row in stim.itertuples(index=False):
-            block = str(getattr(row, "block"))
-            value = getattr(row, col)
-            if block in block_start_seconds and pd.notna(value):
-                remapped.append(block_start_seconds[block] + (float(value) - float(logged_starts[block])))
-            else:
-                remapped.append(float(value) if pd.notna(value) else np.nan)
-        stim[col] = remapped
-
-    return evt, stim, {
-        "timing_mode": "frame_grid",
-        "timing_source": timing_source,
-        "n_blocks": int(n_blocks),
-        "frames_per_block": int(frames_per_block),
-        "block_start_frames": block_start_frames,
-    }
-
-
 def build_suite2p_stimulus_locked_diagnostic(
     *,
     fish_dir: str | Path,
@@ -361,19 +243,16 @@ def build_suite2p_stimulus_locked_diagnostic(
         elif tvec_ref.shape != tvec.shape or not np.allclose(tvec_ref, tvec, atol=1e-6):
             raise RuntimeError("[23c] inconsistent frame rates or diagnostic windows across sessions")
 
-        schedule_blocks = ctx.get("planned_schedule_blocks")
-        schedule_stimuli = ctx.get("planned_schedule_stimuli")
-        use_schedule_timing = isinstance(schedule_blocks, pd.DataFrame) and not schedule_blocks.empty
-        df_evt_source = ctx.get("df_evt_full", ctx["df_evt"]) if use_schedule_timing else ctx["df_evt"]
-        df_stim_source = schedule_stimuli if isinstance(schedule_stimuli, pd.DataFrame) and not schedule_stimuli.empty else ctx["df_stim"]
-        df_evt, df_stim, timing_meta = _remap_stimulus_tables_to_frame_grid(
-            df_evt_source.copy(),
-            df_stim_source.copy(),
+        trace_context = map_stimulus_context_to_trace_grid(
+            ctx,
             n_frames=int(dff_arr.shape[1]),
             fps=fps,
-            block_table=schedule_blocks if use_schedule_timing else None,
+            onset_delay_sec=float(cfg.onset_delay_sec),
             tag="[23c]",
         )
+        df_evt = trace_context["df_evt"]
+        df_stim = trace_context["df_stim"]
+        timing_meta = trace_context["trace_grid_timing"]
         if df_stim.empty:
             continue
         stim_types = [str(value) for value in (ctx.get("stimulus_types") or df_stim["type"].astype(str).unique().tolist())]
@@ -410,6 +289,11 @@ def build_suite2p_stimulus_locked_diagnostic(
                 "fps": fps,
                 "log_path": str(ctx.get("log_path")),
                 "meta_path": str(ctx.get("meta_path")) if ctx.get("meta_path") is not None else None,
+                "stimulus_metadata_path": (
+                    str(ctx.get("stimulus_metadata_path"))
+                    if ctx.get("stimulus_metadata_path") is not None
+                    else None
+                ),
                 "stimulus_types_source": ctx.get("stimulus_types_source"),
                 "stimulus_types": ", ".join(stim_types),
                 "session_mapping_source": ctx.get("session_mapping_source"),
@@ -592,6 +476,38 @@ def build_suite2p_stimulus_locked_diagnostic(
     }
 
 
+def _scored_windows_to_heatmap_spans(
+    scored_windows: pd.DataFrame,
+    heatmap_rows: pd.DataFrame,
+) -> pd.DataFrame:
+    required_windows = {"plane_idx", "stim_type", "scored_onset_frame", "scored_offset_frame"}
+    required_rows = {"plane_idx"}
+    if (
+        not isinstance(scored_windows, pd.DataFrame)
+        or scored_windows.empty
+        or not required_windows.issubset(scored_windows.columns)
+        or not isinstance(heatmap_rows, pd.DataFrame)
+        or heatmap_rows.empty
+        or not required_rows.issubset(heatmap_rows.columns)
+    ):
+        return pd.DataFrame()
+    row_ranges = (
+        heatmap_rows.reset_index(names="heatmap_row")
+        .groupby("plane_idx", sort=False)["heatmap_row"]
+        .agg(row_start="min", row_last="max")
+        .reset_index()
+    )
+    spans = scored_windows.merge(row_ranges, on="plane_idx", how="inner")
+    spans = spans.rename(
+        columns={
+            "scored_onset_frame": "frame_start",
+            "scored_offset_frame": "frame_end",
+        }
+    )
+    spans["row_end"] = pd.to_numeric(spans["row_last"], errors="coerce") + 1
+    return spans.drop(columns=["row_last"], errors="ignore")
+
+
 def run_suite2p_stimulus_locked_diagnostic_stage(
     *,
     fish_dir: str | Path,
@@ -617,9 +533,15 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
     from .plots.analysis import render_suite2p_full_session_heatmap, render_suite2p_stimulus_locked_trace_panels
 
     response_result: dict[str, Any] | None = None
+    scored_windows_df = pd.DataFrame()
     trace_df_for_lines = result["trace_df"]
     try:
-        from .activity import ActivityConfig, build_response_bpi_tables, build_suite2p_response_seed_table
+        from .activity import (
+            ActivityConfig,
+            build_response_bpi_tables,
+            build_scored_stimulus_windows_table,
+            build_suite2p_response_seed_table,
+        )
 
         seed_df, dff_map = build_suite2p_response_seed_table(suite2p_by_ref_idx, fish_id=str(fish_id))
         if not seed_df.empty:
@@ -657,6 +579,16 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
                         print("[23c] no response-active Suite2p neurons available for trace panels; showing all traces.")
             result["response_scored_df"] = response_result["scored_bpi_df"]
             result["response_summary_df"] = response_result["summary_df"]
+            scored_windows_df = build_scored_stimulus_windows_table(
+                fish_id=str(fish_id),
+                df_stim=response_result.get("df_stim"),
+                stim_events=response_result.get("stim_events", []),
+                fps_by_session=response_result.get("fps_by_session"),
+                stim_events_by_plane=response_result.get("stim_events_by_plane"),
+                df_stim_by_plane=response_result.get("df_stim_by_plane"),
+                fps_by_plane=response_result.get("fps_by_plane"),
+            )
+            result["scored_stimulus_windows"] = scored_windows_df
     except Exception as exc:
         result["response_error"] = str(exc)
         if cfg.verbose:
@@ -671,10 +603,14 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         line_alpha=float(cfg.line_alpha),
         line_width=float(cfg.line_width),
     )
+    scored_heatmap_spans = _scored_windows_to_heatmap_spans(
+        scored_windows_df,
+        result["full_session_heatmap_rows"],
+    )
     fig_heatmaps = render_suite2p_full_session_heatmap(
         matrix=result["full_session_heatmap_matrix"],
         row_df=result["full_session_heatmap_rows"],
-        stimulus_spans=result["full_session_stimulus_spans"],
+        stimulus_spans=scored_heatmap_spans,
         block_starts=result["full_session_block_starts"],
         session_colors=result["session_colors"],
         vmin=float(cfg.heatmap_vmin),
@@ -682,6 +618,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         stim_alpha=float(cfg.stim_bar_alpha),
     )
     result["trace_panel_df"] = trace_df_for_lines
+    result["scored_heatmap_spans"] = scored_heatmap_spans
     result["fig_traces"] = fig_traces
     result["fig_heatmaps"] = fig_heatmaps
 
@@ -699,11 +636,13 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         source_csv = out_dir / "suite2p_stimulus_locked_sources_23b.csv"
         heatmap_matrix_npy = out_dir / "suite2p_full_session_heatmap_matrix_23c.npy"
         heatmap_rows_csv = out_dir / "suite2p_full_session_heatmap_rows_23c.csv"
+        scored_windows_csv = out_dir / "suite2p_scored_stimulus_windows_23c.csv"
         summary_out = result["trace_df"].drop(columns=["mean_trace", "mean_dff_trace"]).copy()
         summary_out.to_csv(summary_csv, index=False)
         result["source_df"].to_csv(source_csv, index=False)
         np.save(heatmap_matrix_npy, result["full_session_heatmap_matrix"])
         result["full_session_heatmap_rows"].to_csv(heatmap_rows_csv, index=False)
+        scored_windows_df.to_csv(scored_windows_csv, index=False)
         response_csv = out_dir / "suite2p_response_bpi_cells_23c.csv"
         response_summary_csv = out_dir / "suite2p_response_bpi_summary_23c.csv"
         if response_result is not None:
@@ -718,6 +657,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
             "source_csv": str(source_csv),
             "heatmap_matrix_npy": str(heatmap_matrix_npy),
             "heatmap_rows_csv": str(heatmap_rows_csv),
+            "scored_windows_csv": str(scored_windows_csv),
         }
         if response_result is not None:
             out_paths["response_csv"] = str(response_csv)

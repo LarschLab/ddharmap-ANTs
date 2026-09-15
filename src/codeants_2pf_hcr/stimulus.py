@@ -58,6 +58,127 @@ def block_key(block: str) -> tuple[int, str]:
     return 10**9, str(block)
 
 
+def _logged_block_starts(df_evt: pd.DataFrame, blocks: list[str]) -> dict[str, float]:
+    starts: dict[str, float] = {}
+    for block in blocks:
+        block_events = df_evt[df_evt["event"].astype(str).str.startswith(f"{block}_")].copy()
+        if block_events.empty:
+            continue
+        start_rows = block_events.loc[block_events["event"].astype(str) == f"{block}_start", "time"]
+        starts[str(block)] = (
+            float(start_rows.iloc[0])
+            if len(start_rows)
+            else float(pd.to_numeric(block_events["time"], errors="coerce").min())
+        )
+    return starts
+
+
+def _event_blocks(df_evt: pd.DataFrame) -> list[str]:
+    if df_evt.empty or "event" not in df_evt.columns:
+        return []
+    blocks = []
+    for event in df_evt["event"].astype(str):
+        match = re.match(r"^(B\d+)_", event)
+        if match:
+            blocks.append(match.group(1))
+    return sorted(set(blocks), key=block_key)
+
+
+def _schedule_block_starts(block_table: pd.DataFrame | None) -> tuple[list[str], dict[str, float]]:
+    if not isinstance(block_table, pd.DataFrame) or block_table.empty:
+        return [], {}
+    if not {"block", "start"}.issubset(block_table.columns):
+        return [], {}
+    work = block_table.copy()
+    work["block"] = work["block"].astype(str)
+    work["start"] = pd.to_numeric(work["start"], errors="coerce")
+    work = work[work["block"].ne("") & work["start"].notna()].copy()
+    if work.empty:
+        return [], {}
+    work = work.sort_values("block", key=lambda col: col.map(block_key))
+    blocks = list(dict.fromkeys(work["block"].tolist()))
+    starts = {str(row.block): float(row.start) for row in work.itertuples(index=False)}
+    return blocks, starts
+
+
+def remap_stimulus_tables_to_frame_grid(
+    df_evt: pd.DataFrame,
+    df_stim: pd.DataFrame,
+    *,
+    n_frames: int,
+    fps: float,
+    block_table: pd.DataFrame | None = None,
+    tag: str = "[stim]",
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """Map block-local event times onto the concatenated Suite2p trace grid."""
+    schedule_blocks, schedule_starts = _schedule_block_starts(block_table)
+    if df_stim.empty or "block" not in df_stim.columns:
+        return df_evt.copy(), df_stim.copy(), {"timing_mode": "frame_grid", "n_blocks": 0}
+    if schedule_blocks:
+        blocks = schedule_blocks
+        logged_starts = schedule_starts
+        timing_source = "planned_schedule"
+    else:
+        event_blocks = _event_blocks(df_evt)
+        stim_blocks = sorted({str(value) for value in df_stim["block"].dropna().astype(str)}, key=block_key)
+        blocks = event_blocks or stim_blocks
+        logged_starts = _logged_block_starts(df_evt, blocks)
+        timing_source = "experiment_log"
+    n_blocks = len(blocks)
+    if n_blocks <= 0:
+        return df_evt.copy(), df_stim.copy(), {"timing_mode": "frame_grid", "n_blocks": 0}
+    if int(n_frames) <= 0:
+        raise RuntimeError(f"{tag} cannot compute frame-grid block starts from empty Suite2p traces")
+    if int(n_frames) % int(n_blocks) != 0:
+        raise RuntimeError(
+            f"{tag} Suite2p frame count ({int(n_frames)}) is not divisible by parsed block count ({int(n_blocks)}); "
+            "cannot place block starts on an equal frame grid."
+        )
+    frames_per_block = int(n_frames) // int(n_blocks)
+    missing = [block for block in blocks if block not in logged_starts or not np.isfinite(logged_starts[block])]
+    if missing:
+        raise RuntimeError(f"{tag} could not resolve logged start time for block(s): {', '.join(missing)}")
+
+    block_start_frames = {block: idx * frames_per_block for idx, block in enumerate(blocks)}
+    block_start_seconds = {block: float(frame) / float(fps) for block, frame in block_start_frames.items()}
+
+    evt = df_evt.copy()
+
+    def remap_event_time(row: pd.Series) -> float:
+        match = re.match(r"^(B\d+)_", str(row["event"]))
+        if not match:
+            return float(row["time"])
+        block = match.group(1)
+        if block not in block_start_seconds:
+            return float(row["time"])
+        return block_start_seconds[block] + (float(row["time"]) - float(logged_starts[block]))
+
+    evt["time"] = evt.apply(remap_event_time, axis=1)
+    evt = evt.sort_values("time").reset_index(drop=True)
+
+    stim = df_stim.copy()
+    for col in ("start", "end", "motion_start", "motion_end"):
+        if col not in stim.columns:
+            continue
+        remapped: list[float] = []
+        for row in stim.itertuples(index=False):
+            block = str(getattr(row, "block"))
+            value = getattr(row, col)
+            if block in block_start_seconds and pd.notna(value):
+                remapped.append(block_start_seconds[block] + (float(value) - float(logged_starts[block])))
+            else:
+                remapped.append(float(value) if pd.notna(value) else np.nan)
+        stim[col] = remapped
+
+    return evt, stim, {
+        "timing_mode": "frame_grid",
+        "timing_source": timing_source,
+        "n_blocks": int(n_blocks),
+        "frames_per_block": int(frames_per_block),
+        "block_start_frames": block_start_frames,
+    }
+
+
 def normalize_session_label(session_label: str | int | None) -> str | None:
     if session_label in (None, "", False):
         return None
@@ -821,6 +942,69 @@ def build_stim_tables(
     return events, df_stim
 
 
+def map_stimulus_context_to_trace_grid(
+    context: dict[str, Any],
+    *,
+    n_frames: int,
+    fps: float,
+    onset_delay_sec: float,
+    tag: str = "[stim]",
+) -> dict[str, Any]:
+    """Resolve one stimulus context in the coordinate system of a full Suite2p trace.
+
+    Suite2p concatenates one trace block per acquired TIFF. Experiment-log
+    analysis commonly starts at B1 and removes inter-block gaps, so those
+    relative seconds cannot be used directly as full-trace frame indices when
+    B0 is still present. This mapper restores the cumulative block offset from
+    the complete acquisition schedule before any trace extraction occurs.
+    """
+    df_evt_full = context.get("df_evt_full")
+    if not isinstance(df_evt_full, pd.DataFrame) or df_evt_full.empty:
+        raise RuntimeError(f"{tag} complete experiment-log events are required for trace-grid mapping")
+
+    schedule_blocks = context.get("planned_schedule_blocks")
+    schedule_stimuli = context.get("planned_schedule_stimuli")
+    if isinstance(schedule_blocks, pd.DataFrame) and not schedule_blocks.empty:
+        if not isinstance(schedule_stimuli, pd.DataFrame) or schedule_stimuli.empty:
+            raise RuntimeError(f"{tag} planned schedule declares blocks but no stimulus rows")
+        event_source = df_evt_full.copy()
+        stimulus_source = schedule_stimuli.copy()
+        block_table = schedule_blocks
+    else:
+        blocks = _event_blocks(df_evt_full)
+        if not blocks:
+            raise RuntimeError(f"{tag} no acquisition blocks were found in the complete experiment log")
+        first_block = blocks[0]
+        event_source, stimulus_source = build_stim_tables(
+            df_evt_full,
+            fps=float(fps),
+            onset_delay_sec=float(onset_delay_sec),
+            remove_interblock_gaps=False,
+            measure_start_block=first_block,
+            measure_start_event="start",
+        )
+        block_table = None
+
+    mapped_events, mapped_stimuli, timing = remap_stimulus_tables_to_frame_grid(
+        event_source,
+        stimulus_source,
+        n_frames=int(n_frames),
+        fps=float(fps),
+        block_table=block_table,
+        tag=tag,
+    )
+    block_start_frames = timing.get("block_start_frames", {})
+    mapped_stimuli["trace_grid_block_start_frame"] = mapped_stimuli["block"].astype(str).map(block_start_frames)
+    mapped_stimuli["trace_grid_frames_per_block"] = timing.get("frames_per_block")
+    mapped_stimuli["trace_grid_timing_source"] = timing.get("timing_source")
+    return {
+        **context,
+        "df_evt": mapped_events,
+        "df_stim": mapped_stimuli,
+        "trace_grid_timing": timing,
+    }
+
+
 def resolve_stimulus_context(
     *,
     fish_dir: str | Path,
@@ -984,10 +1168,12 @@ __all__ = [
     "find_metadata_csv",
     "load_events_df",
     "load_metadata_params",
+    "map_stimulus_context_to_trace_grid",
     "normalize_session_label",
     "parse_float",
     "parse_unilateral_stim",
     "resolve_presented_stimulus_metadata",
     "resolve_plane_stimulus_contexts",
     "resolve_stimulus_context",
+    "remap_stimulus_tables_to_frame_grid",
 ]

@@ -17,6 +17,7 @@ from .stimulus import (
     classify_stim_type,
     compute_zscore_stats,
     effective_motion_window,
+    map_stimulus_context_to_trace_grid,
     resolve_plane_stimulus_contexts,
 )
 from .suite2p import infer_frame_rate_from_detail, load_suite2p_dff_map
@@ -429,6 +430,8 @@ def build_scored_stimulus_windows_table(
                 "stim_class": str(event.get("stim_class", "")),
                 "recorded_onset_sec": pd.to_numeric(recorded.get("start", np.nan), errors="coerce"),
                 "recorded_offset_sec": pd.to_numeric(recorded.get("end", np.nan), errors="coerce"),
+                "recorded_onset_frame": int(round(float(recorded.get("start")) * fps)) if pd.notna(recorded.get("start", np.nan)) and np.isfinite(fps) else pd.NA,
+                "recorded_offset_frame": int(round(float(recorded.get("end")) * fps)) if pd.notna(recorded.get("end", np.nan)) and np.isfinite(fps) else pd.NA,
                 "scored_onset_frame": idx0,
                 "scored_offset_frame": idx1,
                 "scored_onset_sec": idx0 / fps if np.isfinite(fps) and fps > 0 else np.nan,
@@ -436,6 +439,10 @@ def build_scored_stimulus_windows_table(
                 "fps": fps,
                 "scored_duration_frames": int(event["duration_frames"]),
                 "scored_duration_sec": float(event["duration_s"]),
+                "trace_grid_block_start_frame": recorded.get("trace_grid_block_start_frame", pd.NA),
+                "trace_grid_frames_per_block": recorded.get("trace_grid_frames_per_block", pd.NA),
+                "trace_grid_timing_source": recorded.get("trace_grid_timing_source", pd.NA),
+                "timing_coordinate": "suite2p_full_trace",
             }
         )
     return pd.DataFrame.from_records(rows)
@@ -558,19 +565,35 @@ def build_response_bpi_tables(
         inferred_fps = infer_frame_rate_from_detail(detail, suite2p_root=suite2p_root)
 
     prepared_contexts: dict[int, dict[str, Any]] = {}
-    prepared_by_key: dict[tuple[Any, str], dict[str, Any]] = {}
+    prepared_by_key: dict[tuple[Any, str, int], dict[str, Any]] = {}
     for plane_idx in plane_indices:
         ctx = raw_plane_stim_contexts.get(int(plane_idx))
         if ctx is None:
+            continue
+        plane_data = s2p_map.get(int(plane_idx))
+        dff = None if plane_data is None else plane_data.get("dff")
+        if dff is None or np.asarray(dff).ndim != 2:
             continue
         fps_value = ctx.get("frame_rate")
         if fps_value is None or float(fps_value) <= 0:
             fps_value = inferred_fps
         if fps_value is None or float(fps_value) <= 0:
             raise RuntimeError("could not determine frame rate for response/BPI computation")
-        key = (ctx.get("session_label"), str(ctx.get("log_path")))
+        n_frames = int(np.asarray(dff).shape[1])
+        key = (ctx.get("session_label"), str(ctx.get("log_path")), n_frames)
         if key not in prepared_by_key:
-            prepared_by_key[key] = _build_activity_stimulus_context(ctx, fps=float(fps_value), cfg=cfg)
+            trace_context = map_stimulus_context_to_trace_grid(
+                ctx,
+                n_frames=n_frames,
+                fps=float(fps_value),
+                onset_delay_sec=float(cfg.stim_onset_delay_sec),
+                tag="[activity]",
+            )
+            prepared_by_key[key] = _build_activity_stimulus_context(
+                trace_context,
+                fps=float(fps_value),
+                cfg=cfg,
+            )
         prepared_contexts[int(plane_idx)] = prepared_by_key[key]
     if not prepared_contexts:
         raise RuntimeError("could not resolve stimulus metadata for response/BPI computation")

@@ -303,13 +303,15 @@ Generated manually for the current extracted package surface.
 - `build_stim_tables`: Build block and trial tables from event logs.
 - `resolve_stimulus_context`: End-to-end notebook-facing stimulus loader for `[55]`.
 - `resolve_plane_stimulus_contexts`: Resolve per-plane stimulus contexts so multi-session fish use the session-specific experiment/meta CSVs.
+- `remap_stimulus_tables_to_frame_grid`: Remap block-relative stimulus/event tables onto an explicit concatenated trace frame grid while retaining block timing provenance.
+- `map_stimulus_context_to_trace_grid`: Map a resolved session context, including its complete planned block schedule, onto a Suite2p trace so B0 remains context and B1/B2 scoring uses physical full-trace frames.
 
 ## `codeants_2pf_hcr.activity`
 
 - `ActivityConfig`: Typed response/BPI scoring configuration for `[50ia]`.
 - `SingleFishBpiDiagnosticsConfig`: Typed BPI/activity diagnostics configuration for notebook cell `[56g]`.
 - `build_suite2p_response_seed_table`: Build a pre-identity Suite2p ROI table plus in-memory dF/F map for early response scoring in `[23c]`.
-- `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table.
+- `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table after centrally mapping each session context onto its complete Suite2p trace.
 - `prepare_single_fish_bpi_diagnostics_stage`: Notebook-facing response-aware diagnostics prep stage for `[56g]` that resolves activity/BPI columns, backfills response metadata from the ROI master table, and publishes plotting-ready bindings.
 
 ## `codeants_2pf_hcr.suite2p`
@@ -321,7 +323,7 @@ Generated manually for the current extracted package surface.
 - `build_suite2p_stimulus_locked_diagnostic`: Compute per-neuron, per-stimulus average Suite2p traces with session-aware stimulus metadata and frame-grid block timing for `[23c]`.
 - `load_suite2p_stage`: Notebook-facing Suite2p stage loader for early `[23a]` that can run before functional reference preprocessing, returning legacy-shaped labels, plane maps, and source summary tables.
 - `load_suite2p_dff_map`: Load Suite2p `F.npy` traces from disk and convert them to dF/F by plane.
-- `run_suite2p_stimulus_locked_diagnostic_stage`: Notebook-facing Suite2p stimulus-locked diagnostic stage for `[23c]`.
+- `run_suite2p_stimulus_locked_diagnostic_stage`: Notebook-facing Suite2p stimulus-locked diagnostic stage for `[23c]`; it persists the exact scored-window table used for the single full-session heatmap overlays.
 
 ## `codeants_2pf_hcr.segmentation`
 

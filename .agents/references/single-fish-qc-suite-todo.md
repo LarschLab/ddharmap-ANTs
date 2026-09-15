@@ -117,10 +117,9 @@ data?
 
 **Required views:**
 
-- full-session Suite2p-cell heatmap, separated by session/plane as appropriate;
-- independently reconstructed recorded stimulus windows drawn over the heatmap,
-  plus the exact analysis windows consumed by `score-activity-bpi` as a second,
-  visually distinguishable overlay;
+- one persisted full-session Suite2p-cell heatmap, separated by session/plane
+  as appropriate, with colored spans equal to the exact analysis windows used
+  by its response scorer;
 - representative/average stimulus-aligned traces and early response evidence;
 - explicit source table for session logs, frame rate, frame boundaries, and
   planned no-stimulus blocks;
@@ -129,11 +128,11 @@ data?
   rounding tolerance;
 - visible warnings for frame-count, session mapping, or timing disagreement.
 
-The recorded windows and scoring windows must come through independent loading
-paths. Plotting the scoring table twice would reproduce a timing bug rather than
-detect it. If Step 06 does not persist the exact event windows it used, add a
-read-only provenance output to `score-activity-bpi` before implementing this QC
-view.
+The recorded windows and scoring windows must remain separately auditable in
+the timing table. The figure itself uses the exact scorer windows so it is a
+literal view of the computation; do not add a second reconstructed full-session
+overlay whose coordinate transform could diverge. `score-activity-bpi` must
+persist the exact event windows it used.
 
 **Accepted timing review (2026-09-09):** Q1 independently matched all 80
 score-provenance input windows to the raw logs within the declared 0.5-frame
@@ -143,6 +142,21 @@ and draws only B1/B2 spans that feed the paired complete-Suite2p averages;
 every stimulus/session average has four valid B1/B2 trials. Timing alignment is
 accepted for this selected scoring universe. This does not promote the
 response/BPI tables or accept downstream BPI/laterality interpretation.
+
+**Correction and renewed acceptance (2026-09-15):** the 9 September timing
+acceptance compared raw and scored events in the same B1-relative coordinate
+system and therefore missed their placement on full 5,502-frame Suite2p traces
+that still contained the 1,834-frame B0 block. All 80 prior windows were one
+block early. A central mapper now places complete B0/B1/B2 acquisition blocks
+on the Suite2p grid before both `[23c]` and `score-activity-bpi` scoring. In the
+fixed working root, B1 scored onsets are frames 2,247–3,441 and B2 scored onsets
+are frames 4,373–5,342 across sessions; the 80 `[23c]` heatmap windows exactly
+equal the persisted scorer windows. The single retained heatmap shows B0 as
+uncolored baseline context and the expected response structure after the exact
+scored spans. Notebook 01 and Notebook 06 execute end-to-end, and response-active
+ROIs change from the superseded 83 to 225. Q1 timing is accepted on this
+corrected full-trace basis; downstream biological BPI interpretation remains a
+separate review gate.
 
 **Recovered in the single working root (2026-09-15):** the 8–9 September Q1
 implementation had been displaced when Notebook 02 was correctly restored to
@@ -417,7 +431,10 @@ trace.
 Notebook 06 renders the ROI-centric response plane, BPI/activity diagnostics,
 activity-binned absolute BPI, response-class distributions, and population
 response/BPI summary from the persisted 3,553-row activity master (2,450 rows
-with finite response evidence). The global ipsilateral/contralateral AUC panel
+with finite response evidence). After the Q1 full-trace timing correction, 225
+rows pass the response-active gate (the superseded one-block-early outputs had
+83), and all 2,450 finite BPI values were recomputed. The global
+ipsilateral/contralateral AUC panel
 continues to fail closed because the distinct accepted anatomy-grid midline
 sidecar and L765_f04 motion-AUC point/count tables do not exist. This preserves
 the original Q7 work without falsely declaring the laterality branch complete.

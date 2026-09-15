@@ -18,7 +18,7 @@ import pandas as pd
 import tifffile
 
 from ..spatial import imread_any, norm01
-from ..stimulus import StimulusConfig, resolve_plane_stimulus_contexts
+from ..stimulus import StimulusConfig, map_stimulus_context_to_trace_grid, resolve_plane_stimulus_contexts
 
 
 _FISH_ID_RE = re.compile(r"^[A-Z][0-9]{3}_f[0-9]{2}$")
@@ -325,14 +325,50 @@ def load_early_response_timing_qc(
     )
     recorded_rows: list[pd.DataFrame] = []
     for plane_idx, context in contexts.items():
-        events = context.get("df_stim")
+        plane_rows = heatmap_rows[
+            pd.to_numeric(heatmap_rows.get("plane_idx"), errors="coerce").eq(int(plane_idx))
+        ] if not heatmap_rows.empty and "plane_idx" in heatmap_rows else pd.DataFrame()
+        n_frame_values = (
+            pd.to_numeric(plane_rows["n_frames"], errors="coerce").dropna()
+            if "n_frames" in plane_rows
+            else pd.Series(dtype=float)
+        )
+        score_plane = scored_df[
+            pd.to_numeric(scored_df.get("plane_idx"), errors="coerce").eq(int(plane_idx))
+        ] if not scored_df.empty and "plane_idx" in scored_df else pd.DataFrame()
+        score_frame_values = (
+            pd.to_numeric(score_plane["scored_offset_frame"], errors="coerce").dropna()
+            if "scored_offset_frame" in score_plane
+            else pd.Series(dtype=float)
+        )
+        n_frames = (
+            int(n_frame_values.iloc[0])
+            if len(n_frame_values)
+            else int(heatmap_matrix.shape[1])
+            if heatmap_matrix.ndim == 2 and heatmap_matrix.shape[1] > 0
+            else int(score_frame_values.max())
+            if len(score_frame_values)
+            else 0
+        )
+        fps = pd.to_numeric(context.get("frame_rate", np.nan), errors="coerce")
+        if not np.isfinite(fps) or float(fps) <= 0 or n_frames <= 0:
+            warnings.append(f"Trace-grid timing could not be resolved for plane {plane_idx}.")
+            continue
+        mapped_context = map_stimulus_context_to_trace_grid(
+            context,
+            n_frames=n_frames,
+            fps=float(fps),
+            onset_delay_sec=10.0,
+            tag="[Q1 timing audit]",
+        )
+        events = mapped_context.get("df_stim")
         if not isinstance(events, pd.DataFrame) or events.empty:
             warnings.append(f"No recorded stimulus events resolved for plane {plane_idx}.")
             continue
         frame = events.copy()
         frame["plane_idx"] = int(plane_idx)
         frame["session_label"] = str(context.get("session_label", ""))
-        frame["recorded_fps"] = pd.to_numeric(context.get("frame_rate", np.nan), errors="coerce")
+        frame["recorded_fps"] = float(fps)
         frame["recorded_log_path"] = str(context.get("log_path", ""))
         recorded_rows.append(frame)
     recorded_df = pd.concat(recorded_rows, ignore_index=True) if recorded_rows else pd.DataFrame()

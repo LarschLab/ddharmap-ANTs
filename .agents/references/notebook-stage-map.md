@@ -12,7 +12,7 @@
 2. **Early functional response readout** (`[23a] [23c]`)
    - Suite2p trace/ROI load and full-experiment fish response quality diagnostics before anatomy or functional preprocessing.
    - `[23a]` can run without `plane_refs`; when functional references are not available yet, Suite2p planes are keyed by discovered Suite2p plane index.
-   - `[23c]` places metadata/log blocks on equal Suite2p frame-count boundaries while preserving stimulus offsets within each block; `planned_schedule.csv` is authoritative for no-stimulus rest blocks when present.
+   - `[23c]` and `[50ia]` use the central stimulus-to-trace mapper to place complete metadata/log blocks on equal Suite2p frame-count boundaries while preserving stimulus offsets within each block; `planned_schedule.csv` is authoritative for no-stimulus rest blocks when present. `B0` stays in the trace as baseline context, but is never scored.
    - `[23c]` uses preprocessing metadata for plane-to-session mapping when present; if it is absent but explicit `r1`/`r2` stimulus logs exist and Suite2p planes split evenly, it infers a contiguous equal split by session order.
    - `[23c]` computes pre-identity Suite2p response/BPI calls for trace-panel filtering; these outputs are non-canonical and later merge into `[50ia]`.
    - Key object: `suite2p_by_ref_idx`.
@@ -62,9 +62,9 @@
 
 - ROI-centric authoritative table: `functional_roi_activity_identity.csv` (`[50i]` + `[50ia]`).
 - Response/BPI exports: `functional_roi_activity_bpi_cells.csv`, `functional_roi_activity_bpi_summary.csv` (`[50ia]`).
-- Response-scoring timing provenance: `scored_stimulus_windows.csv` (`score-activity-bpi`); it records the exact frame windows consumed by scoring for independent Notebook 01 audit.
+- Response-scoring timing provenance: `scored_stimulus_windows.csv` (`score-activity-bpi`); it records the exact full-Suite2p-trace frame windows consumed by scoring, including block-start/frame-count/source provenance, for Notebook 01 audit.
 - Pre-identity response/BPI diagnostics: `suite2p_response_bpi_cells_23c.csv`, `suite2p_response_bpi_summary_23c.csv` (`[23c]`, non-canonical).
-- Full-session QC payload: `suite2p_full_session_heatmap_matrix_23c.npy` plus `suite2p_full_session_heatmap_rows_23c.csv` (`[23c]`); Notebook 01 uses these persisted traces with separately loaded raw-log and score-window overlays.
+- Full-session QC payload: `suite2p_full_session_heatmap_matrix_23c.npy`, `suite2p_full_session_heatmap_rows_23c.csv`, and `suite2p_scored_stimulus_windows_23c.csv` (`[23c]`). Notebook 01 displays this single persisted heatmap; its colored spans are the exact `[23c]` scorer windows, and the separate reconstructed full-session overlay plot is retired.
 - The staged writer route for that payload is
   `prepare-functional-reference-stacks --run-23c`, which records the generated
   QA files in the same stage manifest and writes them under

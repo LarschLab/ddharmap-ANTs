@@ -516,7 +516,7 @@ def render_suite2p_full_session_heatmap(
 
     ax.set_xlim(0, int(n_frames))
     ax.set_ylim(int(n_rows), 0)
-    title = "Suite2p activity across the full experiment; colored spans are the trials used in stimulus averages"
+    title = "Suite2p activity across the full experiment; colored spans are exact score-activity-bpi windows"
     if no_stimulus_block_end is not None:
         title += "; B0 is baseline context, B1+ contain presented stimuli"
     ax.set_title(title, fontsize=11)
@@ -538,7 +538,7 @@ def render_suite2p_full_session_heatmap(
         session_legend = ax.legend(handles=session_handles, loc="upper right", frameon=False, title="Imaging session")
         ax.add_artist(session_legend)
     if stim_handles:
-        ax.legend(handles=stim_handles, loc="lower right", frameon=False, title="Stimulus", ncol=1, fontsize=8)
+        ax.legend(handles=stim_handles, loc="lower right", frameon=False, title="Scored stimulus", ncol=1, fontsize=8)
     fig.tight_layout()
     return fig
 
