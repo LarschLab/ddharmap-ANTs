@@ -99,3 +99,14 @@ def test_functional_registration_notebook_uses_registration_review_owners() -> N
     assert "render_functional_registration_artifacts" in source
     assert "build_early_response_qc_from_raw" not in source
     assert "score-activity-bpi" not in source
+
+
+def test_functional_reference_notebook_owns_persisted_early_response_review() -> None:
+    notebook_path = REPO_ROOT / "notebooks" / "qc" / "01_functional_reference_and_drift_qc.ipynb"
+    source = _code_source(notebook_path)
+    assert "load_early_response_timing_qc" in source
+    assert "render_early_response_timing_audit" in source
+    assert "render_early_response_full_session_heatmap" in source
+    assert "suite2p_stimulus_locked_summary_23b.csv" in source
+    assert "score-activity-bpi" in source
+    assert "build_early_response_qc_from_raw" not in source

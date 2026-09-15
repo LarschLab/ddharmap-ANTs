@@ -50,25 +50,38 @@ def manifest_polarity(fish_dir: str | Path) -> tuple[str | None, str]:
     return value, f"{spatial_manifest_path(fish_dir).name}:polarity"
 
 
-def _declared_paths(payload: dict[str, Any], key: str) -> set[Path]:
+def _declared_outputs(payload: dict[str, Any], key: str) -> dict[Path, str]:
     if key == "functional":
         values: Iterable[Any] = [
             *payload.get("functional_planes", []),
             *payload.get("motion_corrected_movies", []),
         ]
         return {
-            Path(str(item["output_path"])).resolve()
+            Path(str(item["output_path"])).resolve(): str(
+                item.get("output_xy_frame")
+                or payload.get("coordinate_frames", {}).get("canonical_functional_xy", "")
+            ).strip()
             for item in values
             if isinstance(item, dict) and item.get("output_path")
         }
     anatomy = payload.get("anatomy", {})
-    return {Path(str(anatomy["output_path"])).resolve()} if isinstance(anatomy, dict) and anatomy.get("output_path") else set()
+    if not isinstance(anatomy, dict) or not anatomy.get("output_path"):
+        return {}
+    return {
+        Path(str(anatomy["output_path"])).resolve(): str(
+            anatomy.get("output_xy_frame") or payload.get("coordinate_frames", {}).get("canonical_anatomy_xy", "")
+        ).strip()
+    }
+
+
+def _declared_paths(payload: dict[str, Any], key: str) -> set[Path]:
+    return set(_declared_outputs(payload, key))
 
 
 def path_is_canonical(path: str | Path, fish_dir: str | Path, *, kind: str) -> bool:
     payload = load_spatial_manifest(fish_dir, required=True)
     assert payload is not None
-    return Path(path).resolve() in _declared_paths(payload, kind)
+    return _declared_outputs(payload, kind).get(Path(path).resolve()) == CANONICAL_XY_FRAME
 
 
 def fish_dir_from_product_path(path: str | Path) -> Path | None:
@@ -82,10 +95,18 @@ def fish_dir_from_product_path(path: str | Path) -> Path | None:
 
 
 def declared_xy_frame(path: str | Path, *, kind: str) -> str | None:
+    target = Path(path).resolve()
     fish_dir = fish_dir_from_product_path(path)
     if fish_dir is None or not spatial_manifest_path(fish_dir).exists():
         return None
-    return CANONICAL_XY_FRAME if path_is_canonical(path, fish_dir, kind=kind) else None
+    payload = load_spatial_manifest(fish_dir, required=True)
+    assert payload is not None
+    frame = _declared_outputs(payload, kind).get(target)
+    if frame is None:
+        return None
+    if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
+        raise SpatialFrameError(f"Unknown declared {kind} XY frame {frame!r} for {target}")
+    return frame
 
 
 def canonical_anatomy_path(fish_dir: str | Path) -> Path:

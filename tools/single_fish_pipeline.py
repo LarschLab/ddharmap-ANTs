@@ -143,7 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
     assign_writer.add_argument(
         "--source-root",
         type=Path,
-        help="Explicit identity/HCR registration CSV source root. Defaults to the fish registration folder.",
+        help="Optional accepted identity/HCR CSV comparison root. Defaults to the fish registration folder.",
+    )
+    assign_writer.add_argument(
+        "--activity-input-path",
+        type=Path,
+        help="Response-aware ROI table used as passthrough/lookup input. Defaults to the same-root score-activity-bpi output when present.",
     )
     assign_writer.add_argument(
         "--roi-anatomy-root",
@@ -227,6 +232,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-first-block",
         action="store_true",
         help="Compatibility override: include the first selected functional TIFF block in each reference.",
+    )
+    prepare_func_refs.add_argument(
+        "--run-23c",
+        action="store_true",
+        help="Persist the early Suite2p stimulus-response QC payload in this stage root.",
     )
 
     prepare_in_vivo = subparsers.add_parser(
@@ -526,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest = run_single_fish_assign_hcr_identity_stage(
             config,
             source_root=args.source_root,
+            activity_input_path=args.activity_input_path,
             roi_anatomy_root=args.roi_anatomy_root,
             hcr_anatomy_root=args.hcr_anatomy_root,
             force_recompute=args.force_recompute,
@@ -628,6 +639,7 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output_dir,
             force_recompute=args.force_recompute,
             exclude_first_block=not args.include_first_block,
+            run_23c=args.run_23c,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

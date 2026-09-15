@@ -24,6 +24,7 @@ from codeants_2pf_hcr.plots.qc_molecular import (
     plot_hcr_anatomy_match_outcome_donuts,
     plot_hcr_functional_plane_status_donuts,
     plot_hcr_matching_flow_donuts,
+    plot_cross_modality_mask_sizes,
     plot_molecular_geometry_qc,
     plot_molecular_identity_qc,
     plot_molecular_correspondence_tiles,
@@ -257,6 +258,41 @@ def test_cross_modality_sizes_use_legacy_max_minus_min_bbox_dimensions(tmp_path:
     row = pd.DataFrame(_bbox_size_rows(anatomy, modality="anatomy", voxel_zyx_um={"Z": 2.0, "Y": 1.0, "X": 2.0})).iloc[0]
     assert (row.x_px, row.y_px, row.z_px) == (2, 1, 2)
     assert (row.x_um, row.y_um, row.z_um, row.xy_um) == (4.0, 1.0, 4.0, 2.5)
+
+
+def test_cross_modality_size_plot_draws_red_xy_q95_limits() -> None:
+    rows = []
+    for modality in ("anatomy", "functional", "hcr"):
+        for index, value in enumerate((1.0, 2.0, 3.0)):
+            rows.append({
+                "modality": modality,
+                "xy_um": value,
+                "z_um": value + 1.0,
+                "included_in_distribution": True,
+                "is_xy_q95_flag": index == 2,
+                "xy_q05_um": 1.1,
+                "xy_q95_um": 2.9,
+                "round": "r2" if modality == "hcr" else None,
+                "gene": "sst1.2" if modality == "hcr" else None,
+            })
+    figure = plot_cross_modality_mask_sizes(pd.DataFrame(rows), fish_id=FISH_ID)
+    red = np.asarray([0xD6, 0x27, 0x28, 0xFF], dtype=float) / 255.0
+    for axis in (figure.axes[0], figure.axes[2]):
+        collection_colors = [
+            color
+            for collection in axis.collections
+            if hasattr(collection, "get_colors")
+            for color in collection.get_colors()
+        ]
+        assert any(np.allclose(color, red) for color in collection_colors)
+    assert not any(
+        np.allclose(color, red)
+        for axis in (figure.axes[1], figure.axes[3])
+        for collection in axis.collections
+        if hasattr(collection, "get_colors")
+        for color in collection.get_colors()
+    )
+    plt.close(figure)
 
 
 def test_hcr_anatomy_centroid_offset_plot_uses_accepted_pairs_with_lateral_xy_distance(tmp_path: Path) -> None:

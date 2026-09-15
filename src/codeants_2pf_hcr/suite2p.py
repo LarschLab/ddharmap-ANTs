@@ -808,17 +808,25 @@ def load_suite2p_stage(
 
     fish_dir = fish_dir_from_product_path(resolved_root)
     manifest = load_spatial_manifest(fish_dir, required=False) if fish_dir is not None else None
-    declared_frame = CANONICAL_XY_FRAME if manifest is not None else None
-    if input_xy_frame is not None and declared_frame is not None and input_xy_frame != declared_frame:
-        raise ValueError(f"Suite2P frame {input_xy_frame!r} conflicts with canonical manifest {declared_frame!r}")
-    frame = cfg.stat_xy_frame or input_xy_frame or declared_frame or LEGACY_ACQUISITION_XY_FRAME
-    if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
-        raise ValueError(f"Unknown Suite2P input XY frame: {frame!r}")
-    canonical_plane_paths = {
-        Path(str(record["output_path"])).resolve()
+    declared_frame_by_path = {
+        Path(str(record["output_path"])).resolve(): str(
+            record.get("output_xy_frame")
+            or (manifest or {}).get("coordinate_frames", {}).get("canonical_functional_xy", "")
+        ).strip()
         for record in (manifest or {}).get("functional_planes", [])
         if isinstance(record, dict) and record.get("output_path")
     }
+    declared_frames = set(declared_frame_by_path.values())
+    if declared_frames - {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
+        raise ValueError(f"Unknown Suite2P input XY frames in spatial manifest: {sorted(declared_frames)}")
+    declared_frame = next(iter(declared_frames)) if len(declared_frames) == 1 else None
+    requested_frame = cfg.stat_xy_frame or input_xy_frame
+    if requested_frame is not None and declared_frame is not None and requested_frame != declared_frame:
+        raise ValueError(f"Suite2P frame {requested_frame!r} conflicts with spatial manifest {declared_frame!r}")
+    frame = requested_frame or declared_frame or LEGACY_ACQUISITION_XY_FRAME
+    if frame not in {CANONICAL_XY_FRAME, LEGACY_ACQUISITION_XY_FRAME}:
+        raise ValueError(f"Unknown Suite2P input XY frame: {frame!r}")
+    declared_plane_paths = set(declared_frame_by_path)
     orient_mode = "none" if frame == CANONICAL_XY_FRAME else func_orientation_mode(polarity)
     orient_effective = "none" if frame == CANONICAL_XY_FRAME else func_orientation_effective(polarity)
     if cfg.verbose:
@@ -914,11 +922,16 @@ def load_suite2p_stage(
                         if data_paths:
                             candidate = Path(str(data_paths[0])) / candidate
                     ops_inputs.add(candidate.resolve())
-            if not ops_inputs or not ops_inputs.issubset(canonical_plane_paths):
+            if not ops_inputs or not ops_inputs.issubset(declared_plane_paths):
                 raise ValueError(
-                    "Suite2P outputs are stale or lack canonical input provenance: "
+                    "Suite2P outputs are stale or lack declared input provenance: "
                     f"ops inputs={sorted(str(path) for path in ops_inputs)}, "
-                    f"manifest planes={sorted(str(path) for path in canonical_plane_paths)}"
+                    f"manifest planes={sorted(str(path) for path in declared_plane_paths)}"
+                )
+            ops_frames = {declared_frame_by_path[path] for path in ops_inputs}
+            if len(ops_frames) != 1 or next(iter(ops_frames)) != frame:
+                raise ValueError(
+                    f"Suite2P frame {frame!r} conflicts with ops input frames {sorted(ops_frames)}"
                 )
         iscell = np.load(paths["iscell"], allow_pickle=True)
 

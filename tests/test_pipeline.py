@@ -980,6 +980,64 @@ def test_prepare_functional_reference_stacks_stage_writes_manifest_outputs(tmp_p
     assert any(check.label == "functional reference raw TIFFs" and check.status == "pass" for check in manifest.checks)
 
 
+def test_prepare_functional_reference_stacks_stage_can_persist_23c_qc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import codeants_2pf_hcr.suite2p as suite2p_module
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,bottom-left\n"
+    )
+    source = fish_dir / "02_reg" / "00_preprocessing" / "2p_functional" / "02_motionCorrected" / f"{fish_dir.name}_plane0_mcorrected.tif"
+    _write_tiny_functional_tiff(source)
+    suite2p_root = fish_dir / "03_analysis" / "functional" / "suite2P"
+    suite2p_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        suite2p_module,
+        "load_suite2p_stage",
+        lambda **kwargs: {"suite2p_by_ref_idx": {0: {"dff": [[0.0, 1.0]]}}},
+    )
+
+    def fake_run_23c(**kwargs):
+        qa = Path(kwargs["out_qa"])
+        qa.mkdir(parents=True, exist_ok=True)
+        output_paths = {}
+        for name in ("traces.png", "heatmap.png", "summary.csv", "sources.csv"):
+            path = qa / name
+            path.write_text("fresh")
+            output_paths[name] = str(path)
+        return {
+            "out_paths": output_paths,
+            "source_df": pd.DataFrame([{"log_path": str(fish_dir / "raw-log.csv")}]),
+            "trace_df": pd.DataFrame([{"plane_idx": 0}]),
+            "full_session_heatmap_rows": pd.DataFrame([{"plane_idx": 0}]),
+        }
+
+    monkeypatch.setattr(suite2p_module, "run_suite2p_stimulus_locked_diagnostic_stage", fake_run_23c)
+
+    config = SingleFishPipelineConfig(
+        fish_id=fish_dir.name,
+        local_root=tmp_path,
+        pipeline_root=tmp_path / "working-root",
+        strict=True,
+    )
+    manifest = run_prepare_functional_reference_stacks_stage(
+        config,
+        functional_stack_paths=[source],
+        force_recompute=True,
+        exclude_first_block=False,
+        run_23c=True,
+    )
+
+    assert manifest.status == "pass"
+    assert manifest.parameters["run_23c"] is True
+    assert manifest.parameters["early_response_qc"]["suite2p_plane_count"] == 1
+    assert any(record.label == "early Suite2p response QC artifact" for record in manifest.outputs)
+    assert any(check.label == "early Suite2p response QC outputs" and check.status == "pass" for check in manifest.checks)
+
+
 def test_prepare_functional_reference_stacks_stage_discovers_motion_corrected_inputs(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
@@ -1281,15 +1339,26 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     transform_root = functional_roi_anatomy_transform_root(pipeline_paths)
     assert len(tuple((transform_root / "functional" / "anatomy").glob("*_func_mask_in_2p.tif"))) == 1
 
-    qc_manifest = run_make_functional_registration_qc_stage(
-        config,
-        anatomy_stack_path=anatomy,
-        anatomy_labels_path=anatomy_labels,
-        anatomy_label_z_mode="direct",
-        force_recompute=True,
-    )
-    assert qc_manifest.status == "pass"
+    from unittest.mock import patch
+
+    with patch(
+        "codeants_2pf_hcr.matching.infer_anatomy_label_z_mode",
+        return_value=("reverse", {"direct": 0.1, "reverse": 0.4}),
+    ):
+        qc_manifest = run_make_functional_registration_qc_stage(
+            config,
+            anatomy_stack_path=anatomy,
+            anatomy_labels_path=anatomy_labels,
+            anatomy_label_z_mode="auto",
+            force_recompute=True,
+        )
+    assert qc_manifest.status == "pass", qc_manifest.errors
+    assert qc_manifest.parameters["anatomy_label_z_mode_requested"] == "auto"
+    assert qc_manifest.parameters["anatomy_label_z_mode_resolved"] == "reverse"
     qc_dir = functional_registration_qc_root(pipeline_paths) / "qa"
+    qc_plane_refs = json.loads((qc_dir.parent / "plane_refs_summary_qc.json").read_text())
+    assert qc_plane_refs[0]["anat_label_z_mode"] == "reverse"
+    assert qc_plane_refs[0]["anat_label_z"] == 3 - qc_plane_refs[0]["best_z"]
     assert len(tuple(qc_dir.glob("*.png"))) == 5
     assert (qc_dir / "functional_automatic_midline_proposals.png").exists()
     automatic_midlines = pd.read_csv(qc_dir / "functional_automatic_midline_proposals.csv")
@@ -2430,6 +2499,52 @@ def test_prepare_in_vivo_anatomy_stack_stage_default_discovery_ignores_ex_vivo_s
     assert manifest.parameters["pipeline_root"] == str(resolve_pipeline_paths(SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path)).pipeline_root)
 
 
+def test_prepare_in_vivo_anatomy_stack_stages_declared_canonical_input_to_explicit_root(tmp_path: Path) -> None:
+    from codeants_2pf_hcr.spatial_contract import CANONICAL_XY_FRAME, REGISTRATION_Z_FRAME
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
+        "parameter,value\nfish_orientation,bottom-left\n"
+    )
+    source = fish_dir / "01_raw" / "2p" / "anatomy" / f"{fish_dir.name}_anatomy_00001.tif"
+    _write_tiny_ex_vivo_tiff(source)
+    canonical = fish_dir / "02_reg" / "00_preprocessing" / "2p_anatomy" / f"{fish_dir.name}_anatomy_2P_GCaMP.nrrd"
+    first = run_prepare_in_vivo_anatomy_stack_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        anatomy_stack_path=source,
+        output_path=canonical,
+        force_recompute=True,
+    )
+    assert first.status == "pass"
+    spatial_manifest = fish_dir / "02_reg" / "00_preprocessing" / "spatial_preprocessing_manifest.json"
+    spatial_manifest.write_text(
+        json.dumps(
+            {
+                "stage": "canonical_spatial_preprocessing",
+                "status": "complete",
+                "coordinate_frames": {
+                    "canonical_functional_xy": CANONICAL_XY_FRAME,
+                    "canonical_anatomy_xy": CANONICAL_XY_FRAME,
+                    "canonical_anatomy_z": REGISTRATION_Z_FRAME,
+                },
+                "anatomy": {"output_path": str(canonical)},
+            }
+        )
+    )
+    staged = tmp_path / "working-root" / "prepare-in-vivo-anatomy-stack" / canonical.name
+
+    manifest = run_prepare_in_vivo_anatomy_stack_stage(
+        SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True),
+        output_path=staged,
+        force_recompute=True,
+    )
+
+    assert manifest.status == "pass"
+    assert staged.read_bytes() == canonical.read_bytes()
+    assert manifest.inputs[0].path == str(canonical.resolve())
+    assert any("byte-identical canonical anatomy" in line for line in manifest.parameters["log_lines"])
+
+
 def test_single_fish_pipeline_cli_prepare_in_vivo_outputs_manifest(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     (fish_dir / "01_raw" / "2p" / "metadata" / f"{fish_dir.name}_metadata.csv").write_text(
@@ -2929,6 +3044,42 @@ def test_status_includes_downstream_stage_summaries(tmp_path: Path) -> None:
     assert stage_summaries["export-canonical-tables"]["output_records"] == 8
 
 
+def test_downstream_status_rehydrates_exact_same_root_manifest_paths(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    _make_minimal_staged_outputs(fish_dir)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    paths = resolve_pipeline_paths(config)
+    manifest = build_single_fish_downstream_stage_manifest(config, "score-activity-bpi")
+    payload = manifest.to_dict()
+    exact_input = paths.pipeline_root / "exact-writer-input.csv"
+    exact_input.parent.mkdir(parents=True, exist_ok=True)
+    exact_input.write_text("value\n1\n")
+    payload["inputs"][0] = {
+        **payload["inputs"][0],
+        "path": str(exact_input),
+        "exists": True,
+        "kind": "file",
+        "size_bytes": exact_input.stat().st_size,
+        "mtime": exact_input.stat().st_mtime,
+    }
+    manifest_path = stage_manifest_path(paths, "score-activity-bpi")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+    current = build_single_fish_stage_status(config, "score-activity-bpi")
+
+    assert current["persisted_manifest"]["status"] == "current"
+    assert current["persisted_manifest"]["stale_records"] == ()
+
+    exact_input.write_text("value\nchanged\n")
+    stale = build_single_fish_stage_status(config, "score-activity-bpi")
+
+    assert stale["persisted_manifest"]["status"] == "stale"
+    assert stale["persisted_manifest"]["stale_records"] == (
+        f"inputs.{payload['inputs'][0]['label']}",
+    )
+
+
 def test_status_includes_upstream_stage_summaries_without_activating_legacy_outputs(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     status = build_single_fish_status(
@@ -2978,7 +3129,7 @@ def test_upstream_stage_status_warns_when_active_outputs_are_older_than_dependen
         stage for stage in status["upstream_stages"] if stage["stage_name"] == "register-functional-to-anatomy"
     )
 
-    assert manifest.status == "warn"
+    assert manifest.status == "warn", manifest.errors
     assert freshness_check.status == "warn"
     assert "newest_input=staged functional reference raw TIFFs" in str(freshness_check.observed)
     assert upstream_summary["status"] == "warn"
@@ -4485,6 +4636,40 @@ def test_assign_hcr_identity_writer_stages_baseline_identity_and_hcr_outputs(tmp
         "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed"
     )
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_outputs").exists()
+
+
+def test_assign_hcr_identity_writer_recomputes_when_legacy_hcr_controls_are_absent(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    output_root = tmp_path / "staged-output-root"
+    _write_staged_identity_geometry_dependencies(output_root, fish_dir.name)
+    _write_assign_hcr_replay_inputs_and_controls(fish_dir, output_root)
+    registration_dir = fish_dir / "03_analysis" / "functional" / "registration"
+    for filename in (
+        "hcr_activity_status.csv",
+        "hcr_activity_status_summary.csv",
+        "conf_to_func_pairs_raw.csv",
+        "conf_to_func_pairs.csv",
+        "hcr_func_candidates.csv",
+    ):
+        (registration_dir / filename).unlink()
+
+    activity_input = registration_dir / "functional_roi_activity_identity.csv"
+    manifest = run_single_fish_assign_hcr_identity_stage(
+        SingleFishPipelineConfig(
+            fish_id=fish_dir.name,
+            local_root=tmp_path,
+            pipeline_root=output_root,
+            strict=True,
+        ),
+        activity_input_path=activity_input,
+    )
+
+    assign_dir = output_root / "assign-hcr-identity" / "registration"
+    assert manifest.status == "warn", manifest.errors
+    assert manifest.parameters["activity_input_path"] == str(activity_input)
+    assert manifest.parameters["activity_input_is_explicit"] is True
+    assert len(tuple(assign_dir.glob("*.csv"))) == 7
+    assert (assign_dir / "hcr_activity_status.csv").stat().st_size > 0
 
 
 def test_assign_hcr_identity_writer_requires_staged_geometry_dependencies(tmp_path: Path) -> None:

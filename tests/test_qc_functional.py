@@ -297,6 +297,9 @@ def test_functional_registration_qc_loads_all_stage_evidence(tmp_path: Path) -> 
         artifact_names=["functional_anatomy_center_label_overlay_200px.png"],
     )
     assert len(figure.axes) == 1
+    assert figure._suptitle is None
+    assert figure.axes[0].get_title() == ""
+    assert figure.get_figheight() == pytest.approx(11.2)
     plt.close(figure)
 
 

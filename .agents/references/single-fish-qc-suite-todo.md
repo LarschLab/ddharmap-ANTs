@@ -15,6 +15,33 @@ sync any local assistant workspace changes to it only after inspecting diffs
 and preserving pre-existing remote work. Read data from
 `/Volumes/dataDrive/dataProcessing/2p_processing` there.
 
+## Active working root
+
+- The sole active L765_f04 pipeline/QC root is
+  `/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260915T093051Z_WORKING_PIPELINE_AND_QC/L765_f04`.
+- Keep this dated root unchanged as the notebook fixture until the complete
+  pipeline writer chain and all seven QC notebooks have been verified
+  operational. Do not rotate individual notebooks to newer partial roots.
+- Earlier dated roots are comparison/provenance sources only. Necessary
+  artifacts must be freshly written into the active root through their owning
+  stages; do not merge downstream folders from different runs or copy a
+  convenient late-stage file without its dependency chain.
+- All QC notebooks `00`–`06` point at this root. Stored notebook outputs are
+  cleared when the root changes so an old rendered path cannot masquerade as
+  current evidence.
+- The full fresh writer chain currently reaches canonical export and QA report,
+  and all seven QC notebooks execute without cell errors. Keep the root active:
+  `make-figures` is still blocked because L765_f04 has no
+  `motion_auc_plot_points.csv` or `motion_auc_plot_counts.csv`; do not fill that
+  gap with another fish's files.
+- The 2026-09-15 consolidation audit found that the fish-local spatial manifest
+  had backfilled legacy May individual-plane and motion-corrected products as
+  canonical XY even though all ten fresh references were exact left-right
+  mirrors of the reviewed references. Those entries now declare acquisition XY; the original
+  manifest is preserved under the active root's `source-provenance/` directory.
+  Functional references must record acquisition input -> canonical output and
+  reproduce the reviewed orientation before registration proceeds.
+
 ## Non-negotiable review principles
 
 - Reuse the scientific question, population, thresholds, categories, colours,
@@ -117,6 +144,17 @@ every stimulus/session average has four valid B1/B2 trials. Timing alignment is
 accepted for this selected scoring universe. This does not promote the
 response/BPI tables or accept downstream BPI/laterality interpretation.
 
+**Recovered in the single working root (2026-09-15):** the 8–9 September Q1
+implementation had been displaced when Notebook 02 was correctly restored to
+its functional-registration ownership. The package renderers and timing loader
+were still present, but no QC notebook called them. Notebook 01 now owns the
+persisted Q1 review as intended: `prepare-functional-reference-stacks
+--run-23c` writes the full-session matrix/row keys, B0/B1/B2-aware heatmap,
+stimulus-locked traces, per-cell stimulus summary, source table, and
+pre-identity response summary into the fixed active root; Notebook 01 joins
+that evidence to independently loaded raw logs and the same-root
+`scored_stimulus_windows.csv`. It never invokes the raw in-memory fallback.
+
 **Placement:** extend Notebook 01 because it already owns functional-reference,
 drift, and early-response evidence. This review must precede molecular geometry.
 
@@ -174,6 +212,32 @@ L395_f10 plane 2, where symmetry is worse. Keep both overlays in QC, default
 to symmetry for proposal, and retain manual correction/acceptance as the sole
 laterality gate.
 
+**L765_f04 visual review (2026-09-15):** the displayed native-functional
+fixed-consensus midline proposal was reviewed and accepted as suitable for the
+functional-plane QC view. This acceptance does not manufacture the distinct
+anatomy-grid, hash-bound sidecar required by Notebook 06; anatomy-space
+laterality and laterality-dependent AUC remain blocked until that coordinate-
+space provenance exists.
+
+### Q2.1 Functional/anatomy plane and label linkage — Notebook 02
+
+**Question:** Does Cell 11 show the anatomy intensity page used by functional
+registration together with the anatomically corresponding label page, so a
+visible mismatch diagnoses a backend mismatch rather than a plotting mistake?
+
+**Accepted resolution (2026-09-15):** the reviewed registration summaries
+defaulted label Z to direct indexing, while the independently inferred mapping
+for L765_f04 is reverse. The `make-functional-registration-qc` writer now uses
+the central anatomy-label Z resolver, persists both `anat_label_z_mode` and the
+explicit resolved `anat_label_z` for every plane, validates that provenance,
+and fails closed on an invalid mapping. Cell 11 remains a thin reader of this
+single persisted plane summary; it must not invert pages locally. The fresh
+active-root summary resolves all ten planes as reverse (`label_z = 51-best_z`),
+and the `3976x6845` real-data grid was visually reviewed: each fourth-column
+boundary overlay follows the same anatomical structures shown in the adjacent
+best-Z intensity column. The figure now functions as the intended backend
+orientation check.
+
 ### Q3. Functional/anatomy overlay colours — Notebook 03
 
 **Legacy source:** `[22e]`.
@@ -181,6 +245,12 @@ laterality gate.
 Change the current overlay to the legacy green/magenta pairing, preserving the
 same data and geometry. Verify boundaries remain distinguishable on both dark
 and bright anatomy regions.
+
+**Implemented and retained (2026-09-08; re-audited 2026-09-15):** anatomy-label
+boundaries are green (`#00A651`) and transformed functional-ROI boundaries are
+magenta (`#D81B60`) in the package-owned geometry placement views. The current
+Notebook 03 remains the accepted/frozen geometry review surface; this colour
+change does not alter labels, matches, or coordinate transforms.
 
 ### Q4. Cross-modality mask-size distributions — Notebook 04
 
@@ -205,6 +275,14 @@ low-confidence. Display the q05/q95 values and before/after counts. Do not apply
 those cut-offs along Z, and do not replace the bounding-box dimensions with
 area-equivalent or volume-equivalent diameters. Keep lateral and axial panels
 separate because point-spread and sampling differ strongly along Z.
+
+**Implemented (2026-09-08; display completed 2026-09-15):** Notebook 04 reads
+the persisted anatomy, transformed-functional, and retained-HCR label masks and
+computes the legacy bounding-box metrics without changing any mask. It applies
+modality-local XY q05 drops, retains q95-flagged observations, shows counts,
+medians, SDs, and units, and draws the q95 limits as red horizontal segments in
+both XY panels. Individual scatter points remain intentionally omitted from
+the violin plots after the 8 September review.
 
 ### Q5. HCR matching flow and placement — Notebook 04
 
@@ -253,6 +331,12 @@ reconstructible for those two labels. Do not fabricate historical assignments
 to force visual parity. Next session: visually review the Cell 12 L395 output;
 if exact historical tac3b parity is required, locate the historical status/q95
 writer inputs before changing the read-only QC classifier.
+
+**L765_f04 working-root update (2026-09-15):** the fresh identity/HCR writer
+now persists `hcr_activity_status.csv` (434 rows) plus its summary, raw-pair,
+responsive-pair, and candidate tables in the active root. Notebook 04 Cell 12
+executed from that writer-owned path without the previous FileNotFoundError or
+missing-status block.
 
 ### Q6. Molecular identity fate — Notebook 05
 
@@ -328,6 +412,15 @@ direct individual-stimulus views. BPI is a response ratio, not the first
 functional result. Clearly distinguish a directional response call (response
 pass plus BPI direction) from a finite raw BPI in a low-activity/no-response
 trace.
+
+**Implemented review surface (2026-09-08; active-root execution 2026-09-15):**
+Notebook 06 renders the ROI-centric response plane, BPI/activity diagnostics,
+activity-binned absolute BPI, response-class distributions, and population
+response/BPI summary from the persisted 3,553-row activity master (2,450 rows
+with finite response evidence). The global ipsilateral/contralateral AUC panel
+continues to fail closed because the distinct accepted anatomy-grid midline
+sidecar and L765_f04 motion-AUC point/count tables do not exist. This preserves
+the original Q7 work without falsely declaring the laterality branch complete.
 
 ### Q8. Deferred until identity and functional response are merged
 

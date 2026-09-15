@@ -132,7 +132,13 @@ def test_geometry_spatial_reviews_use_saved_anatomy_and_labels(tmp_path: Path) -
     _write_geometry(root)
     anatomy = np.arange(320, dtype=np.uint16).reshape(4, 8, 10)
     anatomy_path = tmp_path / "anatomy.tif"
-    tifffile.imwrite(anatomy_path, anatomy, photometric="minisblack")
+    tifffile.imwrite(
+        anatomy_path,
+        anatomy,
+        imagej=True,
+        metadata={"axes": "ZYX", "spacing": 2.0, "unit": "um"},
+        resolution=(2.0, 2.0),
+    )
     anatomy_labels = np.zeros((4, 8, 10), dtype=np.uint16)
     anatomy_labels[1, 2:5, 3:7] = 10
     anatomy_labels_path = tmp_path / "anatomy_labels.tif"
@@ -171,6 +177,8 @@ def test_geometry_spatial_reviews_use_saved_anatomy_and_labels(tmp_path: Path) -
     assert "anatomy Z=2, label Z=1" in overview.axes[0].get_title()
     detail = render_centroid_offset_detail(bundle, plane_idx=0)
     assert len(detail.axes) == 2
+    assert detail.axes[1].get_ylabel() == "Functional-to-anatomy centroid distance (µm)"
+    assert "physical XY remeasurement" in detail.axes[1].get_title()
     plt.close(overview)
     plt.close(detail)
 

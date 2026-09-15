@@ -1394,9 +1394,13 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
 
 
 def _load_same_pipeline_root_stage_manifest(paths: PipelinePaths, stage_name: str) -> dict[str, Any] | None:
-    if stage_name not in UPSTREAM_STAGE_NAMES:
+    if stage_name not in (*UPSTREAM_STAGE_NAMES, *POST_PREPROCESSING_STAGE_NAMES):
         return None
-    manifest_path = cellpose_stage_manifest_path(paths, stage_name)
+    manifest_path = (
+        cellpose_stage_manifest_path(paths, stage_name)
+        if stage_name in UPSTREAM_STAGE_NAMES
+        else stage_manifest_path(paths, stage_name)
+    )
     if not manifest_path.exists():
         return None
     try:
@@ -2498,7 +2502,16 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
                 )
             continue
         if not staged_path.exists() or not control_path.exists():
-            if (stage_name in UPSTREAM_STAGE_NAMES or stage_name == "score-activity-bpi") and staged_path.exists() and not control_path.exists():
+            if (
+                stage_name in UPSTREAM_STAGE_NAMES
+                or stage_name in {
+                    "assign-hcr-identity",
+                    "score-activity-bpi",
+                    "export-canonical-tables",
+                    "make-qa-report",
+                    "make-figures",
+                }
+            ) and staged_path.exists() and not control_path.exists():
                 if spec.parity == "nonempty_csv":
                     rows = _csv_row_count(staged_path)
                     staged_ok = rows is not None and rows > 0
@@ -2516,8 +2529,8 @@ def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tu
                     StageCheckRecord(
                         label=f"comparison control missing: {spec.label}",
                         status="warn" if staged_ok else "fail",
-                        detail="No accepted/control output exists for this upstream fish; parity cannot be evaluated, so staged output presence is checked instead.",
-                        expected="control optional for cross-fish upstream comparison; staged output present",
+                        detail="No accepted/control output exists for this fish and stage; parity cannot be evaluated, so staged output presence is checked instead.",
+                        expected="control optional for first complete staged chain; staged output present",
                         observed=f"control=False; staged={staged_observed}",
                     )
                 )
@@ -3259,6 +3272,7 @@ def _build_activity_detail_from_geometry(
     import pandas as pd
 
     from .activity import build_suite2p_response_seed_table
+    from .context import resolve_func_polarity
     from .suite2p import Suite2pStageConfig, load_suite2p_stage
 
     geometry = pd.read_csv(geometry_path)
@@ -3268,10 +3282,17 @@ def _build_activity_detail_from_geometry(
         raise RuntimeError(f"frozen geometry input missing columns: {', '.join(missing)}")
     if geometry.duplicated(list(required)).any():
         raise RuntimeError("frozen geometry input has duplicate (plane_idx, func_label) rows")
+    polarity, polarity_source = resolve_func_polarity(
+        fish_id,
+        paths.matching_metadata_csv,
+        fish_dir=paths.fish_dir,
+    )
     loaded = load_suite2p_stage(
         plane_refs=[],
         suite2p_root=paths.functional_suite2p_dir,
         fish_id=fish_id,
+        polarity=polarity,
+        polarity_source=polarity_source,
         config=Suite2pStageConfig(verbose=False),
     )
     seed, dff_map = build_suite2p_response_seed_table(loaded["suite2p_by_ref_idx"], fish_id=fish_id)
@@ -3441,6 +3462,17 @@ def _append_anatomy_identity_lookup_checks(
             expected=">0",
         )
     )
+    if not control_rows:
+        checks.append(
+            StageCheckRecord(
+                label="assign-hcr-identity anatomy identity lookup parity",
+                status="warn",
+                detail="No accepted anatomy identity lookup exists for comparison; the recomputed staged lookup remains usable.",
+                observed="comparison control unavailable",
+                expected="optional accepted control",
+            )
+        )
+        return
     recomputed_by_label = {str(row.get("anat_label")): str(row.get("identity_label")) for row in recomputed_rows}
     control_by_label = {str(row.get("anat_label")): str(row.get("identity_label")) for row in control_rows}
     mismatches = [
@@ -3476,6 +3508,17 @@ def _append_roi_identity_master_checks(
             expected=">0",
         )
     )
+    if not control_rows:
+        checks.append(
+            StageCheckRecord(
+                label="assign-hcr-identity ROI identity master parity",
+                status="warn",
+                detail="No accepted ROI identity master exists for comparison; the recomputed staged master remains usable.",
+                observed="comparison control unavailable",
+                expected="optional accepted control",
+            )
+        )
+        return
     key_columns = ("plane_idx", "func_label")
     identity_columns = ("selected_anat_label", "anat_label", "identity_label", "has_identity_assigned")
 
@@ -3593,6 +3636,7 @@ def run_single_fish_assign_hcr_identity_stage(
     config: SingleFishPipelineConfig,
     *,
     source_root: str | Path | None = None,
+    activity_input_path: str | Path | None = None,
     roi_anatomy_root: str | Path | None = None,
     hcr_anatomy_root: str | Path | None = None,
     force_recompute: bool = False,
@@ -3608,6 +3652,16 @@ def run_single_fish_assign_hcr_identity_stage(
     output_specs = _stage_output_specs(paths, "assign-hcr-identity")
     output_paths = tuple(Path(spec.path) for spec in output_specs)
     source_paths = {filename: input_root / filename for filename in ASSIGN_HCR_IDENTITY_CSVS}
+    staged_activity_path = (
+        _stage_root(paths, "score-activity-bpi") / "registration" / "functional_roi_activity_identity.csv"
+    )
+    response_activity_path = (
+        Path(activity_input_path)
+        if activity_input_path not in (None, "", False)
+        else staged_activity_path
+        if staged_activity_path.is_file()
+        else source_paths["functional_roi_activity_identity.csv"]
+    )
     inputs = (
         describe_manifest_path(roi_anatomy_root_path / "functional_roi_anatomy_matches.csv", label="staged ROI/anatomy geometry matches"),
         describe_manifest_path(plane_summary_path, label="geometry-resolved plane refs summary"),
@@ -3618,8 +3672,13 @@ def run_single_fish_assign_hcr_identity_stage(
         describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root for HCR activity replay"),
         describe_glob(paths.functional_suite2p_dir, "plane*/*F.npy", label="Suite2p F traces for HCR activity replay"),
         _optional_manifest_path(anat_labels_path, label="anatomy labels for HCR activity replay"),
+        describe_manifest_path(response_activity_path, label="response-aware ROI activity input"),
     ) + tuple(
-        describe_manifest_path(source_paths[filename], label=f"assign-hcr-identity source: {filename}")
+        _optional_manifest_path(
+            source_paths[filename],
+            label=f"assign-hcr-identity optional comparison control: {filename}",
+            required=False,
+        )
         for filename in ASSIGN_HCR_IDENTITY_CSVS
     )
     checks: list[StageCheckRecord] = []
@@ -3690,7 +3749,7 @@ def run_single_fish_assign_hcr_identity_stage(
         roi_identity_df = attach_identity_to_functional_roi_geometry_df(
             pd.read_csv(roi_anatomy_root_path / "functional_roi_anatomy_matches.csv"),
             lookup_df,
-            passthrough_df=pd.read_csv(source_paths["functional_roi_activity_identity.csv"]),
+            passthrough_df=pd.read_csv(response_activity_path),
             identity_none=FunctionalRoiIdentityConfig().identity_none,
         )
         roi_identity_path = output_by_name["functional_roi_activity_identity.csv"]
@@ -3732,6 +3791,11 @@ def run_single_fish_assign_hcr_identity_stage(
             polarity=polarity,
             polarity_source=_polarity_source,
             config=Suite2pStageConfig(verbose=False),
+        )
+        replay_orientation_callback = (
+            _apply_replay_func_orientation
+            if suite2p_result.get("input_xy_frame") == "two_photon_acquisition_xy"
+            else None
         )
         response_lookup = hcr_response_lookup_from_roi_master_df(
             roi_identity_df,
@@ -3828,6 +3892,8 @@ def run_single_fish_assign_hcr_identity_stage(
             "pipeline_root": str(paths.pipeline_root),
             "source_root": str(input_root),
             "source_root_is_explicit": source_root not in (None, "", False),
+            "activity_input_path": str(response_activity_path),
+            "activity_input_is_explicit": activity_input_path not in (None, "", False),
             "roi_anatomy_root": str(roi_anatomy_root_path),
             "roi_anatomy_root_is_explicit": roi_anatomy_root not in (None, "", False),
             "hcr_anatomy_root": str(hcr_anatomy_root_path),
@@ -3835,7 +3901,7 @@ def run_single_fish_assign_hcr_identity_stage(
             "plane_refs_summary_path": str(plane_summary_path),
             "anatomy_labels_path": str(anat_labels_path),
             "force_recompute": bool(force_recompute),
-            "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; HCR activity/status/candidate exports are recomputed by label-first HCR replay from staged HCR final pairs, Suite2p, anatomy labels, and staged functional/anatomy plane refs; source registration CSVs are comparison controls",
+            "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; response fields come from the explicit or same-root score-activity-bpi ROI table; HCR activity/status/candidate exports are recomputed by label-first HCR replay; source registration CSVs are optional comparison controls",
         },
         warnings=warnings,
         errors=errors,
@@ -4015,6 +4081,11 @@ def build_single_fish_hcr_activity_replay_manifest(
                 polarity=polarity,
                 polarity_source=polarity_source,
                 config=Suite2pStageConfig(verbose=False),
+            )
+            replay_orientation_callback = (
+                _apply_replay_func_orientation
+                if suite2p_result.get("input_xy_frame") == "two_photon_acquisition_xy"
+                else None
             )
             response_lookup = hcr_response_lookup_from_roi_master_df(
                 pd.read_csv(identity_path),
@@ -5777,10 +5848,11 @@ def build_single_fish_downstream_stage_manifest(
     if stage_name not in POST_PREPROCESSING_STAGE_NAMES:
         raise ValueError(
             f"unsupported downstream stage {stage_name!r}; expected one of {', '.join(POST_PREPROCESSING_STAGE_NAMES)}"
-        )
+    )
     paths = resolve_pipeline_paths(config)
     dependency_inputs = _stage_dependency_input_records(paths, stage_name)
-    inputs = (*_stage_input_records(paths, stage_name), *dependency_inputs)
+    persisted_inputs = _manifest_records_for_inventory(paths, stage_name, "inputs")
+    inputs = persisted_inputs or (*_stage_input_records(paths, stage_name), *dependency_inputs)
     outputs = _stage_output_records(paths, stage_name)
     checks = (
         *_build_downstream_stage_checks(paths, stage_name),
@@ -7098,6 +7170,19 @@ def run_prepare_in_vivo_anatomy_stack_stage(
             polarity_source=polarity_source,
             config=AnatomyUint8PreprocessingConfig(force_recompute_anat_uint8=force_recompute),
         )
+        if (
+            upstream_manifest is not None
+            and output_path not in (None, "", False)
+            and source_path.resolve() != out_path.resolve()
+        ):
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, out_path)
+            result = dict(result)
+            result["log_lines"] = tuple(result.get("log_lines", ())) + (
+                f"[INFO] Staged byte-identical canonical anatomy NRRD at explicit output: {out_path}",
+            )
+            result["artifacts"] = dict(result.get("artifacts", {}))
+            result["artifacts"]["staged_copy_source_path"] = str(source_path)
         artifacts = result.get("artifacts", {})
         output_shape = artifacts.get("output_shape")
         output_yx = tuple(output_shape[-2:]) if output_shape else None
@@ -7176,6 +7261,7 @@ def run_prepare_functional_reference_stacks_stage(
     output_dir: str | Path | None = None,
     force_recompute: bool = False,
     exclude_first_block: bool = True,
+    run_23c: bool = False,
 ) -> StageManifest:
     from .context import resolve_func_polarity
     from .spatial import FunctionalReferenceConfig, build_functional_references_stage
@@ -7204,12 +7290,63 @@ def run_prepare_functional_reference_stacks_stage(
                 exclude_first_block=exclude_first_block,
             ),
         )
+        functional_input_xy_frame = result.get("bindings", {}).get("FUNCTIONAL_INPUT_XY_FRAME")
+        functional_reference_xy_frame = result.get("bindings", {}).get("FUNCTIONAL_REFERENCE_XY_FRAME")
         plane_refs = tuple(result.get("plane_refs", ()))
         frame_selection_by_plane = {
             str(plane_ref.get("label", "")): dict(plane_ref["functional_reference_frame_selection"])
             for plane_ref in plane_refs
             if plane_ref.get("label") and isinstance(plane_ref.get("functional_reference_frame_selection"), dict)
         }
+        diagnostic_outputs: list[Path] = []
+        diagnostic_inputs: list[Path] = []
+        diagnostic_summary: dict[str, Any] = {}
+        if run_23c:
+            import pandas as pd
+
+            from .suite2p import (
+                Suite2pStageConfig,
+                Suite2pStimulusLockedDiagnosticConfig,
+                load_suite2p_stage,
+                run_suite2p_stimulus_locked_diagnostic_stage,
+            )
+
+            suite2p_result = load_suite2p_stage(
+                plane_refs=list(plane_refs),
+                suite2p_root=paths.functional_suite2p_dir,
+                fish_id=config.fish_id,
+                polarity=polarity,
+                polarity_source=polarity_source,
+                input_xy_frame=functional_input_xy_frame,
+                config=Suite2pStageConfig(verbose=False),
+            )
+            diagnostic = run_suite2p_stimulus_locked_diagnostic_stage(
+                fish_dir=paths.fish_dir,
+                fish_id=config.fish_id,
+                suite2p_by_ref_idx=suite2p_result["suite2p_by_ref_idx"],
+                out_qa=_stage_root(paths, "prepare-functional-reference-stacks") / "qa",
+                config=Suite2pStimulusLockedDiagnosticConfig(
+                    save_figures=True,
+                    show_figures=False,
+                    verbose=False,
+                ),
+            )
+            diagnostic_outputs = [Path(path) for path in diagnostic.get("out_paths", {}).values()]
+            diagnostic_inputs = [paths.functional_suite2p_dir]
+            source_df = diagnostic.get("source_df")
+            if isinstance(source_df, pd.DataFrame):
+                for column in ("log_path", "meta_path"):
+                    if column in source_df:
+                        diagnostic_inputs.extend(
+                            Path(str(value))
+                            for value in source_df[column].dropna().astype(str).unique()
+                            if str(value).strip()
+                        )
+            diagnostic_summary = {
+                "suite2p_plane_count": int(len(suite2p_result["suite2p_by_ref_idx"])),
+                "trace_summary_row_count": int(len(diagnostic.get("trace_df", ()))),
+                "heatmap_row_count": int(len(diagnostic.get("full_session_heatmap_rows", ()))),
+            }
         raw_outputs: list[Path] = []
         norm_outputs: list[Path] = []
         for plane_ref in plane_refs:
@@ -7242,6 +7379,18 @@ def run_prepare_functional_reference_stacks_stage(
                 observed=str(sum(1 for path in norm_outputs if path.exists())),
                 expected=str(len(norm_outputs)),
             ),
+        ) + (
+            (
+                StageCheckRecord(
+                    label="early Suite2p response QC outputs",
+                    status="pass" if diagnostic_outputs and all(path.exists() for path in diagnostic_outputs) else "fail",
+                    detail="the requested [23c] trace, heatmap, source, summary, and response evidence is persisted",
+                    observed=str(sum(1 for path in diagnostic_outputs if path.exists())),
+                    expected=str(len(diagnostic_outputs)),
+                ),
+            )
+            if run_23c
+            else ()
         )
         status = "pass"
         errors: tuple[str, ...] = ()
@@ -7255,8 +7404,13 @@ def run_prepare_functional_reference_stacks_stage(
         norm_outputs = []
         result = {"log_lines": []}
         frame_selection_by_plane = {}
+        diagnostic_outputs = []
+        diagnostic_inputs = []
+        diagnostic_summary = {}
         polarity = None
         polarity_source = None
+        functional_input_xy_frame = None
+        functional_reference_xy_frame = None
         status = "fail"
         errors = (str(exc),)
         warnings = ()
@@ -7267,6 +7421,9 @@ def run_prepare_functional_reference_stacks_stage(
     ) + tuple(
         describe_manifest_path(path, label="functional reference normalized TIFF")
         for path in norm_outputs
+    ) + tuple(
+        describe_manifest_path(path, label="early Suite2p response QC artifact")
+        for path in diagnostic_outputs
     )
     metadata_inputs = tuple(
         describe_manifest_path(path, label="functional preprocessing metadata")
@@ -7286,7 +7443,11 @@ def run_prepare_functional_reference_stacks_stage(
         dry_run=False,
         generated_at=datetime.now(timezone.utc).isoformat(),
         inputs=tuple(describe_manifest_path(path, label="motion-corrected functional stack") for path in source_paths)
-        + metadata_inputs,
+        + metadata_inputs
+        + tuple(
+            describe_manifest_path(path, label="early Suite2p response QC source")
+            for path in dict.fromkeys(diagnostic_inputs)
+        ),
         outputs=outputs,
         checks=checks,
         parameters={
@@ -7294,11 +7455,15 @@ def run_prepare_functional_reference_stacks_stage(
             "pipeline_root": str(paths.pipeline_root),
             "force_recompute": bool(force_recompute),
             "exclude_first_block": bool(exclude_first_block),
+            "run_23c": bool(run_23c),
             "output_dir": str(out_dir),
             "polarity": polarity,
             "polarity_source": polarity_source,
+            "functional_input_xy_frame": functional_input_xy_frame,
+            "functional_reference_xy_frame": functional_reference_xy_frame,
             "log_lines": tuple(result.get("log_lines", ())),
             "frame_selection_by_plane": frame_selection_by_plane,
+            "early_response_qc": diagnostic_summary,
         },
         warnings=warnings,
         errors=errors,
@@ -7990,6 +8155,11 @@ def run_make_functional_registration_qc_stage(
     import matplotlib.pyplot as plt
 
     from .context import infer_anat_labels_path
+    from .matching import (
+        infer_anatomy_label_z_mode,
+        resolve_anatomy_label_z,
+        validate_anatomy_label_z_provenance,
+    )
     from .plots.qa import (
         render_functional_anatomy_center_overlay_qc_png,
         render_functional_anatomy_intensity_overlay_qc_png,
@@ -8000,6 +8170,7 @@ def run_make_functional_registration_qc_stage(
         build_automatic_native_functional_midline_qc,
         render_automatic_native_functional_midline_qc,
     )
+    from .spatial import imread_any
     from .stimulus import discover_functional_sessions
 
     paths = resolve_pipeline_paths(config)
@@ -8053,10 +8224,43 @@ def run_make_functional_registration_qc_stage(
         plane_rows = json.loads(summary_path.read_text())
         if not isinstance(plane_rows, list) or not plane_rows:
             raise RuntimeError(f"Plane refs summary has no records: {summary_path}")
-        if z_mode != "auto":
-            for row in plane_rows:
-                if isinstance(row, dict):
-                    row["anat_label_z_mode"] = z_mode
+        anatomy_stack = imread_any(anatomy_path)
+        anatomy_labels = imread_any(anat_labels_path)
+        declared_label_z_modes = tuple(
+            sorted(
+                {
+                    str(row.get("anat_label_z_mode")).strip().lower()
+                    for row in plane_rows
+                    if isinstance(row, dict) and row.get("anat_label_z_mode") not in (None, "", False)
+                }
+            )
+        )
+        label_z_scores: dict[str, float] = {}
+        if z_mode == "auto":
+            resolved_label_z_mode, label_z_scores = infer_anatomy_label_z_mode(
+                anatomy_stack,
+                anatomy_labels,
+                plane_rows,
+            )
+        else:
+            resolved_label_z_mode = z_mode
+        for row in plane_rows:
+            if not isinstance(row, dict):
+                raise ValueError("Registered plane-reference records must be objects")
+            row["anat_label_z_mode"] = resolved_label_z_mode
+            row["anat_label_z"] = resolve_anatomy_label_z(
+                row,
+                int(anatomy_labels.shape[0]),
+            )
+        label_z_provenance_errors = validate_anatomy_label_z_provenance(
+            plane_rows,
+            int(anatomy_labels.shape[0]),
+        )
+        if label_z_provenance_errors:
+            raise ValueError(
+                "Invalid anatomy-label Z provenance for registration QC: "
+                + "; ".join(label_z_provenance_errors)
+            )
         adjusted_summary_path.parent.mkdir(parents=True, exist_ok=True)
         adjusted_summary_path.write_text(json.dumps(plane_rows, indent=2, sort_keys=True))
         native_dir = transform_root / "functional" / "native"
@@ -8152,6 +8356,13 @@ def run_make_functional_registration_qc_stage(
                 observed=str(existing_count),
                 expected=str(len(expected_pngs)),
             ),
+            StageCheckRecord(
+                label="anatomy intensity-to-label Z provenance",
+                status="pass",
+                detail="every QC row uses the central persisted direct/reverse anatomy-label Z mapping",
+                observed=str(resolved_label_z_mode),
+                expected="direct or reverse",
+            ),
         )
         outputs = tuple(
             [describe_manifest_path(adjusted_summary_path, label="QC plane refs summary")]
@@ -8183,6 +8394,10 @@ def run_make_functional_registration_qc_stage(
             "pipeline_root": str(paths.pipeline_root),
             "output_root": str(stage_root),
             "anatomy_label_z_mode": str(anatomy_label_z_mode),
+            "anatomy_label_z_mode_requested": str(anatomy_label_z_mode),
+            "anatomy_label_z_mode_resolved": resolved_label_z_mode if "resolved_label_z_mode" in locals() else None,
+            "anatomy_label_z_mode_declared": declared_label_z_modes if "declared_label_z_modes" in locals() else (),
+            "anatomy_label_z_mode_scores": label_z_scores if "label_z_scores" in locals() else {},
             "force_recompute": bool(force_recompute),
         },
         warnings=warnings,
@@ -9019,6 +9234,11 @@ def run_match_roi_to_anatomy_stage(
                 polarity=polarity,
                 polarity_source=polarity_source,
                 config=Suite2pStageConfig(verbose=False),
+            )
+            match_orientation_callback = (
+                _apply_match_func_orientation
+                if suite2p_result.get("input_xy_frame") == "two_photon_acquisition_xy"
+                else None
             )
             anat_labels = imread_any(anat_labels_path)
             requested_label_z_mode = str(anatomy_label_z_mode or "auto").strip().lower()

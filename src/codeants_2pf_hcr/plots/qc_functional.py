@@ -837,15 +837,24 @@ def render_functional_registration_artifacts(
         raise KeyError(f"Unknown registration QC artifacts: {unknown}")
     if not names:
         raise ValueError("At least one registration QC artifact must be selected")
-    fig, axes = plt.subplots(len(names), 1, figsize=(14.0, 6.0 * len(names)), squeeze=False, constrained_layout=True)
+    single_artifact = len(names) == 1
+    images = {name: mpimg.imread(pngs[name]) for name in names}
+    empty = [name for name, image in images.items() if image.size == 0]
+    if empty:
+        raise ValueError(f"Registration QC image is empty: {pngs[empty[0]]}")
+    if single_artifact:
+        image = images[names[0]]
+        figsize = (14.0, max(4.0, 14.0 * image.shape[0] / image.shape[1]))
+    else:
+        figsize = (14.0, 6.0 * len(names))
+    fig, axes = plt.subplots(len(names), 1, figsize=figsize, squeeze=False, constrained_layout=True)
     for ax, name in zip(axes[:, 0], names):
-        image = mpimg.imread(pngs[name])
-        if image.size == 0:
-            raise ValueError(f"Registration QC image is empty: {pngs[name]}")
-        ax.imshow(image)
-        ax.set_title(name.replace("_", " ").removesuffix(".png"))
+        ax.imshow(images[name])
+        if not single_artifact:
+            ax.set_title(name.replace("_", " ").removesuffix(".png"))
         ax.axis("off")
-    fig.suptitle(f"{bundle['fish_id']}: persisted functional-registration evidence", fontsize=13, fontweight="bold")
+    if not single_artifact:
+        fig.suptitle(f"{bundle['fish_id']}: persisted functional-registration evidence", fontsize=13, fontweight="bold")
     return fig
 
 

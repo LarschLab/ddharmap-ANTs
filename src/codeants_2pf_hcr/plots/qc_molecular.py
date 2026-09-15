@@ -684,7 +684,15 @@ def build_cross_modality_mask_size_table(
     return table
 
 
-def _plot_size_distribution(ax: plt.Axes, table: pd.DataFrame, value_col: str, title: str, ylabel: str) -> None:
+def _plot_size_distribution(
+    ax: plt.Axes,
+    table: pd.DataFrame,
+    value_col: str,
+    title: str,
+    ylabel: str,
+    *,
+    show_xy_q95: bool = False,
+) -> None:
     modalities = [name for name in ("anatomy", "functional", "hcr") if name in set(table["modality"])]
     data = [table.loc[(table["modality"] == name) & table["included_in_distribution"], value_col].to_numpy(dtype=float) for name in modalities]
     violin = ax.violinplot(data, positions=np.arange(1, len(modalities) + 1), showextrema=False, showmedians=True)
@@ -700,6 +708,8 @@ def _plot_size_distribution(ax: plt.Axes, table: pd.DataFrame, value_col: str, t
         mean, sd = (np.mean(kept_values), np.std(kept_values, ddof=1)) if len(kept_values) > 1 else ((kept_values[0], 0.0) if len(kept_values) else (np.nan, np.nan))
         median = float(np.median(kept_values)) if len(kept_values) else np.nan
         ax.text(idx, 0.01, f"n={kept}/{total}\nmed={median:.2g}; SD={sd:.2g}\nXY q05={q05:.2g}, q95={q95:.2g}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
+        if show_xy_q95:
+            ax.hlines(q95, idx - 0.34, idx + 0.34, color="#d62728", linewidth=1.8, zorder=5)
     ax.set_title(title)
     ax.set_ylabel(ylabel)
     ax.grid(axis="y", alpha=0.22)
@@ -707,8 +717,10 @@ def _plot_size_distribution(ax: plt.Axes, table: pd.DataFrame, value_col: str, t
     if len(plotted):
         span = max(float(np.ptp(plotted)), max(float(np.max(plotted)), 1.0) * 0.1)
         ax.set_ylim(float(np.min(plotted)) - 0.34 * span, float(np.max(plotted)) + 0.12 * span)
+    if show_xy_q95:
+        ax.plot([], [], color="#d62728", linewidth=1.8, label="Modality XY q95")
     if ax.get_legend_handles_labels()[0]:
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=8, frameon=False)
 
 
 def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) -> plt.Figure:
@@ -719,7 +731,7 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
         raise ValueError(f"Size table lacks required columns: {missing}")
     _validate_fish(fish_id)
     fig, axes = plt.subplots(2, 2, figsize=(12, 8.5), constrained_layout=True)
-    _plot_size_distribution(axes[0, 0], size_table, "xy_um", "All masks: XY bounding-box size", "Mean X/Y extent (µm)")
+    _plot_size_distribution(axes[0, 0], size_table, "xy_um", "All masks: XY bounding-box size", "Mean X/Y extent (µm)", show_xy_q95=True)
     _plot_size_distribution(axes[0, 1], size_table, "z_um", "All masks: Z bounding-box size", "Z extent (µm)")
     hcr = size_table.loc[(size_table["modality"] == "hcr") & size_table["included_in_distribution"]].copy()
     hcr["hcr_group"] = hcr[["round", "gene"]].fillna("unknown").astype(str).agg(" · ".join, axis=1)
@@ -742,6 +754,9 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
             median = float(np.median(group_values)) if len(group_values) else np.nan
             sd = float(np.std(group_values, ddof=1)) if len(group_values) > 1 else 0.0
             ax.text(idx, 0.01, f"n={len(group_values)}\nmed={median:.2g}; SD={sd:.2g}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
+            if value_col == "xy_um":
+                q95 = float(hcr.loc[hcr["hcr_group"] == group, "xy_q95_um"].iloc[0])
+                ax.hlines(q95, idx - 0.34, idx + 0.34, color="#d62728", linewidth=1.8, zorder=5)
         ax.set_title(title)
         ax.set_ylabel(ylabel)
         ax.tick_params(axis="x", rotation=25)
@@ -749,7 +764,10 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
         plotted = hcr[value_col].to_numpy(dtype=float)
         span = max(float(np.ptp(plotted)), max(float(np.max(plotted)), 1.0) * 0.1)
         ax.set_ylim(float(np.min(plotted)) - 0.34 * span, float(np.max(plotted)) + 0.12 * span)
-    fig.suptitle(f"{fish_id} cross-modality mask bounding boxes · Q05 XY drops excluded; Q95 limits annotated")
+        if value_col == "xy_um":
+            ax.plot([], [], color="#d62728", linewidth=1.8, label="HCR XY q95")
+            ax.legend(fontsize=8, frameon=False)
+    fig.suptitle(f"{fish_id} cross-modality mask bounding boxes · Q05 XY drops excluded; Q95 shown in red")
     return fig
 
 

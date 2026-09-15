@@ -20,7 +20,7 @@ import pandas as pd
 import tifffile
 
 from ..matching import resolve_anatomy_label_z
-from ..spatial import imread_any, norm01
+from ..spatial import imread_any, load_or_cache_voxels, norm01
 
 
 REQUIRED_GEOMETRY_COLUMNS = (
@@ -450,11 +450,9 @@ def _anatomy_radius_reference_um(bundle: GeometryReviewBundle) -> float | None:
         return None
     values = matches.loc[:, columns].apply(pd.to_numeric, errors="coerce").dropna()
     try:
-        import SimpleITK as sitk
-
-        spacing_x, spacing_y, _ = sitk.ReadImage(str(bundle.anatomy_stack_path)).GetSpacing()
-        pixel_area_um2 = float(spacing_x) * float(spacing_y)
-    except Exception:
+        spacing_x_um, spacing_y_um = _anatomy_xy_spacing_um(bundle)
+        pixel_area_um2 = spacing_x_um * spacing_y_um
+    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
         return None
     if "selected_anat_label" not in matches:
         return None
@@ -467,6 +465,19 @@ def _anatomy_radius_reference_um(bundle: GeometryReviewBundle) -> float | None:
             if 0 < label < len(areas) and areas[label] > 0:
                 radii_um.append(float(np.sqrt(areas[label] * pixel_area_um2 / np.pi)))
     return float(np.median(radii_um)) if radii_um else None
+
+
+def _anatomy_xy_spacing_um(bundle: GeometryReviewBundle) -> tuple[float, float]:
+    """Read physical anatomy XY spacing, including legacy TIFF fallback."""
+    if bundle.anatomy_stack_path is None:
+        raise ValueError("Physical centroid-offset review requires the prepared anatomy stack")
+    voxels = load_or_cache_voxels(bundle.anatomy_stack_path)
+    if "X" in voxels and "Y" in voxels:
+        return float(voxels["X"]), float(voxels["Y"])
+    import SimpleITK as sitk
+
+    spacing_x_um, spacing_y_um, _ = sitk.ReadImage(str(bundle.anatomy_stack_path)).GetSpacing()
+    return float(spacing_x_um), float(spacing_y_um)
 
 
 def render_centroid_offset_detail(bundle: GeometryReviewBundle, *, plane_idx: int) -> plt.Figure:
@@ -505,12 +516,17 @@ def render_centroid_offset_detail(bundle: GeometryReviewBundle, *, plane_idx: in
         loc="lower right", frameon=True, fontsize=8,
     )
 
+    spacing_x_um, spacing_y_um = _anatomy_xy_spacing_um(bundle)
+    matches["physical_xy_offset_um"] = np.hypot(
+        (pd.to_numeric(matches["centroid_x_func_anat"], errors="coerce") - pd.to_numeric(matches["centroid_x_anat"], errors="coerce")) * spacing_x_um,
+        (pd.to_numeric(matches["centroid_y_func_anat"], errors="coerce") - pd.to_numeric(matches["centroid_y_anat"], errors="coerce")) * spacing_y_um,
+    )
     planes = sorted(matches["plane_idx"].dropna().astype(int).unique())
     distributions: list[np.ndarray] = []
     positions: list[int] = []
     missing_positions: list[int] = []
     for position, plane in enumerate(planes):
-        values = pd.to_numeric(matches.loc[matched & matches["plane_idx"].eq(plane), "selected_dist_um"], errors="coerce").dropna().to_numpy()
+        values = pd.to_numeric(matches.loc[matched & matches["plane_idx"].eq(plane), "physical_xy_offset_um"], errors="coerce").dropna().to_numpy()
         if len(values) >= 2:
             distributions.append(values)
             positions.append(position)
@@ -530,8 +546,14 @@ def render_centroid_offset_detail(bundle: GeometryReviewBundle, *, plane_idx: in
         violin_ax.axhline(radius, color="#D55E00", linestyle="--", linewidth=1.5, label=f"Median anatomy-label radius ({radius:.2f} µm)")
     violin_ax.set_xticks(np.arange(len(planes)), [str(plane) for plane in planes])
     violin_ax.set_xlabel("Functional plane")
-    violin_ax.set_ylabel("Stored selected_dist_um (unit pending Q0.1 audit)")
-    violin_ax.set_title("All-plane stored-distance distribution; selected plane highlighted", fontsize=10)
+    refs = json.loads(bundle.plane_refs_path.read_text()) if bundle.plane_refs_path is not None else []
+    transform_sources = sorted({str(row.get("tform_src", "unknown")) for row in refs if isinstance(row, dict)})
+    source_label = ", ".join(transform_sources) if transform_sources else "unrecorded transform"
+    violin_ax.set_ylabel("Functional-to-anatomy centroid distance (µm)")
+    violin_ax.set_title(
+        f"Frozen {source_label} geometry; physical XY remeasurement\nselected plane highlighted",
+        fontsize=10,
+    )
     violin_ax.grid(axis="y", alpha=0.2)
     if radius is not None:
         violin_ax.legend(frameon=False, fontsize=8)

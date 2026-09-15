@@ -46,6 +46,30 @@ def test_canonical_functional_reference_is_not_flipped_again(tmp_path: Path) -> 
     assert result["bindings"]["FUNCTIONAL_INPUT_XY_FRAME"] == "codeants_2p_canonical_xy_v1"
 
 
+def test_manifest_declared_acquisition_frame_is_oriented_once(tmp_path: Path) -> None:
+    fish = tmp_path / "L000_f00"
+    source = fish / "02_reg" / "00_preprocessing" / "2p_functional" / "02_motionCorrected" / "L000_f00_plane0.tif"
+    source.parent.mkdir(parents=True)
+    movie = np.asarray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], dtype=np.uint16)
+    tifffile.imwrite(source, movie, photometric="minisblack")
+    anatomy = fish / "02_reg" / "00_preprocessing" / "2p_anatomy" / "L000_f00_anatomy_2P_GCaMP.nrrd"
+    manifest_path = _manifest(fish, source, anatomy)
+    payload = json.loads(manifest_path.read_text())
+    payload["functional_planes"][0]["output_xy_frame"] = "two_photon_acquisition_xy"
+    manifest_path.write_text(json.dumps(payload))
+
+    result = build_functional_references_stage(
+        flipped_list=[],
+        func_nonflipped_list=[source],
+        out_raw=tmp_path / "refs",
+        polarity="south",
+        config=FunctionalReferenceConfig(use_top_corr_refs=False, reuse_saved_refs=False),
+    )
+
+    np.testing.assert_array_equal(result["ref2d_raw"], np.flip(movie.mean(axis=0), axis=-1))
+    assert result["bindings"]["FUNCTIONAL_INPUT_XY_FRAME"] == "two_photon_acquisition_xy"
+
+
 def test_canonical_anatomy_is_passed_through_without_rewrite(tmp_path: Path) -> None:
     import SimpleITK as sitk
 

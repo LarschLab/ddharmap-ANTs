@@ -127,6 +127,48 @@ class Suite2pStageTests(unittest.TestCase):
             self.assertEqual(int(labels[1, 3]), 0)
             self.assertEqual(result["input_xy_frame"], "codeants_2p_canonical_xy_v1")
 
+    def test_manifest_declared_acquisition_suite2p_input_is_oriented_once(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish = Path(tmpdir) / "L000_f00"
+            root = fish / "03_analysis" / "functional" / "suite2P" / "plane0"
+            self._write_minimal_suite2p_plane(root)
+            source_plane = fish / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes" / "L000_f00_plane0.tif"
+            source_plane.parent.mkdir(parents=True)
+            source_plane.touch()
+            ops = np.load(root / "ops.npy", allow_pickle=True).item()
+            ops["tiff_list"] = [str(source_plane)]
+            np.save(root / "ops.npy", ops, allow_pickle=True)
+            manifest = fish / "02_reg" / "00_preprocessing" / "spatial_preprocessing_manifest.json"
+            manifest.write_text(json.dumps({
+                "stage": "canonical_spatial_preprocessing",
+                "status": "complete",
+                "polarity": {"value": "south"},
+                "coordinate_frames": {
+                    "canonical_functional_xy": "codeants_2p_canonical_xy_v1",
+                    "canonical_anatomy_xy": "codeants_2p_canonical_xy_v1",
+                    "canonical_anatomy_z": "codeants_confocal_registration_z_v1",
+                },
+                "functional_planes": [{
+                    "output_path": str(source_plane),
+                    "output_xy_frame": "two_photon_acquisition_xy",
+                }],
+                "anatomy": {},
+            }))
+
+            result = load_suite2p_stage(
+                plane_refs=[{"label": "fish_plane0", "index": 0}],
+                suite2p_root=root.parent,
+                fish_id="L000_f00",
+                polarity="south",
+                polarity_source="manifest",
+                config=Suite2pStageConfig(verbose=False),
+            )
+
+            labels = result["func_labels"][0]
+            self.assertEqual(int(labels[1, 3]), 1)
+            self.assertEqual(int(labels[1, 1]), 0)
+            self.assertEqual(result["input_xy_frame"], "two_photon_acquisition_xy")
+
     def test_canonical_manifest_rejects_stale_suite2p_input_provenance(self) -> None:
         with TemporaryDirectory() as tmpdir:
             fish = Path(tmpdir) / "L000_f00"

@@ -3898,3 +3898,99 @@
   - none in this cleanup slice; notebook cell-ID normalization remains a future compatibility task because nbformat currently emits warnings.
 - Validation:
   - focused agent-document, notebook-contract, and scientific-artifact contract tests pass on Linnaeus with bytecode and pytest caches disabled.
+
+### 2026-09-15 - apply reviewed QC notebook corrections on L765_f04
+
+- Notebook 02 single-artifact displays now preserve the persisted PNG aspect
+  ratio and omit wrapper titles, leaving one readable title layer instead of
+  shrinking the tall registration grid inside nested figure titles.
+- Notebook 03 Cell 08 was confirmed to consume `ants_rigid_affine` geometry on
+  all ten planes. Its apparent legacy/NCC-like distance scale came from plotting
+  the historically misnamed, pixel-valued `selected_dist_um`; the violin now
+  remeasures the same frozen centroid pairs with the anatomy NRRD XY spacing
+  and labels the ANTs transform provenance explicitly. For 3,419 unique pairs,
+  the overall median changes from 2.806 stored pixels to 1.339 µm at
+  0.477123 µm/px without rematching.
+- Notebook 04 Cell 06 now draws red modality-local q95 segments in both XY
+  panels while retaining the existing numeric annotations. Cell 12 checks the
+  staged writer-owned HCR status path before the legacy fish-local path and
+  reports a blocked review state when neither exists. No
+  `hcr_activity_status.csv` is currently persisted for L765_f04, so the
+  notebook does not reconstruct or fabricate that stage output.
+- The previously implemented Q7 six-panel response/BPI gate remains present
+  and renders from 3,553 ROI rows (2,450 finite rows). The reviewed
+  native-functional fixed-consensus midline proposal is recorded as accepted
+  for that QC coordinate space; anatomy-space laterality remains blocked until
+  its distinct hash-bound sidecar exists.
+- Focused local and Linnaeus tests pass (41/41). Real-data renders were visually
+  inspected under `/tmp/codeants-qc-improvements.UFR94P/` on Linnaeus; all four
+  artifacts passed dimension, nonblank, and relevant red-line colour checks.
+
+### 2026-09-15 - consolidate L765_f04 into one working pipeline/QC root
+
+- Established the sole active root
+  `/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260915T093051Z_WORKING_PIPELINE_AND_QC/L765_f04`,
+  added its `WORKING_ROOT.md` marker, preserved the pre-audit spatial manifest
+  under `source-provenance/`, repointed QC notebooks `00`-`06`, and cleared all
+  stored notebook outputs. The root remains fixed until the pipeline and QC
+  suite are fully operational; older roots are provenance/control inputs only.
+- A fresh reference/registration audit found all ten initial references were
+  exact left-right mirrors of the reviewed references and reduced NCC to
+  `0.059-0.222`. L765_f04's May individual-plane and motion-corrected products
+  predate the canonical contract but had been backfilled as canonical. Their
+  per-product manifest frames now correctly declare acquisition XY; package
+  consumers resolve each declared output frame and orient it exactly once.
+  Fresh deterministic ANTs registration then restored the accepted best-Z
+  sequence and NCC range (`0.621-0.739`).
+- `make-functional-registration-qc` now centrally infers, resolves, persists,
+  and validates anatomy-label Z pages. The active-root summary resolves all ten
+  L765_f04 planes as reverse (`label_z = 51-best_z`). The `3976x6845` plane grid
+  passed visual review: fourth-column boundaries correspond to the adjacent
+  anatomy intensity structures, and Notebook 02 applies no local inversion.
+- Fresh writer outputs now include 3,553 ROI geometry/activity rows and 434 HCR
+  activity-status rows. Missing legacy identity/HCR controls are comparison
+  warnings rather than first-generation prerequisites; activity passthrough is
+  explicit or same-root. Canonical export and the Markdown/HTML/PDF/JSON QA
+  report completed. All seven QC notebooks executed on Linnaeus with zero cell
+  errors; Notebook 04 Cell 12 reads the newly persisted HCR status successfully.
+- `make-figures` remains correctly blocked because L765_f04 has never had
+  `motion_auc_plot_points.csv` or `motion_auc_plot_counts.csv`. No L395 artifact
+  was copied to hide that gap. This is the remaining full-pipeline blocker and
+  does not invalidate the successful QC-notebook execution.
+
+### 2026-09-15 - recover the 8-9 September Q1 notebook work
+
+- Audited the 2026-09-08 and 2026-09-09 daily evidence plus commits `a8655da`,
+  `c243c5d`, and `d743914`. The Q1 timing/trace/heatmap implementation remained
+  package-owned, but its temporary Notebook 02 orchestration was intentionally
+  removed when Notebook 02's functional-registration gate was restored; the
+  promised Notebook 01 replacement was absent.
+- Restored the Q1 review in Notebook 01 while preserving Notebook 02 as the
+  registration-only gate. Notebook 01 reads stage-owned `[23c]` outputs,
+  independently reloads raw-log events, compares them with the same-root
+  `scored_stimulus_windows.csv`, and displays the accepted B0-versus-B1/B2
+  selection, stimulus-locked traces, and all-cell mean dF/F evidence.
+- Added `prepare-functional-reference-stacks --run-23c` so the fixed working
+  root receives fresh trace, heatmap, source, summary, response, and heatmap
+  matrix/row artifacts through an owning writer and records them in its
+  manifest. The notebook does not use the historical raw in-memory fallback.
+- Added an executable scientific-artifact contract for the early Suite2p
+  heatmap/trace review: all Suite2p-classified cells, B0 visible but excluded
+  from averages, B1/B2 presented trials only, independent raw-log and score
+  paths, and fixed Notebook 01 ownership.
+- Reconciled the work register to retain the other completed 8 September
+  surfaces: Notebook 03 green/magenta geometry overlays, Notebook 04 legacy
+  mask-size violins and two-ring HCR audit, and Notebook 06's laterality-safe
+  Q7 response/BPI gate.
+- Focused local validation passed 158 tests. Linnaeus lacks `pytest`; remote
+  package/CLI compilation passed, the real-data writer completed with a passing
+  30-output manifest, and Notebook 01 executed end-to-end with zero cell errors
+  in the installed `python3`/cellMatching kernel. The fresh heatmap and trace
+  PNGs passed dimension/nonblank checks and visual inspection under
+  `/private/tmp/codeants-q1-recovery-20260915/`.
+  The contract/notebook/timing checks add a further 6 passing focused tests.
+- Closed a downstream status-audit mismatch exposed by the fresh root rerun.
+  Status now rehydrates exact input/output paths from same-root downstream
+  writer manifests and recomputes their signatures, so freshly written stages
+  are not falsely labelled stale while a later file change still is. The
+  expanded focused suite passes 163 tests.
