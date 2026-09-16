@@ -27,10 +27,12 @@ def classify_stim_type(stype: str) -> str | None:
         return None
     tags: list[str] = []
     for part in parts:
-        token = re.split(r"[_\s]", part, maxsplit=1)[0]
-        if token.endswith("LB"):
+        normalized = re.sub(r"_TRAJECTORY$", "", part)
+        if normalized.startswith("WFC"):
+            tags.append("C")
+        elif normalized.endswith("B"):
             tags.append("B")
-        elif token.endswith("LC"):
+        elif normalized.endswith("C"):
             tags.append("C")
         else:
             return None

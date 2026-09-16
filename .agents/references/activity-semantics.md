@@ -27,6 +27,13 @@ uses the planned schedule to locate complete acquisition blocks when available.
 `scored_stimulus_windows.csv` records the resulting full-trace coordinates and
 is the timing authority for response/BPI figures.
 
+The scorer includes the complete presented pure-condition vocabulary. For the
+L765 protocol, `LAB`, `RAB`, `LB`, `RB`, `Ll_RB`, and `Rl_RB` trajectories are
+bout conditions; `LC`, `RC`, `WFCl`, and `WFCo` are continuous conditions.
+No condition may be dropped merely because its code does not end in `LB` or
+`LC`. Combined codes are classified as mixed when their components span both
+modes and remain outside the pure-mode BPI pools.
+
 ### Stage 1: response-state classification
 
 - **Responsive**: passes AUC null-threshold test in bout and/or continuous condition.

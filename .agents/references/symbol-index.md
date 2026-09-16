@@ -293,7 +293,7 @@ Generated manually for the current extracted package surface.
 - `load_metadata_params`: Read metadata key-value pairs.
 - `parse_float`: Robust numeric parser for mixed metadata values.
 - `resolve_presented_stimulus_metadata`: Resolve companion stimulus metadata (`trial_sequence`/`planned_schedule`), validate it against parsed experiment-log stimulus events, and expose planned-schedule block/stimulus tables when present.
-- `classify_stim_type`: Collapse notebook stimulus codes to bout/continuous/mixed.
+- `classify_stim_type`: Collapse the complete presented stimulus vocabulary to bout/continuous/mixed, including trajectory variants and whole-field `WFC*` conditions.
 - `effective_motion_window`: Compute motion-response windows after onset delay.
 - `build_prestim_baseline_windows`: Build merged prestim baseline windows from `df_evt`.
 - `build_prestim_trial_windows`: Build per-trial prestim windows for null sampling.

@@ -79,6 +79,78 @@ class ActivityTests(unittest.TestCase):
             self.assertGreater(result["scored_bpi_df"].loc[0, "mean_bout_dff"], 3.0)
             self.assertGreater(result["scored_bpi_df"].loc[0, "mean_cont_dff"], 2.0)
 
+    def test_response_scoring_includes_complete_presented_stimulus_vocabulary(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish_id = "L758_f02"
+            fish_dir = Path(tmpdir) / fish_id
+            metadata = fish_dir / "01_raw" / "2p" / "metadata"
+            metadata.mkdir(parents=True)
+            (metadata / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            stim_types = [
+                "LAB_trajectory",
+                "RAB_trajectory",
+                "LB_trajectory",
+                "RB_trajectory",
+                "Ll_RB_trajectory",
+                "Rl_RB_trajectory",
+                "LC_trajectory",
+                "RC_trajectory",
+                "WFCl",
+                "WFCo",
+            ]
+            event_lines = ["event,timestamp", "B0_start,0", "B0_end,100"]
+            for block_idx, block in enumerate(("B1", "B2"), start=1):
+                block_start = block_idx * 100
+                event_lines.append(f"{block}_start,{block_start}")
+                for stim_idx, stim_type in enumerate(stim_types):
+                    onset = block_start + 2 + 8 * stim_idx
+                    event_lines.extend(
+                        [
+                            f"{block}_prestim{stim_idx}_pause,{onset - 1}",
+                            f"{block}_stim{stim_idx}_{stim_type},{onset}",
+                            f"{block}_poststim{stim_idx}_pause,{onset + 2}",
+                        ]
+                    )
+                event_lines.append(f"{block}_end,{block_start + 100}")
+            (metadata / f"2026_f{fish_id}_experiment_log.csv").write_text("\n".join(event_lines) + "\n")
+
+            dff = np.ones((1, 300), dtype=np.float32)
+            detail = pd.DataFrame(
+                {
+                    "plane_idx": [0],
+                    "func_label": [1],
+                    "activity_class": ["Active neurons"],
+                    "is_active": [True],
+                }
+            )
+            result = build_response_bpi_tables(
+                detail,
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_dff_map={0: {"dff": dff}},
+                config=ActivityConfig(
+                    min_trials_per_class=1,
+                    stim_onset_delay_sec=0.0,
+                    response_null_min_windows=1,
+                    response_null_bootstrap_n=5,
+                    zscore_min_points=1,
+                ),
+            )
+            scored_windows = build_scored_stimulus_windows_table(
+                fish_id=fish_id,
+                df_stim=result["df_stim"],
+                stim_events=result["stim_events"],
+                stim_events_by_plane=result["stim_events_by_plane"],
+                df_stim_by_plane=result["df_stim_by_plane"],
+                fps_by_plane=result["fps_by_plane"],
+            )
+
+            self.assertEqual(set(scored_windows["stim_type"]), set(stim_types))
+            self.assertEqual(len(scored_windows), 20)
+            self.assertEqual(scored_windows["stim_class"].value_counts().to_dict(), {"bout": 12, "continuous": 8})
+            self.assertTrue((scored_windows.loc[scored_windows["block"] == "B1", "scored_onset_frame"] >= 100).all())
+            self.assertTrue((scored_windows.loc[scored_windows["block"] == "B2", "scored_onset_frame"] >= 200).all())
+
     def test_build_response_bpi_tables_uses_plane_session_stimulus_metadata(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
