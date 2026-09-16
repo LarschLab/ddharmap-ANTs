@@ -404,7 +404,8 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(ax.get_title(), "WFCl")
             self.assertEqual(ax.get_xlabel(), "Time from stimulus appearance (s)")
             self.assertTrue(any(line.get_color() == "#a32626" and np.allclose(line.get_xdata(), [10.0, 10.0]) for line in ax.lines))
-            self.assertTrue(any(line.get_color() == "#777777" for line in ax.lines))
+            self.assertFalse(any(line.get_color() == "#777777" for line in ax.lines))
+            self.assertEqual(sum(line.get_color() == "blue" for line in ax.lines), 1)
         finally:
             plt.close(fig)
 

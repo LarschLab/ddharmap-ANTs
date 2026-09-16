@@ -354,7 +354,6 @@ def render_suite2p_stimulus_locked_trace_panels(
         row_idx, col_idx = slots[str(stim_type)]
         ax = axes[row_idx, col_idx]
         sub = trace_df[trace_df["stim_type"].astype(str) == str(stim_type)].copy()
-        nonresponsive_sub = reference_df[reference_df["stim_type"].astype(str) == str(stim_type)] if not reference_df.empty else reference_df
         if stim_type in durations and np.isfinite(float(durations[stim_type])):
             duration = float(durations[stim_type])
             if motion_onset_delay_sec is not None and 0 < float(motion_onset_delay_sec) < duration:
@@ -363,34 +362,12 @@ def render_suite2p_stimulus_locked_trace_panels(
                 ax.axvline(float(motion_onset_delay_sec), color="#a32626", linestyle="--", linewidth=1.0, alpha=0.85)
             else:
                 ax.axvspan(0.0, duration, color="#d0d0d0", alpha=0.25, zorder=0)
-        if not nonresponsive_sub.empty:
-            reference_traces = [
-                np.asarray(value, dtype=float) for value in nonresponsive_sub[trace_column].tolist()
-                if np.asarray(value).shape == tvec_arr.shape
-            ]
-            if reference_traces:
-                ax.plot(tvec_arr, np.nanmean(np.vstack(reference_traces), axis=0), color="#777777", linestyle="--", linewidth=1.7, alpha=0.9, zorder=3)
         for row in sub.itertuples(index=False):
             session = str(getattr(row, "session_label"))
             color = session_colors.get(session, "#666666")
             mean = np.asarray(getattr(row, trace_column), dtype=float)
             if mean.shape == tvec_arr.shape:
                 ax.plot(tvec_arr, mean, color=color, alpha=float(line_alpha), linewidth=float(line_width))
-        for session, session_sub in sub.groupby("session_label", sort=False):
-            session_traces = [
-                np.asarray(value, dtype=float)
-                for value in session_sub[trace_column].tolist()
-                if np.asarray(value).shape == tvec_arr.shape
-            ]
-            if session_traces:
-                ax.plot(
-                    tvec_arr,
-                    np.nanmean(np.vstack(session_traces), axis=0),
-                    color=session_colors.get(str(session), "#666666"),
-                    linewidth=2.2,
-                    alpha=1.0,
-                    zorder=4,
-                )
         ax.axvline(0.0, color="black", linestyle="--", linewidth=0.8, alpha=0.75)
         ax.axhline(0.0, color="black", linewidth=0.6, alpha=0.5)
         ax.set_title(str(stim_type), fontsize=10)
@@ -408,18 +385,18 @@ def render_suite2p_stimulus_locked_trace_panels(
                 ax.axis("off")
     axes[0, 0].set_title(axes[0, 0].get_title() or "Left", fontsize=10)
     axes[0, 1].set_title(axes[0, 1].get_title() or "Right", fontsize=10)
-    handles = [Line2D([0], [0], color=color, linewidth=2.2, label=f"{session}: population mean") for session, color in session_colors.items()]
+    handles = [Line2D([0], [0], color=color, linewidth=1.0, label=str(session)) for session, color in session_colors.items()]
     if handles:
         fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
     if not reference_df.empty:
-        fig.text(0.5, 0.049, "Gray dashed: nonresponsive mean; red dashed: motion onset", ha="center", fontsize=8)
+        fig.text(0.5, 0.049, "Nonresponsive cells are counted separately, not plotted; red dashed: motion onset", ha="center", fontsize=8)
     cohort_count = trace_df[["plane_idx", "func_label"]].drop_duplicates().shape[0]
     cohort_context = f"Any-stimulus responders n={cohort_count}"
     if not reference_df.empty:
         nonresponsive_count = reference_df[["plane_idx", "func_label"]].drop_duplicates().shape[0]
         cohort_context += f"; nonresponsive n={nonresponsive_count}"
     fig.suptitle(f"{title}\n{cohort_context}", y=0.995)
-    fig.text(0.5, 0.065, f"{trial_context}; bold traces are session means", ha="center", fontsize=8)
+    fig.text(0.5, 0.065, trial_context, ha="center", fontsize=8)
     fig.tight_layout(rect=[0, 0.09, 1, 0.94])
     return fig
 

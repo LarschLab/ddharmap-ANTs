@@ -28,6 +28,21 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-09-16 - omit cross-cell means from Suite2p stimulus QC traces
+
+- Slice goal:
+  - keep the any-presented-stimulus responder QC figure informative when heterogeneous cell responses cancel in a population average.
+- What changed:
+  - removed the bold r1/r2 cross-cell means and gray nonresponsive cross-cell mean from `[23c]` stimulus-locked panels; retained each cell's average across valid repetitions, fixed any-stimulus responder selection, nonresponsive counts, and the motion-onset marker.
+  - updated figure guidance and a renderer regression test to prohibit these cross-cell means.
+- Validation:
+  - focused plot/diagnostic/cohort tests passed (`49 passed`); `git diff --check` passed.
+  - isolated real-data L765_f04 rerender on Linnaeus showed 1,500 individual traces in each of ten stimulus panels, 950 separately counted nonresponsive cells, and no cross-cell mean; rendered PNG was visually checked for legibility and clipping.
+- Remaining in-slice work:
+  - the dated working pipeline root has not been overwritten with this revised figure; promote it after final scientific review of the isolated preview.
+- Rerun implications:
+  - regenerate `[23c]` QC figures from current code when the final view is accepted; canonical response/BPI tables are unchanged.
+
 ### 2026-09-09 - link Q1 full-session heatmap to stimulus-average inclusion
 
 - Slice goal:
