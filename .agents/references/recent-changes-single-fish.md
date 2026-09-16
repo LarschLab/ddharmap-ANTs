@@ -28,6 +28,22 @@
 - Append new entries; do not rewrite unrelated history.
 - Keep migration state in `current-state.md`; use this file for per-change single-fish handoff detail.
 
+### 2026-09-16 - render Notebook 01 Q1 from numeric evidence
+
+- Slice goal:
+  - prevent the review notebook from silently displaying a stale trace or heatmap PNG after code and response-screen changes.
+- What changed:
+  - refreshed the dated L765_f04 working root with the validated any-stimulus trace PNG/PDF, summary, and two responder-screen tables; backed up the old trace artifacts under source-provenance/pre-any-stimulus-qc-20260916.
+  - persisted a numeric per-cell trace payload linked by SHA-256 to its summary CSV, and changed Notebook 01 Cell 11 to render trace and heatmap figures from same-root numeric data rather than saved PNGs.
+  - kept response/BPI scoring and canonical outputs out of the notebook; mixed-generation trace data now fails visibly.
+- Validation:
+  - 77 focused Linnaeus tests passed; notebook JSON and git diff checks passed.
+  - isolated real L765_f04 rerun produced 24,500 trace rows, 1,500 any-stimulus responders, and 950 assessable nonresponders. The new summary and trace PNG matched the promoted working-root artifacts byte-for-byte.
+  - the working-root numeric payload loaded and rendered ten trace panels; the numeric heatmap loaded 2,450 cell rows with no timing warnings. Both rendered views were inspected visually.
+  - BPI and 400 scored-window tables remained byte-for-byte unchanged.
+- Review boundary:
+  - these are computational QC artifacts, not biological acceptance. Restart the Notebook 01 kernel and rerun setup through Cell 11 to see the live-rendered figures.
+
 ### 2026-09-16 - omit cross-cell means from Suite2p stimulus QC traces
 
 - Slice goal:

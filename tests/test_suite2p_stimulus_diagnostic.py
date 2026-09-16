@@ -15,6 +15,7 @@ from codeants_2pf_hcr.suite2p import (
 )
 from codeants_2pf_hcr.activity import ActivityConfig
 from codeants_2pf_hcr.plots.analysis import _suite2p_stim_panel_layout, render_suite2p_full_session_heatmap, render_suite2p_stimulus_locked_trace_panels
+from codeants_2pf_hcr.plots.qc_functional import load_early_response_trace_qc, render_early_response_stimulus_traces
 
 
 class Suite2pStimulusDiagnosticTests(unittest.TestCase):
@@ -323,13 +324,14 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
                 fish_dir=fish_dir,
                 fish_id=fish_id,
                 suite2p_by_ref_idx=suite2p_by_ref_idx,
+                out_qa=root / "qa",
                 config=Suite2pStimulusLockedDiagnosticConfig(
                     pre_sec=1.0,
                     post_sec=2.0,
                     zscore_min_baseline_points=1,
                     min_valid_frac=0.5,
                     min_trials_per_stimulus=1,
-                    save_figures=False,
+                    save_figures=True,
                     show_figures=False,
                 ),
                 activity_config=ActivityConfig(
@@ -348,6 +350,17 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(set(result["full_session_heatmap_rows"]["func_label"]), {1, 2})
             self.assertEqual(result["scored_heatmap_spans"]["frame_start"].tolist(), [2, 7])
             self.assertEqual(result["scored_heatmap_spans"]["frame_end"].tolist(), [4, 9])
+            self.assertTrue(Path(result["out_paths"]["trace_payload_npz"]).is_file())
+            bundle = load_early_response_trace_qc(fish_id=fish_id, diagnostic_root=root / "qa")
+            self.assertEqual(set(bundle["trace_df"]["func_label"]), {1})
+            self.assertEqual(set(bundle["nonresponsive_trace_df"]["func_label"]), {2})
+            fig = render_early_response_stimulus_traces(bundle)
+            self.assertTrue(fig.axes)
+            plt.close(fig)
+            summary_path = root / "qa" / "suite2p_stimulus_locked_summary_23b.csv"
+            summary_path.write_text(summary_path.read_text() + "\n")
+            with self.assertRaisesRegex(RuntimeError, "different runs"):
+                load_early_response_trace_qc(fish_id=fish_id, diagnostic_root=root / "qa")
 
     def test_any_presented_response_keeps_wf_only_cells_and_separates_nonresponders(self) -> None:
         with TemporaryDirectory() as tmpdir:

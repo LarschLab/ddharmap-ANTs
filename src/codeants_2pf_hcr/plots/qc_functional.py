@@ -1,11 +1,12 @@
 """Read-only notebook views for functional-reference, drift, and registration QC.
 
-The builders in this module consume persisted manifests, tables, and PNGs.  They
+The builders in this module consume persisted manifests, numeric data, and tables. They
 never run a pipeline stage and never write analysis products.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -425,6 +426,63 @@ def load_early_response_timing_qc(
     }
 
 
+def load_early_response_trace_qc(*, fish_id: str, diagnostic_root: str | Path) -> dict[str, Any]:
+    """Load numeric [23c] traces, rejecting a mixed-generation summary/payload."""
+    root = _path(diagnostic_root, label="early-response diagnostic root")
+    summary_path, summary = _csv(root / "suite2p_stimulus_locked_summary_23b.csv", label="stimulus-locked trace summary")
+    _validate_table_fish(summary, _validate_fish_id(fish_id), summary_path)
+    required = {
+        "plane_idx", "func_label", "session_label", "stim_type",
+        "any_presented_response_is_active", "any_presented_response_state",
+    }
+    if not required.issubset(summary.columns):
+        raise ValueError(f"Missing [23c] trace classification columns: {sorted(required - set(summary.columns))}")
+    payload_path = _path(root / "suite2p_stimulus_locked_trace_payload_23c.npz", label="numeric stimulus-locked trace payload")
+    with np.load(payload_path, allow_pickle=False) as payload:
+        traces = np.asarray(payload["traces"], dtype=np.float32)
+        tvec = np.asarray(payload["tvec"], dtype=np.float32)
+        summary_digest = str(payload["summary_sha256"].item())
+        metadata = json.loads(str(payload["plot_metadata_json"].item()))
+    if summary_digest != hashlib.sha256(summary_path.read_bytes()).hexdigest():
+        raise RuntimeError("[23c] trace payload and summary are from different runs")
+    if tvec.ndim != 1 or traces.shape != (len(summary), len(tvec)):
+        raise RuntimeError("[23c] numeric trace payload does not align with summary rows or time axis")
+    summary["mean_trace"] = list(traces)
+    responsive = summary[summary["any_presented_response_is_active"].astype(str).str.lower().eq("true")].copy()
+    nonresponsive = summary[summary["any_presented_response_state"].eq("nonresponsive")].copy()
+    if responsive.empty:
+        raise RuntimeError("[23c] no any-stimulus responders are available for trace QC")
+    return {
+        "trace_df": responsive,
+        "nonresponsive_trace_df": nonresponsive,
+        "tvec": tvec,
+        "stim_order": metadata["stim_order"],
+        "session_colors": {
+            session: tuple(color) if isinstance(color, list) else color
+            for session, color in metadata["session_colors"].items()
+        },
+        "duration_by_stim": metadata["duration_by_stim"],
+        "motion_onset_delay_sec": float(metadata["motion_onset_delay_sec"]),
+        "summary_path": summary_path,
+        "payload_path": payload_path,
+    }
+
+
+def render_early_response_stimulus_traces(bundle: Mapping[str, Any]) -> plt.Figure:
+    """Render the staged numeric trace payload with the stage-owned figure logic."""
+    from .analysis import render_suite2p_stimulus_locked_trace_panels
+
+    return render_suite2p_stimulus_locked_trace_panels(
+        trace_df=bundle["trace_df"],
+        nonresponsive_trace_df=bundle["nonresponsive_trace_df"],
+        tvec=bundle["tvec"],
+        stim_order=bundle["stim_order"],
+        session_colors=bundle["session_colors"],
+        duration_by_stim=bundle["duration_by_stim"],
+        motion_onset_delay_sec=bundle["motion_onset_delay_sec"],
+    )
+
+
 def build_early_response_qc_from_raw(*, fish_id: str, fish_dir: str | Path) -> dict[str, Any]:
     """Rebuild the legacy [23c] review payload in memory from canonical inputs.
 
@@ -496,7 +554,7 @@ def render_early_response_full_session_heatmap(bundle: Mapping[str, Any]) -> plt
     """Render persisted Suite2p heatmap with independent recorded/scored spans."""
     matrix = np.asarray(bundle.get("heatmap_matrix"), dtype=float)
     rows = bundle.get("heatmap_rows")
-    fig, ax = plt.subplots(figsize=(12.5, max(4.0, 2.6 + 0.018 * len(rows))))
+    fig, ax = plt.subplots(figsize=(12.5, max(4.0, min(14.0, 2.6 + 0.018 * len(rows)))))
     if matrix.ndim != 2 or matrix.size == 0 or not isinstance(rows, pd.DataFrame) or rows.empty:
         ax.text(0.5, 0.5, "Persisted heatmap payload unavailable", transform=ax.transAxes, ha="center", va="center")
         return fig

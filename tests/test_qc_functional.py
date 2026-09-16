@@ -178,6 +178,20 @@ def test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent(tm
     plt.close(heatmap)
 
 
+def test_early_response_heatmap_caps_height_for_large_cell_count() -> None:
+    bundle = {
+        "heatmap_matrix": np.zeros((2450, 5), dtype=np.float32),
+        "heatmap_rows": pd.DataFrame({"plane_idx": np.zeros(2450, dtype=int)}),
+        "recorded_events": pd.DataFrame([{"plane_idx": 0, "recorded_onset_frame": 1, "recorded_offset_frame": 3}]),
+        "scored_windows": pd.DataFrame([{"plane_idx": 0, "scored_onset_frame": 1, "scored_offset_frame": 3}]),
+    }
+    fig = render_early_response_full_session_heatmap(bundle)
+    try:
+        assert fig.get_size_inches()[1] == 14.0
+    finally:
+        plt.close(fig)
+
+
 def test_early_response_timing_qc_warns_when_offset_exceeds_rounding_tolerance(tmp_path: Path) -> None:
     fish_dir = tmp_path / FISH_ID
     metadata = fish_dir / "01_raw" / "2p" / "metadata"

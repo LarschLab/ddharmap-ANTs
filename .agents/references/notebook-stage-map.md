@@ -64,7 +64,8 @@
 - Response/BPI exports: `functional_roi_activity_bpi_cells.csv`, `functional_roi_activity_bpi_summary.csv` (`[50ia]`).
 - Response-scoring timing provenance: `scored_stimulus_windows.csv` (`score-activity-bpi`); it records the exact full-Suite2p-trace frame windows consumed by scoring, including block-start/frame-count/source provenance, for Notebook 01 audit.
 - Pre-identity response/BPI diagnostics: `suite2p_response_bpi_cells_23c.csv`, `suite2p_response_bpi_summary_23c.csv` (`[23c]`, non-canonical).
-- Full-session QC payload: `suite2p_full_session_heatmap_matrix_23c.npy`, `suite2p_full_session_heatmap_rows_23c.csv`, and `suite2p_scored_stimulus_windows_23c.csv` (`[23c]`). Notebook 01 displays this single persisted heatmap; its colored spans cover every exact presented interval from the shared full-trace mapper, while `used_for_bpi` marks the balanced LB/RB-versus-LC/RC subset. The separate reconstructed full-session overlay plot is retired.
+- Full-session QC payload: `suite2p_full_session_heatmap_matrix_23c.npy`, `suite2p_full_session_heatmap_rows_23c.csv`, and `suite2p_scored_stimulus_windows_23c.csv` (`[23c]`). Notebook 01 renders the numeric matrix at review time with independently resolved recorded and scored windows; `used_for_bpi` marks the balanced LB/RB-versus-LC/RC subset.
+- Stimulus-trace QC payload: `suite2p_stimulus_locked_summary_23b.csv` plus `suite2p_stimulus_locked_trace_payload_23c.npz` (`[23c]`). The numeric payload contains per-cell stimulus-average traces, time axis, and plot metadata, and is hash-bound to the summary CSV. Notebook 01 fails on missing or mixed-generation data and renders with the same package figure logic as the writer.
 - The staged writer route for that payload is
   `prepare-functional-reference-stacks --run-23c`, which records the generated
   QA files in the same stage manifest and writes them under

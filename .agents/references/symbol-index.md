@@ -24,6 +24,7 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.plots.qc_functional`
 
 - `load_functional_reference_drift_qc`: Load manifest-declared functional references plus the authoritative per-fish temporal Z-drift bundle and response-evidence availability for notebook `01`.
+- `load_early_response_trace_qc`, `render_early_response_stimulus_traces`: Verify and render same-run numeric [23c] trace payloads for notebook `01`, without displaying a cached PNG.
 - `render_functional_reference_artifacts`, `render_functional_reference_drift_summary`: Render persisted reference and drift evidence without recomputation.
 - `load_functional_registration_qc`: Load anatomy-prep, registration, transformed-label, and registration-QC manifests/tables/PNGs for notebook `02`.
 - `functional_registration_plane_review`, `render_functional_registration_plane`, `render_functional_registration_all_planes`, `render_functional_registration_artifacts`, `show_functional_anatomy_zoom_viewer`: Read-only functional-registration views, including all-plane anatomy overlays and scroll-zoom inspection.

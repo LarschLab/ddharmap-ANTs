@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from pathlib import Path
 import pathlib
 import re
@@ -644,11 +646,31 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         fig_heatmaps.savefig(heat_png.with_suffix(".pdf"), bbox_inches="tight")
         summary_csv = out_dir / "suite2p_stimulus_locked_summary_23b.csv"
         source_csv = out_dir / "suite2p_stimulus_locked_sources_23b.csv"
+        trace_payload_npz = out_dir / "suite2p_stimulus_locked_trace_payload_23c.npz"
         heatmap_matrix_npy = out_dir / "suite2p_full_session_heatmap_matrix_23c.npy"
         heatmap_rows_csv = out_dir / "suite2p_full_session_heatmap_rows_23c.csv"
         scored_windows_csv = out_dir / "suite2p_scored_stimulus_windows_23c.csv"
         summary_out = result["trace_df"].drop(columns=["mean_trace", "mean_dff_trace"]).copy()
         summary_out.to_csv(summary_csv, index=False)
+        trace_matrix = np.stack([
+            np.asarray(trace, dtype=np.float32) for trace in result["trace_df"]["mean_trace"]
+        ])
+        tvec = np.asarray(result["tvec"], dtype=np.float32)
+        if trace_matrix.shape != (len(summary_out), len(tvec)):
+            raise RuntimeError("[23c] trace vectors do not align with the persisted summary")
+        plot_metadata = {
+            "stim_order": result["stim_order"],
+            "session_colors": result["session_colors"],
+            "duration_by_stim": result["duration_by_stim"],
+            "motion_onset_delay_sec": float(response_cfg.stim_onset_delay_sec),
+        }
+        np.savez_compressed(
+            trace_payload_npz,
+            traces=trace_matrix,
+            tvec=tvec,
+            summary_sha256=np.asarray(hashlib.sha256(summary_csv.read_bytes()).hexdigest()),
+            plot_metadata_json=np.asarray(json.dumps(plot_metadata)),
+        )
         result["source_df"].to_csv(source_csv, index=False)
         np.save(heatmap_matrix_npy, result["full_session_heatmap_matrix"])
         result["full_session_heatmap_rows"].to_csv(heatmap_rows_csv, index=False)
@@ -669,6 +691,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
             "heatmap_png": str(heat_png),
             "heatmap_pdf": str(heat_png.with_suffix(".pdf")),
             "summary_csv": str(summary_csv),
+            "trace_payload_npz": str(trace_payload_npz),
             "source_csv": str(source_csv),
             "heatmap_matrix_npy": str(heatmap_matrix_npy),
             "heatmap_rows_csv": str(heatmap_rows_csv),

@@ -4,6 +4,9 @@ These notebooks are read-only scientific review surfaces for persisted
 single-fish pipeline outputs. Reusable loading, validation, filtering, and
 plotting logic belongs in `src/codeants_2pf_hcr/`; notebook cells contain only
 explicit configuration, package calls, and display/save controls.
+Notebook 01 renders Q1 heatmap and trace figures from persisted numeric data,
+not saved PNGs. Its trace loader verifies the numeric payload and summary came
+from the same writer run; missing or mixed-generation inputs fail visibly.
 
 | Notebook | Review ownership | Decision gate |
 | --- | --- | --- |
