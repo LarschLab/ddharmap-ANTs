@@ -87,7 +87,7 @@
   `[23c]` and `[50ia]` scoring. A further 2026-09-16 correction expanded the
   persisted provenance from the legacy `LB`/`LC` subset to all ten presented
   conditions, while keeping BPI balanced at `LB+RB` versus `LC+RC`. The active
-  L765_f04 root is being refreshed with 400 exact presented intervals, of which
+  L765_f04 root now contains 400 exact presented intervals, of which
   160 are BPI-eligible (8 bout and 8 continuous trials per plane).
   Notebook 01 displays one persisted full-session
   heatmap whose colored spans are its exact scorer windows and audits those

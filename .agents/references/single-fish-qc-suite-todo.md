@@ -168,11 +168,12 @@ but BPI is deliberately restricted to the balanced comparison requested by the
 experiment: `LB+RB` bouts versus `LC+RC` continuous stimuli. `LAB`, `RAB`,
 `Ll_RB`, `Rl_RB`, `WFCl`, and `WFCo` remain visible in the heatmap and trace
 panels and are explicitly marked `used_for_bpi=False`. The fixed working root
-must contain 400 presented windows (40 per condition; 200 each in B1 and B2),
+contains 400 presented windows (40 per condition; 200 each in B1 and B2),
 with 160 BPI-eligible windows (8 bout and 8 continuous trials per plane). B0
-remains unscored. Final response/BPI counts and visual acceptance must be
-recorded after this balanced rerun; biological BPI interpretation remains a
-separate review gate.
+remains unscored. The balanced rerun yields 161 response-active ROIs and 2,450
+finite BPI values. The heatmap and all ten trace panels passed visual review,
+and all seven QC notebooks execute end-to-end. Timing and condition coverage
+are accepted; biological BPI interpretation remains a separate review gate.
 
 **Recovered in the single working root (2026-09-15):** the 8–9 September Q1
 implementation had been displaced when Notebook 02 was correctly restored to

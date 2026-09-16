@@ -4046,3 +4046,55 @@
   manifests are now current, and all seven QC notebooks execute end-to-end.
   Only `make-figures` remains stale/not started because the declared L765_f04
   motion-AUC inputs are absent.
+
+### 2026-09-16 - show all presented intervals and balance the BPI pools
+
+- Slice goal:
+  - ensure Notebook 01 shows every presented L765_f04 interval while
+    response/BPI uses only the intended balanced LB/RB-versus-LC/RC pools.
+- Passes completed in this session:
+  - audited the raw experiment logs and persisted scorer windows;
+  - separated complete presented-stimulus mode classification from explicit
+    BPI eligibility and added unit/integration and scientific-contract coverage;
+  - preserved the superseded LB/LC-only outputs, reran `[23c]`, refreshed the
+    dependent registration/geometry/activity/identity/export/report chain,
+    inspected both plots, and executed all seven QC notebooks.
+- What changed:
+  - `classify_stim_type` describes every presented condition for QC, while the
+    new `classify_bpi_stim_type` admits only `LB_trajectory` and
+    `RB_trajectory` to the bout pool and `LC_trajectory` and `RC_trajectory`
+    to the continuous pool.
+  - the active working root persists 400 presented windows: 40 per stimulus,
+    200 per block, and 40 per plane. Exactly 160 rows have
+    `used_for_bpi=True`; every plane contributes 8 bout and 8 continuous
+    trials. The `[23c]` and score-stage provenance tables match exactly.
+  - B0 remains unscored. Across sessions, scored onsets span frames
+    1,879-3,613 in B1 and 3,713-5,447 in B2, reflecting the earlier conditions
+    that the LB/LC-only universe had omitted.
+  - response-active ROIs changed from the superseded LB/LC-only 225 to 161;
+    all 2,450 finite BPI values were recomputed. BPI correlation is 0.881
+    against the LB/LC-only result and 0.546 against the rejected all-ten-pool
+    intermediate result.
+- What remains broken:
+  - `make-figures` remains unavailable because declared L765_f04 motion-AUC
+    inputs are absent. Stage-status parity checks against missing legacy
+    canonical controls remain non-passing even though the refreshed writers
+    completed and the staged artifacts are present.
+- Remaining in-slice work:
+  - none for interval coverage or pool membership; biological interpretation of the
+    recomputed BPI distribution remains an explicit later review gate.
+- Next likely breakpoint:
+  - provide/recompute the declared motion-AUC inputs before running
+    `make-figures`, then review Notebook 06 BPI interpretation.
+- Rerun implications:
+  - any root generated before commit `1f71790` must rerun `[23c]`,
+    `score-activity-bpi`, `assign-hcr-identity`, canonical export, and QA;
+    rerun the spatial dependency chain too if functional references are
+    rewritten by `prepare-functional-reference-stacks`.
+- Validation evidence:
+  - local focused suite: 184 passed;
+  - real L765_f04 writers completed through `make-qa-report`;
+  - heatmap (`3915x4165`) and traces (`2800x4427`) passed nonblank checks and
+    visual inspection, showing all ten stimulus types and an explicit plot
+    title stating that BPI uses only LB/RB versus LC/RC;
+  - all seven QC notebooks passed end-to-end on Linnaeus.
