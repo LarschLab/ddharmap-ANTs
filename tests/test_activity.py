@@ -139,15 +139,26 @@ class ActivityTests(unittest.TestCase):
             scored_windows = build_scored_stimulus_windows_table(
                 fish_id=fish_id,
                 df_stim=result["df_stim"],
-                stim_events=result["stim_events"],
-                stim_events_by_plane=result["stim_events_by_plane"],
+                stim_events=result["presented_stim_events"],
+                stim_events_by_plane=result["presented_stim_events_by_plane"],
                 df_stim_by_plane=result["df_stim_by_plane"],
                 fps_by_plane=result["fps_by_plane"],
             )
 
             self.assertEqual(set(scored_windows["stim_type"]), set(stim_types))
             self.assertEqual(len(scored_windows), 20)
-            self.assertEqual(scored_windows["stim_class"].value_counts().to_dict(), {"bout": 12, "continuous": 8})
+            self.assertEqual(int(scored_windows["used_for_bpi"].sum()), 8)
+            self.assertEqual(
+                scored_windows.loc[scored_windows["used_for_bpi"], "stim_type"].value_counts().to_dict(),
+                {"LB_trajectory": 2, "RB_trajectory": 2, "LC_trajectory": 2, "RC_trajectory": 2},
+            )
+            self.assertEqual(
+                scored_windows.loc[scored_windows["used_for_bpi"], "bpi_stim_class"].value_counts().to_dict(),
+                {"bout": 4, "continuous": 4},
+            )
+            scored = result["scored_bpi_df"].iloc[0]
+            self.assertEqual(int(scored["n_bout_trials"]), 4)
+            self.assertEqual(int(scored["n_cont_trials"]), 4)
             self.assertTrue((scored_windows.loc[scored_windows["block"] == "B1", "scored_onset_frame"] >= 100).all())
             self.assertTrue((scored_windows.loc[scored_windows["block"] == "B2", "scored_onset_frame"] >= 200).all())
 

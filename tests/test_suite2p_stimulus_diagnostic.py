@@ -393,7 +393,8 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
         try:
             ax = fig.axes[0]
             self.assertEqual(ax.get_xlabel(), "Frame")
-            self.assertIn("colored spans are exact score-activity-bpi windows", ax.get_title())
+            self.assertIn("colored spans are all presented stimuli", ax.get_title())
+            self.assertIn("BPI uses LB/RB vs LC/RC only", ax.get_title())
             self.assertEqual(len(ax.images), 1)
             cmap = ax.images[0].cmap
             low_rgb = np.asarray(cmap(0.0)[:3])

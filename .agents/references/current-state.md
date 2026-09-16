@@ -84,7 +84,12 @@
   root. A 2026-09-15 correction found that prior B1-relative event frames had
   been applied directly to full Suite2p traces that still contained B0. The
   central mapper now places complete blocks on the trace grid before both
-  `[23c]` and `[50ia]` scoring. Notebook 01 displays one persisted full-session
+  `[23c]` and `[50ia]` scoring. A further 2026-09-16 correction expanded the
+  persisted provenance from the legacy `LB`/`LC` subset to all ten presented
+  conditions, while keeping BPI balanced at `LB+RB` versus `LC+RC`. The active
+  L765_f04 root is being refreshed with 400 exact presented intervals, of which
+  160 are BPI-eligible (8 bout and 8 continuous trials per plane).
+  Notebook 01 displays one persisted full-session
   heatmap whose colored spans are its exact scorer windows and audits those
   against the same-root `score-activity-bpi/scored_stimulus_windows.csv`.
   Notebook 02 remains registration-only; neither notebook rebuilds Q1 from raw

@@ -12,6 +12,7 @@ from codeants_2pf_hcr.stimulus import (
     build_prestim_trial_windows,
     build_stim_tables,
     classify_stim_type,
+    classify_bpi_stim_type,
     combine_segments,
     compute_zscore_stats,
     discover_functional_sessions,
@@ -47,6 +48,22 @@ class StimulusTests(unittest.TestCase):
         for stim_type in ("LC_trajectory", "RC_trajectory", "WFCl", "WFCo"):
             self.assertEqual(classify_stim_type(stim_type), "continuous")
         self.assertEqual(classify_stim_type("LAB_trajectory+RC_trajectory"), "mixed")
+
+    def test_bpi_classifier_uses_only_balanced_lb_rb_lc_rc_conditions(self) -> None:
+        for stim_type in ("LB_trajectory", "RB_trajectory", "LLB", "RLB"):
+            self.assertEqual(classify_bpi_stim_type(stim_type), "bout")
+        for stim_type in ("LC_trajectory", "RC_trajectory", "LLC", "RLC"):
+            self.assertEqual(classify_bpi_stim_type(stim_type), "continuous")
+        for stim_type in (
+            "LAB_trajectory",
+            "RAB_trajectory",
+            "Ll_RB_trajectory",
+            "Rl_RB_trajectory",
+            "WFCl",
+            "WFCo",
+        ):
+            self.assertIsNone(classify_bpi_stim_type(stim_type))
+        self.assertEqual(classify_bpi_stim_type("LB_trajectory+RC_trajectory"), "mixed")
 
     def test_effective_motion_window_uses_onset_delay(self) -> None:
         start, end, duration = effective_motion_window(5.0, 10.0, None, 2.0)

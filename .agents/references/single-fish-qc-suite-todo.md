@@ -160,6 +160,20 @@ ROIs change from the superseded 83 to 225. Q1 timing is accepted on this
 corrected full-trace basis; downstream biological BPI interpretation remains a
 separate review gate.
 
+**Complete-stimulus correction (2026-09-16):** the corrected trace-grid
+placement still scored only conditions whose legacy code ended in `LB` or
+`LC`, so the 80-window review covered only `LB_trajectory` and
+`LC_trajectory`. The central provenance now retains every presented condition,
+but BPI is deliberately restricted to the balanced comparison requested by the
+experiment: `LB+RB` bouts versus `LC+RC` continuous stimuli. `LAB`, `RAB`,
+`Ll_RB`, `Rl_RB`, `WFCl`, and `WFCo` remain visible in the heatmap and trace
+panels and are explicitly marked `used_for_bpi=False`. The fixed working root
+must contain 400 presented windows (40 per condition; 200 each in B1 and B2),
+with 160 BPI-eligible windows (8 bout and 8 continuous trials per plane). B0
+remains unscored. Final response/BPI counts and visual acceptance must be
+recorded after this balanced rerun; biological BPI interpretation remains a
+separate review gate.
+
 **Recovered in the single working root (2026-09-15):** the 8–9 September Q1
 implementation had been displaced when Notebook 02 was correctly restored to
 its functional-registration ownership. The package renderers and timing loader

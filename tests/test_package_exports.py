@@ -93,6 +93,7 @@ from codeants_2pf_hcr import (
     corrcoef_img,
     compute_zscore_stats,
     classify_stim_type,
+    classify_bpi_stim_type,
     deduplicate_hcr_intensity_targets,
     describe_glob,
     describe_manifest_path,
@@ -323,6 +324,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_suite2p_stimulus_locked_diagnostic)
     assert callable(check_notebook_contract)
     assert callable(classify_stim_type)
+    assert callable(classify_bpi_stim_type)
     assert callable(collect_cohort_53a_tables)
     assert callable(cohort_cache_paths)
     assert callable(count_trace_genes)

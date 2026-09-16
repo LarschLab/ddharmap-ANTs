@@ -4524,9 +4524,9 @@ def run_single_fish_score_activity_bpi_stage(
                 timing_df = build_scored_stimulus_windows_table(
                     fish_id=config.fish_id,
                     df_stim=result.get("df_stim"),
-                    stim_events=result.get("stim_events", []),
+                    stim_events=result.get("presented_stim_events", []),
                     fps_by_session=session_fps,
-                    stim_events_by_plane=result.get("stim_events_by_plane"),
+                    stim_events_by_plane=result.get("presented_stim_events_by_plane"),
                     df_stim_by_plane=result.get("df_stim_by_plane"),
                     fps_by_plane=result.get("fps_by_plane"),
                 )

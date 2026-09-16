@@ -27,12 +27,12 @@ uses the planned schedule to locate complete acquisition blocks when available.
 `scored_stimulus_windows.csv` records the resulting full-trace coordinates and
 is the timing authority for response/BPI figures.
 
-The scorer includes the complete presented pure-condition vocabulary. For the
-L765 protocol, `LAB`, `RAB`, `LB`, `RB`, `Ll_RB`, and `Rl_RB` trajectories are
-bout conditions; `LC`, `RC`, `WFCl`, and `WFCo` are continuous conditions.
-No condition may be dropped merely because its code does not end in `LB` or
-`LC`. Combined codes are classified as mixed when their components span both
-modes and remain outside the pure-mode BPI pools.
+The persisted stimulus-window provenance includes the complete presented
+vocabulary, with an explicit `used_for_bpi` flag. The BPI calculation itself is
+balanced and restricted to `LB_trajectory` plus `RB_trajectory` for the bout
+pool and `LC_trajectory` plus `RC_trajectory` for the continuous pool. `LAB`,
+`RAB`, `Ll_RB`, `Rl_RB`, `WFCl`, and `WFCo` remain visible in the heatmap and
+trace panels but do not enter response/BPI pooling.
 
 ### Stage 1: response-state classification
 
@@ -73,7 +73,7 @@ Primary fields:
 
 - `[50ia]` owns the exported BPI/activity thresholds used to interpret downstream plots.
 - `[23c]` may compute pre-identity Suite2p response/BPI calls with the same threshold knobs so early diagnostics can filter trace panels before HCR geometry exists; those outputs are diagnostic until merged by `[50ia]`.
-- `[23c]` and `[50ia]` must use the same full-trace block mapper. The `[23c]` full-session heatmap may overlay only the exact windows returned by its response scorer; a separately reconstructed B1-relative overlay is forbidden.
+- `[23c]` and `[50ia]` must use the same full-trace block mapper and persisted all-presented window provenance. The `[23c]` full-session heatmap overlays every exact presented interval; BPI eligibility comes only from its `used_for_bpi` flag. A separately reconstructed B1-relative overlay is forbidden.
 - `functional_roi_activity_bpi_cells.csv` is a response/BPI diagnostic helper table. It may carry an `anat_label` column for schema compatibility, but identity should remain blank there; use the ROI master table for authoritative anatomy identity.
 - Downstream figures should reuse `bpi_zero_band` for near-zero BPI guide lines and `bpi_activity_threshold` for low-activity guide lines when those columns are present.
 - Do not hard-code duplicate threshold constants in downstream cohort or figure stages when the authoritative `[50ia]` columns are available.

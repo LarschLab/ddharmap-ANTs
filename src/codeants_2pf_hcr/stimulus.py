@@ -43,6 +43,32 @@ def classify_stim_type(stype: str) -> str | None:
     return "mixed"
 
 
+def classify_bpi_stim_type(stype: str) -> str | None:
+    """Classify only the balanced trajectory conditions admitted to BPI.
+
+    BPI compares the simple left/right bout trajectories (LB/RB) with the
+    simple left/right continuous trajectories (LC/RC). Other presented
+    conditions remain valid QC/trace events but do not enter either BPI pool.
+    """
+    parts = [part.strip().upper() for part in str(stype).split("+") if str(part).strip()]
+    if not parts:
+        return None
+    tags: list[str] = []
+    for part in parts:
+        normalized = re.sub(r"_TRAJECTORY$", "", part)
+        if normalized in {"LB", "RB", "LLB", "RLB"}:
+            tags.append("B")
+        elif normalized in {"LC", "RC", "LLC", "RLC"}:
+            tags.append("C")
+        else:
+            return None
+    if all(tag == "B" for tag in tags):
+        return "bout"
+    if all(tag == "C" for tag in tags):
+        return "continuous"
+    return "mixed"
+
+
 def parse_float(value: object) -> float | None:
     if value is None:
         return None
@@ -1162,6 +1188,7 @@ __all__ = [
     "build_prestim_trial_windows",
     "build_stim_tables",
     "classify_stim_type",
+    "classify_bpi_stim_type",
     "combine_segments",
     "compute_zscore_stats",
     "discover_functional_sessions",

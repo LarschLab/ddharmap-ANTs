@@ -582,9 +582,9 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
             scored_windows_df = build_scored_stimulus_windows_table(
                 fish_id=str(fish_id),
                 df_stim=response_result.get("df_stim"),
-                stim_events=response_result.get("stim_events", []),
+                stim_events=response_result.get("presented_stim_events", []),
                 fps_by_session=response_result.get("fps_by_session"),
-                stim_events_by_plane=response_result.get("stim_events_by_plane"),
+                stim_events_by_plane=response_result.get("presented_stim_events_by_plane"),
                 df_stim_by_plane=response_result.get("df_stim_by_plane"),
                 fps_by_plane=response_result.get("fps_by_plane"),
             )

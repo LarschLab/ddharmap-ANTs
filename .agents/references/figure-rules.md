@@ -22,7 +22,7 @@ Machine-readable contracts for accepted high-risk tables and figures live in `.a
 - Do not derive `low activity` from ad hoc quantiles/medians when response calls are available.
 - `[23c]` trace panels filter to pre-identity `response_is_active == True` calls when available; `[23c]` full-experiment heatmaps keep all Suite2p-cell traces, including low-activity neurons.
 - `[23c]` trace stimulus panels use two columns: left-column stimuli (`L*` and `WFCl`) on the left, right-column stimuli (`R*` and `WFCo`) on the right, with rows keyed by stimulus type after the side prefix.
-- `[23c]` full-experiment heatmaps use frame on the X axis and a white-to-black scale where black is high activity, with transparent stimulus spans over the corresponding session/plane row block; those spans must cover the complete pure bout/continuous vocabulary consumed by the scorer, while `planned_schedule.csv` rest blocks remain span-free.
+- `[23c]` full-experiment heatmaps use frame on the X axis and a white-to-black scale where black is high activity, with transparent spans for every presented stimulus over the corresponding session/plane row block; `planned_schedule.csv` rest blocks remain span-free. The provenance table marks which intervals feed the balanced LB/RB-versus-LC/RC BPI calculation.
 - `multiFish.ipynb` inherits `[23c]`: average traces use response-active Suite2p rows when response scoring is available, while full-session heatmaps retain all valid Suite2p-cell traces.
 
 ## HCR-centric figure exception

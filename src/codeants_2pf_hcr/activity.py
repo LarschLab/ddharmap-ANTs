@@ -14,6 +14,7 @@ from .stimulus import (
     build_null_window_start_map,
     build_prestim_baseline_windows,
     build_prestim_trial_windows,
+    classify_bpi_stim_type,
     classify_stim_type,
     compute_zscore_stats,
     effective_motion_window,
@@ -323,12 +324,12 @@ def _build_activity_stimulus_context(
     prestim_trial_windows = build_prestim_trial_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
 
     df_stim_work = df_stim.copy()
-    df_stim_work["stim_class"] = df_stim_work["type"].map(classify_stim_type)
-    df_stim_work = df_stim_work[df_stim_work["stim_class"].isin(["bout", "continuous"])].copy()
+    df_stim_work["presented_stim_mode"] = df_stim_work["type"].map(classify_stim_type)
+    df_stim_work["bpi_stim_class"] = df_stim_work["type"].map(classify_bpi_stim_type)
     if df_stim_work.empty:
-        raise RuntimeError("No pure bout/continuous stimuli available for response/BPI computation")
+        raise RuntimeError("No presented stimuli available for response/BPI computation")
 
-    stim_events: list[dict[str, Any]] = []
+    presented_stim_events: list[dict[str, Any]] = []
     for _, row in df_stim_work.iterrows():
         t0, t1, duration = effective_motion_window(
             row.get("start", np.nan),
@@ -342,12 +343,17 @@ def _build_activity_stimulus_context(
         idx1 = int(round(t1 * float(fps)))
         if idx1 <= idx0:
             continue
-        stim_events.append(
+        bpi_stim_class = row.get("bpi_stim_class", None)
+        used_for_bpi = str(bpi_stim_class) in {"bout", "continuous"}
+        presented_stim_events.append(
             {
                 "block": row.get("block", pd.NA),
                 "stim_idx": int(row.get("stim_idx", -1)) if pd.notna(row.get("stim_idx", np.nan)) else -1,
                 "stim_type": str(row.get("type", "")),
-                "stim_class": str(row.get("stim_class", "")),
+                "stim_class": str(bpi_stim_class) if used_for_bpi else "not_used_for_bpi",
+                "presented_stim_mode": str(row.get("presented_stim_mode", "")),
+                "bpi_stim_class": str(bpi_stim_class) if used_for_bpi else "",
+                "used_for_bpi": bool(used_for_bpi),
                 "idx0": idx0,
                 "idx1": idx1,
                 "duration_s": float(duration),
@@ -355,8 +361,9 @@ def _build_activity_stimulus_context(
                 "session_label": ctx.get("session_label", pd.NA),
             }
         )
+    stim_events = [event for event in presented_stim_events if bool(event["used_for_bpi"])]
     if not stim_events:
-        raise RuntimeError("Stimulus events could not be constructed for response/BPI computation")
+        raise RuntimeError("No LB/RB or LC/RC events available for response/BPI computation")
 
     step_frames = max(1, int(round(float(cfg.response_null_step_sec) * float(fps))))
     null_starts_by_duration = build_null_window_start_map(
@@ -370,6 +377,7 @@ def _build_activity_stimulus_context(
         "df_evt": df_evt,
         "df_stim": df_stim,
         "stim_events": stim_events,
+        "presented_stim_events": presented_stim_events,
         "stim_source": str(ctx.get("log_path")),
         "meta_path": ctx.get("meta_path"),
         "session_label": ctx.get("session_label"),
@@ -389,11 +397,12 @@ def build_scored_stimulus_windows_table(
     df_stim_by_plane: Mapping[int, pd.DataFrame] | None = None,
     fps_by_plane: Mapping[int, float] | None = None,
 ) -> pd.DataFrame:
-    """Record the exact response-scoring windows without changing scoring.
+    """Record exact presented windows and their response/BPI eligibility.
 
-    This is provenance for read-only QC: the recorded window comes from the
-    parsed stimulus table and the scored window is the frame interval consumed
-    by :func:`build_response_bpi_tables` after its onset-delay rule.
+    This is provenance for read-only QC: every recorded B1/B2 stimulus window
+    is mapped through the same onset-delay rule. ``used_for_bpi`` identifies
+    the balanced LB/RB versus LC/RC subset consumed by
+    :func:`build_response_bpi_tables`.
     """
     rows: list[dict[str, Any]] = []
     source = df_stim.copy() if isinstance(df_stim, pd.DataFrame) else pd.DataFrame()
@@ -428,6 +437,9 @@ def build_scored_stimulus_windows_table(
                 "stim_idx": int(stim_idx),
                 "stim_type": str(event.get("stim_type", "")),
                 "stim_class": str(event.get("stim_class", "")),
+                "presented_stim_mode": str(event.get("presented_stim_mode", event.get("stim_class", ""))),
+                "bpi_stim_class": str(event.get("bpi_stim_class", event.get("stim_class", ""))),
+                "used_for_bpi": bool(event.get("used_for_bpi", True)),
                 "recorded_onset_sec": pd.to_numeric(recorded.get("start", np.nan), errors="coerce"),
                 "recorded_offset_sec": pd.to_numeric(recorded.get("end", np.nan), errors="coerce"),
                 "recorded_onset_frame": int(round(float(recorded.get("start")) * fps)) if pd.notna(recorded.get("start", np.nan)) and np.isfinite(fps) else pd.NA,
@@ -958,11 +970,13 @@ def build_response_bpi_tables(
         "fps": float(fps),
         "fps_by_session": {str(ctx.get("session_label", "")): float(ctx["fps"]) for ctx in unique_contexts},
         "stim_events_by_plane": {plane: context["stim_events"] for plane, context in prepared_contexts.items()},
+        "presented_stim_events_by_plane": {plane: context["presented_stim_events"] for plane, context in prepared_contexts.items()},
         "df_stim_by_plane": {plane: context["df_stim"] for plane, context in prepared_contexts.items()},
         "fps_by_plane": {plane: float(context["fps"]) for plane, context in prepared_contexts.items()},
         "df_evt": df_evt,
         "df_stim": df_stim,
         "stim_events": stim_events,
+        "presented_stim_events": [event for ctx in unique_contexts for event in ctx["presented_stim_events"]],
         "stim_source": stim_source,
         "baseline_windows": baseline_windows,
         "prestim_trial_windows": prestim_trial_windows,

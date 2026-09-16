@@ -259,8 +259,8 @@
       "population": "All Suite2p-classified cells across every functional plane in the selected fish and run.",
       "filters": [
         "B0 remains visible as no-visual-stimulus baseline context.",
-        "Only the exact B1/B2 windows consumed by score-activity-bpi are colored on the full-session heatmap.",
-        "Every presented pure bout or continuous condition is scored: LAB, RAB, LB, RB, Ll_RB, Rl_RB, LC, RC, WFCl, and WFCo.",
+        "Every exact presented B1/B2 interval is colored on the full-session heatmap and persisted with an explicit used_for_bpi flag.",
+        "BPI uses only the balanced LB/RB bout pool and LC/RC continuous pool; LAB, RAB, Ll_RB, Rl_RB, WFCl, and WFCo remain visible but are not used for BPI.",
         "Independent raw-log review maps acquisition blocks onto the full Suite2p trace before comparing score provenance."
       ],
       "denominator": "One heatmap row per Suite2p-classified cell; per-stimulus summaries report valid trials separately for every session and stimulus type.",
@@ -279,7 +279,7 @@
       ],
       "thresholds": {
         "authority": "codeants_2pf_hcr.suite2p.Suite2pStimulusLockedDiagnosticConfig",
-        "rule": "Map complete acquisition blocks onto the concatenated Suite2p trace before response extraction; classify the complete presented stimulus vocabulary into bout/continuous modes; the heatmap and response/BPI writer must use the same scored frame windows."
+        "rule": "Map complete acquisition blocks onto the concatenated Suite2p trace before response extraction; persist and display every presented interval, while restricting balanced BPI computation to LB/RB versus LC/RC."
       },
       "forbidden_reinterpretations": [
         "Do not include B0 in stimulus averages.",
