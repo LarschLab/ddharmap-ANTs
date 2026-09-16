@@ -262,6 +262,44 @@ def render_functional_reference_artifacts(bundle: Mapping[str, Any]) -> plt.Figu
     return fig
 
 
+def build_early_response_trial_count_tables(
+    *, fish_id: str, scored_windows_path: str | Path, presented_response_path: str | Path,
+) -> dict[str, pd.DataFrame]:
+    """Show presented and valid trial counts separately for each imaging session."""
+    fish = _validate_fish_id(fish_id)
+    windows_path, windows = _csv(scored_windows_path, label="scored stimulus windows")
+    response_path, responses = _csv(presented_response_path, label="presented-stimulus responses")
+    _validate_table_fish(windows, fish, windows_path)
+    _validate_table_fish(responses, fish, response_path)
+    event_keys = ["session_label", "block", "stim_idx", "stim_type"]
+    response_keys = ["session_label", "stim_type", "n_valid_trials"]
+    for path, frame, required in (
+        (windows_path, windows, event_keys), (response_path, responses, response_keys),
+    ):
+        missing = sorted(set(required) - set(frame.columns))
+        if missing:
+            raise ValueError(f"Missing trial-count columns {missing}: {path}")
+    presented = windows[event_keys].drop_duplicates().groupby(
+        ["session_label", "stim_type"], dropna=False,
+    ).size().rename("counts")
+    valid = responses.groupby(["session_label", "stim_type"], dropna=False)["n_valid_trials"].agg(["min", "max"])
+    if set(presented.index) != set(valid.index):
+        raise ValueError("Presented and valid-trial tables cover different session/stimulus conditions")
+    merged = presented.to_frame().join(valid)
+    if (merged["min"] > merged["counts"]).any() or (merged["max"] > merged["counts"]).any():
+        raise ValueError("Valid trial count exceeds presented count")
+    merged["valid_counts"] = [
+        str(int(low)) if low == high else f"{int(low)}–{int(high)}"
+        for low, high in zip(merged["min"], merged["max"])
+    ]
+    return {
+        str(session): frame.reset_index(level="session_label", drop=True).reset_index().rename(
+            columns={"stim_type": "stimulus"}
+        )[["stimulus", "counts", "valid_counts"]].reset_index(drop=True)
+        for session, frame in merged.groupby(level="session_label", sort=True)
+    }
+
+
 def load_early_response_timing_qc(
     *,
     fish_id: str,
@@ -953,6 +991,7 @@ def render_functional_registration_artifacts(
 
 
 __all__ = [
+    "build_early_response_trial_count_tables",
     "build_early_response_qc_from_raw",
     "functional_registration_plane_review",
     "load_functional_reference_drift_qc",

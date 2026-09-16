@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 from typing import Mapping, Sequence
 
+from matplotlib.lines import Line2D
 import matplotlib.pyplot as plt
 from matplotlib import patheffects
 import numpy as np
@@ -1119,17 +1120,28 @@ _BPI_CATEGORY_COLORS = {
     "response unavailable": "#ececec",
 }
 _BPI_CATEGORY_ORDER = tuple(_BPI_CATEGORY_COLORS)
+_BPI_PREFERENCE_COLORS = {
+    "bout-preferential": "#2c7fb8",
+    "continuous-preferential": "#d95f0e",
+    "non-preferential": "#d946ef",
+}
+_RESPONSE_CLASS_MARKERS = {
+    "bout-responsive": "o",
+    "continuous-responsive": "s",
+    "both-responsive": "D",
+}
 
 
 def build_activity_bpi_gate_table(bpi_cells_path: str | Path) -> tuple[pd.DataFrame, dict[str, float]]:
-    """Load finite, response-aware ROI rows and their persisted BPI cut-offs."""
+    """Load the complete ROI table and normalize persisted response/BPI fields."""
     path = Path(bpi_cells_path)
     if not path.is_file():
         raise FileNotFoundError(f"Missing response/BPI cells table: {path}")
     table = pd.read_csv(path)
     required = {
-        "mean_bout_auc_dff", "mean_cont_auc_dff", "activity_mag", "bpi",
-        "response_is_active", "bpi_category", "bpi_zero_band", "bpi_activity_threshold",
+        "mean_bout_auc_dff", "mean_cont_auc_dff", "response_magnitude_auc", "activity_mag", "bpi",
+        "response_is_active", "response_class", "bpi_category", "bpi_preference",
+        "bpi_zero_band", "bpi_activity_threshold",
     }
     missing = sorted(required - set(table.columns))
     if missing:
@@ -1141,91 +1153,189 @@ def build_activity_bpi_gate_table(bpi_cells_path: str | Path) -> tuple[pd.DataFr
             raise ValueError(f"Expected one persisted {column} value in {path}; found {values.tolist()}")
         thresholds[column] = float(values[0])
     work = table.copy()
-    for column in ("mean_bout_auc_dff", "mean_cont_auc_dff", "activity_mag", "bpi"):
+    for column in ("mean_bout_auc_dff", "mean_cont_auc_dff", "response_magnitude_auc", "activity_mag", "bpi"):
         work[column] = pd.to_numeric(work[column], errors="coerce")
-    work["bpi_category"] = work["bpi_category"].fillna("response unavailable").astype(str).str.strip().str.lower()
-    work["response_is_active"] = work["response_is_active"].fillna(False).astype(bool)
+    for column, fallback in (
+        ("response_class", "response unavailable"),
+        ("bpi_category", "response unavailable"),
+        ("bpi_preference", "unavailable"),
+    ):
+        work[column] = work[column].fillna(fallback).astype(str).str.strip().str.lower()
+    active = work["response_is_active"]
+    if pd.api.types.is_bool_dtype(active):
+        work["response_is_active"] = active.fillna(False).astype(bool)
+    elif pd.api.types.is_numeric_dtype(active):
+        work["response_is_active"] = active.fillna(0).astype(float).ne(0)
+    else:
+        work["response_is_active"] = active.astype(str).str.strip().str.lower().isin({"1", "true", "t", "yes", "y"})
     work["abs_bpi"] = work["bpi"].abs()
-    work = work.loc[
-        np.isfinite(work["mean_bout_auc_dff"])
+    assessable = (
+        work["response_class"].ne("response unavailable")
+        & np.isfinite(work["mean_bout_auc_dff"])
         & np.isfinite(work["mean_cont_auc_dff"])
+        & np.isfinite(work["response_magnitude_auc"])
         & np.isfinite(work["activity_mag"])
-        & np.isfinite(work["bpi"])
-    ].copy()
-    if work.empty:
-        raise ValueError(f"No finite response/BPI rows available for review: {path}")
+    )
+    if not assessable.any():
+        raise ValueError(f"No assessable response rows available for review: {path}")
     return work, thresholds
 
 
 def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple[plt.Figure, pd.DataFrame]:
-    """Render the read-only Q7 response/BPI gate from persisted score outputs.
-
-    The table is ROI-centric.  The laterality-dependent global AUC panel remains
-    intentionally out of scope until the midline review has been accepted.
-    """
+    """Render response-test classes separately from BPI effect-size preference."""
     work, thresholds = build_activity_bpi_gate_table(bpi_cells_path)
-    all_rows = pd.read_csv(bpi_cells_path)
-    all_rows["bpi_category"] = all_rows["bpi_category"].fillna("response unavailable").astype(str).str.strip().str.lower()
     zero_band = thresholds["bpi_zero_band"]
-    activity_threshold = thresholds["bpi_activity_threshold"]
+    auc_floor = thresholds["bpi_activity_threshold"]
+    assessable = work.loc[
+        work["response_class"].ne("response unavailable")
+        & np.isfinite(work["mean_bout_auc_dff"])
+        & np.isfinite(work["mean_cont_auc_dff"])
+        & np.isfinite(work["response_magnitude_auc"])
+        & np.isfinite(work["activity_mag"])
+    ].copy()
+    responsive = assessable.loc[
+        assessable["response_is_active"] & np.isfinite(assessable["bpi"])
+    ].copy()
+    nonresponsive = assessable.loc[~assessable["response_is_active"]].copy()
+    if responsive.empty:
+        raise ValueError(f"No response-positive finite-BPI rows available for review: {bpi_cells_path}")
+
     fig, axes = plt.subplots(2, 3, figsize=(15.0, 8.8), constrained_layout=True)
     ax_plane, ax_bpi, ax_bins, ax_dist, ax_strength, ax_donut = axes.flat
-    all_counts = all_rows["bpi_category"].value_counts()
-    categories = [item for item in _BPI_CATEGORY_ORDER if item in set(all_counts.index)]
-    categories.extend(sorted(set(all_counts.index) - set(categories)))
-    responsive = work[work["response_is_active"]].copy()
-    nonresponsive = work[~work["response_is_active"]].copy()
-    extreme_nonresponsive = nonresponsive[nonresponsive["abs_bpi"] > zero_band]
-    for category in categories:
-        subset = work[work["bpi_category"] == category]
-        color = _BPI_CATEGORY_COLORS.get(category, "#666666")
-        label = f"{category} (n={int(all_counts[category])})"
-        ax_plane.scatter(subset["mean_cont_auc_dff"], subset["mean_bout_auc_dff"], s=10, alpha=0.55, color=color, label=label)
-        responsive_subset = subset[subset["response_is_active"]]
-        ax_bpi.scatter(responsive_subset["activity_mag"], responsive_subset["bpi"], s=16, alpha=0.7, color=color)
-        ax_strength.scatter(0.5 * (responsive_subset["mean_bout_auc_dff"] + responsive_subset["mean_cont_auc_dff"]), responsive_subset["bpi"], s=16, alpha=0.7, color=color)
-    for axis, x_values in (
-        (ax_bpi, nonresponsive["activity_mag"]),
-        (ax_strength, 0.5 * (nonresponsive["mean_bout_auc_dff"] + nonresponsive["mean_cont_auc_dff"])),
+
+    ax_plane.scatter(
+        nonresponsive["mean_cont_auc_dff"], nonresponsive["mean_bout_auc_dff"],
+        s=9, marker="x", linewidths=0.45, alpha=0.22, color="#7f7f7f",
+    )
+    for response_class, marker in _RESPONSE_CLASS_MARKERS.items():
+        for preference, color in _BPI_PREFERENCE_COLORS.items():
+            subset = responsive.loc[
+                responsive["response_class"].eq(response_class)
+                & responsive["bpi_preference"].eq(preference)
+            ]
+            if subset.empty:
+                continue
+            scatter_kw = dict(s=19, marker=marker, alpha=0.75, color=color)
+            ax_plane.scatter(subset["mean_cont_auc_dff"], subset["mean_bout_auc_dff"], **scatter_kw)
+            ax_bpi.scatter(subset["response_magnitude_auc"], subset["bpi"], **scatter_kw)
+            ax_strength.scatter(subset["activity_mag"], subset["bpi"], **scatter_kw)
+
+    limit = 1.05 * float(np.nanmax(np.abs(assessable[["mean_bout_auc_dff", "mean_cont_auc_dff"]].to_numpy())))
+    ax_plane.plot([-limit, limit], [-limit, limit], "--", color="#444444", linewidth=0.9)
+    ax_plane.axvline(auc_floor, color="#777777", linestyle=":", linewidth=0.8)
+    ax_plane.text(
+        0.98, 0.02, "dotted: 0.05 AUC floor\nnull threshold: cell-specific",
+        transform=ax_plane.transAxes, ha="right", va="bottom", fontsize=7,
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8},
+    )
+    ax_plane.axhline(auc_floor, color="#777777", linestyle=":", linewidth=0.8)
+    ax_plane.set_xscale("symlog", linthresh=0.01)
+    ax_plane.set_yscale("symlog", linthresh=0.01)
+    ax_plane.set(
+        xlim=(-limit, limit), ylim=(-limit, limit),
+        xlabel="Continuous response AUC (dF/F·s)", ylabel="Bout response AUC (dF/F·s)",
+        title=f"Condition AUCs (n={len(assessable)} assessable)\ncolor=BPI effect class; marker=response test",
+    )
+
+    preference_handles = [
+        Line2D(
+            [0], [0], marker="o", linestyle="", color=color, markersize=5,
+            label=f"{preference} (n={int(responsive['bpi_preference'].eq(preference).sum())})",
+        )
+        for preference, color in _BPI_PREFERENCE_COLORS.items()
+        if responsive["bpi_preference"].eq(preference).any()
+    ]
+    class_handles = [
+        Line2D(
+            [0], [0], marker=marker, linestyle="", markerfacecolor="white",
+            markeredgecolor="#222222", color="#222222", markersize=5,
+            label=f"{response_class} (n={int(responsive['response_class'].eq(response_class).sum())})",
+        )
+        for response_class, marker in _RESPONSE_CLASS_MARKERS.items()
+        if responsive["response_class"].eq(response_class).any()
+    ]
+    nonresponse_handle = Line2D(
+        [0], [0], marker="x", linestyle="", color="#7f7f7f", markersize=5,
+        label=f"no response pass (n={len(nonresponsive)})",
+    )
+
+    for axis, x_label in (
+        (ax_bpi, "Mean positive response AUC (dF/F·s)"),
+        (ax_strength, "Mean absolute z-response"),
     ):
-        axis.scatter(x_values, nonresponsive["bpi"], s=9, marker="x", linewidths=0.45, alpha=0.22, color="#7f7f7f")
-    limit = float(np.nanpercentile(np.abs(work[["mean_bout_auc_dff", "mean_cont_auc_dff"]].to_numpy()), 99))
-    limit = max(limit, activity_threshold)
-    ax_plane.plot([0, limit], [0, limit], "--", color="#444444", linewidth=0.9)
-    ax_plane.set(xlim=(0, limit), ylim=(0, limit), xlabel="Continuous response AUC (dF/F·s)", ylabel="Bout response AUC (dF/F·s)", title="[56g] Bout versus continuous response")
-    ax_plane.legend(fontsize=7, frameon=False, loc="upper left")
-    for axis, x_label in ((ax_bpi, "Activity magnitude"), (ax_strength, "Mean bout/continuous AUC (dF/F·s)")):
         axis.axhline(0, color="#444444", linewidth=0.8)
         axis.axhline(zero_band, color="#444444", linestyle=":", linewidth=1.0)
         axis.axhline(-zero_band, color="#444444", linestyle=":", linewidth=1.0)
-        axis.axvline(activity_threshold, color="#444444", linestyle="-.", linewidth=1.0)
         axis.set(xlabel=x_label, ylabel="BPI", ylim=(-1.02, 1.02))
-    gate_text = (
-        f"Directional call = AUC/null pass and |BPI| > {zero_band:g}\n"
-        f"grey x: no response pass (n={len(nonresponsive)}; extreme |BPI| n={len(extreme_nonresponsive)})"
+    effect_note = (
+        f"n={len(responsive)} response-positive; color=BPI effect class; marker=response test\n"
+        f"|BPI| > {zero_band:g} is an effect-size rule, not a contrast test"
     )
-    ax_bpi.set_title("[56g] BPI versus activity magnitude\n" + gate_text, fontsize=10)
-    ax_strength.set_title("[50l] Population response strength versus BPI\n" + gate_text, fontsize=10)
-    n_bins = min(6, int(work["activity_mag"].nunique()))
+    ax_bpi.set_title("BPI versus response magnitude\n" + effect_note, fontsize=9.5)
+    ax_strength.set_title("BPI versus z-scored response\n" + effect_note, fontsize=9.5)
+
+    n_bins = min(6, int(assessable["response_magnitude_auc"].nunique()))
     if n_bins >= 2:
-        binned = work.assign(_bin=pd.qcut(work["activity_mag"], q=n_bins, duplicates="drop")).groupby("_bin", observed=False)["abs_bpi"].agg(["median", "count"]).reset_index()
-        mids = [0.5 * (item.left + item.right) for item in binned["_bin"]]
-        ax_bins.plot(mids, binned["median"], marker="o", color="#1f77b4")
-        for x, row in zip(mids, binned.itertuples(index=False)):
-            ax_bins.annotate(f"n={row.count}", (x, row.median), xytext=(2, 4), textcoords="offset points", fontsize=7)
-    ax_bins.set(xlabel="Activity magnitude (bin midpoint)", ylabel="Median |BPI|", ylim=(0, 1.02), title="[56g] Absolute BPI across activity bins")
-    distribution_categories = [item for item in categories if (work["bpi_category"] == item).any()]
-    distribution_data = [work.loc[work["bpi_category"] == category, "activity_mag"].to_numpy() for category in distribution_categories]
-    ax_dist.boxplot(distribution_data, labels=[f"{category}\n(n={len(values)})" for category, values in zip(distribution_categories, distribution_data)], showfliers=False)
-    ax_dist.axhline(activity_threshold, color="#444444", linestyle="-.", linewidth=1.0)
-    ax_dist.set(ylabel="Activity magnitude", title="[56g] Activity by response/BPI class")
-    ax_dist.tick_params(axis="x", labelrotation=20, labelsize=7)
-    counts = all_counts.reindex(categories, fill_value=0)
-    ax_donut.pie(counts.to_numpy(), colors=[_BPI_CATEGORY_COLORS.get(item, "#666666") for item in counts.index], startangle=90, wedgeprops={"width": 0.42, "edgecolor": "white"})
-    ax_donut.text(0, 0, f"n={len(all_rows)}\nall ROIs", ha="center", va="center", fontsize=10)
-    ax_donut.legend([f"{item} (n={int(count)})" for item, count in counts.items()], fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False)
-    ax_donut.set_title("[50l] Response/BPI population composition")
-    fig.suptitle(f"{fish_id}: activity and BPI review (ROI-centric; persisted cut-offs)", fontsize=14, fontweight="bold")
+        binned = (
+            assessable.assign(
+                _bin=pd.qcut(assessable["response_magnitude_auc"], q=n_bins, duplicates="drop")
+            )
+            .groupby("_bin", observed=False)["response_is_active"]
+            .agg(["mean", "count"])
+            .reset_index()
+        )
+        mids = np.asarray([0.5 * (item.left + item.right) for item in binned["_bin"]], dtype=float)
+        ax_bins.plot(mids, binned["mean"], marker="o", color="#1f77b4")
+    ax_bins.set(
+        xlabel="Response AUC (dF/F·s; bin midpoint)", ylabel="Fraction response-positive",
+        ylim=(0, 1.02), title=f"Response calls across all assessable ROIs (n={len(assessable)}; equal-frequency bins)",
+    )
+    ax_bins.legend(
+        handles=[*preference_handles, *class_handles, nonresponse_handle],
+        fontsize=6.4, frameon=False, loc="upper left", ncol=1,
+    )
+
+    distribution_categories = [
+        category for category in _BPI_CATEGORY_ORDER
+        if category != "response unavailable" and assessable["response_class"].eq(category).any()
+    ]
+    distribution_data = [
+        assessable.loc[assessable["response_class"].eq(category), "activity_mag"].to_numpy()
+        for category in distribution_categories
+    ]
+    boxes = ax_dist.boxplot(
+        distribution_data,
+        labels=[f"{category}\n(n={len(values)})" for category, values in zip(distribution_categories, distribution_data)],
+        showfliers=True, patch_artist=True,
+        flierprops={"marker": ".", "markersize": 2.5, "markerfacecolor": "#444444", "markeredgecolor": "none", "alpha": 0.35},
+    )
+    for patch, category in zip(boxes["boxes"], distribution_categories):
+        patch.set_facecolor(_BPI_CATEGORY_COLORS.get(category, "#cccccc"))
+        patch.set_alpha(0.45)
+    ax_dist.set(ylabel="Mean absolute z-response", title=f"Z-response by response-test class (n={len(assessable)})")
+    ax_dist.tick_params(axis="x", labelrotation=18, labelsize=7)
+
+    all_counts = work["response_class"].value_counts()
+    donut_categories = [
+        item for item in _BPI_CATEGORY_ORDER if item in all_counts.index
+    ]
+    donut_categories.extend(sorted(set(all_counts.index) - set(donut_categories)))
+    counts = all_counts.reindex(donut_categories, fill_value=0)
+    ax_donut.pie(
+        counts.to_numpy(),
+        colors=[_BPI_CATEGORY_COLORS.get(item, "#666666") for item in counts.index],
+        startangle=90, wedgeprops={"width": 0.42, "edgecolor": "white"},
+    )
+    ax_donut.text(0, 0, f"n={len(work)}\nall ROIs", ha="center", va="center", fontsize=10)
+    ax_donut.legend(
+        [f"{item} (n={int(count)})" for item, count in counts.items()],
+        fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5), frameon=False,
+    )
+    ax_donut.set_title("Population response-test classes")
+    fig.suptitle(
+        f"{fish_id}: response significance and BPI effect size (ROI-centric)",
+        fontsize=14, fontweight="bold",
+    )
     return fig, work
 
 

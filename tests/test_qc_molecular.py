@@ -491,17 +491,23 @@ def test_activity_bpi_gate_uses_persisted_thresholds_and_all_categories(tmp_path
     table = _csv(
         tmp_path / "functional_roi_activity_bpi_cells.csv",
         [
-            {"mean_bout_auc_dff": 0.08, "mean_cont_auc_dff": 0.02, "activity_mag": 0.08, "bpi": 0.6, "response_is_active": True, "bpi_category": "bout-responsive", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
-            {"mean_bout_auc_dff": 0.02, "mean_cont_auc_dff": 0.09, "activity_mag": 0.09, "bpi": -0.63, "response_is_active": True, "bpi_category": "continuous-responsive", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
-            {"mean_bout_auc_dff": 0.01, "mean_cont_auc_dff": 0.01, "activity_mag": 0.02, "bpi": 0.8, "response_is_active": False, "bpi_category": "low activity", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
-            {"mean_bout_auc_dff": 0.04, "mean_cont_auc_dff": 0.04, "activity_mag": 0.04, "bpi": 0.0, "response_is_active": False, "bpi_category": "response unavailable", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
+            {"mean_bout_auc_dff": 0.08, "mean_cont_auc_dff": 0.02, "response_magnitude_auc": 0.05, "activity_mag": 0.08, "bpi": 0.6, "response_is_active": True, "response_class": "bout-responsive", "bpi_category": "bout-responsive", "bpi_preference": "bout-preferential", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
+            {"mean_bout_auc_dff": 0.02, "mean_cont_auc_dff": 0.09, "response_magnitude_auc": 0.055, "activity_mag": 0.09, "bpi": -0.63, "response_is_active": True, "response_class": "continuous-responsive", "bpi_category": "continuous-responsive", "bpi_preference": "continuous-preferential", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
+            {"mean_bout_auc_dff": 0.01, "mean_cont_auc_dff": 0.01, "response_magnitude_auc": 0.01, "activity_mag": 1.2, "bpi": 0.8, "response_is_active": False, "response_class": "low activity", "bpi_category": "low activity", "bpi_preference": "not-responsive", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
+            {"mean_bout_auc_dff": 0.0, "mean_cont_auc_dff": 0.0, "response_magnitude_auc": 0.0, "activity_mag": 1.4, "bpi": np.nan, "response_is_active": False, "response_class": "low activity", "bpi_category": "low activity", "bpi_preference": "not-responsive", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
+            {"mean_bout_auc_dff": 0.04, "mean_cont_auc_dff": 0.04, "response_magnitude_auc": 0.04, "activity_mag": 0.04, "bpi": 0.0, "response_is_active": False, "response_class": "response unavailable", "bpi_category": "response unavailable", "bpi_preference": "unavailable", "bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05},
         ],
     )
     work, thresholds = build_activity_bpi_gate_table(table)
-    assert len(work) == 4
+    assert len(work) == 5
     assert thresholds == {"bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05}
     figure, plotted = plot_activity_bpi_gate(table, fish_id=FISH_ID)
     assert len(figure.axes) == 6
     assert set(plotted["bpi_category"]) == {"bout-responsive", "continuous-responsive", "low activity", "response unavailable"}
-    assert "extreme |BPI| n=1" in figure.axes[1].get_title()
+    assert len(figure.axes[1].lines) == 3  # zero and the two unitless BPI preference guides
+    assert "effect-size rule, not a contrast test" in figure.axes[1].get_title()
+    assert "n=4 assessable" in figure.axes[0].get_title()
+    assert sum(len(collection.get_offsets()) for collection in figure.axes[1].collections) == 2
+    assert figure.axes[3].get_ylim()[1] >= 1.4
+    assert figure.axes[2].get_ylabel() == "Fraction response-positive"
     plt.close(figure)

@@ -155,8 +155,8 @@ class StimulusTests(unittest.TestCase):
         baseline = build_prestim_baseline_windows(df_evt, 2.0, 1.0)
         trials = build_prestim_trial_windows(df_evt, 2.0, 1.0)
         start_map = build_null_window_start_map(trials, [4], step_frames=1, min_windows=1)
-        self.assertEqual(baseline, [(2, 8)])
-        self.assertEqual(trials[0]["duration_frames"], 6)
+        self.assertEqual(baseline, [(2, 6)])
+        self.assertEqual(trials[0]["duration_frames"], 4)
         self.assertTrue(isinstance(start_map[4], np.ndarray))
 
     def test_compute_zscore_stats_flags_low_sigma(self) -> None:

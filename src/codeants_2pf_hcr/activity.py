@@ -12,7 +12,6 @@ import pandas as pd
 from .stimulus import (
     StimulusConfig,
     build_null_window_start_map,
-    build_prestim_baseline_windows,
     build_prestim_trial_windows,
     classify_bpi_stim_type,
     classify_stim_type,
@@ -39,6 +38,7 @@ class ActivityConfig:
     response_both: str = "both-responsive"
     response_low: str = "low activity"
     response_unavailable: str = "response unavailable"
+    # Legacy configuration compatibility; newly scored rows never emit this class.
     bpi_weak: str = "weak-response"
     zero_band: float = 0.50
     min_trials_per_class: int = 3
@@ -46,6 +46,7 @@ class ActivityConfig:
     edge_policy: str = "pad_nan"
     min_valid_frac: float = 0.5
     stim_onset_delay_sec: float = 10.0
+    response_window_sec: float = 12.5
     response_min_auc: float = 0.05
     response_null_q: float = 0.99
     response_null_bootstrap_n: int = 2000
@@ -178,6 +179,7 @@ def _merge_scored_response_table(
         "n_cont_trials_z",
         "mean_bout_dff",
         "mean_cont_dff",
+        "response_magnitude_auc",
         "mean_bout_zdff",
         "mean_cont_zdff",
         "mean_bout_auc_dff",
@@ -197,6 +199,7 @@ def _merge_scored_response_table(
         "bpi",
         "bpi_z",
         "activity_mag",
+        "bpi_preference",
         "bpi_status",
         "bpi_data_available",
         "bpi_category",
@@ -220,6 +223,8 @@ def _merge_scored_response_table(
     detail["bout_response_pass"] = _as_bool_series(detail.get("bout_response_pass", False)).astype(bool)
     detail["cont_response_pass"] = _as_bool_series(detail.get("cont_response_pass", False)).astype(bool)
     detail["response_class"] = detail["response_class"].fillna(cfg.response_unavailable)
+    if "bpi_preference" not in detail.columns:
+        detail["bpi_preference"] = "unavailable"
     detail["response_summary_class"] = detail["response_summary_class"].fillna(response_summary_unavailable)
     detail["bpi_category"] = detail["bpi_category"].fillna(bpi_unavailable)
     if "bpi_status" not in detail.columns:
@@ -296,15 +301,17 @@ def _compute_bootstrap_null_quantiles(
         for event in class_events:
             duration = int(event["duration_frames"])
             starts = null_starts_by_duration.get(duration)
-            if starts is None or len(starts) == 0:
+            if starts is None or len(starts) < 2:
                 usable = False
                 break
             if duration not in auc_cache:
                 sums = csum[:, starts + duration] - csum[:, starts]
                 auc_cache[duration] = sums / float(fps)
             auc_mat = auc_cache[duration]
-            choices = rng.integers(0, auc_mat.shape[1], size=int(n_boot))
-            boot += auc_mat[:, choices]
+            baseline_choices = rng.integers(0, auc_mat.shape[1], size=int(n_boot))
+            response_choices = rng.integers(0, auc_mat.shape[1] - 1, size=int(n_boot))
+            response_choices += response_choices >= baseline_choices
+            boot += auc_mat[:, response_choices] - auc_mat[:, baseline_choices]
         if not usable:
             continue
         boot /= float(len(class_events))
@@ -320,9 +327,30 @@ def _build_activity_stimulus_context(
 ) -> dict[str, Any]:
     df_evt = ctx["df_evt"]
     df_stim = ctx["df_stim"]
-    baseline_windows = build_prestim_baseline_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
-    prestim_trial_windows = build_prestim_trial_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
-
+    raw_prestim = build_prestim_trial_windows(df_evt, fps, cfg.stim_onset_delay_sec, tag="[activity]")
+    raw_by_trial = {(str(item["block"]), int(item["stim_idx"])): item for item in raw_prestim}
+    response_frames = int(round(float(cfg.response_window_sec) * float(fps)))
+    if response_frames <= 0:
+        raise ValueError("response_window_sec must be positive")
+    # The planned acquisition grid and mapped raw log may have different block offsets.
+    # Preserve the measured pause duration, but anchor it to the same onset used for scoring.
+    prestim_trial_windows = []
+    for _, stimulus in df_stim.iterrows():
+        key = (str(stimulus["block"]), int(stimulus["stim_idx"]))
+        raw_window = raw_by_trial.get(key)
+        if raw_window is None:
+            raise RuntimeError(f"missing prestimulus pause for {key}")
+        end = int(round(float(stimulus["start"]) * float(fps)))
+        duration = int(raw_window["duration_frames"])
+        prestim_trial_windows.append({
+            "block": key[0], "stim_idx": key[1],
+            "idx0": end - duration, "idx1": end, "duration_frames": duration,
+        })
+    prestim_by_trial = {
+        (str(window["block"]), int(window["stim_idx"])): window
+        for window in prestim_trial_windows
+    }
+    baseline_windows = sorted((int(item["idx0"]), int(item["idx1"])) for item in prestim_trial_windows)
     df_stim_work = df_stim.copy()
     df_stim_work["presented_stim_mode"] = df_stim_work["type"].map(classify_stim_type)
     df_stim_work["bpi_stim_class"] = df_stim_work["type"].map(classify_bpi_stim_type)
@@ -340,10 +368,21 @@ def _build_activity_stimulus_context(
         if not np.isfinite(t0) or not np.isfinite(t1) or not np.isfinite(duration):
             continue
         idx0 = int(round(t0 * float(fps)))
-        idx1 = int(round(t1 * float(fps)))
+        idx1 = idx0 + response_frames
         if idx1 <= idx0:
             continue
         bpi_stim_class = row.get("bpi_stim_class", None)
+        trial_key = (str(row.get("block")), int(row.get("stim_idx")))
+        prestim = prestim_by_trial.get(trial_key)
+        if prestim is None:
+            raise RuntimeError(f"missing prestimulus pause for {trial_key}")
+        baseline_idx1 = int(round(float(row["start"]) * float(fps)))
+        baseline_idx0 = baseline_idx1 - response_frames
+        if baseline_idx0 < int(prestim["idx0"]) or baseline_idx1 > int(prestim["idx1"]):
+            raise RuntimeError(f"prestimulus pause is shorter than the matched response window for {trial_key}")
+        next_prestim = [int(window["idx0"]) for window in prestim_trial_windows if int(window["idx0"]) > baseline_idx1]
+        if next_prestim and idx1 > min(next_prestim):
+            raise RuntimeError(f"response window overlaps the next prestimulus pause for {trial_key}")
         used_for_bpi = str(bpi_stim_class) in {"bout", "continuous"}
         presented_stim_events.append(
             {
@@ -356,7 +395,9 @@ def _build_activity_stimulus_context(
                 "used_for_bpi": bool(used_for_bpi),
                 "idx0": idx0,
                 "idx1": idx1,
-                "duration_s": float(duration),
+                "duration_s": float(idx1 - idx0) / float(fps),
+                "baseline_idx0": baseline_idx0,
+                "baseline_idx1": baseline_idx1,
                 "duration_frames": int(idx1 - idx0),
                 "session_label": ctx.get("session_label", pd.NA),
             }
@@ -442,6 +483,10 @@ def build_scored_stimulus_windows_table(
                 "used_for_bpi": bool(event.get("used_for_bpi", True)),
                 "recorded_onset_sec": pd.to_numeric(recorded.get("start", np.nan), errors="coerce"),
                 "recorded_offset_sec": pd.to_numeric(recorded.get("end", np.nan), errors="coerce"),
+                "prestim_baseline_start_frame": event.get("baseline_idx0", pd.NA),
+                "prestim_baseline_end_frame": event.get("baseline_idx1", pd.NA),
+                "prestim_baseline_duration_frames": int(event["duration_frames"]) if "baseline_idx0" in event else pd.NA,
+                "response_window_policy": "fixed_from_movement_onset_matched_prestim",
                 "recorded_onset_frame": int(round(float(recorded.get("start")) * fps)) if pd.notna(recorded.get("start", np.nan)) and np.isfinite(fps) else pd.NA,
                 "recorded_offset_frame": int(round(float(recorded.get("end")) * fps)) if pd.notna(recorded.get("end", np.nan)) and np.isfinite(fps) else pd.NA,
                 "scored_onset_frame": idx0,
@@ -486,6 +531,7 @@ def build_response_bpi_tables(
         "mean_cont_zdff",
         "mean_bout_auc_dff",
         "mean_cont_auc_dff",
+        "response_magnitude_auc",
         "bout_null_q99_auc",
         "cont_null_q99_auc",
         "bout_response_pass",
@@ -502,6 +548,7 @@ def build_response_bpi_tables(
         "bpi_z",
         "activity_mag",
         "bpi_status",
+        "bpi_preference",
         "bpi_data_available",
         "bpi_category",
         "bpi_zero_band",
@@ -663,7 +710,6 @@ def build_response_bpi_tables(
     response_summary_responsive = "Responsive neurons"
     response_summary_low = "Low activity"
     response_summary_unavailable = "Response unavailable"
-    bpi_low = cfg.response_low
     bpi_unavailable = cfg.response_unavailable
     cell_rows: list[dict[str, Any]] = []
 
@@ -687,6 +733,7 @@ def build_response_bpi_tables(
             "mean_cont_dff": np.nan,
             "mean_bout_zdff": np.nan,
             "mean_cont_zdff": np.nan,
+            "response_magnitude_auc": np.nan,
             "mean_bout_auc_dff": np.nan,
             "mean_cont_auc_dff": np.nan,
             "bout_null_q99_auc": np.nan,
@@ -704,6 +751,7 @@ def build_response_bpi_tables(
             "bpi": np.nan,
             "bpi_z": np.nan,
             "activity_mag": np.nan,
+            "bpi_preference": "unavailable",
             "bpi_data_available": False,
             "bpi_category": bpi_unavailable,
             "bpi_zero_band": float(cfg.zero_band),
@@ -757,8 +805,17 @@ def build_response_bpi_tables(
             )
             if seg is None:
                 continue
-            resp_mean = float(np.nanmean(seg))
-            resp_auc = float(np.nansum(seg) / plane_fps)
+            baseline, _, _ = _extract_window(
+                trace, int(event["baseline_idx0"]), int(event["baseline_idx1"]),
+                mode="strict", min_valid_frac=float(cfg.min_valid_frac),
+            )
+            if baseline is None:
+                continue
+            baseline_mean = float(np.nanmean(baseline))
+            if not np.isfinite(baseline_mean):
+                continue
+            resp_mean = float(np.nanmean(seg) - baseline_mean)
+            resp_auc = float(np.nansum(seg - baseline_mean) / plane_fps)
             if not np.isfinite(resp_mean) or not np.isfinite(resp_auc):
                 continue
             if event["stim_class"] == "bout":
@@ -775,8 +832,12 @@ def build_response_bpi_tables(
                     mode=str(cfg.edge_policy),
                     min_valid_frac=float(cfg.min_valid_frac),
                 )
-                if seg_z is not None:
-                    resp_z = float(np.nanmean(seg_z))
+                baseline_z, _, _ = _extract_window(
+                    trace_z, int(event["baseline_idx0"]), int(event["baseline_idx1"]),
+                    mode="strict", min_valid_frac=float(cfg.min_valid_frac),
+                )
+                if seg_z is not None and baseline_z is not None:
+                    resp_z = float(np.nanmean(seg_z) - np.nanmean(baseline_z))
                     if np.isfinite(resp_z):
                         if event["stim_class"] == "bout":
                             bout_z.append(resp_z)
@@ -796,9 +857,13 @@ def build_response_bpi_tables(
         c = float(np.nanmean(cont_resp)) if n_c > 0 else np.nan
         b_auc_mean = float(np.nanmean(bout_auc)) if bout_auc else np.nan
         c_auc_mean = float(np.nanmean(cont_auc)) if cont_auc else np.nan
+        bout_magnitude = max(0.0, b_auc_mean) if np.isfinite(b_auc_mean) else np.nan
+        cont_magnitude = max(0.0, c_auc_mean) if np.isfinite(c_auc_mean) else np.nan
+        if np.isfinite(bout_magnitude) and np.isfinite(cont_magnitude):
+            base_row["response_magnitude_auc"] = 0.5 * (bout_magnitude + cont_magnitude)
         b_z_mean = float(np.nanmean(bout_z)) if n_b_z > 0 else np.nan
         c_z_mean = float(np.nanmean(cont_z)) if n_c_z > 0 else np.nan
-        denom = b + c if np.isfinite(b) and np.isfinite(c) else np.nan
+        denom = bout_magnitude + cont_magnitude
         denom_z = b_z_mean + c_z_mean if np.isfinite(b_z_mean) and np.isfinite(c_z_mean) else np.nan
         base_row["mean_bout_dff"] = b
         base_row["mean_cont_dff"] = c
@@ -850,16 +915,18 @@ def build_response_bpi_tables(
         else:
             base_row["response_class"] = cfg.response_unavailable
             base_row["response_summary_class"] = response_summary_unavailable
+        base_row["bpi_category"] = base_row["response_class"]
 
+        base_row["bpi_preference"] = "unavailable" if base_row["response_is_active"] else "not-responsive"
         if n_b < int(cfg.min_trials_per_class) or n_c < int(cfg.min_trials_per_class):
             base_row["bpi_status"] = "insufficient_trials"
             cell_rows.append(base_row)
             continue
-        if not np.isfinite(denom) or abs(float(denom)) <= float(cfg.denom_eps):
+        if not np.isfinite(denom) or denom <= float(cfg.denom_eps):
             base_row["bpi_status"] = "low_denom"
             cell_rows.append(base_row)
             continue
-        bpi = float((b - c) / denom)
+        bpi = float((bout_magnitude - cont_magnitude) / denom)
         if not np.isfinite(bpi):
             base_row["bpi_status"] = "nonfinite_bpi"
             cell_rows.append(base_row)
@@ -872,19 +939,14 @@ def build_response_bpi_tables(
                 if np.isfinite(bpi_z):
                     base_row["bpi_z"] = bpi_z
 
-        if bout_pass and cont_pass:
-            if float(bpi) > float(cfg.zero_band):
-                base_row["bpi_category"] = cfg.response_bout
-            elif float(bpi) < -float(cfg.zero_band):
-                base_row["bpi_category"] = cfg.response_cont
-            else:
-                base_row["bpi_category"] = cfg.response_both
-        elif bout_pass:
-            base_row["bpi_category"] = cfg.bpi_weak if abs(float(bpi)) <= float(cfg.zero_band) else cfg.response_bout
-        elif cont_pass:
-            base_row["bpi_category"] = cfg.bpi_weak if abs(float(bpi)) <= float(cfg.zero_band) else cfg.response_cont
+        if not bool(base_row["response_is_active"]):
+            base_row["bpi_preference"] = "not-responsive"
+        elif bpi > float(cfg.zero_band):
+            base_row["bpi_preference"] = "bout-preferential"
+        elif bpi < -float(cfg.zero_band):
+            base_row["bpi_preference"] = "continuous-preferential"
         else:
-            base_row["bpi_category"] = bpi_low if base_row["response_class"] == cfg.response_low else bpi_unavailable
+            base_row["bpi_preference"] = "non-preferential"
         cell_rows.append(base_row)
 
     scored_bpi_df = pd.DataFrame(cell_rows)
@@ -908,6 +970,7 @@ def build_response_bpi_tables(
             "mean_bout_zdff",
             "mean_cont_zdff",
             "mean_bout_auc_dff",
+            "response_magnitude_auc",
             "mean_cont_auc_dff",
             "bout_null_q99_auc",
             "cont_null_q99_auc",
@@ -926,6 +989,7 @@ def build_response_bpi_tables(
             "activity_mag",
             "bpi_status",
             "bpi_data_available",
+            "bpi_preference",
             "bpi_category",
             "bpi_zero_band",
             "bpi_activity_threshold",
@@ -936,6 +1000,7 @@ def build_response_bpi_tables(
         detail["cont_response_pass"] = _as_bool_series(detail.get("cont_response_pass", False)).astype(bool)
         detail["response_class"] = detail["response_class"].fillna(cfg.response_unavailable)
         detail["response_summary_class"] = detail["response_summary_class"].fillna(response_summary_unavailable)
+        detail["bpi_preference"] = detail["bpi_preference"].fillna("unavailable")
         detail["bpi_category"] = detail["bpi_category"].fillna(bpi_unavailable)
         detail["bpi_status"] = detail["bpi_status"].fillna("response_unavailable")
         detail["bpi_data_available"] = _as_bool_series(detail.get("bpi_data_available", False)).astype(bool)
@@ -978,6 +1043,7 @@ def build_response_bpi_tables(
         "stim_events": stim_events,
         "presented_stim_events": [event for ctx in unique_contexts for event in ctx["presented_stim_events"]],
         "stim_source": stim_source,
+        "prestim_trial_windows_by_plane": {plane: context["prestim_trial_windows"] for plane, context in prepared_contexts.items()},
         "baseline_windows": baseline_windows,
         "prestim_trial_windows": prestim_trial_windows,
         "s2p_map": s2p_map,
@@ -1004,7 +1070,6 @@ def build_presented_stimulus_response_tables(
     if not types:
         raise RuntimeError("no presented stimulus events available for response screening")
     null_quantile = 1.0 - (1.0 - float(cfg.response_null_q)) / len(types)
-    event_log = response_result["df_evt"]
     s2p_map = response_result["s2p_map"]
     fps_by_plane = response_result["fps_by_plane"]
     rows: list[dict[str, Any]] = []
@@ -1016,8 +1081,7 @@ def build_presented_stimulus_response_tables(
         events = events_by_plane.get(plane_idx, [])
         session = str(events[0].get("session_label", "")) if events else ""
         fps = float(fps_by_plane[plane_idx])
-        session_log = event_log[event_log["session_label"].astype(str) == session]
-        prestim = build_prestim_trial_windows(session_log, fps, cfg.stim_onset_delay_sec, tag="[23c]")
+        prestim = response_result["prestim_trial_windows_by_plane"][plane_idx]
         null_starts = build_null_window_start_map(
             prestim,
             [int(event["duration_frames"]) for event in events],
@@ -1038,19 +1102,27 @@ def build_presented_stimulus_response_tables(
                         dff[int(roi_idx)], int(event["idx0"]), int(event["idx1"]),
                         mode=str(cfg.edge_policy), min_valid_frac=float(cfg.min_valid_frac),
                     )
-                    if segment is not None:
-                        auc = float(np.nansum(segment) / fps)
+                    baseline, _, _ = _extract_window(
+                        dff[int(roi_idx)], int(event["baseline_idx0"]), int(event["baseline_idx1"]),
+                        mode="strict", min_valid_frac=float(cfg.min_valid_frac),
+                    )
+                    if segment is not None and baseline is not None:
+                        auc = float(np.nansum(segment - np.nanmean(baseline)) / fps)
                         if np.isfinite(auc):
                             observed[pos].append(auc)
             null_threshold = np.full(len(roi_indices), np.nan, dtype=np.float32)
-            if type_events and all(int(event["duration_frames"]) in null_starts for event in type_events):
+            if type_events and all(len(null_starts.get(int(event["duration_frames"]), [])) >= 2 for event in type_events):
                 rng = np.random.default_rng(int(cfg.response_rng_seed) + plane_idx * 100 + type_idx)
                 boot = np.zeros((len(roi_indices), int(cfg.response_null_bootstrap_n)), dtype=np.float32)
                 for event in type_events:
                     duration = int(event["duration_frames"])
                     starts = null_starts[duration]
-                    chosen = starts[rng.integers(0, len(starts), size=boot.shape[1])]
-                    boot += (csum[roi_indices[:, None], chosen + duration] - csum[roi_indices[:, None], chosen]) / fps
+                    baseline_choices = rng.integers(0, len(starts), size=boot.shape[1])
+                    response_choices = rng.integers(0, len(starts) - 1, size=boot.shape[1])
+                    response_choices += response_choices >= baseline_choices
+                    baseline_start, response_start = starts[baseline_choices], starts[response_choices]
+                    boot += ((csum[roi_indices[:, None], response_start + duration] - csum[roi_indices[:, None], response_start])
+                             - (csum[roi_indices[:, None], baseline_start + duration] - csum[roi_indices[:, None], baseline_start])) / fps
                 boot /= float(len(type_events))
                 null_threshold = np.quantile(boot, null_quantile, axis=1).astype(np.float32)
             for pos, roi_idx in enumerate(roi_indices):

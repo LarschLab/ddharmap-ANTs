@@ -17,6 +17,7 @@
 
 ## Practical warnings
 
+- The 2026-09-16 fixed 12.5-s movement-onset response window, matched true-prestimulus baseline/null, and separate response/BPI preference semantics change `[23c]` and `[50ia]` outputs. The pinned L765_f04 working root below still contains the older scoring generation; rerun writers in a distinct root and review Q1/Q7 before replacing it.
 - L765_f04 QC development is pinned to the single dated working root
   `/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260915T093051Z_WORKING_PIPELINE_AND_QC/L765_f04`.
   Keep that root stable until the full pipeline and QC suite pass; older roots

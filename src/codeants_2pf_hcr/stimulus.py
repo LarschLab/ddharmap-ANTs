@@ -641,6 +641,7 @@ def build_prestim_baseline_windows(
     tag: str = "[stim]",
     verbose: bool = False,
 ) -> list[tuple[int, int]]:
+    """Return true prestimulus pauses, ending at stimulus appearance."""
     if df_evt is None or getattr(df_evt, "empty", True):
         raise RuntimeError(f"{tag} df_evt is empty")
     evt = df_evt[["event", "time"]].copy()
@@ -668,7 +669,7 @@ def build_prestim_baseline_windows(
             missing += 1
             continue
         t0 = float(t_pre)
-        t1 = float(t_stim) + float(onset_delay_sec)
+        t1 = float(t_stim)
         if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
             continue
         idx0 = int(round(t0 * float(fps)))
@@ -701,6 +702,7 @@ def build_prestim_trial_windows(
     *,
     tag: str = "[stim]",
 ) -> list[dict[str, int | str]]:
+    """Return per-trial pauses without post-onset stimulus samples."""
     if df_evt is None or getattr(df_evt, "empty", True):
         raise RuntimeError(f"{tag} df_evt is empty")
     evt = df_evt[["event", "time"]].copy()
@@ -727,7 +729,7 @@ def build_prestim_trial_windows(
         if t_stim is None:
             continue
         t0 = float(t_pre)
-        t1 = float(t_stim) + float(onset_delay_sec)
+        t1 = float(t_stim)
         if not np.isfinite(t0) or not np.isfinite(t1) or t1 <= t0:
             continue
         idx0 = int(round(t0 * float(fps)))

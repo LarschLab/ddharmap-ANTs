@@ -21,7 +21,7 @@
       "units": {
         "BPI": "unitless ratio",
         "geometry": "Inherited unchanged from the geometry writer; unit corrections require a schema decision.",
-        "response_AUC": "Stage-owned activity units recorded with stimulus timing provenance."
+        "response_AUC": "Baseline-subtracted dF/F·s over a fixed 12.5 s from movement onset, paired with a 12.5 s true-prestimulus interval in the same session."
       },
       "grouping": [
         "fish_id",
@@ -30,7 +30,7 @@
       ],
       "thresholds": {
         "authority": ".agents/references/activity-semantics.md",
-        "rule": "Threshold values are owned by the activity writer and must be persisted in provenance."
+        "rule": "The activity writer persists AUC/null response gates and strict |BPI| > 0.5 preference separately; response_class and bpi_category report significant condition passes, not preference."
       },
       "forbidden_reinterpretations": [
         "Do not drop suite2p_is_cell false rows from the ROI inventory.",
@@ -292,7 +292,7 @@
         "tests/test_qc_functional.py::test_early_response_timing_qc_keeps_recorded_and_scored_paths_independent",
         "tests/test_activity.py::test_response_scoring_maps_b1_b2_after_full_trace_b0",
         "tests/test_activity.py::test_response_scoring_includes_complete_presented_stimulus_vocabulary",
-        "tests/test_qc_notebook_contract.py::test_functional_reference_notebook_owns_persisted_early_response_review"
+        "tests/test_qc_notebook_contract.py::test_functional_reference_notebook_renders_persisted_numeric_early_response_data"
       ]
     }
   ]

@@ -9,6 +9,7 @@ import pandas as pd
 from codeants_2pf_hcr.activity import (
     ActivityConfig,
     SingleFishBpiDiagnosticsConfig,
+    _build_activity_stimulus_context,
     build_response_bpi_tables,
     build_scored_stimulus_windows_table,
     build_suite2p_response_seed_table,
@@ -23,6 +24,30 @@ class ActivityTests(unittest.TestCase):
         table = build_scored_stimulus_windows_table(fish_id="L758_f02", df_stim=pd.DataFrame(), stim_events=[], stim_events_by_plane=events, df_stim_by_plane=source, fps_by_plane={0: 2.0, 1: 2.0})
         self.assertEqual(table["plane_idx"].tolist(), [0, 1])
         self.assertEqual(len(table), 2)
+    def test_planned_grid_anchors_true_prestim_and_fixed_motion_window(self) -> None:
+        context = {
+            "df_evt": pd.DataFrame([
+                {"event": "B1_prestim0_pause", "time": 103.0},
+                {"event": "B1_stim0_LB_trajectory", "time": 115.5},
+                {"event": "B1_prestim1_pause", "time": 148.0},
+                {"event": "B1_stim1_LC_trajectory", "time": 160.5},
+            ]),
+            "df_stim": pd.DataFrame([
+                {"block": "B1", "stim_idx": 0, "type": "LB_trajectory", "start": 112.5, "end": 129.5, "duration": 17.0},
+                {"block": "B1", "stim_idx": 1, "type": "LC_trajectory", "start": 157.5, "end": 174.5, "duration": 17.0},
+            ]),
+            "session_label": "r1",
+        }
+        scored = _build_activity_stimulus_context(
+            context, fps=2.0, cfg=ActivityConfig(response_null_min_windows=1),
+        )
+        self.assertEqual(scored["prestim_trial_windows"][0]["idx0"], 200)
+        self.assertEqual(scored["prestim_trial_windows"][0]["idx1"], 225)
+        self.assertEqual(scored["presented_stim_events"][0]["idx0"], 245)
+        self.assertEqual(scored["presented_stim_events"][0]["idx1"], 270)
+        self.assertEqual(scored["presented_stim_events"][0]["baseline_idx0"], 200)
+        self.assertEqual(scored["presented_stim_events"][0]["baseline_idx1"], 225)
+
 
     def test_response_scoring_maps_b1_b2_after_full_trace_b0(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -67,6 +92,7 @@ class ActivityTests(unittest.TestCase):
                 config=ActivityConfig(
                     min_trials_per_class=1,
                     stim_onset_delay_sec=0.0,
+                    response_window_sec=2.0,
                     response_null_min_windows=1,
                     response_null_bootstrap_n=5,
                     zscore_min_points=1,
@@ -76,8 +102,8 @@ class ActivityTests(unittest.TestCase):
             events = result["stim_events_by_plane"][0]
             self.assertEqual([event["block"] for event in events], ["B1", "B2"])
             self.assertEqual([event["idx0"] for event in events], [12, 22])
-            self.assertGreater(result["scored_bpi_df"].loc[0, "mean_bout_dff"], 3.0)
-            self.assertGreater(result["scored_bpi_df"].loc[0, "mean_cont_dff"], 2.0)
+            self.assertGreater(result["scored_bpi_df"].loc[0, "mean_bout_dff"], 2.5)
+            self.assertGreater(result["scored_bpi_df"].loc[0, "mean_cont_dff"], 1.5)
 
     def test_response_scoring_includes_complete_presented_stimulus_vocabulary(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -131,6 +157,7 @@ class ActivityTests(unittest.TestCase):
                 config=ActivityConfig(
                     min_trials_per_class=1,
                     stim_onset_delay_sec=0.0,
+                    response_window_sec=1.0,
                     response_null_min_windows=1,
                     response_null_bootstrap_n=5,
                     zscore_min_points=1,
@@ -238,6 +265,7 @@ class ActivityTests(unittest.TestCase):
                 config=ActivityConfig(
                     min_trials_per_class=1,
                     stim_onset_delay_sec=0.0,
+                    response_window_sec=2.0,
                     response_null_min_windows=1,
                     response_null_bootstrap_n=5,
                     dfof_baseline_pct=0.0,
@@ -294,6 +322,7 @@ class ActivityTests(unittest.TestCase):
                 config=ActivityConfig(
                     min_trials_per_class=1,
                     stim_onset_delay_sec=0.0,
+                    response_window_sec=2.0,
                     response_null_min_windows=1,
                     response_null_bootstrap_n=5,
                     dfof_baseline_pct=0.0,

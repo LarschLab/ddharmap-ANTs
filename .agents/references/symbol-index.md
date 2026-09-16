@@ -24,6 +24,7 @@ Generated manually for the current extracted package surface.
 ## `codeants_2pf_hcr.plots.qc_functional`
 
 - `load_functional_reference_drift_qc`: Load manifest-declared functional references plus the authoritative per-fish temporal Z-drift bundle and response-evidence availability for notebook `01`.
+- `build_early_response_trial_count_tables`: Compare presented events with per-cell valid-trial counts for each session and stimulus in Notebook 01.
 - `load_early_response_trace_qc`, `render_early_response_stimulus_traces`: Verify and render same-run numeric [23c] trace payloads for notebook `01`, without displaying a cached PNG.
 - `render_functional_reference_artifacts`, `render_functional_reference_drift_summary`: Render persisted reference and drift evidence without recomputation.
 - `load_functional_registration_qc`: Load anatomy-prep, registration, transformed-label, and registration-QC manifests/tables/PNGs for notebook `02`.
@@ -59,7 +60,7 @@ Generated manually for the current extracted package surface.
 - `inspect_molecular_identity_qc`, `plot_molecular_identity_qc`: Enforce frozen geometry and compare geometry fields before/after identity attachment in notebook `05`.
 - `plot_molecular_correspondence_tiles`: Render persisted HCR→anatomy→functional correspondence crops in anatomy/GCaMP context for notebook `05`, retaining every selected frozen-geometry link by default and exposing display-only gene, response, and flag filters; it never changes final-pair membership or creates exclusions.
 - `inspect_activity_export_qc`, `plot_activity_export_qc`: Review session-aware response/BPI provenance, canonical keys, figures, and ROI-centric versus HCR-centric scopes in notebook `06`.
-- `build_activity_bpi_gate_table`, `plot_activity_bpi_gate`: Read the persisted score-activity-BPI thresholds and render the ROI-centric Q7 `[56g]` / selected `[50l]` review panels in notebook `06`; directional colour requires a response pass as well as the BPI threshold, while finite nonresponsive rows are shown as faint diagnostic markers and unavailable rows remain counted.
+- `build_activity_bpi_gate_table`, `plot_activity_bpi_gate`: Read persisted response classes and strict BPI preferences for ROI-centric Notebook 06 review; non-BPI summaries use every response-assessable ROI, BPI panels use response-positive ROIs only, preference is color-coded, response-test class is marker-coded, and the all-ROI donut retains unavailable rows.
 
 ## `codeants_2pf_hcr.pipeline`
 
