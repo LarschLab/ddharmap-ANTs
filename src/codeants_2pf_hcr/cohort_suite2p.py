@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .activity import ActivityConfig, build_response_bpi_tables, build_suite2p_response_seed_table
+from .activity import ActivityConfig, build_presented_stimulus_response_tables, build_response_bpi_tables, build_suite2p_response_seed_table
 from .context import default_local_root, resolve_func_polarity
 from .suite2p import (
     Suite2pStageConfig,
@@ -275,6 +275,10 @@ def _merge_response_calls(
         out = trace_df.merge(lookup, on=["plane_idx", "func_label"], how="left")
         if "response_is_active" in out.columns:
             out["response_is_active"] = out["response_is_active"].fillna(False).astype(bool)
+        _, any_response = build_presented_stimulus_response_tables(
+            response_result, trace_df[["plane_idx", "func_label"]], fish_id=str(fish_id), config=activity_config,
+        )
+        out = out.merge(any_response, on=["fish_id", "plane_idx", "func_label"], how="left", validate="many_to_one")
         return out, scored, None
     except Exception as exc:
         return trace_df.copy(), pd.DataFrame(), str(exc)
@@ -307,8 +311,11 @@ def _source_summary_rows(
         session_str = str(session)
         roi_sub = roi_df[roi_df["session_label"].astype(str) == session_str].copy() if not roi_df.empty else pd.DataFrame()
         n_response = 0
+        n_any_response = 0
         if not roi_sub.empty and "response_is_active" in roi_sub.columns:
             n_response = int(roi_sub.loc[roi_sub["response_is_active"].astype(bool), ["plane_idx", "func_label"]].drop_duplicates().shape[0])
+        if not roi_sub.empty and "any_presented_response_is_active" in roi_sub.columns:
+            n_any_response = int(roi_sub.loc[roi_sub["any_presented_response_is_active"].astype(bool), ["plane_idx", "func_label"]].drop_duplicates().shape[0])
         n_z = int(pd.to_numeric(group.get("n_zscore_valid", pd.Series(dtype=float)), errors="coerce").fillna(0).sum())
         stimuli = sorted({item.strip() for value in group.get("stimulus_types", pd.Series(dtype=str)).dropna().astype(str) for item in value.split(",") if item.strip()})
         rows.append(
@@ -321,7 +328,9 @@ def _source_summary_rows(
                 "n_suite2p_cells": int(pd.to_numeric(group.get("n_suite2p_cells", pd.Series(dtype=float)), errors="coerce").fillna(0).sum()),
                 "n_zscore_valid": n_z,
                 "n_response_active_rois": int(n_response),
+                "n_any_presented_response_rois": int(n_any_response),
                 "response_fraction": float(n_response / n_z) if n_z else np.nan,
+                "any_presented_response_fraction": float(n_any_response / n_z) if n_z else np.nan,
                 "stimuli_detected": ", ".join(stimuli),
                 "response_error": response_error,
             }
@@ -355,7 +364,7 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
 
     if bool(cfg.skip_build_if_cached) and not bool(cfg.force_build):
         loaded = load_cohort_suite2p_23c_outputs_from_disk(outdir)
-        if {"trace_mean_df", "tvec", "heatmap_payloads"}.issubset(loaded):
+        if {"trace_mean_df", "tvec", "heatmap_payloads"}.issubset(loaded) and loaded.get("trace_cohort_policy") == "any_presented_stimulus_v1":
             bindings = dict(env)
             bindings.update(loaded)
             bindings["cohort_suite2p_23c_cache_paths"] = paths
@@ -432,14 +441,16 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
                 ]
                 response_count_rows.append(scored_out.groupby(count_cols, dropna=False).size().reset_index(name="n_rois"))
             status = "ok"
-            notes = "response-active traces"
+            notes = "any-presented-stimulus-responsive traces"
             active_trace_df = pd.DataFrame()
-            if response_error is None and "response_is_active" in trace_df.columns:
-                active_trace_df = trace_df[trace_df["response_is_active"].astype(bool)].copy()
-            if active_trace_df.empty:
-                active_trace_df = trace_df.copy()
-                notes = "response unavailable fallback: all valid Suite2p-cell traces"
-                status = "warn" if response_error else "ok"
+            if response_error is None and "any_presented_response_is_active" in trace_df.columns:
+                active_trace_df = trace_df[trace_df["any_presented_response_is_active"].astype(bool)].copy()
+            if response_error is not None:
+                notes = "any-presented-stimulus screen unavailable; no filtered traces"
+                status = "skip"
+            elif active_trace_df.empty:
+                notes = "no any-presented-stimulus responders"
+                status = "warn"
             if not active_trace_df.empty:
                 active_trace_df["fish_id"] = str(fish_id)
                 all_active_trace_rows.append(active_trace_df)
@@ -500,6 +511,7 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
             {
                 "trace_mean_df": trace_mean_df,
                 "trace_panel_df": trace_panel_df,
+                "trace_cohort_policy": "any_presented_stimulus_v1",
                 "tvec": tvec_ref,
                 "stim_order": stim_order,
                 "duration_by_stim": duration_summary,
@@ -517,6 +529,7 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
             "response_counts_df": response_counts_df,
             "trace_mean_df": trace_mean_df,
             "trace_panel_df": trace_panel_df,
+            "trace_cohort_policy": "any_presented_stimulus_v1",
             "tvec": tvec_ref,
             "stim_order": stim_order,
             "duration_by_stim": duration_summary,

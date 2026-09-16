@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import codeants_2pf_hcr.cohort_suite2p as cohort_suite2p
 
 from codeants_2pf_hcr import (
     aggregate_cohort_23c_trace_means,
@@ -89,3 +90,22 @@ def test_heatmap_rows_can_remain_all_cells_when_trace_rows_are_response_filtered
 
     assert int(out.iloc[0]["n_responsive_rois"]) == 1
     assert len(heatmap_row_df) == 3
+
+
+def test_cohort_trace_calls_use_any_presented_response_without_relabelling_bpi(monkeypatch, tmp_path: Path) -> None:
+    trace_df = pd.DataFrame({"fish_id": ["L758_f02", "L758_f02"], "plane_idx": [0, 0], "func_label": [1, 2], "stim_type": ["WFCl", "WFCl"]})
+    scored = pd.DataFrame({"plane_idx": [0, 0], "func_label": [1, 2], "response_is_active": [True, False]})
+    any_calls = pd.DataFrame({"fish_id": ["L758_f02", "L758_f02"], "plane_idx": [0, 0], "func_label": [1, 2], "any_presented_response_is_active": [False, True]})
+    monkeypatch.setattr(cohort_suite2p, "build_suite2p_response_seed_table", lambda *_args, **_kwargs: (trace_df, {0: {"dff": np.zeros((2, 2))}}))
+    monkeypatch.setattr(cohort_suite2p, "build_response_bpi_tables", lambda *_args, **_kwargs: {"scored_bpi_df": scored})
+    monkeypatch.setattr(cohort_suite2p, "build_presented_stimulus_response_tables", lambda *_args, **_kwargs: (pd.DataFrame(), any_calls))
+
+    merged, scored_out, error = cohort_suite2p._merge_response_calls(
+        fish_dir=tmp_path, fish_id="L758_f02", suite2p_by_ref_idx={}, trace_df=trace_df,
+        activity_config=cohort_suite2p.ActivityConfig(),
+    )
+
+    assert error is None
+    assert scored_out["response_is_active"].tolist() == [True, False]
+    assert merged["any_presented_response_is_active"].tolist() == [False, True]
+    assert merged["response_is_active"].tolist() == [True, False]

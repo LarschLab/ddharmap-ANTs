@@ -4098,3 +4098,17 @@
     visual inspection, showing all ten stimulus types and an explicit plot
     title stating that BPI uses only LB/RB versus LC/RC;
   - all seven QC notebooks passed end-to-end on Linnaeus.
+
+### 2026-09-16 - any-presented-stimulus Suite2p trace cohort
+
+- Slice goal:
+  - replace the LB/RB/LC/RC-only trace-panel filter with one fixed cohort responsive to any of the ten presented motion conditions, without changing BPI.
+- What changed:
+  - `[23c]` now persists per-condition and per-ROI any-presented-stimulus response screens using the same scored motion windows and prestimulus AUC-null logic, with a Bonferroni-adjusted null quantile.
+  - trace panels keep appearance at `t=0`, mark motion onset at `+10 s`, show the fixed responder cohort across all conditions, and retain an assessable nonresponsive mean separately. Unavailable cells are not relabelled nonresponsive.
+  - `suite2p_response_bpi_cells_23c.csv`, the 400 scored windows, and all pre-existing summary columns remained exactly equal in isolated L765_f04 validation.
+- Validation evidence:
+  - isolated Linnaeus `/tmp/codeants-any-stim-qc-6pd2Ox/qa/` run: 2,450 valid cells, 1,500 any-stim responders, 950 assessable nonresponders, 975 WFCl passes, 868 WFCo passes; the rendered figure was visually inspected.
+  - 500 local tests passed; five pooled-BPI responders do not pass an individually family-wise-corrected condition screen, so the two labels remain separate.
+- Remaining breakpoint and rerun:
+  - the selected `20260915T093051Z_WORKING_PIPELINE_AND_QC` root has not been overwritten; review the isolated figure before replacing its `[23c]` diagnostic artifacts, then rerun Notebook 01 review. No `[50ia]`/BPI recomputation is needed because those outputs are unchanged.

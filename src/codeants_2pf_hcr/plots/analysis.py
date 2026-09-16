@@ -320,18 +320,24 @@ def render_suite2p_stimulus_locked_trace_panels(
     stim_order: list[str],
     session_colors: dict[str, Any],
     duration_by_stim: dict[str, float] | None = None,
+    nonresponsive_trace_df: pd.DataFrame | None = None,
+    motion_onset_delay_sec: float | None = None,
     line_alpha: float = 0.22,
     line_width: float = 0.8,
     trace_column: str = "mean_trace",
     y_label: str = "z-scored dF/F",
-    title: str = "All Suite2p cells show stimulus-locked structure across imaging sessions",
+    title: str = "Stimulus-locked Suite2p responses across imaging sessions",
 ) -> Any:
-    if not isinstance(trace_df, pd.DataFrame) or trace_df.empty:
-        raise RuntimeError("[23b] trace_df is empty")
+    if not isinstance(trace_df, pd.DataFrame):
+        raise RuntimeError("[23b] trace_df is not a table")
+    reference_df = nonresponsive_trace_df if isinstance(nonresponsive_trace_df, pd.DataFrame) else pd.DataFrame()
+    if trace_df.empty and reference_df.empty:
+        raise RuntimeError("[23b] no stimulus-locked traces are available")
     tvec_arr = np.asarray(tvec, dtype=float)
-    stim_types = [stim for stim in stim_order if stim in set(trace_df["stim_type"].astype(str))]
+    available_stimuli = set(trace_df["stim_type"].astype(str)) | (set(reference_df["stim_type"].astype(str)) if not reference_df.empty else set())
+    stim_types = [stim for stim in stim_order if stim in available_stimuli]
     if not stim_types:
-        stim_types = sorted(trace_df["stim_type"].astype(str).unique().tolist())
+        stim_types = sorted(available_stimuli)
     row_keys, slots = _suite2p_stim_panel_layout(stim_types)
     nrows, ncols = len(row_keys), 2
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.0 * ncols, 2.8 * nrows + 0.7), sharex=True, sharey=True, squeeze=False)
@@ -348,8 +354,22 @@ def render_suite2p_stimulus_locked_trace_panels(
         row_idx, col_idx = slots[str(stim_type)]
         ax = axes[row_idx, col_idx]
         sub = trace_df[trace_df["stim_type"].astype(str) == str(stim_type)].copy()
+        nonresponsive_sub = reference_df[reference_df["stim_type"].astype(str) == str(stim_type)] if not reference_df.empty else reference_df
         if stim_type in durations and np.isfinite(float(durations[stim_type])):
-            ax.axvspan(0.0, float(durations[stim_type]), color="#d0d0d0", alpha=0.25, zorder=0)
+            duration = float(durations[stim_type])
+            if motion_onset_delay_sec is not None and 0 < float(motion_onset_delay_sec) < duration:
+                ax.axvspan(0.0, float(motion_onset_delay_sec), color="#d0d0d0", alpha=0.14, zorder=0)
+                ax.axvspan(float(motion_onset_delay_sec), duration, color="#d0d0d0", alpha=0.28, zorder=0)
+                ax.axvline(float(motion_onset_delay_sec), color="#a32626", linestyle="--", linewidth=1.0, alpha=0.85)
+            else:
+                ax.axvspan(0.0, duration, color="#d0d0d0", alpha=0.25, zorder=0)
+        if not nonresponsive_sub.empty:
+            reference_traces = [
+                np.asarray(value, dtype=float) for value in nonresponsive_sub[trace_column].tolist()
+                if np.asarray(value).shape == tvec_arr.shape
+            ]
+            if reference_traces:
+                ax.plot(tvec_arr, np.nanmean(np.vstack(reference_traces), axis=0), color="#777777", linestyle="--", linewidth=1.7, alpha=0.9, zorder=3)
         for row in sub.itertuples(index=False):
             session = str(getattr(row, "session_label"))
             color = session_colors.get(session, "#666666")
@@ -373,11 +393,8 @@ def render_suite2p_stimulus_locked_trace_panels(
                 )
         ax.axvline(0.0, color="black", linestyle="--", linewidth=0.8, alpha=0.75)
         ax.axhline(0.0, color="black", linewidth=0.6, alpha=0.5)
-        ax.set_title(
-            f"{stim_type} (neurons n={sub[['plane_idx', 'func_label']].drop_duplicates().shape[0]})",
-            fontsize=10,
-        )
-        ax.set_xlabel("Time from stimulus start (s)")
+        ax.set_title(str(stim_type), fontsize=10)
+        ax.set_xlabel("Time from stimulus appearance (s)")
         ax.set_ylabel(y_label)
 
     for row_idx, row_key in enumerate(row_keys):
@@ -394,8 +411,16 @@ def render_suite2p_stimulus_locked_trace_panels(
     handles = [Line2D([0], [0], color=color, linewidth=2.2, label=f"{session}: population mean") for session, color in session_colors.items()]
     if handles:
         fig.legend(handles=handles, loc="lower center", ncol=min(6, len(handles)), frameon=False, title="Imaging session")
-    fig.suptitle(f"{title}\n{trial_context}; bold traces are session population means", y=0.995)
-    fig.tight_layout(rect=[0, 0.05, 1, 0.94])
+    if not reference_df.empty:
+        fig.text(0.5, 0.049, "Gray dashed: nonresponsive mean; red dashed: motion onset", ha="center", fontsize=8)
+    cohort_count = trace_df[["plane_idx", "func_label"]].drop_duplicates().shape[0]
+    cohort_context = f"Any-stimulus responders n={cohort_count}"
+    if not reference_df.empty:
+        nonresponsive_count = reference_df[["plane_idx", "func_label"]].drop_duplicates().shape[0]
+        cohort_context += f"; nonresponsive n={nonresponsive_count}"
+    fig.suptitle(f"{title}\n{cohort_context}", y=0.995)
+    fig.text(0.5, 0.065, f"{trial_context}; bold traces are session means", ha="center", fontsize=8)
+    fig.tight_layout(rect=[0, 0.09, 1, 0.94])
     return fig
 
 

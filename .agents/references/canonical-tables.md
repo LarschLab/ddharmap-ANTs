@@ -43,6 +43,11 @@ Representative column groups:
 - Useful for response/BPI diagnostics.
 - Not an independent identity source.
 
+### `suite2p_presented_stimulus_response_23c.csv` and `suite2p_any_presented_response_23c.csv`
+
+- Authority: early, pre-identity all-presented-stimulus response diagnostics and the fixed trace-panel cohort only.
+- Per-stimulus and per-ROI screens use motion-window AUCs with a family-wise-adjusted prestimulus null. They do not replace `[50ia]` response/BPI fields or the ROI-centric master table.
+
 ### `anatomy_identity_lookup.csv`
 
 - Authority:

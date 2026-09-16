@@ -342,3 +342,13 @@
   - `PYTHONPATH=src pytest -q tests/test_multifish.py tests/test_package_exports.py tests/test_agent_docs.py`
 - rerun implications:
   - rerun each fish through single-fish `[50i]`/`[50ia]` first when `functional_roi_activity_identity.csv` is missing, then rerun `multiFish.ipynb` `[cfg]` and `[multifish-functional-anatomy-match]`.
+
+### 2026-09-16 - inherit any-presented-stimulus trace cohort
+
+- Changed:
+  - `[cohort-23c-build]` now selects the per-fish any-presented-stimulus responder cohort for average traces while leaving BPI response calls/counts distinct.
+  - cache payloads carry `trace_cohort_policy=any_presented_stimulus_v1`; older BPI-filtered trace caches cannot be silently reused.
+  - screen failure no longer substitutes all Suite2p cells as though they were response-filtered.
+- Validation and remaining work:
+  - focused cohort integration tests pass; no multi-fish real-data cache was rewritten in this slice.
+  - rebuild the cohort `[23c]` cache and inspect its trace figure before treating the updated cohort view as reviewed.

@@ -538,19 +538,23 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
     try:
         from .activity import (
             ActivityConfig,
+            build_presented_stimulus_response_tables,
             build_response_bpi_tables,
             build_scored_stimulus_windows_table,
             build_suite2p_response_seed_table,
         )
 
+        response_cfg = activity_config or ActivityConfig()
         seed_df, dff_map = build_suite2p_response_seed_table(suite2p_by_ref_idx, fish_id=str(fish_id))
-        if not seed_df.empty:
+        if seed_df.empty:
+            raise RuntimeError("Suite2p response seed table is empty")
+        else:
             response_result = build_response_bpi_tables(
                 seed_df,
                 fish_dir=fish_dir,
                 fish_id=str(fish_id),
                 suite2p_dff_map=dff_map,
-                config=activity_config or ActivityConfig(),
+                config=response_cfg,
                 experiment_log_csv=experiment_log_csv,
                 experiment_meta_csv=experiment_meta_csv,
                 frame_rate=frame_rate,
@@ -570,13 +574,19 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
                 lookup = lookup.drop_duplicates(subset=["plane_idx", "func_label"], keep="last")
                 result["trace_df"] = result["trace_df"].merge(lookup, on=["plane_idx", "func_label"], how="left")
                 result["trace_df"]["response_is_active"] = result["trace_df"]["response_is_active"].fillna(False).astype(bool)
+            per_stim_response, any_response = build_presented_stimulus_response_tables(
+                response_result,
+                result["trace_df"][["plane_idx", "func_label"]],
+                fish_id=str(fish_id),
+                config=response_cfg,
+            )
+            result["presented_stimulus_response_df"] = per_stim_response
+            result["any_presented_response_df"] = any_response
+            result["trace_df"] = result["trace_df"].merge(any_response, on=["fish_id", "plane_idx", "func_label"], how="left", validate="many_to_one")
+            if bool(cfg.filter_trace_panels_response_active):
+                trace_df_for_lines = result["trace_df"][result["trace_df"]["any_presented_response_is_active"]].copy()
+            else:
                 trace_df_for_lines = result["trace_df"]
-                if bool(cfg.filter_trace_panels_response_active):
-                    active_df = trace_df_for_lines[trace_df_for_lines["response_is_active"].astype(bool)].copy()
-                    if not active_df.empty:
-                        trace_df_for_lines = active_df
-                    elif cfg.verbose:
-                        print("[23c] no response-active Suite2p neurons available for trace panels; showing all traces.")
             result["response_scored_df"] = response_result["scored_bpi_df"]
             result["response_summary_df"] = response_result["summary_df"]
             scored_windows_df = build_scored_stimulus_windows_table(
@@ -590,9 +600,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
             )
             result["scored_stimulus_windows"] = scored_windows_df
     except Exception as exc:
-        result["response_error"] = str(exc)
-        if cfg.verbose:
-            print(f"[23c] response scoring unavailable for trace-panel filtering: {exc}")
+        raise RuntimeError(f"[23c] presented-stimulus response screening unavailable: {exc}") from exc
 
     fig_traces = render_suite2p_stimulus_locked_trace_panels(
         trace_df=trace_df_for_lines,
@@ -600,6 +608,8 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         stim_order=result["stim_order"],
         session_colors=result["session_colors"],
         duration_by_stim=result["duration_by_stim"],
+        nonresponsive_trace_df=result["trace_df"][result["trace_df"]["any_presented_response_state"].eq("nonresponsive")],
+        motion_onset_delay_sec=float(response_cfg.stim_onset_delay_sec),
         line_alpha=float(cfg.line_alpha),
         line_width=float(cfg.line_width),
     )
@@ -648,6 +658,11 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         if response_result is not None:
             response_result["scored_bpi_df"].to_csv(response_csv, index=False)
             response_result["summary_df"].to_csv(response_summary_csv, index=False)
+        presented_response_csv = out_dir / "suite2p_presented_stimulus_response_23c.csv"
+        any_response_csv = out_dir / "suite2p_any_presented_response_23c.csv"
+        if "presented_stimulus_response_df" in result:
+            result["presented_stimulus_response_df"].to_csv(presented_response_csv, index=False)
+            result["any_presented_response_df"].to_csv(any_response_csv, index=False)
         out_paths = {
             "trace_png": str(trace_png),
             "trace_pdf": str(trace_png.with_suffix(".pdf")),
@@ -662,6 +677,9 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
         if response_result is not None:
             out_paths["response_csv"] = str(response_csv)
             out_paths["response_summary_csv"] = str(response_summary_csv)
+        if "presented_stimulus_response_df" in result:
+            out_paths["presented_response_csv"] = str(presented_response_csv)
+            out_paths["any_response_csv"] = str(any_response_csv)
         if cfg.verbose:
             print(f"[23c] saved stimulus-locked Suite2p diagnostics to {out_dir}")
     result["out_paths"] = out_paths

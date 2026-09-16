@@ -69,6 +69,7 @@ from codeants_2pf_hcr import (
     build_prestim_trial_windows,
     build_registration_helper_stage,
     build_response_bpi_tables,
+    build_presented_stimulus_response_tables,
     build_suite2p_response_seed_table,
     build_run_config_stage,
     build_single_fish_compare_legacy_baseline_manifest,
@@ -308,6 +309,7 @@ def test_notebook_spatial_exports_are_available() -> None:
     assert callable(build_prestim_trial_windows)
     assert callable(build_registration_helper_stage)
     assert callable(build_response_bpi_tables)
+    assert callable(build_presented_stimulus_response_tables)
     assert callable(build_suite2p_response_seed_table)
     assert callable(build_run_config_stage)
     assert callable(build_single_fish_compare_legacy_baseline_manifest)

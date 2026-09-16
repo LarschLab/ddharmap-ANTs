@@ -313,6 +313,7 @@ Generated manually for the current extracted package surface.
 - `SingleFishBpiDiagnosticsConfig`: Typed BPI/activity diagnostics configuration for notebook cell `[56g]`.
 - `build_suite2p_response_seed_table`: Build a pre-identity Suite2p ROI table plus in-memory dF/F map for early response scoring in `[23c]`.
 - `build_response_bpi_tables`: Build response/BPI annotations and summary tables from the ROI master table after centrally mapping each session context onto its complete Suite2p trace.
+- `build_presented_stimulus_response_tables`: Build separate per-condition and any-presented-stimulus diagnostic response screens from the mapped `[23c]` motion windows, with a family-wise-adjusted prestimulus null; never changes BPI pools.
 - `prepare_single_fish_bpi_diagnostics_stage`: Notebook-facing response-aware diagnostics prep stage for `[56g]` that resolves activity/BPI columns, backfills response metadata from the ROI master table, and publishes plotting-ready bindings.
 
 ## `codeants_2pf_hcr.suite2p`

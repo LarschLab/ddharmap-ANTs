@@ -14,7 +14,7 @@
    - `[23a]` can run without `plane_refs`; when functional references are not available yet, Suite2p planes are keyed by discovered Suite2p plane index.
    - `[23c]` and `[50ia]` use the central stimulus-to-trace mapper to place complete metadata/log blocks on equal Suite2p frame-count boundaries while preserving stimulus offsets within each block; `planned_schedule.csv` is authoritative for no-stimulus rest blocks when present. `B0` stays in the trace as baseline context, but is never scored.
    - `[23c]` uses preprocessing metadata for plane-to-session mapping when present; if it is absent but explicit `r1`/`r2` stimulus logs exist and Suite2p planes split evenly, it infers a contiguous equal split by session order.
-   - `[23c]` computes pre-identity Suite2p response/BPI calls for trace-panel filtering; these outputs are non-canonical and later merge into `[50ia]`.
+   - `[23c]` computes pre-identity Suite2p response/BPI calls and a separate all-presented-stimulus response screen. The latter owns `suite2p_presented_stimulus_response_23c.csv` (one row per Suite2p cell and stimulus) and `suite2p_any_presented_response_23c.csv` (one row per Suite2p cell), drives the fixed trace-panel responder cohort, and leaves the balanced BPI calculation unchanged. These outputs are diagnostic, not canonical identity/activity tables.
    - Key object: `suite2p_by_ref_idx`.
 3. **Spatial preparation** (`[13] [14] [14a] [7] [9] [11] [15] [19] [19a] [21] [22d] [24a] [22e]`)
    - Orientation, voxel alignment, best-z/scale search, in-plane placement comparison, regional crop selection, QA overlays.

@@ -89,6 +89,13 @@
   conditions, while keeping BPI balanced at `LB+RB` versus `LC+RC`. The active
   L765_f04 root now contains 400 exact presented intervals, of which
   160 are BPI-eligible (8 bout and 8 continuous trials per plane).
+  An isolated Linnaeus `/tmp` run of the next `[23c]` diagnostic revision
+  classified 1,500 of 2,450 valid Suite2p cells as responsive to at least one
+  presented motion condition, with 950 assessable nonresponders. WFCl/WFCo
+  individually had 975/868 passes. Persisted BPI and 400 scored-window tables
+  were exactly unchanged, and the trace figure was visually reviewed. The
+  accepted working root still has the prior figure and needs an explicit
+  refresh/review before this new diagnostic replaces it.
   Notebook 01 displays one persisted full-session
   heatmap whose colored spans are its exact scorer windows and audits those
   against the same-root `score-activity-bpi/scored_stimulus_windows.csv`.

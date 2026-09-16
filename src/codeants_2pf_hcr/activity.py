@@ -984,6 +984,110 @@ def build_response_bpi_tables(
     }
 
 
+def build_presented_stimulus_response_tables(
+    response_result: dict[str, Any],
+    roi_keys: pd.DataFrame,
+    *,
+    fish_id: str,
+    config: ActivityConfig | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Screen every presented condition without changing balanced BPI calls.
+
+    Per-condition AUCs use the same delayed motion windows and prestimulus
+    null pool as BPI. A Bonferroni-adjusted null quantile controls the ten-way
+    any-stimulus screen; no condition is added to the BPI pools.
+    """
+    cfg = config or ActivityConfig()
+    keys = roi_keys[["plane_idx", "func_label"]].drop_duplicates().copy()
+    events_by_plane = response_result["presented_stim_events_by_plane"]
+    types = sorted({str(event["stim_type"]) for events in events_by_plane.values() for event in events})
+    if not types:
+        raise RuntimeError("no presented stimulus events available for response screening")
+    null_quantile = 1.0 - (1.0 - float(cfg.response_null_q)) / len(types)
+    event_log = response_result["df_evt"]
+    s2p_map = response_result["s2p_map"]
+    fps_by_plane = response_result["fps_by_plane"]
+    rows: list[dict[str, Any]] = []
+
+    for plane_idx, plane_keys in keys.groupby("plane_idx", sort=True):
+        plane_idx = int(plane_idx)
+        dff = np.asarray(s2p_map[plane_idx]["dff"], dtype=np.float32)
+        roi_indices = plane_keys["func_label"].astype(int).to_numpy() - 1
+        events = events_by_plane.get(plane_idx, [])
+        session = str(events[0].get("session_label", "")) if events else ""
+        fps = float(fps_by_plane[plane_idx])
+        session_log = event_log[event_log["session_label"].astype(str) == session]
+        prestim = build_prestim_trial_windows(session_log, fps, cfg.stim_onset_delay_sec, tag="[23c]")
+        null_starts = build_null_window_start_map(
+            prestim,
+            [int(event["duration_frames"]) for event in events],
+            step_frames=max(1, int(round(float(cfg.response_null_step_sec) * fps))),
+            min_windows=int(cfg.response_null_min_windows),
+        )
+        csum = np.concatenate(
+            [np.zeros((dff.shape[0], 1), dtype=np.float32), np.cumsum(dff, axis=1, dtype=np.float32)],
+            axis=1,
+        )
+        by_type = {stim_type: [event for event in events if str(event["stim_type"]) == stim_type] for stim_type in types}
+        for type_idx, stim_type in enumerate(types):
+            type_events = by_type[stim_type]
+            observed: list[list[float]] = [[] for _ in roi_indices]
+            for event in type_events:
+                for pos, roi_idx in enumerate(roi_indices):
+                    segment, _, _ = _extract_window(
+                        dff[int(roi_idx)], int(event["idx0"]), int(event["idx1"]),
+                        mode=str(cfg.edge_policy), min_valid_frac=float(cfg.min_valid_frac),
+                    )
+                    if segment is not None:
+                        auc = float(np.nansum(segment) / fps)
+                        if np.isfinite(auc):
+                            observed[pos].append(auc)
+            null_threshold = np.full(len(roi_indices), np.nan, dtype=np.float32)
+            if type_events and all(int(event["duration_frames"]) in null_starts for event in type_events):
+                rng = np.random.default_rng(int(cfg.response_rng_seed) + plane_idx * 100 + type_idx)
+                boot = np.zeros((len(roi_indices), int(cfg.response_null_bootstrap_n)), dtype=np.float32)
+                for event in type_events:
+                    duration = int(event["duration_frames"])
+                    starts = null_starts[duration]
+                    chosen = starts[rng.integers(0, len(starts), size=boot.shape[1])]
+                    boot += (csum[roi_indices[:, None], chosen + duration] - csum[roi_indices[:, None], chosen]) / fps
+                boot /= float(len(type_events))
+                null_threshold = np.quantile(boot, null_quantile, axis=1).astype(np.float32)
+            for pos, roi_idx in enumerate(roi_indices):
+                n_valid = len(observed[pos])
+                mean_auc = float(np.mean(observed[pos])) if n_valid else np.nan
+                threshold = float(null_threshold[pos])
+                available = n_valid >= int(cfg.min_trials_per_class) and np.isfinite(threshold)
+                rows.append({
+                    "fish_id": str(fish_id),
+                    "plane_idx": plane_idx,
+                    "func_label": int(roi_idx) + 1,
+                    "session_label": session,
+                    "stim_type": stim_type,
+                    "n_valid_trials": n_valid,
+                    "mean_auc_dff": mean_auc,
+                    "null_auc_threshold": threshold,
+                    "response_auc_floor": float(cfg.response_min_auc),
+                    "null_quantile_familywise": null_quantile,
+                    "response_available": bool(available),
+                    "response_pass": bool(available and mean_auc >= max(float(cfg.response_min_auc), threshold)),
+                })
+
+    per_stim = pd.DataFrame(rows)
+    any_response = (
+        per_stim.groupby(["fish_id", "plane_idx", "func_label"], as_index=False)
+        .agg(any_presented_response_is_active=("response_pass", "any"),
+             all_presented_responses_available=("response_available", "all"),
+             n_presented_stimuli_tested=("response_available", "sum"),
+             n_presented_stimuli_passed=("response_pass", "sum"))
+    )
+    any_response["any_presented_response_state"] = np.where(
+        any_response["any_presented_response_is_active"], "responsive",
+        np.where(any_response["all_presented_responses_available"], "nonresponsive", "unavailable"),
+    )
+    return per_stim, any_response
+
+
 def prepare_single_fish_bpi_diagnostics_stage(
     bpi_cells_df: pd.DataFrame,
     *,
@@ -1248,6 +1352,7 @@ __all__ = [
     "ActivityConfig",
     "SingleFishBpiDiagnosticsConfig",
     "build_response_bpi_tables",
+    "build_presented_stimulus_response_tables",
     "build_suite2p_response_seed_table",
     "prepare_single_fish_bpi_diagnostics_stage",
     "run_single_fish_cell_50ia_stage",

@@ -14,7 +14,7 @@ from codeants_2pf_hcr.suite2p import (
     run_suite2p_stimulus_locked_diagnostic_stage,
 )
 from codeants_2pf_hcr.activity import ActivityConfig
-from codeants_2pf_hcr.plots.analysis import _suite2p_stim_panel_layout, render_suite2p_full_session_heatmap
+from codeants_2pf_hcr.plots.analysis import _suite2p_stim_panel_layout, render_suite2p_full_session_heatmap, render_suite2p_stimulus_locked_trace_panels
 
 
 class Suite2pStimulusDiagnosticTests(unittest.TestCase):
@@ -348,6 +348,65 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertEqual(set(result["full_session_heatmap_rows"]["func_label"]), {1, 2})
             self.assertEqual(result["scored_heatmap_spans"]["frame_start"].tolist(), [2, 7])
             self.assertEqual(result["scored_heatmap_spans"]["frame_end"].tolist(), [4, 9])
+
+    def test_any_presented_response_keeps_wf_only_cells_and_separates_nonresponders(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish_id = "L758_f02"
+            fish_dir = Path(tmpdir) / fish_id
+            meta_dir = fish_dir / "01_raw" / "2p" / "metadata"
+            meta_dir.mkdir(parents=True)
+            (meta_dir / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (meta_dir / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B1_start,0\nB1_prestim0_pause,0\nB1_stim0_LLB,3\nB1_poststim0_pause,5\n"
+                "B1_prestim1_pause,6\nB1_stim1_RLC,9\nB1_poststim1_pause,11\n"
+                "B1_prestim2_pause,12\nB1_stim2_WFCl,15\nB1_poststim2_pause,17\nB1_end,20\n"
+            )
+            dff = np.vstack([np.linspace(0.1, 0.2, 24, dtype=np.float32) for _ in range(3)])
+            dff[0, 3:5] = 8.0
+            dff[1, 15:17] = 8.0
+            result = run_suite2p_stimulus_locked_diagnostic_stage(
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_by_ref_idx={0: {"dff": dff, "iscell": np.ones((3, 2)), "ops": {"fs": 1.0}}},
+                config=Suite2pStimulusLockedDiagnosticConfig(
+                    pre_sec=1.0, post_sec=3.0, zscore_min_baseline_points=1,
+                    save_figures=False, show_figures=False,
+                ),
+                activity_config=ActivityConfig(
+                    min_trials_per_class=1, stim_onset_delay_sec=0.0,
+                    response_min_auc=5.0, response_null_min_windows=1,
+                    response_null_bootstrap_n=100, zscore_min_points=1,
+                ),
+            )
+            calls = result["presented_stimulus_response_df"]
+            any_calls = result["any_presented_response_df"].set_index("func_label")
+            self.assertEqual(len(calls), 9)
+            self.assertAlmostEqual(float(calls["null_quantile_familywise"].iloc[0]), 1 - 0.01 / 3)
+            self.assertEqual(set(result["trace_panel_df"]["func_label"]), {1, 2})
+            self.assertEqual(any_calls.loc[3, "any_presented_response_state"], "nonresponsive")
+            self.assertTrue(calls[(calls["func_label"] == 2) & (calls["stim_type"] == "WFCl")]["response_pass"].iloc[0])
+            self.assertFalse(result["trace_df"].loc[result["trace_df"]["func_label"] == 2, "response_is_active"].any())
+            self.assertEqual(set(result["full_session_heatmap_rows"]["func_label"]), {1, 2, 3})
+
+    def test_trace_panels_keep_appearance_zero_and_mark_motion_onset(self) -> None:
+        tvec = np.asarray([-1.0, 0.0, 10.0, 20.0], dtype=np.float32)
+        common = {"plane_idx": 0, "session_label": "r1", "stim_type": "WFCl", "n_valid_trials": 4, "blocks_used": "B1, B2"}
+        responsive = pd.DataFrame([{**common, "func_label": 1, "mean_trace": np.asarray([0.0, 0.0, 2.0, 3.0])}])
+        nonresponsive = pd.DataFrame([{**common, "func_label": 2, "mean_trace": np.asarray([0.0, 0.0, 0.1, 0.1])}])
+        fig = render_suite2p_stimulus_locked_trace_panels(
+            trace_df=responsive, nonresponsive_trace_df=nonresponsive,
+            tvec=tvec, stim_order=["WFCl"], session_colors={"r1": "blue"},
+            duration_by_stim={"WFCl": 30.0}, motion_onset_delay_sec=10.0,
+        )
+        try:
+            ax = fig.axes[0]
+            self.assertEqual(ax.get_title(), "WFCl")
+            self.assertEqual(ax.get_xlabel(), "Time from stimulus appearance (s)")
+            self.assertTrue(any(line.get_color() == "#a32626" and np.allclose(line.get_xdata(), [10.0, 10.0]) for line in ax.lines))
+            self.assertTrue(any(line.get_color() == "#777777" for line in ax.lines))
+        finally:
+            plt.close(fig)
 
     def test_full_session_heatmap_renderer_uses_frame_axis_gray_r_and_stimulus_spans(self) -> None:
         matrix = np.asarray([[0.0, 1.0, 5.0], [np.nan, 2.0, 4.0]], dtype=np.float32)
