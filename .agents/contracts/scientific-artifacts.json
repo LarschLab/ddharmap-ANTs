@@ -55,7 +55,7 @@
       ],
       "population": "Accepted HCR-to-anatomy labels, including labels without a selected functional response candidate.",
       "filters": [
-        "HCR label-first candidate universe.",
+        "HCR label-first candidate universe is restricted to final pairs passing small-speck, low-confidence-segmentation, and fish-derived anatomy XY-radius gates.",
         "Response selection occurs after label geometry is accepted."
       ],
       "denominator": "Accepted HCR labels in the explicitly selected gene and fish scope.",

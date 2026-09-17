@@ -9,6 +9,7 @@ import html
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -237,6 +238,10 @@ HCR_ALIGNED_PAIR_COLUMNS: tuple[str, ...] = (
     "overlap_frac_twoP",
     "pair_type",
     "quality",
+    "passes_label_quality_gate",
+    "passes_anatomy_radius_gate",
+    "analysis_eligible",
+    "analysis_exclusion_reason",
 )
 
 STAGED_FIGURE_FILES: tuple[str, ...] = (
@@ -3448,7 +3453,7 @@ def _append_assign_identity_geometry_dependency_checks(
                 status=final_pair_acceptance_status,
                 detail="staged HCR/anatomy final-pair rows are accepted good 1-1 within-gate pairs",
                 observed=final_pair_acceptance_observed,
-                expected="quality=good,pair_type=1-1,within_gate=True",
+                expected="quality=good,pair_type=1-1,within_gate=True,analysis_eligible=True",
             ),
         )
     )
@@ -4619,6 +4624,9 @@ def _canonical_export_source_paths(
         sources[filename] = score_root / filename
     for filename in HCR_IDENTITY_ACTIVITY_CSVS:
         sources[filename] = hcr_root / filename
+    # The identity writer owns the ROI-centric master. Scoring owns only the
+    # BPI cells/summary; its geometry-derived detail has no molecular identity.
+    sources["functional_roi_activity_identity.csv"] = hcr_root / "functional_roi_activity_identity.csv"
     return sources
 
 
@@ -4695,7 +4703,7 @@ def run_single_fish_export_canonical_tables_stage(
             "score_input_root_is_explicit": score_input_root not in (None, "", False),
             "hcr_input_root_is_explicit": hcr_input_root not in (None, "", False),
             "force_recompute": bool(force_recompute),
-            "source_policy": "score CSVs from staged score root; HCR/activity CSVs from staged assign root unless explicit roots are supplied",
+            "source_policy": "ROI identity master and HCR-centric CSVs from staged assign root; BPI cells/summary from staged score root unless explicit roots are supplied",
         },
         warnings=warnings,
         errors=errors,
@@ -8573,7 +8581,15 @@ def _copy_hcr_aligned_stage_files(
     for source_path in dict.fromkeys(stage_inputs):
         target_path = output_root / source_path.name
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_path, target_path)
+        if source_path.name.endswith("_cp_masks_in_2p_labels_uint16.tif"):
+            if target_path.exists():
+                target_path.unlink()
+            try:
+                os.link(source_path, target_path)
+            except OSError:
+                shutil.copy2(source_path, target_path)
+        else:
+            shutil.copy2(source_path, target_path)
         copied.append(target_path)
     return tuple(copied)
 
@@ -8603,6 +8619,8 @@ def _hcr_final_pair_acceptance_status(paths: tuple[Path, ...]) -> tuple[str, str
                 bad.append(f"{path.name}:{index}: pair_type={row.get('pair_type', '')}")
             if str(row.get("within_gate", "")).strip().lower() not in {"true", "1", "yes"}:
                 bad.append(f"{path.name}:{index}: within_gate={row.get('within_gate', '')}")
+            if str(row.get("analysis_eligible", "")).strip().lower() not in {"true", "1", "yes"}:
+                bad.append(f"{path.name}:{index}: analysis_eligible={row.get('analysis_eligible', '')}")
     if bad:
         return "fail", "; ".join(bad[:10])
     return "pass" if n_rows > 0 else "warn", str(n_rows)
@@ -8730,7 +8748,12 @@ def _hcr_raw_mask_paths(paths: PipelinePaths) -> tuple[Path, ...]:
     return tuple(
         path
         for path in sorted(
-            [*paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tif"), *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tiff")]
+            [
+                *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tif"),
+                *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tiff"),
+                *paths.confocal_raw_cp_masks_dir.glob("*rbest*_cp_masks*.tif"),
+                *paths.confocal_raw_cp_masks_dir.glob("*rbest*_cp_masks*.tiff"),
+            ]
         )
         if path.is_file() and _is_real_match(path)
     )
@@ -8749,7 +8772,7 @@ def _hcr_direct_filter_stats_recompute_count(direct_warp_results: tuple[Any, ...
         filter_stats = payload.get("filter_stats")
         if not isinstance(filter_stats, dict):
             continue
-        if str(filter_stats.get("filter_policy_version", "")) != "label_voxel_floor_v3":
+        if str(filter_stats.get("filter_policy_version", "")) != "table_driven_hcr_label_quality_v1":
             continue
         if "n_dropped_small_components_abs" not in filter_stats:
             continue
@@ -8790,8 +8813,8 @@ def _hcr_final_pair_key_parity_checks(source_root: Path, output_root: Path) -> t
         checks.append(
             StageCheckRecord(
                 label=f"HCR recomputed final-pair key parity: {output_path.name}",
-                status="pass" if not missing and not extra else "fail",
-                detail="recomputed HCR/anatomy final-pair conf/twoP keys match accepted control",
+                status="pass" if not missing and not extra else "warn",
+                detail="historical accepted-control key delta is reported, not enforced, after the explicit label-quality and anatomy-radius policy change",
                 observed=f"missing={len(missing)},extra={len(extra)},both={len(left & right)}",
                 expected="missing=0,extra=0",
             )
@@ -8799,35 +8822,85 @@ def _hcr_final_pair_key_parity_checks(source_root: Path, output_root: Path) -> t
     return tuple(checks)
 
 
+def _hcr_mask_uid(path: Path) -> str:
+    return re.sub(r"_cp_masks(?:_in_2p_labels_uint16)?(?:\.tiff?)?$", "", path.name, flags=re.IGNORECASE)
+
+
+def _build_hcr_label_metrics_csv(
+    *, paths: PipelinePaths, aligned_label_paths: tuple[Path, ...], output_root: Path,
+) -> Path:
+    import pandas as pd
+    from .hcr_warp import build_hcr_label_metrics
+    from .spatial import imread_any
+
+    raw_by_uid = {_hcr_mask_uid(path): path for path in _hcr_raw_mask_paths(paths)}
+    frames: list[pd.DataFrame] = []
+    for aligned_path in aligned_label_paths:
+        uid = _hcr_mask_uid(aligned_path)
+        raw_path = raw_by_uid.get(uid)
+        intensity_candidates = tuple(
+            candidate
+            for sub in (paths.preproc_dir / "rbest", paths.preproc_dir / "rn")
+            for candidate in (sub / f"{uid}.nrrd",)
+            if candidate.is_file()
+        )
+        native_spacing = None
+        if intensity_candidates:
+            try:
+                voxels = load_or_cache_voxels(intensity_candidates[0])
+                if all(axis in voxels for axis in ("Z", "Y", "X")):
+                    native_spacing = {"dz": float(voxels["Z"]), "dy": float(voxels["Y"]), "dx": float(voxels["X"])}
+            except (OSError, ValueError, KeyError, RuntimeError):
+                native_spacing = None
+        if raw_path is not None and native_spacing is not None:
+            measurement_path, spacing, measurement_space = raw_path, native_spacing, "native_hcr"
+        else:
+            measurement_path = aligned_path
+            spacing = _anatomy_zyx_spacing_from_voxel_cache(paths)
+            measurement_space = "aligned_2p"
+        native_volume_floor = 200.0 * native_spacing["dz"] * native_spacing["dy"] * native_spacing["dx"] if native_spacing else None
+        frames.append(build_hcr_label_metrics(
+            imread_any(measurement_path), fish_id=paths.fish_dir.name, mask_path=measurement_path,
+            voxel_zyx_um=spacing, transformed_labels_zyx=imread_any(aligned_path),
+            measurement_space=measurement_space, min_component_volume_um3=native_volume_floor,
+        ))
+    metrics = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    output_path = output_root / "hcr_label_metrics.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics.to_csv(output_path, index=False)
+    return output_path
+
+
 def _write_recomputed_hcr_anatomy_match_csvs(
     *,
-    direct_warp_results: tuple[Any, ...],
+    aligned_label_paths: tuple[Path, ...],
+    label_metrics_path: Path,
     anatomy_labels_path: Path,
     output_root: Path,
     vox_anat_um: dict[str, float],
 ) -> tuple[Path, ...]:
+    import pandas as pd
     from .matching import build_hcr_anatomy_match_tables
     from .spatial import imread_any
 
     anatomy_labels = imread_any(anatomy_labels_path)
+    metrics = pd.read_csv(label_metrics_path)
     written: list[Path] = []
-    for result in direct_warp_results:
-        label_path = Path(result.output_label_path)
-        if not label_path.exists():
-            continue
-        hcr_labels = imread_any(label_path)
+    for label_path in aligned_label_paths:
+        uid = _hcr_mask_uid(label_path)
+        quality = metrics.loc[metrics["mask_uid"].astype(str).eq(uid)].copy()
+        if quality.empty:
+            raise ValueError(f"No HCR label-quality rows found for {label_path.name}")
         matches, final_pairs, review, _qc = build_hcr_anatomy_match_tables(
-            hcr_labels,
-            anatomy_labels,
-            vox_anat_um=vox_anat_um,
+            imread_any(label_path), anatomy_labels, vox_anat_um=vox_anat_um,
+            label_quality_df=quality,
         )
         save_base = output_root / label_path.name.replace("_labels_uint16.tif", "")
-        paths_and_frames = (
+        for path, frame in (
             (Path(f"{save_base}_matches.csv"), matches),
             (Path(f"{save_base}_final_pairs.csv"), final_pairs),
             (Path(f"{save_base}_review.csv"), review),
-        )
-        for path, frame in paths_and_frames:
+        ):
             path.parent.mkdir(parents=True, exist_ok=True)
             frame.to_csv(path, index=False)
             written.append(path)
@@ -9139,6 +9212,8 @@ def run_register_hcr_to_anatomy_stage(
         if hcr_warp_route not in {"exvivo_bridge", "legacy_direct"}:
             raise ValueError(f"Unknown HCR warp route: {hcr_warp_route!r}")
         source_groups = _discover_hcr_aligned_stage_files(source_root_path)
+        if not source_groups["label_tiffs"] and not recompute_direct_ants:
+            raise FileNotFoundError(f"HCR aligned label TIFFs are missing from {source_root_path}")
         existing_outputs = tuple(path for path in aligned_output_root.glob("*") if path.is_file() and _is_real_match(path))
         if existing_outputs and not force_recompute:
             raise FileExistsError(
@@ -9150,24 +9225,20 @@ def run_register_hcr_to_anatomy_stage(
         recomputed_match_outputs: tuple[Path, ...] = ()
         direct_filter_stats_recompute_count = 0
         anat_labels_path = infer_anat_labels_path(paths.fish_dir, config.fish_id)
+        if anat_labels_path is None or not Path(anat_labels_path).exists():
+            raise FileNotFoundError(f"HCR/anatomy matching requires anatomy labels for {config.fish_id}")
         if recompute_direct_ants:
             if not direct_ants_provenance.get("hcr_direct_ants_expected"):
                 raise RuntimeError("Direct ANTs HCR recompute requested, but matching metadata does not select bigwarp=False.")
             best_round_raw = direct_ants_provenance.get("matching_metadata_best_round")
             if best_round_raw in (None, ""):
                 raise RuntimeError("Direct ANTs HCR recompute requested, but best_round is missing from matching metadata.")
-            if anat_labels_path is None or not Path(anat_labels_path).exists():
-                raise FileNotFoundError(f"Direct HCR/anatomy match recompute requires anatomy labels for {config.fish_id}")
             best_round_idx = int(str(best_round_raw).lower().lstrip("r"))
             from .hcr_warp import run_direct_ants_hcr_label_warp
-
             direct_warp_results = run_direct_ants_hcr_label_warp(
-                fish_id=config.fish_id,
-                mask_paths=_hcr_raw_mask_paths(paths),
-                preproc_dir=paths.preproc_dir,
+                fish_id=config.fish_id, mask_paths=_hcr_raw_mask_paths(paths), preproc_dir=paths.preproc_dir,
                 anatomy_intensity_path=paths.anatomy_preproc_dir / f"{config.fish_id}_anatomy_2P_GCaMP.nrrd",
-                output_dir=aligned_output_root,
-                best_round_idx=best_round_idx,
+                output_dir=aligned_output_root, best_round_idx=best_round_idx,
                 rbest_to_2p_transform_dir=paths.preproc_dir.parent / "01_rbest-2p" / "transMatrices",
                 rn_to_rbest_transform_dir=paths.preproc_dir.parent / "02_rn-rbest" / "transMatrices",
                 warp_route=hcr_warp_route,
@@ -9175,28 +9246,30 @@ def run_register_hcr_to_anatomy_stage(
                 rbest_to_exvivo_transform_dir=paths.preproc_dir.parent / "03_rbest-exvivo" / "transMatrices",
                 rn_to_exvivo_transform_dir=paths.preproc_dir.parent / "05_rn-exvivo" / "transMatrices",
             )
-            accepted_filter_stats_overlay_count = 0
             direct_filter_stats_recompute_count = _hcr_direct_filter_stats_recompute_count(direct_warp_results)
-            recomputed_match_outputs = _write_recomputed_hcr_anatomy_match_csvs(
-                direct_warp_results=direct_warp_results,
-                anatomy_labels_path=Path(anat_labels_path),
-                output_root=aligned_output_root,
-                vox_anat_um=_anatomy_zyx_spacing_from_voxel_cache(paths),
-            )
-        else:
-            accepted_filter_stats_overlay_count = 0
-            direct_filter_stats_recompute_count = 0
+        accepted_filter_stats_overlay_count = 0
         copied_outputs = _copy_hcr_aligned_stage_files(
-            source_root_path,
-            aligned_output_root,
+            source_root_path, aligned_output_root,
             skip_label_tiffs=bool(recompute_direct_ants),
             skip_warp_meta_jsons=bool(recompute_direct_ants),
-            skip_match_csvs=bool(recompute_direct_ants),
+            skip_match_csvs=True,
         )
         recomputed_label_outputs = tuple(Path(result.output_label_path) for result in direct_warp_results) + tuple(
             Path(result.output_metadata_path) for result in direct_warp_results
         )
-        recomputed_outputs = recomputed_label_outputs + recomputed_match_outputs
+        aligned_label_paths = tuple(sorted(
+            path for path in aligned_output_root.glob("*_cp_masks_in_2p_labels_uint16.tif")
+            if path.is_file() and _is_real_match(path)
+        ))
+        label_metrics_path = _build_hcr_label_metrics_csv(
+            paths=paths, aligned_label_paths=aligned_label_paths, output_root=aligned_output_root,
+        )
+        recomputed_match_outputs = _write_recomputed_hcr_anatomy_match_csvs(
+            aligned_label_paths=aligned_label_paths, label_metrics_path=label_metrics_path,
+            anatomy_labels_path=Path(anat_labels_path), output_root=aligned_output_root,
+            vox_anat_um=_anatomy_zyx_spacing_from_voxel_cache(paths),
+        )
+        recomputed_outputs = recomputed_label_outputs + (label_metrics_path,) + recomputed_match_outputs
         staged_outputs = (*copied_outputs, *recomputed_outputs)
         copied_names = {path.name for path in copied_outputs}
         staged_label_count = sum(1 for path in staged_outputs if path.name.endswith("_cp_masks_in_2p_labels_uint16.tif"))
@@ -9218,14 +9291,14 @@ def run_register_hcr_to_anatomy_stage(
             StageCheckRecord(
                 label="HCR aligned match CSVs",
                 status="pass" if copied_match_count > 0 else "fail",
-                detail="staged HCR/anatomy match CSVs exist",
+                detail="backend-recomputed HCR/anatomy match CSVs exist",
                 observed=str(copied_match_count),
                 expected=">=1",
             ),
             StageCheckRecord(
                 label="HCR aligned final-pair CSVs",
                 status="pass" if copied_final_pair_count > 0 else "warn",
-                detail="manual/accepted final-pair CSVs exist when review has been finalized",
+                detail="analysis-eligible final-pair CSVs exist when matching succeeds",
                 observed=str(copied_final_pair_count),
                 expected=">=1",
             ),
@@ -9248,7 +9321,7 @@ def run_register_hcr_to_anatomy_stage(
                 status=final_pair_acceptance_status,
                 detail="accepted final-pair rows are good 1-1 within-gate pairs",
                 observed=final_pair_acceptance_observed,
-                expected="quality=good,pair_type=1-1,within_gate=True",
+                expected="quality=good,pair_type=1-1,within_gate=True,analysis_eligible=True",
             ),
             StageCheckRecord(
                 label="HCR warp metadata",
@@ -9277,16 +9350,16 @@ def run_register_hcr_to_anatomy_stage(
                     if not recompute_direct_ants or direct_filter_stats_recompute_count == len(direct_warp_results)
                     else "fail"
                 ),
-                detail="HCR prewarp label-filter statistics were recomputed into direct warp metadata",
+                detail="HCR prewarp label-quality provenance was recomputed without creating a filtered label stack",
                 observed=f"{direct_filter_stats_recompute_count}/{len(direct_warp_results)}",
                 expected="all recomputed masks",
             ),
             StageCheckRecord(
                 label="HCR direct ANTs match table recompute",
-                status="pass" if (not recompute_direct_ants or len(recomputed_match_outputs) >= 3 * len(direct_warp_results)) else "fail",
-                detail="HCR/anatomy match, review, and final-pair CSVs were recomputed from warped labels when requested",
-                observed=f"{len(recomputed_match_outputs)}/{3 * len(direct_warp_results)}",
-                expected="3 CSVs per recomputed mask",
+                status="pass" if len(recomputed_match_outputs) >= 3 * len(aligned_label_paths) else "fail",
+                detail="HCR/anatomy match, review, and final-pair CSVs were recomputed from staged labels and label-quality gates",
+                observed=f"{len(recomputed_match_outputs)}/{3 * len(aligned_label_paths)}",
+                expected="3 CSVs per staged mask",
             ),
         ) + direct_ants_checks + (
             _hcr_final_pair_key_parity_checks(source_root_path, aligned_output_root) if recompute_direct_ants else ()
@@ -9367,11 +9440,11 @@ def run_register_hcr_to_anatomy_stage(
             "anatomy_labels_path": str(anat_labels_path) if anat_labels_path is not None else None,
             "anatomy_zyx_spacing_um": _anatomy_zyx_spacing_from_voxel_cache(paths),
             "input_aligned_nrrd_count": len(source_groups["aligned_nrrds"]),
-            "copy_policy": "csv_json_tif_only",
+            "copy_policy": "hardlink_aligned_label_tiffs_when_possible;copy_small_sidecars;recompute_tables",
             "hcr_recompute_mode": (
                 f"{hcr_warp_route}_ants_label_warp_and_match_tables"
                 if recompute_direct_ants
-                else "accepted_artifact_staging_with_direct_ants_readiness"
+                else "accepted_label_staging_plus_table_driven_quality_and_match_recompute"
             ),
             **direct_ants_provenance,
         },

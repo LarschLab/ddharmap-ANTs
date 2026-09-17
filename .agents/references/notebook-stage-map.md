@@ -101,11 +101,8 @@ scientific gate rather than one notebook per executable stage:
    `match-roi-to-anatomy/registration/plane_refs_summary_geometry.json`, whose
    explicit per-plane anatomy-label Z pages must agree with the selected labels
    in the geometry table.
-5. `04_molecular_geometry_qc.ipynb`: direct in-vivo HCR-label inventory,
-   dynamic anatomy-plane label-overlay review, and distinct molecular
-   bridge-registration tracks. It must distinguish available transformed masks
-   from molecular/anatomy candidate matching that has not yet been run.
-6. `05_molecular_identity_qc.ipynb`: identity review after frozen geometry, including read-only lateral-XY-distance and signed-Z-offset violins by gene for accepted pairs.
+5. `04_molecular_geometry_qc.ipynb`: read-only HCR-label inventory and mask-size violins from the backend `hcr_label_metrics.csv`, including retained low-confidence segmentation flags, dynamic anatomy-plane overlays, and distinct bridge-registration tracks. Missing `ipympl` skips only the interactive viewer in headless execution.
+6. `05_molecular_identity_qc.ipynb`: identity review after frozen geometry. Its ROI master comes from `assign-hcr-identity`, and its persisted candidate-pair XY/Z offset violins show the fish-specific anatomy-radius gate and excluded pairs; correspondence tiles use accepted final pairs only.
 7. `06_activity_and_export_qc.ipynb`: independent response/BPI review from the
    `score-activity-bpi` stage before canonical export, with separate optional
    HCR identity context and preserved ROI-centric/HCR-centric scopes. It also

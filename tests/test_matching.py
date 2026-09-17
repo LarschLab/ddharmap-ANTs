@@ -61,23 +61,14 @@ def test_build_hcr_anatomy_match_tables_classifies_final_and_review_pairs() -> N
         iou_min=0.8,
     )
 
-    assert list(matches.columns) == [
-        "conf_label",
-        "twoP_label",
-        "distance_um",
-        "overlap_voxels",
-        "within_gate",
-        "conf_vol",
-        "twoP_vol",
-        "iou",
-        "overlap_frac_conf",
-        "overlap_frac_twoP",
-        "centroid_xy_distance_um",
-        "median_anatomy_xy_radius_um",
-        "is_centroid_xy_offset_over_median_anatomy_radius",
-        "pair_type",
-        "quality",
-    ]
+    assert {
+        "conf_label", "twoP_label", "distance_um", "overlap_voxels",
+        "within_geometry_gate", "within_gate", "conf_vol", "twoP_vol", "iou",
+        "overlap_frac_conf", "overlap_frac_twoP", "centroid_xy_distance_um",
+        "median_anatomy_xy_radius_um", "passes_anatomy_radius_gate",
+        "passes_label_quality_gate", "analysis_eligible", "analysis_exclusion_reason",
+        "is_centroid_xy_offset_over_median_anatomy_radius", "pair_type", "quality",
+    }.issubset(matches.columns)
     assert matches["is_centroid_xy_offset_over_median_anatomy_radius"].dtype == bool
     assert final_pairs[["conf_label", "twoP_label", "pair_type", "quality"]].to_dict("records") == [
         {"conf_label": 1, "twoP_label": 10, "pair_type": "1-1", "quality": "good"}
@@ -87,6 +78,45 @@ def test_build_hcr_anatomy_match_tables_classifies_final_and_review_pairs() -> N
     ]
     assert int(qc["pairs_final"]) == 1
     assert int(qc["pairs_after_filter_iou_quality_good"]) == 1
+
+
+def test_hcr_anatomy_radius_gate_retains_rejected_candidate_in_review() -> None:
+    anatomy = np.zeros((1, 4, 6), dtype=np.uint16)
+    conf = np.zeros_like(anatomy)
+    anatomy[0, 1, 1] = 10
+    conf[0, 1, 1] = 3
+    conf[0, 1, 3] = 3
+    matches, final, review, _ = build_hcr_anatomy_match_tables(
+        conf, anatomy, vox_anat_um={"dz": 2.0, "dy": 1.0, "dx": 1.0},
+        iou_min=0.0,
+    )
+    assert len(matches) == 1
+    assert bool(matches.iloc[0]["within_geometry_gate"])
+    assert not bool(matches.iloc[0]["passes_anatomy_radius_gate"])
+    assert "anatomy_radius_plausibility" in matches.iloc[0]["analysis_exclusion_reason"]
+    assert final.empty
+    assert len(review) == 1
+
+
+def test_hcr_low_confidence_segmentation_cannot_enter_final_pairs() -> None:
+    anatomy = np.zeros((1, 4, 4), dtype=np.uint16)
+    conf = np.zeros_like(anatomy)
+    anatomy[0, 1, 1] = 10
+    conf[0, 1, 1] = 3
+    quality = pd.DataFrame([{
+        "conf_label": 3, "is_small_speck": False,
+        "is_low_confidence_segmentation": True, "analysis_eligible": False,
+        "analysis_exclusion_reason": "low_confidence_segmentation",
+    }])
+    matches, final, review, _ = build_hcr_anatomy_match_tables(
+        conf, anatomy, vox_anat_um={"dz": 2.0, "dy": 1.0, "dx": 1.0},
+        label_quality_df=quality,
+    )
+    assert bool(matches.iloc[0]["within_geometry_gate"])
+    assert bool(matches.iloc[0]["passes_anatomy_radius_gate"])
+    assert not bool(matches.iloc[0]["passes_label_quality_gate"])
+    assert final.empty
+    assert len(review) == 1
 
 
 def test_build_functional_anatomy_debug_stage_returns_debug_df_bindings() -> None:

@@ -8,6 +8,9 @@ from pathlib import Path
 import re
 from typing import Any
 
+import numpy as np
+import pandas as pd
+
 from ._hcr_warp_stage_cells import CELL_43_SOURCE, CELL_43B_SOURCE
 from .single_fish_notebook_stages import (
     run_single_fish_cell_38_stage,
@@ -27,6 +30,75 @@ class HcrDirectWarpResult:
     whichtoinvert: tuple[bool, ...]
     max_label: int
     route: str
+
+
+
+def build_hcr_label_metrics(
+    labels_zyx: Any,
+    *,
+    fish_id: str,
+    mask_path: str | Path,
+    voxel_zyx_um: dict[str, float],
+    transformed_labels_zyx: Any | None = None,
+    min_component_voxels: int = 200,
+    min_component_volume_um3: float | None = None,
+    large_mask_quantile: float = 0.95,
+    measurement_space: str = "native_hcr",
+) -> pd.DataFrame:
+    """Measure every native HCR label and assign table-driven QC gates.
+
+    The label image is never modified. Small speckles fail the absolute native
+    voxel floor; masks above the per-mask q95 equivalent diameter are retained
+    for review but marked low-confidence. Both are excluded from hard claims.
+    """
+    labels = np.asarray(labels_zyx)
+    if labels.ndim != 3:
+        raise ValueError(f"Expected 3D HCR labels; got {labels.shape}")
+    dz, dy, dx = (float(voxel_zyx_um[key]) for key in ("dz", "dy", "dx"))
+    if not all(np.isfinite(value) and value > 0 for value in (dz, dy, dx)):
+        raise ValueError(f"Invalid HCR voxel spacing: {voxel_zyx_um}")
+    values, counts = np.unique(labels.astype(np.int64, copy=False), return_counts=True)
+    nonzero = values != 0
+    values, counts = values[nonzero], counts[nonzero]
+    threshold = max(0, int(min_component_voxels))
+    volumes = counts.astype(float) * dz * dy * dx
+    volume_floor = float(min_component_volume_um3) if min_component_volume_um3 is not None else threshold * dz * dy * dx
+    diameters = 2.0 * np.cbrt((3.0 * volumes) / (4.0 * np.pi))
+    is_small = volumes < volume_floor
+    eligible = diameters[~is_small]
+    q95 = float(np.quantile(eligible, float(large_mask_quantile))) if eligible.size else np.nan
+    is_large = (~is_small) & np.isfinite(q95) & (diameters > q95)
+    transformed_counts: dict[int, int] = {}
+    if transformed_labels_zyx is not None:
+        t_values, t_counts = np.unique(np.asarray(transformed_labels_zyx).astype(np.int64, copy=False), return_counts=True)
+        transformed_counts = {int(label): int(count) for label, count in zip(t_values, t_counts) if int(label) != 0}
+    path = Path(mask_path)
+    stem = re.sub(r"_cp_masks.*$", "", path.stem)
+    round_match = re.search(r"round(\d+)", path.name.lower())
+    gene_match = re.search(r"(?:round\d+|rbest)_channel\d+_(.+?)(?:_cp_masks|\.tif|$)", path.name.lower())
+    rows: list[dict[str, Any]] = []
+    for label, count, volume, diameter, small, large in zip(values, counts, volumes, diameters, is_small, is_large):
+        reasons = (["small_speck"] if bool(small) else []) + (["low_confidence_segmentation"] if bool(large) else [])
+        rows.append({
+            "fish_id": str(fish_id), "mask_uid": stem, "mask_path": str(path),
+            "round_idx": int(round_match.group(1)) if round_match else np.nan,
+            "gene": gene_match.group(1) if gene_match else "unknown", "conf_label": int(label),
+            "measurement_space": str(measurement_space),
+            "measurement_n_voxels": int(count), "measurement_volume_um3": float(volume),
+            "measurement_equivalent_diameter_um": float(diameter),
+            "transformed_n_voxels": int(transformed_counts.get(int(label), 0)),
+            "survived_warp": int(label) in transformed_counts if transformed_labels_zyx is not None else np.nan,
+            "min_component_voxels_reference": threshold,
+            "min_component_volume_um3": volume_floor,
+            "large_mask_quantile": float(large_mask_quantile),
+            "large_mask_q95_equivalent_diameter_um": q95,
+            "is_small_speck": bool(small), "is_low_confidence_segmentation": bool(large),
+            "analysis_eligible": not bool(small or large),
+            "analysis_exclusion_reason": ";".join(reasons),
+            "policy_version": "hcr_label_quality_v1",
+            "voxel_dz_um": dz, "voxel_dy_um": dy, "voxel_dx_um": dx,
+        })
+    return pd.DataFrame(rows)
 
 
 def _parse_round_from_name(path: Path | str) -> int | None:
@@ -317,29 +389,30 @@ def _filter_hcr_labels_for_direct_warp(
     counts = counts[nonzero]
     threshold = max(0, int(min_component_voxels))
     dropped = values[counts < threshold] if threshold > 0 else np.asarray([], dtype=np.int64)
+    # Preserve one complete stack; exclusion is owned by hcr_label_metrics.csv.
     filtered = labels.astype(np.int32, copy=True)
-    if dropped.size:
-        filtered[np.isin(filtered, dropped)] = 0
     kept_count = int(len(values) - len(dropped))
     stats = {
         "n_labels_before": int(len(values)),
-        "n_labels_after": kept_count,
-        "n_dropped_low_q": int(len(dropped)),
-        "n_dropped_noise_prewarp_total": int(len(dropped)),
+        "n_labels_after": int(len(values)),
+        "n_dropped_low_q": 0,
+        "n_dropped_noise_prewarp_total": 0,
         "n_dropped_low_q_quantile_only": 0,
-        "n_dropped_small_components_abs": int(len(dropped)),
+        "n_dropped_small_components_abs": 0,
+        "n_small_specks_excluded_by_table": int(len(dropped)),
+        "small_speck_labels": [int(value) for value in dropped.tolist()],
         "n_low_confidence_high_q": 0,
         "low_conf_labels": [],
-        "dropped_labels": [int(value) for value in dropped.tolist()],
+        "dropped_labels": [],
         "dropped_labels_low_q_only": [],
-        "dropped_labels_small_components_abs": [int(value) for value in dropped.tolist()],
+        "dropped_labels_small_components_abs": [],
         "filter_metric_name": "n_voxels",
         "low_filter_metric_name": "n_voxels",
         "high_filter_metric_name": "equivalent_diameter_um",
         "absolute_filter_metric_name": "n_voxels",
         "min_component_volume_um3": None,
         "min_component_voxels_fallback": threshold,
-        "filter_policy_version": "label_voxel_floor_v3",
+        "filter_policy_version": "table_driven_hcr_label_quality_v1",
         "n_original_labels_before_split": int(len(values)),
         "n_components_before_abs_filter": int(len(values)),
         "n_components_after_abs_filter": kept_count,
@@ -395,6 +468,7 @@ def run_direct_ants_hcr_label_warp(
         round_idx = _parse_round_from_name(mask_path)
         if round_idx is None and not _is_rbest_mask(mask_path):
             continue
+        effective_round = best_round_idx if round_idx is None else round_idx
         labels_zyx = tifffile.imread(mask_path)
         if np.asarray(labels_zyx).ndim != 3:
             raise ValueError(f"Expected 3D HCR mask TIFF for direct warp: {mask_path}")
@@ -402,9 +476,9 @@ def run_direct_ants_hcr_label_warp(
             labels_zyx,
             min_component_voxels=min_component_voxels,
         )
-        moving_intensity = _find_hcr_intensity_for_mask(preproc_dir, mask_path, round_idx, fish_id)
+        moving_intensity = _find_hcr_intensity_for_mask(preproc_dir, mask_path, effective_round, fish_id)
         if moving_intensity is None or not moving_intensity.exists():
-            moving_intensity = _find_intensity_for_round(preproc_dir, round_idx)
+            moving_intensity = _find_intensity_for_round(preproc_dir, effective_round)
         if moving_intensity is None or not moving_intensity.exists():
             raise FileNotFoundError(f"Missing moving HCR intensity for {mask_path.name} round r{round_idx}")
         if warp_route == "exvivo_bridge":
@@ -419,7 +493,6 @@ def run_direct_ants_hcr_label_warp(
                 rn_to_rbest_transform_dir=rn_to_rbest_transform_dir,
             )
         else:
-            effective_round = best_round_idx if round_idx is None else round_idx
             transform_chain = build_direct_ants_hcr_transform_chain(
                 round_idx=effective_round,
                 best_round_idx=best_round_idx,
@@ -439,7 +512,7 @@ def run_direct_ants_hcr_label_warp(
         _write_warped_label_tiff(label_path, warped_zyx, like_img=fixed_img)
         max_label = int(np.asarray(warped_zyx).max()) if np.asarray(warped_zyx).size else 0
         metadata = {
-            "round": int(round_idx),
+            "round": int(effective_round),
             "mask": str(mask_path),
             "method": "ants_same_fish_labels_to_2p",
             "output_space": "2p",
@@ -491,6 +564,7 @@ def run_hcr_external_bigwarp_intensity_stage(*, env: dict[str, Any] | None = Non
 
 __all__ = [
     "HcrDirectWarpResult",
+    "build_hcr_label_metrics",
     "build_direct_ants_hcr_transform_chain",
     "build_ex_vivo_bridge_hcr_transform_chain",
     "run_direct_ants_hcr_label_warp",

@@ -271,6 +271,7 @@ def test_cross_modality_size_plot_draws_red_xy_q95_limits() -> None:
                 "z_um": value + 1.0,
                 "included_in_distribution": True,
                 "is_xy_q95_flag": index == 2,
+                "is_low_confidence_segmentation": modality == "hcr" and index == 2,
                 "xy_q05_um": 1.1,
                 "xy_q95_um": 2.9,
                 "round": "r2" if modality == "hcr" else None,
@@ -278,21 +279,12 @@ def test_cross_modality_size_plot_draws_red_xy_q95_limits() -> None:
             })
     figure = plot_cross_modality_mask_sizes(pd.DataFrame(rows), fish_id=FISH_ID)
     red = np.asarray([0xD6, 0x27, 0x28, 0xFF], dtype=float) / 255.0
-    for axis in (figure.axes[0], figure.axes[2]):
-        collection_colors = [
-            color
-            for collection in axis.collections
-            if hasattr(collection, "get_colors")
-            for color in collection.get_colors()
+    for axis in figure.axes:
+        colors = [
+            color for collection in axis.collections
+            for color in (collection.get_facecolors() if hasattr(collection, "get_facecolors") else [])
         ]
-        assert any(np.allclose(color, red) for color in collection_colors)
-    assert not any(
-        np.allclose(color, red)
-        for axis in (figure.axes[1], figure.axes[3])
-        for collection in axis.collections
-        if hasattr(collection, "get_colors")
-        for color in collection.get_colors()
-    )
+        assert any(np.allclose(color, red) for color in colors)
     plt.close(figure)
 
 

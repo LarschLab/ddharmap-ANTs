@@ -38,6 +38,8 @@ modules when rerun in an existing kernel, avoiding stale package imports.
 - ROI-centric tables remain authoritative for whole-population analysis;
   HCR-centric tables remain limited to identified-cell activity analysis.
 
+Notebook 04 reads the backend `hcr_label_metrics.csv` to display retained large masks as low-confidence segmentation; its XY bounding-box quantiles are display diagnostics, not the eligibility rule. Notebook 05 reads candidate match-table gate flags for the radius audit and the identity writer's ROI master for actual assignments. Canonical export takes that identity-enriched master from the identity stage, with BPI cells/summary from the score stage.
+
 The logbook owns gate decisions; the pipeline owns computational artifacts.
 An executed notebook is evidence of inspection, never an acceptance signal.
 For midline review, the pipeline projects persisted native-functional lines

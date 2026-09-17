@@ -53,8 +53,9 @@ def anatomy_max_section_xy_radii_um(
     """Measure every anatomy label at its largest XY section in physical units.
 
     Each 3-D label contributes once, regardless of functional-plane coverage
-    or whether an ROI/HCR label was matched to it. This is a QC reference,
-    never an assignment gate.
+    or whether an ROI/HCR label was matched to it. The fish-level median of
+    these radii gates lateral HCR-to-anatomy centroid plausibility; it is not
+    a 3-D or axial-distance threshold.
     """
     labels = np.asarray(labels_zyx)
     if labels.ndim != 3 or labels.dtype.kind not in "uib":

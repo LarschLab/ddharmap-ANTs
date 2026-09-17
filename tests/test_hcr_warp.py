@@ -8,6 +8,7 @@ import numpy as np
 import tifffile
 
 from codeants_2pf_hcr.hcr_warp import (
+    build_hcr_label_metrics,
     build_direct_ants_hcr_transform_chain,
     build_ex_vivo_bridge_hcr_transform_chain,
     run_direct_ants_hcr_label_warp,
@@ -179,7 +180,7 @@ def test_run_direct_ants_hcr_label_warp_writes_ex_vivo_bridge_metadata(
     assert np.array_equal(tifffile.imread(results[0].output_label_path), labels)
 
 
-def test_run_direct_ants_hcr_label_warp_filters_small_labels_before_warp(
+def test_run_direct_ants_hcr_label_warp_preserves_small_labels_for_table_driven_qc(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -255,8 +256,32 @@ def test_run_direct_ants_hcr_label_warp_filters_small_labels_before_warp(
 
     warped = tifffile.imread(results[0].output_label_path)
     metadata = __import__("json").loads(Path(results[0].output_metadata_path).read_text())
-    assert 7 not in np.unique(warped)
+    assert 7 in np.unique(warped)
     assert 8 in np.unique(warped)
     assert metadata["filter_stats"]["n_labels_before"] == 2
-    assert metadata["filter_stats"]["n_labels_after"] == 1
-    assert metadata["filter_stats"]["dropped_labels_small_components_abs"] == [7]
+    assert metadata["filter_stats"]["n_labels_after"] == 2
+    assert metadata["filter_stats"]["small_speck_labels"] == [7]
+    assert metadata["filter_stats"]["dropped_labels_small_components_abs"] == []
+    assert metadata["filter_stats"]["filter_policy_version"] == "table_driven_hcr_label_quality_v1"
+
+
+def test_hcr_label_metrics_preserve_small_and_large_masks_without_duplicate_stacks() -> None:
+    labels = np.zeros((1, 20, 20), dtype=np.uint16)
+    labels[0, 0, 0] = 1
+    labels[0, 2:5, 2:5] = 2
+    labels[0, 7:11, 7:11] = 3
+    labels[0, 12:20, 12:20] = 4
+    original = labels.copy()
+    metrics = build_hcr_label_metrics(
+        labels, fish_id="L000_f00", mask_path="L000_f00_rbest_channel2_pth2_cp_masks.tif",
+        voxel_zyx_um={"dz": 2.0, "dy": 0.5, "dx": 0.5},
+        transformed_labels_zyx=labels, min_component_voxels=5,
+    ).set_index("conf_label")
+    assert np.array_equal(labels, original)
+    assert bool(metrics.loc[1, "is_small_speck"])
+    assert bool(metrics.loc[4, "is_low_confidence_segmentation"])
+    assert not bool(metrics.loc[1, "analysis_eligible"])
+    assert not bool(metrics.loc[4, "analysis_eligible"])
+    assert bool(metrics.loc[2, "analysis_eligible"])
+    assert bool(metrics.loc[3, "analysis_eligible"])
+    assert set(metrics["measurement_space"]) == {"native_hcr"}

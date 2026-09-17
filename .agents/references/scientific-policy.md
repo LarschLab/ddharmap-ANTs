@@ -51,6 +51,14 @@ Short form: **geometry first, identity second, activity third, figures last**.
 - Its candidate universe is intentionally label-first and local to identified HCR/anatomy labels; it should not be forced to reuse the ROI-centric one-to-one competition table when that would suppress identified cells of interest.
 - Must not silently replace the ROI-centric authoritative path.
 
+## HCR label quality and anatomy plausibility
+
+- `register-hcr-to-anatomy` writes one `hcr_label_metrics.csv` row per HCR label, keyed by fish, mask identity, and label ID. It retains one aligned label stack per mask; no filtered duplicate label stack is needed.
+- The 200-native-voxel floor is expressed as a physical-volume threshold using the native HCR intensity spacing. When the native mask is unavailable, the backend measures the retained aligned stack using anatomy-grid spacing and records `measurement_space=aligned_2p`; this is a provenance-limited approximation, not a recovered native segmentation.
+- Labels below the small-speck floor are excluded. Among non-small labels in each mask, equivalent-volume diameters above q95 are retained as `is_low_confidence_segmentation` but excluded from accepted identity and downstream functional claims. The q95 is not a bounding-box XY threshold.
+- HCR/anatomy candidates must also have lateral centroid XY distance no greater than the fish-specific median equivalent XY radius of every anatomy label's maximal 2-D section across the complete 3-D label stack. The radius is computed with physical XY spacing, never hardcoded, and never applied to axial or 3-D distance.
+- All failed candidates remain in the match/review audit tables with explicit gate flags and exclusion reasons. Only good one-to-one pairs that pass both quality and anatomy-radius gates enter `*_final_pairs.csv`. Response/BPI never changes these geometric or segmentation gates.
+
 ## Ambiguity ladder
 
 - ROI-centric vs HCR-centric meaning: start here, then confirm migration caveats in `current-state.md`.

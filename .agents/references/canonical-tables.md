@@ -62,6 +62,12 @@ Representative column groups:
 - Trace metadata/index for exported ROI traces.
 - Should remain aligned to ROI-centric authoritative subset definitions.
 
+## HCR geometry and quality authorities
+
+- `register-hcr-to-anatomy/confocal/aligned/hcr_label_metrics.csv` owns per-label HCR size, measurement-space provenance, small-speck and low-confidence-segmentation flags, and table-driven analysis eligibility. QC notebooks only display it.
+- Per-mask `*_matches.csv` and `*_review.csv` retain candidate pairs and explicit quality/radius gate failures. Per-mask `*_final_pairs.csv` contains only good one-to-one pairs passing both gates; the identity writer consumes these final pairs.
+- `assign-hcr-identity/registration/functional_roi_activity_identity.csv` owns the identity-enriched ROI master. `score-activity-bpi` owns the identity-neutral response/BPI detail and scored cells. `export-canonical-tables` takes its ROI identity master from `assign-hcr-identity` and BPI cells/summary from `score-activity-bpi`; it must not replace identity with the score-stage detail table.
+
 ## HCR-centric identified-cell tables (non-authoritative for whole-population identity)
 
 ### `hcr_activity_status.csv`

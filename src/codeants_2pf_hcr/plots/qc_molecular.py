@@ -645,6 +645,7 @@ def build_cross_modality_mask_size_table(
     functional_label_paths: Sequence[str | Path],
     hcr_label_paths: Sequence[str | Path],
     reference_anatomy_path: str | Path,
+    hcr_label_metrics_path: str | Path | None = None,
 ) -> pd.DataFrame:
     """Measure persisted anatomy, functional, and HCR label-mask bounding boxes.
 
@@ -652,8 +653,9 @@ def build_cross_modality_mask_size_table(
     spacing is read from ``reference_anatomy_path`` (normally the prepared
     anatomy NRRD), because transformed TIFF masks do not reliably preserve XY
     resolution metadata.  Q05 and Q95 are calculated independently for each
-    modality from the mean X/Y ``xy_um`` extent: Q05 rows are
-    marked as hard drops and Q95 rows are retained but visibly flagged.
+    modality from the mean X/Y ``xy_um`` extent. When a persisted HCR label
+    metrics table is provided, HCR small/large classifications come from that
+    backend table, never from display-only XY bounding-box quantiles.
     """
     reference = _path(reference_anatomy_path)
     if reference is None or not reference.is_file():
@@ -682,6 +684,30 @@ def build_cross_modality_mask_size_table(
     table["is_xy_hard_drop"] = table["xy_um"] < table["xy_q05_um"]
     table["is_xy_q95_flag"] = table["xy_um"] > table["xy_q95_um"]
     table["included_in_distribution"] = ~table["is_xy_hard_drop"]
+    table["is_small_speck"] = False
+    table["is_low_confidence_segmentation"] = False
+    table["analysis_eligible"] = True
+    if hcr_label_metrics_path is not None:
+        metrics_path = _path(hcr_label_metrics_path)
+        if metrics_path is None or not metrics_path.is_file():
+            raise FileNotFoundError(f"HCR label metrics do not exist: {hcr_label_metrics_path}")
+        metrics = pd.read_csv(metrics_path)
+        required_metrics = {"mask_uid", "conf_label", "is_small_speck", "is_low_confidence_segmentation", "analysis_eligible"}
+        missing_metrics = sorted(required_metrics - set(metrics.columns))
+        if missing_metrics:
+            raise ValueError(f"HCR label metrics lack columns: {missing_metrics}")
+        hcr_rows = table["modality"].eq("hcr")
+        table.loc[hcr_rows, "mask_uid"] = table.loc[hcr_rows, "source_name"].str.replace("_cp_masks_in_2p_labels_uint16.tif", "", regex=False)
+        keyed = metrics.loc[:, list(required_metrics)].rename(columns={"conf_label": "label"})
+        hcr = table.loc[hcr_rows].drop(columns=["is_small_speck", "is_low_confidence_segmentation", "analysis_eligible"]).merge(
+            keyed, on=["mask_uid", "label"], how="left", validate="one_to_one",
+        )
+        if hcr["analysis_eligible"].isna().any():
+            raise ValueError("Some staged HCR labels lack hcr_label_metrics.csv rows")
+        for column in ("is_small_speck", "is_low_confidence_segmentation", "analysis_eligible"):
+            table.loc[hcr_rows, column] = hcr[column].astype(bool).to_numpy()
+        table.loc[hcr_rows, "is_xy_hard_drop"] = table.loc[hcr_rows, "is_small_speck"]
+        table.loc[hcr_rows, "included_in_distribution"] = ~table.loc[hcr_rows, "is_small_speck"]
     return table
 
 
@@ -708,8 +734,18 @@ def _plot_size_distribution(
         q95 = float(table.loc[table["modality"] == modality, "xy_q95_um"].iloc[0])
         mean, sd = (np.mean(kept_values), np.std(kept_values, ddof=1)) if len(kept_values) > 1 else ((kept_values[0], 0.0) if len(kept_values) else (np.nan, np.nan))
         median = float(np.median(kept_values)) if len(kept_values) else np.nan
-        ax.text(idx, 0.01, f"n={kept}/{total}\nmed={median:.2g}; SD={sd:.2g}\nXY q05={q05:.2g}, q95={q95:.2g}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
-        if show_xy_q95:
+        if modality == "hcr":
+            low_conf = int(((table["modality"] == modality) & table["is_low_confidence_segmentation"]).sum())
+            annotation = f"n={kept}/{total}\nmed={median:.2g}; SD={sd:.2g}\nlow-conf={low_conf}"
+        else:
+            annotation = f"n={kept}/{total}\nmed={median:.2g}; SD={sd:.2g}\nXY q05={q05:.2g}, q95={q95:.2g}"
+        ax.text(idx, 0.01, annotation, ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
+        flagged = table.loc[
+            (table["modality"] == modality) & table.get("is_low_confidence_segmentation", False), value_col
+        ].to_numpy(dtype=float)
+        if len(flagged):
+            ax.scatter(np.full(len(flagged), idx), flagged, color="#d62728", marker="x", s=34, zorder=6)
+        if show_xy_q95 and modality != "hcr":
             ax.hlines(q95, idx - 0.34, idx + 0.34, color="#d62728", linewidth=1.8, zorder=5)
     ax.set_title(title)
     ax.set_ylabel(ylabel)
@@ -727,6 +763,9 @@ def _plot_size_distribution(
 def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) -> plt.Figure:
     """Plot XY/Z size distributions plus HCR gene/round splits from QC-only data."""
     required = {"modality", "xy_um", "z_um", "included_in_distribution", "is_xy_q95_flag", "round", "gene"}
+    size_table = size_table.copy()
+    if "is_low_confidence_segmentation" not in size_table:
+        size_table["is_low_confidence_segmentation"] = False
     missing = sorted(required - set(size_table.columns))
     if missing:
         raise ValueError(f"Size table lacks required columns: {missing}")
@@ -755,9 +794,9 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
             median = float(np.median(group_values)) if len(group_values) else np.nan
             sd = float(np.std(group_values, ddof=1)) if len(group_values) > 1 else 0.0
             ax.text(idx, 0.01, f"n={len(group_values)}\nmed={median:.2g}; SD={sd:.2g}", ha="center", va="bottom", transform=ax.get_xaxis_transform(), fontsize=7)
-            if value_col == "xy_um":
-                q95 = float(hcr.loc[hcr["hcr_group"] == group, "xy_q95_um"].iloc[0])
-                ax.hlines(q95, idx - 0.34, idx + 0.34, color="#d62728", linewidth=1.8, zorder=5)
+            flagged = hcr.loc[hcr["hcr_group"].eq(group) & hcr["is_low_confidence_segmentation"], value_col].to_numpy(dtype=float)
+            if len(flagged):
+                ax.scatter(np.full(len(flagged), idx), flagged, color="#d62728", marker="x", s=34, zorder=6)
         ax.set_title(title)
         ax.set_ylabel(ylabel)
         ax.tick_params(axis="x", rotation=25)
@@ -765,10 +804,10 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
         plotted = hcr[value_col].to_numpy(dtype=float)
         span = max(float(np.ptp(plotted)), max(float(np.max(plotted)), 1.0) * 0.1)
         ax.set_ylim(float(np.min(plotted)) - 0.34 * span, float(np.max(plotted)) + 0.12 * span)
-        if value_col == "xy_um":
-            ax.plot([], [], color="#d62728", linewidth=1.8, label="HCR XY q95")
+        if hcr["is_low_confidence_segmentation"].any():
+            ax.scatter([], [], color="#d62728", marker="x", label="Low-confidence segmentation")
             ax.legend(fontsize=8, frameon=False)
-    fig.suptitle(f"{fish_id} cross-modality mask bounding boxes · Q05 XY drops excluded; Q95 shown in red")
+    fig.suptitle(f"{fish_id} cross-modality mask bounding boxes · HCR small speckles excluded; low-confidence masks retained as red ×")
     return fig
 
 
@@ -779,10 +818,10 @@ def build_hcr_anatomy_centroid_offset_table(
     hcr_label_paths: Sequence[str | Path],
     final_pair_paths: Sequence[str | Path],
 ) -> pd.DataFrame:
-    """Return signed HCR-minus-anatomy centroid offsets for accepted HCR pairs.
+    """Return signed HCR-minus-anatomy centroid offsets for persisted HCR pairs.
 
     All masks must already share the in-vivo anatomy grid.  The function reads
-    only persisted masks and ``*_final_pairs.csv`` tables; it never proposes or
+    only persisted masks and pair tables; it never proposes or
     changes a molecular/anatomy pairing.  Physical spacing is required from an
     explicit anatomy-grid source (normally the prepared anatomy NRRD); label
     TIFF metadata is not trusted because segmentation exports may omit it.
@@ -827,7 +866,8 @@ def build_hcr_anatomy_centroid_offset_table(
         hcr_centroids = compute_centroids(hcr)
         hcr_um = hcr_centroids.loc[:, ["label", "z", "y", "x"]].copy()
         hcr_um[["z_um", "y_um", "x_um"]] = idx_to_um(hcr_centroids, vox_zyx)
-        merged = pairs.loc[:, ["conf_label", "twoP_label"]].drop_duplicates().merge(
+        pair_columns = ["conf_label", "twoP_label"] + [column for column in ("analysis_eligible", "analysis_exclusion_reason", "within_geometry_gate") if column in pairs]
+        merged = pairs.loc[:, pair_columns].drop_duplicates().merge(
             hcr_um, left_on="conf_label", right_on="label", how="inner"
         ).merge(anatomy_um, left_on="twoP_label", right_on="label", how="inner", suffixes=("_hcr", "_anatomy"))
         if merged.empty:
@@ -841,6 +881,8 @@ def build_hcr_anatomy_centroid_offset_table(
                         "offset_um": merged[f"{axis}_um_hcr"] - merged[f"{axis}_um_anatomy"],
                         "conf_label": merged["conf_label"].astype(int),
                         "anat_label": merged["twoP_label"].astype(int),
+                        "analysis_eligible": merged["analysis_eligible"].astype(bool) if "analysis_eligible" in merged else True,
+                        "analysis_exclusion_reason": merged["analysis_exclusion_reason"].astype(str) if "analysis_exclusion_reason" in merged else "",
                         "median_anatomy_xy_radius_um": median_anatomy_xy_radius_um,
                         "anatomy_radius_definition": radius_summary["definition"],
                         "anatomy_dx_um": float(vox_zyx["dx"]),
@@ -863,15 +905,15 @@ def build_hcr_anatomy_centroid_offset_table(
 
 
 def plot_hcr_anatomy_centroid_offsets(offset_table: pd.DataFrame) -> plt.Figure:
-    """Plot accepted-pair lateral XY distance and signed axial Z displacement by gene."""
+    """Plot lateral XY distance and signed axial Z displacement by gene and gate."""
 
     required = {"gene", "axis", "offset_um"}
     if not required.issubset(offset_table.columns):
         raise ValueError(f"Offset table lacks required columns {sorted(required)}")
-    key_columns = [column for column in ("gene", "conf_label", "anat_label", "mask_path", "final_pairs_path") if column in offset_table]
+    key_columns = [column for column in ("gene", "conf_label", "anat_label", "analysis_eligible", "analysis_exclusion_reason", "mask_path", "final_pairs_path") if column in offset_table]
     wide = offset_table.pivot_table(index=key_columns, columns="axis", values="offset_um", aggfunc="first").reset_index()
     if not {"x", "y", "z"}.issubset(wide.columns):
-        raise ValueError("Offset table must contain X, Y, and Z values for every accepted pair.")
+        raise ValueError("Offset table must contain X, Y, and Z values for every persisted pair.")
     wide["xy"] = np.sqrt(wide["x"] ** 2 + wide["y"] ** 2)
     genes = sorted(wide["gene"].dropna().astype(str).unique())
     figure_specs = (("xy", "XY offset", "Lateral centroid distance (µm)", False), ("z", "Z offset", "Signed axial centroid offset (µm)", True))
@@ -881,7 +923,7 @@ def plot_hcr_anatomy_centroid_offsets(offset_table: pd.DataFrame) -> plt.Figure:
         subsets = [pd.to_numeric(wide.loc[wide["gene"].astype(str) == gene, axis], errors="coerce").dropna().to_numpy(dtype=float) for gene in genes]
         nonempty = [(gene, values) for gene, values in zip(genes, subsets) if values.size]
         if not nonempty:
-            ax.text(0.5, 0.5, "No accepted pairs", ha="center", va="center", transform=ax.transAxes)
+            ax.text(0.5, 0.5, "No persisted pairs", ha="center", va="center", transform=ax.transAxes)
             ax.set_axis_off()
             continue
         positions = np.arange(1, len(nonempty) + 1)
@@ -890,16 +932,15 @@ def plot_hcr_anatomy_centroid_offsets(offset_table: pd.DataFrame) -> plt.Figure:
             body.set_facecolor("#756bb1")
             body.set_edgecolor("#4a1486")
             body.set_alpha(0.72)
-        for position, (_, values) in zip(positions, nonempty):
-            ax.scatter(
-                position + rng.uniform(-0.09, 0.09, size=len(values)),
-                values,
-                color="#4a1486",
-                s=9,
-                alpha=0.28,
-                linewidths=0,
-                zorder=3,
-            )
+        for position, (gene, values) in zip(positions, nonempty):
+            ax.scatter(position + rng.uniform(-0.09, 0.09, size=len(values)), values,
+                       color="#4a1486", s=9, alpha=0.28, linewidths=0, zorder=3)
+            if "analysis_eligible" in wide:
+                rejected = pd.to_numeric(wide.loc[
+                    wide["gene"].astype(str).eq(gene) & ~wide["analysis_eligible"].astype(bool), axis
+                ], errors="coerce").dropna().to_numpy(dtype=float)
+                if len(rejected):
+                    ax.scatter(np.full(len(rejected), position), rejected, color="#d62728", marker="x", s=32, zorder=5)
         ax.axhline(0.0, color="#333333", linewidth=1, linestyle="--", zorder=0)
         ax.set_xticks(positions, [f"{gene}\n(n={len(values)})" for gene, values in nonempty], rotation=0)
         ax.set_title(title)
@@ -908,19 +949,11 @@ def plot_hcr_anatomy_centroid_offsets(offset_table: pd.DataFrame) -> plt.Figure:
         ax.grid(axis="y", alpha=0.22)
         if not signed:
             ax.set_ylim(bottom=0.0)
-            radii = pd.to_numeric(offset_table.get("median_anatomy_xy_radius_um"), errors="coerce").dropna()
-            if not radii.empty:
-                radius = float(radii.median())
-                ax.axhline(
-                    radius,
-                    color="#D55E00",
-                    linestyle="--",
-                    linewidth=1.5,
-                    zorder=1,
-                    label=f"Median all-label max-section anatomy radius ({radius:.2f} µm)",
-                )
-                ax.legend(loc="upper right", fontsize=8)
-    fig.suptitle("Accepted HCR/anatomy pairs: lateral XY distance and axial Z displacement")
+            if "median_anatomy_xy_radius_um" in offset_table and not offset_table.empty:
+                radius = float(pd.to_numeric(offset_table["median_anatomy_xy_radius_um"], errors="coerce").dropna().iloc[0])
+                ax.axhline(radius, color="#d62728", linewidth=1.6, linestyle=":", label=f"Median all-label max-section anatomy radius gate ({radius:.2f} µm)")
+                ax.legend(frameon=False, fontsize=8)
+    fig.suptitle("HCR/anatomy candidates: lateral XY gate and axial Z displacement · red × excluded")
     fig.tight_layout()
     return fig
 

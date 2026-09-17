@@ -569,11 +569,19 @@ def _write_tforms_by_plane(path: Path) -> None:
 def _write_hcr_aligned_artifacts(source_root: Path, fish_id: str = "L000_f00") -> None:
     source_root.mkdir(parents=True, exist_ok=True)
     prefix = f"{fish_id}_round1_channel2_sst1_1_cp_masks_in_2p"
-    (source_root / f"{prefix}_labels_uint16.tif").write_bytes(b"label-tif")
+    import numpy as np
+    import tifffile
+
+    labels = np.zeros((1, 4, 5), dtype=np.uint16)
+    labels[0, 1, 2:4] = 3
+    labels[0, 2, 3] = 3
+    tifffile.imwrite(source_root / f"{prefix}_labels_uint16.tif", labels)
+    anatomy_path = source_root.parents[1] / "structural" / "cp_masks" / f"{fish_id}_anatomy_00001_8bit_cp_masks.tif"
+    _write_tiny_anatomy_labels_tiff(anatomy_path)
     (source_root / f"{prefix}_conf_within_labels.tif").write_bytes(b"qc-label-tif")
     (source_root / f"{prefix}_twoP_within_mask.tif").write_bytes(b"qc-mask-tif")
-    pair_header = "conf_label,twoP_label,distance_um,overlap_voxels,within_gate,conf_vol,twoP_vol,iou,overlap_frac_conf,overlap_frac_twoP,pair_type,quality"
-    pair_row = "3,7,1.2,25,True,40,50,0.4,0.6,0.5,1-1,good"
+    pair_header = "conf_label,twoP_label,distance_um,overlap_voxels,within_gate,conf_vol,twoP_vol,iou,overlap_frac_conf,overlap_frac_twoP,pair_type,quality,passes_label_quality_gate,passes_anatomy_radius_gate,analysis_eligible,analysis_exclusion_reason"
+    pair_row = "3,7,0,3,True,3,3,1,1,1,1-1,good,True,True,True,"
     (source_root / f"{prefix}_matches.csv").write_text(pair_header + "\n" + pair_row + "\n")
     (source_root / f"{prefix}_review.csv").write_text(pair_header + "\n" + pair_row + "\n")
     (source_root / f"{prefix}_final_pairs.csv").write_text(pair_header + "\n" + pair_row + "\n")
@@ -1685,14 +1693,14 @@ def test_register_hcr_to_anatomy_stage_stages_small_aligned_artifacts(tmp_path: 
     manifest = run_register_hcr_to_anatomy_stage(config, source_root=source_root, force_recompute=True)
 
     out_root = hcr_to_anatomy_registration_root(resolve_pipeline_paths(config)) / "confocal" / "aligned"
-    assert manifest.status == "pass"
+    assert manifest.status == "pass", manifest.errors
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_labels_uint16.tif").exists()
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_matches.csv").exists()
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_final_pairs.csv").exists()
     assert not (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_in_2p.nrrd").exists()
-    assert manifest.parameters["copy_policy"] == "csv_json_tif_only"
+    assert manifest.parameters["copy_policy"] == "hardlink_aligned_label_tiffs_when_possible;copy_small_sidecars;recompute_tables"
     assert manifest.parameters["input_aligned_nrrd_count"] == 1
-    assert manifest.parameters["hcr_recompute_mode"] == "accepted_artifact_staging_with_direct_ants_readiness"
+    assert manifest.parameters["hcr_recompute_mode"] == "accepted_label_staging_plus_table_driven_quality_and_match_recompute"
     assert any(check.label == "large aligned intensity volumes not copied" and check.status == "pass" for check in manifest.checks)
     assert any(check.label == "HCR direct recompute matching metadata" and check.status == "warn" for check in manifest.checks)
 
@@ -1707,7 +1715,7 @@ def test_register_hcr_to_anatomy_stage_reports_direct_ants_recompute_prerequisit
     manifest = run_register_hcr_to_anatomy_stage(config, source_root=source_root, force_recompute=True)
 
     checks_by_label = {check.label: check for check in manifest.checks}
-    assert manifest.status == "pass"
+    assert manifest.status == "pass", manifest.errors
     assert manifest.parameters["matching_metadata_best_round"] == "r2"
     assert manifest.parameters["matching_metadata_num_rounds"] == "2"
     assert manifest.parameters["matching_metadata_bigwarp"] is False
@@ -1759,12 +1767,17 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
                         "n_labels_before": 2,
                         "n_labels_after": 2,
                         "n_dropped_small_components_abs": 0,
-                        "filter_policy_version": "label_voxel_floor_v3",
+                        "n_small_specks_excluded_by_table": 0,
+                        "filter_policy_version": "table_driven_hcr_label_quality_v1",
                     },
                 }
             )
             + "\n"
         )
+        # This fixture models a fish whose native segmentation is unavailable;
+        # the writer measures the aligned stack with explicit provenance.
+        for raw_path in kwargs["mask_paths"]:
+            raw_path.unlink()
         return (
             SimpleNamespace(
                 output_label_path=str(label_path),
@@ -1786,7 +1799,8 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
 
     out_root = hcr_to_anatomy_registration_root(resolve_pipeline_paths(config)) / "confocal" / "aligned"
     checks_by_label = {check.label: check for check in manifest.checks}
-    assert manifest.status == "pass"
+    assert manifest.status == "pass", manifest.errors
+    assert any("final-pair key parity" in warning for warning in manifest.warnings)
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_matches.csv").exists()
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_review.csv").exists()
     assert (out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_final_pairs.csv").exists()
@@ -1803,7 +1817,7 @@ def test_register_hcr_to_anatomy_stage_can_recompute_direct_ants_labels(
     assert checks_by_label["HCR direct ANTs match table recompute"].status == "pass"
     meta = json.loads((out_root / f"{fish_dir.name}_round1_channel2_sst1_1_cp_masks_in_2p_warp_meta.json").read_text())
     assert meta["filter_stats"]["n_labels_after"] == 2
-    assert meta["filter_stats"]["filter_policy_version"] == "label_voxel_floor_v3"
+    assert meta["filter_stats"]["filter_policy_version"] == "table_driven_hcr_label_quality_v1"
 
 
 def test_register_hcr_to_anatomy_stage_refuses_existing_outputs_without_force(tmp_path: Path) -> None:
@@ -1830,7 +1844,6 @@ def test_register_hcr_to_anatomy_stage_fails_without_required_aligned_artifacts(
 
     assert manifest.status == "fail"
     assert any("HCR aligned label TIFFs" in error for error in manifest.errors)
-    assert any("HCR aligned match CSVs" in error for error in manifest.errors)
 
 
 def test_single_fish_pipeline_cli_register_hcr_to_anatomy_outputs_manifest(tmp_path: Path) -> None:
@@ -1865,7 +1878,7 @@ def test_single_fish_pipeline_cli_register_hcr_to_anatomy_outputs_manifest(tmp_p
     assert result.returncode == 0
     assert payload["stage_name"] == "register-hcr-to-anatomy"
     assert payload["status"] == "pass"
-    assert payload["parameters"]["copy_policy"] == "csv_json_tif_only"
+    assert payload["parameters"]["copy_policy"] == "hardlink_aligned_label_tiffs_when_possible;copy_small_sidecars;recompute_tables"
     assert any(output["label"] == "staged HCR aligned label TIFFs" for output in payload["outputs"])
 
 
@@ -4828,6 +4841,9 @@ def test_export_canonical_tables_writer_uses_staged_assign_root_by_default(tmp_p
     assert (canonical_dir / "hcr_activity_status.csv").read_bytes() == (
         output_root / "assign-hcr-identity" / "registration" / "hcr_activity_status.csv"
     ).read_bytes()
+    assert (canonical_dir / "functional_roi_activity_identity.csv").read_bytes() == (
+        output_root / "assign-hcr-identity" / "registration" / "functional_roi_activity_identity.csv"
+    ).read_bytes()
     assert manifest.parameters is not None
     assert manifest.parameters["hcr_input_root_is_explicit"] is False
 
@@ -4856,6 +4872,7 @@ def test_export_canonical_tables_writer_assembles_staged_score_and_hcr_sources(t
         _copy_csv_with_crlf(registration_dir / filename, score_root / filename)
     for filename in hcr_filenames:
         _copy_csv_with_crlf(registration_dir / filename, hcr_root / filename)
+    _copy_csv_with_crlf(registration_dir / "functional_roi_activity_identity.csv", hcr_root / "functional_roi_activity_identity.csv")
 
     manifest = run_single_fish_export_canonical_tables_stage(
         SingleFishPipelineConfig(
@@ -4869,12 +4886,13 @@ def test_export_canonical_tables_writer_assembles_staged_score_and_hcr_sources(t
     canonical_dir = output_root / "export-canonical-tables" / "registration"
     assert manifest.status == "warn"
     assert len(tuple(canonical_dir.glob("*.csv"))) == 8
-    for filename in score_filenames:
+    for filename in score_filenames[1:]:
         assert (canonical_dir / filename).read_text() == (score_root / filename).read_text()
+    assert (canonical_dir / score_filenames[0]).read_text() == (hcr_root / score_filenames[0]).read_text()
     for filename in hcr_filenames:
         assert (canonical_dir / filename).read_text() == (hcr_root / filename).read_text()
     assert manifest.parameters is not None
-    assert manifest.parameters["source_policy"].startswith("score CSVs from staged score root")
+    assert manifest.parameters["source_policy"].startswith("ROI identity master and HCR-centric CSVs from staged assign root")
 
 
 def test_export_canonical_tables_writer_uses_explicit_hcr_input_root(tmp_path: Path) -> None:
@@ -4900,6 +4918,7 @@ def test_export_canonical_tables_writer_uses_explicit_hcr_input_root(tmp_path: P
     ):
         _copy_csv_with_crlf(registration_dir / filename, hcr_root / filename)
 
+    _copy_file(registration_dir / "functional_roi_activity_identity.csv", hcr_root / "functional_roi_activity_identity.csv")
     manifest = run_single_fish_export_canonical_tables_stage(
         SingleFishPipelineConfig(
             fish_id=fish_dir.name,

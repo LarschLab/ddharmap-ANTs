@@ -914,6 +914,7 @@ def build_hcr_anatomy_match_tables(
     use_frac_filters: bool = False,
     min_overlap_frac_conf: float = 0.0,
     min_overlap_frac_twop: float = 0.0,
+    label_quality_df: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series]:
     conf_arr = _ensure_uint_labels(conf_labels_2p)
     anat_arr = _ensure_uint_labels(anatomy_labels)
@@ -945,8 +946,12 @@ def build_hcr_anatomy_match_tables(
                 "iou",
                 "overlap_frac_conf",
                 "overlap_frac_twoP",
-                "pair_type",
-                "quality",
+                "pair_type", "quality", "within_geometry_gate",
+                "centroid_xy_distance_um", "median_anatomy_xy_radius_um",
+                "passes_anatomy_radius_gate", "is_centroid_xy_offset_over_median_anatomy_radius",
+                "is_small_speck", "is_low_confidence_segmentation",
+                "passes_label_quality_gate", "label_quality_exclusion_reason",
+                "analysis_eligible", "analysis_exclusion_reason",
             ]
         )
         return empty.copy(), empty.copy(), empty.copy(), pd.Series(dtype=object, name="QC Summary")
@@ -959,7 +964,16 @@ def build_hcr_anatomy_match_tables(
 
     if bool(require_overlap):
         if overlap_df.empty:
-            empty = pd.DataFrame(columns=["conf_label", "twoP_label", "distance_um", "overlap_voxels", "within_gate"])
+            empty = pd.DataFrame(columns=[
+                "conf_label", "twoP_label", "distance_um", "overlap_voxels",
+                "within_gate", "within_geometry_gate", "conf_vol", "twoP_vol",
+                "iou", "overlap_frac_conf", "overlap_frac_twoP", "pair_type", "quality",
+                "centroid_xy_distance_um", "median_anatomy_xy_radius_um",
+                "passes_anatomy_radius_gate", "is_centroid_xy_offset_over_median_anatomy_radius",
+                "is_small_speck", "is_low_confidence_segmentation",
+                "passes_label_quality_gate", "label_quality_exclusion_reason",
+                "analysis_eligible", "analysis_exclusion_reason",
+            ])
             return empty.copy(), empty.copy(), empty.copy(), pd.Series(dtype=object, name="QC Summary")
         conf_coords = dict(zip(labels_conf, p_conf_um))
         twop_coords = dict(zip(labels_twop, p_twop_um))
@@ -1022,6 +1036,53 @@ def build_hcr_anatomy_match_tables(
     n_pairs_overlap_candidates = int(len(overlap_df)) if overlap_df is not None else int(len(matches))
     after_overlap = int(len(matches))
 
+    # Apply segmentation-quality and lateral plausibility gates before dedup so
+    # an ineligible HCR label cannot displace an eligible candidate.
+    matches["within_geometry_gate"] = matches["within_gate"].astype(bool)
+    _, radius_summary = anatomy_max_section_xy_radii_um(
+        anat_arr, dx_um=vox_anat_um["dx"], dy_um=vox_anat_um["dy"],
+    )
+    median_anatomy_xy_radius_um = float(radius_summary["median_xy_radius_um"])
+    conf_x = dict(zip(labels_conf, p_conf_um[:, 2]))
+    conf_y = dict(zip(labels_conf, p_conf_um[:, 1]))
+    anat_x = dict(zip(labels_twop, p_twop_um[:, 2]))
+    anat_y = dict(zip(labels_twop, p_twop_um[:, 1]))
+    matches["centroid_xy_distance_um"] = np.sqrt(
+        (matches["conf_label"].map(conf_x).astype(float) - matches["twoP_label"].map(anat_x).astype(float)) ** 2
+        + (matches["conf_label"].map(conf_y).astype(float) - matches["twoP_label"].map(anat_y).astype(float)) ** 2
+    )
+    matches["median_anatomy_xy_radius_um"] = median_anatomy_xy_radius_um
+    matches["passes_anatomy_radius_gate"] = matches["centroid_xy_distance_um"] <= median_anatomy_xy_radius_um
+    matches["is_centroid_xy_offset_over_median_anatomy_radius"] = ~matches["passes_anatomy_radius_gate"]
+    if label_quality_df is None:
+        matches["is_small_speck"] = False
+        matches["is_low_confidence_segmentation"] = False
+        matches["passes_label_quality_gate"] = True
+        matches["label_quality_exclusion_reason"] = ""
+    else:
+        required_quality = {"conf_label", "is_small_speck", "is_low_confidence_segmentation", "analysis_eligible", "analysis_exclusion_reason"}
+        missing_quality = sorted(required_quality - set(label_quality_df.columns))
+        if missing_quality:
+            raise ValueError(f"HCR label-quality table lacks columns: {missing_quality}")
+        quality = label_quality_df.loc[:, sorted(required_quality)].copy()
+        quality["conf_label"] = pd.to_numeric(quality["conf_label"], errors="raise").astype(int)
+        if quality["conf_label"].duplicated().any():
+            raise ValueError("HCR label-quality table has duplicate conf_label rows for one mask")
+        quality = quality.rename(columns={"analysis_eligible": "passes_label_quality_gate", "analysis_exclusion_reason": "label_quality_exclusion_reason"})
+        matches = matches.merge(quality, on="conf_label", how="left", validate="many_to_one")
+        if matches["passes_label_quality_gate"].isna().any():
+            missing_labels = sorted(matches.loc[matches["passes_label_quality_gate"].isna(), "conf_label"].astype(int).unique())
+            raise ValueError(f"HCR match candidates lack label-quality rows: {missing_labels}")
+        for column in ("is_small_speck", "is_low_confidence_segmentation", "passes_label_quality_gate"):
+            matches[column] = matches[column].astype(bool)
+        matches["label_quality_exclusion_reason"] = matches["label_quality_exclusion_reason"].fillna("").astype(str)
+    matches["analysis_eligible"] = matches["passes_label_quality_gate"] & matches["passes_anatomy_radius_gate"]
+    matches["analysis_exclusion_reason"] = matches["label_quality_exclusion_reason"]
+    radius_failed = ~matches["passes_anatomy_radius_gate"]
+    matches.loc[radius_failed & matches["analysis_exclusion_reason"].ne(""), "analysis_exclusion_reason"] += ";"
+    matches.loc[radius_failed, "analysis_exclusion_reason"] += "anatomy_radius_plausibility"
+    matches["within_gate"] = matches["within_geometry_gate"] & matches["analysis_eligible"]
+
     if dedup_by_twop in {"closest", "max_overlap"}:
         valid = matches["within_gate"].to_numpy(dtype=bool)
         if valid.any():
@@ -1052,13 +1113,6 @@ def build_hcr_anatomy_match_tables(
 
     conf_vol = _label_volumes(conf_arr)
     twop_vol = _label_volumes(anat_arr)
-    # Review-only XY reference. Confocal axial PSF broadening makes Z centroid
-    # displacement less diagnostic than lateral displacement. This never
-    # changes ``within_gate``, quality, or membership in final_pairs.
-    _, radius_summary = anatomy_max_section_xy_radii_um(
-        anat_arr, dx_um=vox_anat_um["dx"], dy_um=vox_anat_um["dy"],
-    )
-    median_anatomy_xy_radius_um = float(radius_summary["median_xy_radius_um"])
     matches["conf_vol"] = matches["conf_label"].map(conf_vol).fillna(0).astype(int)
     matches["twoP_vol"] = matches["twoP_label"].map(twop_vol).fillna(0).astype(int)
     den = matches["conf_vol"] + matches["twoP_vol"] - matches["overlap_voxels"]
@@ -1075,12 +1129,6 @@ def build_hcr_anatomy_match_tables(
         out=np.zeros_like(matches["twoP_vol"], dtype=float),
         where=(matches["twoP_vol"] > 0),
     )
-    matches["centroid_xy_distance_um"] = np.sqrt(
-        (matches["conf_label"].map(dict(zip(labels_conf, p_conf_um[:, 2]))).astype(float) - matches["twoP_label"].map(dict(zip(labels_twop, p_twop_um[:, 2]))).astype(float)) ** 2
-        + (matches["conf_label"].map(dict(zip(labels_conf, p_conf_um[:, 1]))).astype(float) - matches["twoP_label"].map(dict(zip(labels_twop, p_twop_um[:, 1]))).astype(float)) ** 2
-    )
-    matches["median_anatomy_xy_radius_um"] = median_anatomy_xy_radius_um
-    matches["is_centroid_xy_offset_over_median_anatomy_radius"] = matches["centroid_xy_distance_um"] > median_anatomy_xy_radius_um
     acc = matches.loc[matches["within_gate"]].copy()
     conf_counts = acc["conf_label"].value_counts()
     twop_counts = acc["twoP_label"].value_counts()
@@ -1115,6 +1163,7 @@ def build_hcr_anatomy_match_tables(
     review = matches[
         ((matches["pair_type"].isin(["split", "merge", "complex"])) & matches["within_gate"])
         | ((matches["pair_type"] == "1-1") & (matches["quality"] != "good"))
+        | (matches["within_geometry_gate"] & ~matches["analysis_eligible"])
     ].copy()
     review = review.sort_values(["pair_type", "iou", "distance_um"], ascending=[True, False, True]).reset_index(drop=True)
     gate_mask = matches["distance_um"] <= float(max_distance_um)
@@ -1131,6 +1180,8 @@ def build_hcr_anatomy_match_tables(
             "pairs_after_filter_iou_quality_good": int(
                 (matches["within_gate"] & (matches["pair_type"] == "1-1") & (matches["quality"] == "good")).sum()
             ),
+            "pairs_after_label_quality_gate": int(matches["passes_label_quality_gate"].sum()),
+            "pairs_after_anatomy_radius_gate": int(matches["passes_anatomy_radius_gate"].sum()),
             "pairs_final": int(final_pairs.shape[0]),
             "gate_only_pairs": int(gate_mask.sum()),
             "accepted_pairs_after_dedup": int(after_conf),
