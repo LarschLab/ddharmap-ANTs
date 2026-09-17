@@ -846,11 +846,13 @@ def parse_unilateral_stim(stype: str) -> tuple[str | None, str | None]:
     parts = [part.strip().upper() for part in str(stype).split("+") if str(part).strip()]
     if len(parts) != 1:
         return None, None
-    match = re.match(r"^([LR])(LB|LC)$", parts[0])
+    legacy = re.fullmatch(r"([LR])L([BC])", parts[0])
+    trajectory = re.fullmatch(r"([LR])([BC])_TRAJECTORY", parts[0])
+    match = legacy or trajectory
     if not match:
         return None, None
     stim_side = "left" if match.group(1) == "L" else "right"
-    stim_mode = "bout" if match.group(2) == "LB" else "continuous"
+    stim_mode = "bout" if match.group(2) == "B" else "continuous"
     return stim_side, stim_mode
 
 

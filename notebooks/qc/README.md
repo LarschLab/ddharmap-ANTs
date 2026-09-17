@@ -3,10 +3,12 @@
 These notebooks are read-only scientific review surfaces for persisted
 single-fish pipeline outputs. Reusable loading, validation, filtering, and
 plotting logic belongs in `src/codeants_2pf_hcr/`; notebook cells contain only
-explicit configuration, package calls, and display/save controls.
+explicit configuration, package calls, and display calls.
 Notebook 01 renders Q1 heatmap and trace figures from persisted numeric data,
 not saved PNGs. Its trace loader verifies the numeric payload and summary came
 from the same writer run; missing or mixed-generation inputs fail visibly.
+Notebooks 03–05 reload the shared `spatial` dependency before their QC plot
+modules when rerun in an existing kernel, avoiding stale package imports.
 
 | Notebook | Review ownership | Decision gate |
 | --- | --- | --- |
@@ -27,17 +29,25 @@ from the same writer run; missing or mixed-generation inputs fail visibly.
   to another fish or pipeline root.
 - Never run Cellpose, ANTs, matching, identity assignment, response scoring,
   canonical export, or promotion from a QC notebook.
-- The only permitted write is an explicit review JSON sidecar beneath the
-  reviewed stage's `reviews/` directory. It is hash-bound to reviewed
-  artifacts and does not promote them.
+- Notebook cells write nothing: no sidecars, tables, figures, manifests, or
+  gate records. The agent discusses evidence with the user and records accepted
+  decisions in wikiLogbook. Explicit pipeline CLI stages then materialize
+  hash-bound computational inputs and derived tables outside the notebooks.
 - Review geometry without gene, response, or BPI information. Review identity
   after geometry. Review response/BPI after geometry is frozen.
 - ROI-centric tables remain authoritative for whole-population analysis;
   HCR-centric tables remain limited to identified-cell activity analysis.
 
-Review records are operational evidence. Reconcile accepted decisions through
-the lab logbook and an explicit promotion step; never infer acceptance from a
-notebook having executed successfully.
+The logbook owns gate decisions; the pipeline owns computational artifacts.
+An executed notebook is evidence of inspection, never an acceptance signal.
+For midline review, the pipeline projects persisted native-functional lines
+to the anatomy grid, the logbook binds acceptance to the proposal CSV/PNG
+hashes, and `materialize-anatomy-midline` creates the accepted input.
+`make-motion-auc-tables` consumes that input and the same-run fixed 12.5-s
+scored windows before notebook 06 displays laterality-dependent evidence.
+Notebook 06 checks the pinned scoring-window policy and blocks the older
+L765_f04 7-s AUC tables. The corrected response-window continuation lives at
+`/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260917T1150Z_RESPONSE_WINDOW_RECOMPUTE/L765_f04`; it is a separate staged analysis, not an implicit replacement for the pinned registration-QC root.
 
 For historical functional-registration runs that predate
 `prepare-in-vivo-anatomy-stack`, notebook 02 records the explicitly selected

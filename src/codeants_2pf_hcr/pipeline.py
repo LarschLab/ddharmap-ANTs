@@ -31,11 +31,14 @@ PIPELINE_STAGE_ORDER: tuple[str, ...] = (
     "register-functional-to-anatomy",
     "transform-functional-rois-to-anatomy",
     "make-functional-registration-qc",
+    "make-anatomy-midline-proposal",
+    "materialize-anatomy-midline",
     "register-hcr-to-anatomy",
     "match-roi-to-anatomy",
     "assign-hcr-identity",
     "score-activity-bpi",
     "export-canonical-tables",
+    "make-motion-auc-tables",
     "make-qa-report",
     "make-figures",
 )
@@ -487,11 +490,14 @@ def pipeline_contracts() -> tuple[StageContract, ...]:
         "register-functional-to-anatomy": "Audit or generate functional-to-anatomy registration products.",
         "transform-functional-rois-to-anatomy": "Apply the selected functional-to-anatomy transform to Suite2p ROI labels.",
         "make-functional-registration-qc": "Render functional-registration QC from registered intensities and transformed ROI labels.",
+        "make-anatomy-midline-proposal": "Project the native-functional line into anatomy pixels for review.",
+        "materialize-anatomy-midline": "Materialize the logbook-accepted anatomy-grid midline as a computational input.",
         "register-hcr-to-anatomy": "Audit or generate HCR-to-anatomy registration products.",
         "match-roi-to-anatomy": "Fix geometry-only ROI-to-anatomy matches.",
         "assign-hcr-identity": "Attach molecular identity after geometry is fixed.",
         "score-activity-bpi": "Attach response and BPI annotations to frozen ROI/anatomy geometry independently of molecular identity.",
         "export-canonical-tables": "Export ROI-centric and HCR-centric canonical table bundles.",
+        "make-motion-auc-tables": "Build laterality-dependent motion AUC tables after the midline gate.",
         "make-qa-report": "Collect biologist-facing QA/report artifacts.",
         "make-figures": "Render final table-driven figures.",
     }
@@ -503,13 +509,16 @@ def pipeline_contracts() -> tuple[StageContract, ...]:
         "register-functional-to-anatomy": ("preprocess-functional", "preprocess-anatomy"),
         "transform-functional-rois-to-anatomy": ("register-functional-to-anatomy",),
         "make-functional-registration-qc": ("transform-functional-rois-to-anatomy",),
+        "make-anatomy-midline-proposal": ("make-functional-registration-qc",),
+        "materialize-anatomy-midline": ("make-anatomy-midline-proposal",),
         "register-hcr-to-anatomy": ("preprocess-anatomy", "preprocess-hcr"),
         "match-roi-to-anatomy": ("register-functional-to-anatomy",),
         "assign-hcr-identity": ("match-roi-to-anatomy", "register-hcr-to-anatomy"),
         "score-activity-bpi": ("match-roi-to-anatomy",),
         "export-canonical-tables": ("assign-hcr-identity", "score-activity-bpi"),
+        "make-motion-auc-tables": ("export-canonical-tables", "materialize-anatomy-midline"),
         "make-qa-report": ("export-canonical-tables",),
-        "make-figures": ("export-canonical-tables",),
+        "make-figures": ("export-canonical-tables", "make-motion-auc-tables"),
     }
     return tuple(
         StageContract(
@@ -5656,6 +5665,69 @@ def run_single_fish_make_qa_report_stage(
     )
 
 
+def run_single_fish_make_motion_auc_tables_stage(
+    config: SingleFishPipelineConfig, *,
+    accepted_midline_path: str | Path | None = None,
+    force_recompute: bool = False,
+) -> StageManifest:
+    """Write laterality AUC tables from frozen canonical rows and accepted anatomy midline."""
+    from .traces import build_single_fish_motion_auc_plot_tables
+    from .midline_review import load_accepted_anatomy_midline_context
+    import pandas as pd
+
+    paths = resolve_pipeline_paths(config)
+    canonical = _stage_root(paths, "export-canonical-tables") / "registration"
+    midline = (
+        Path(accepted_midline_path).expanduser().resolve()
+        if accepted_midline_path is not None
+        else _stage_root(paths, "materialize-anatomy-midline") / "anatomy_midline.json"
+    )
+    scored_windows = _stage_root(paths, "score-activity-bpi") / "registration" / "scored_stimulus_windows.csv"
+    stage_root = _stage_root(paths, "make-motion-auc-tables") / "registration"
+    outputs_paths = tuple(stage_root / name for name in (
+        "motion_auc_plot_points.csv", "motion_auc_plot_counts.csv",
+        "motion_auc_roi_panels.csv",
+    ))
+    master = canonical / "functional_roi_activity_identity.csv"
+    status_csv = canonical / "hcr_activity_status.csv"
+    inputs = tuple(describe_manifest_path(path) for path in (
+        master, status_csv, midline, scored_windows,
+    ))
+    try:
+        if any(path.exists() for path in outputs_paths) and not force_recompute:
+            raise FileExistsError("Motion AUC tables already exist; refusing overwrite")
+        all_rois = pd.read_csv(master, usecols=["plane_idx"])
+        load_accepted_anatomy_midline_context(
+            midline, fish_id=config.fish_id,
+            required_planes=sorted(all_rois["plane_idx"].astype(int).unique()),
+        )
+        build_single_fish_motion_auc_plot_tables(
+            fish_dir=paths.fish_dir, fish_id=config.fish_id,
+            out_reg=stage_root, suite2p_root=paths.functional_suite2p_dir,
+            detail_csv=master, hcr_status_csv=status_csv,
+            accepted_midline_sidecar=midline,
+            scored_windows_csv=scored_windows,
+            points_csv=outputs_paths[0], counts_csv=outputs_paths[1],
+            roi_panel_csv=outputs_paths[2], write_csv=True,
+        )
+        missing = [str(path) for path in outputs_paths if not path.is_file()]
+        if missing:
+            raise RuntimeError("Motion AUC writer omitted outputs: " + ", ".join(missing))
+        status, errors = "pass", ()
+    except Exception as exc:
+        status, errors = "fail", (str(exc),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION,
+        stage_name="make-motion-auc-tables", fish_id=config.fish_id,
+        status=status, dry_run=False, generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=inputs, outputs=tuple(describe_manifest_path(path) for path in outputs_paths),
+        parameters={"pipeline_root": str(paths.pipeline_root), "midline_path": str(midline),
+                    "scored_windows_path": str(scored_windows),
+                    "window_policy": "fixed_from_movement_onset_matched_prestim"},
+        errors=errors,
+    )
+
+
 def _make_figures_source_roots(
     paths: PipelinePaths,
     *,
@@ -5676,6 +5748,7 @@ def _render_package_owned_single_fish_figures(
     fish_id: str,
     canonical_root: Path,
     composite_input_root: Path,
+    accepted_midline_sidecar: Path | None,
     output_dir: Path,
 ) -> None:
     from codeants_2pf_hcr.plots.analysis import render_single_fish_bpi_all_pairs_diagnostics
@@ -5702,6 +5775,7 @@ def _render_package_owned_single_fish_figures(
             out_reg=temp_reg,
             outdir=output_dir,
             fish_id=fish_id,
+            accepted_midline_sidecar=accepted_midline_sidecar,
         )
         render_single_fish_bpi_all_pairs_diagnostics(
             fish_id=fish_id,
@@ -5741,6 +5815,7 @@ def run_single_fish_make_figures_stage(
     *,
     canonical_input_root: str | Path | None = None,
     figure_input_root: str | Path | None = None,
+    accepted_midline_path: str | Path | None = None,
     force_recompute: bool = False,
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
@@ -5749,12 +5824,21 @@ def run_single_fish_make_figures_stage(
         canonical_input_root=canonical_input_root,
         figure_input_root=figure_input_root,
     )
-    composite_input_root = paths.functional_registration_dir
+    staged_auc_root = _stage_root(paths, "make-motion-auc-tables") / "registration"
+    composite_input_root = staged_auc_root if staged_auc_root.is_dir() else paths.functional_registration_dir
+    scored_windows_path = _stage_root(paths, "score-activity-bpi") / "registration" / "scored_stimulus_windows.csv"
+    accepted_midline = (
+        Path(accepted_midline_path).expanduser().resolve()
+        if accepted_midline_path is not None
+        else _stage_root(paths, "materialize-anatomy-midline") / "anatomy_midline.json"
+        if staged_auc_root.is_dir() else None
+    )
     output_specs = _stage_output_specs(paths, "make-figures")
     output_paths = tuple(Path(spec.path) for spec in output_specs)
     figure_sources = {filename: figure_root / filename for filename in LEGACY_COPIED_FIGURE_FILES}
     inputs = (
         describe_glob(canonical_root, "*.csv", label="make-figures staged canonical CSV inputs"),
+        describe_manifest_path(scored_windows_path, required=False, label="make-figures scorer window provenance"),
         *(
             describe_manifest_path(canonical_root / filename, label=f"make-figures canonical render input: {filename}")
             for filename in (
@@ -5770,6 +5854,10 @@ def run_single_fish_make_figures_stage(
                 label=f"make-figures composite render input: {filename}",
             )
             for filename in COMPOSITE_50L_RENDER_INPUT_FILES
+        ),
+        *(
+            (describe_manifest_path(accepted_midline, label="accepted anatomy-grid midline for global AUC"),)
+            if accepted_midline is not None else ()
         ),
         *(
             describe_manifest_path(figure_sources[filename], label=f"make-figures legacy source figure: {filename}")
@@ -5788,7 +5876,26 @@ def run_single_fish_make_figures_stage(
             observed="none" if not existing_outputs else ",".join(str(path) for path in existing_outputs),
         )
     )
-    if not missing_required and (force_recompute or not existing_outputs):
+    window_check_pass = True
+    if scored_windows_path.is_file():
+        try:
+            with scored_windows_path.open(newline="") as handle:
+                reader = csv.DictReader(handle)
+                required_window_columns = {"fish_id", "used_for_bpi", "response_window_policy", "scored_duration_sec"}
+                if not required_window_columns.issubset(reader.fieldnames or []):
+                    raise ValueError("scorer table predates fixed-window provenance")
+                eligible = [row for row in reader if row["fish_id"] == config.fish_id and row["used_for_bpi"].strip().lower() in {"true", "1"}]
+                if not eligible or any(row["response_window_policy"] != "fixed_from_movement_onset_matched_prestim" or not math.isclose(float(row["scored_duration_sec"]), 12.5, rel_tol=0, abs_tol=1e-6) for row in eligible):
+                    raise ValueError("BPI-eligible scorer windows are not all fixed 12.5 s from movement onset")
+        except (OSError, ValueError) as exc:
+            window_check_pass = False
+            checks.append(StageCheckRecord(
+                label="make-figures scorer window provenance", status="fail",
+                detail="Figure rendering must not mix historical scorer windows with current AUC policy.",
+                expected="fixed 12.5 s movement-onset BPI-eligible windows",
+                observed=str(exc),
+            ))
+    if not missing_required and window_check_pass and (force_recompute or not existing_outputs):
         output_by_name = {Path(spec.path).name: Path(spec.path) for spec in output_specs}
         for filename in LEGACY_COPIED_FIGURE_FILES:
             source_path = figure_sources[filename]
@@ -5799,6 +5906,7 @@ def run_single_fish_make_figures_stage(
             fish_id=config.fish_id,
             canonical_root=canonical_root,
             composite_input_root=composite_input_root,
+            accepted_midline_sidecar=accepted_midline,
             output_dir=output_by_name[RENDERED_FIGURE_FILES[0]].parent,
         )
         checks.extend(_build_staged_comparison_checks(paths, "make-figures"))
@@ -8153,6 +8261,7 @@ def run_make_functional_registration_qc_stage(
     force_recompute: bool = False,
 ) -> StageManifest:
     import matplotlib.pyplot as plt
+    import numpy as np
 
     from .context import infer_anat_labels_path
     from .matching import (
@@ -8169,7 +8278,9 @@ def run_make_functional_registration_qc_stage(
     from .plots.qc_midline import (
         build_automatic_native_functional_midline_qc,
         render_automatic_native_functional_midline_qc,
+        render_anatomy_midline_proposal_grid,
     )
+    from .midline_review import build_anatomy_midline_proposal_table
     from .spatial import imread_any
     from .stimulus import discover_functional_sessions
 
@@ -8204,7 +8315,9 @@ def run_make_functional_registration_qc_stage(
     ncc_png = qa_dir / "functional_ncc_depth_profiles.png"
     automatic_midline_png = qa_dir / "functional_automatic_midline_proposals.png"
     automatic_midline_csv = qa_dir / "functional_automatic_midline_proposals.csv"
-    expected_pngs = (plane_rows_png, intensity_png, center_png, ncc_png, automatic_midline_png)
+    anatomy_midline_png = qa_dir / "anatomy_midline_proposals.png"
+    anatomy_midline_csv = qa_dir / "anatomy_midline_proposals.csv"
+    expected_pngs = (plane_rows_png, intensity_png, center_png, ncc_png, automatic_midline_png, anatomy_midline_png)
     outputs: tuple[ManifestPathRecord, ...] = ()
     checks: tuple[StageCheckRecord, ...] = ()
     warnings: tuple[str, ...] = ()
@@ -8346,6 +8459,21 @@ def run_make_functional_registration_qc_stage(
         )
         automatic_midline_figure.savefig(automatic_midline_png, dpi=180, bbox_inches="tight")
         plt.close(automatic_midline_figure)
+        anatomy_midline = build_anatomy_midline_proposal_table(
+            plane_rows, automatic_midline["proposals"],
+            anatomy_shape=tuple(np.asarray(anatomy_stack).shape[-2:]),
+        )
+        anatomy_midline.to_csv(anatomy_midline_csv, index=False)
+        anatomy_midline_figure = render_anatomy_midline_proposal_grid(
+            anatomy_midline, anatomy_stack,
+            transformed_roi_labels={
+                int(re.search(r"plane(\d+)", path.name).group(1)): path
+                for path in transformed_dir.glob("*.tif")
+                if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+            },
+        )
+        anatomy_midline_figure.savefig(anatomy_midline_png, dpi=180, bbox_inches="tight")
+        plt.close(anatomy_midline_figure)
         existing_count = sum(path.exists() for path in expected_pngs)
         status = "pass" if existing_count == len(expected_pngs) else "fail"
         checks = (
@@ -8831,6 +8959,165 @@ def _hcr_direct_ants_recompute_provenance(
         ),
     ]
     return provenance, tuple(checks)
+
+
+def run_make_anatomy_midline_proposal_stage(
+    config: SingleFishPipelineConfig, *, force_recompute: bool = False,
+) -> StageManifest:
+    """Backfill anatomy-grid proposal evidence without rewriting registration QC."""
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    from .midline_review import build_anatomy_midline_proposal_table
+    from .plots.qc_midline import render_anatomy_midline_proposal_grid
+    from .spatial import imread_any
+
+    paths = resolve_pipeline_paths(config)
+    registration = functional_to_anatomy_registration_root(paths)
+    transform = functional_roi_anatomy_transform_root(paths)
+    native_csv = functional_registration_qc_root(paths) / "qa" / "functional_automatic_midline_proposals.csv"
+    refs_path = registration / "plane_refs_summary.json"
+    anatomy_path = prepared_in_vivo_anatomy_path(paths)
+    stage_root = _stage_root(paths, "make-anatomy-midline-proposal")
+    qa_dir = stage_root / "qa"
+    csv_path = qa_dir / "anatomy_midline_proposals.csv"
+    png_path = qa_dir / "anatomy_midline_proposals.png"
+    inputs = tuple(describe_manifest_path(path) for path in (native_csv, refs_path, anatomy_path))
+    try:
+        if any(path.exists() for path in (csv_path, png_path)) and not force_recompute:
+            raise FileExistsError("Anatomy midline proposal already exists; use --force-recompute only after review")
+        refs = load_plane_refs_summary(refs_path)
+        anatomy = imread_any(anatomy_path)
+        proposals = build_anatomy_midline_proposal_table(
+            refs, pd.read_csv(native_csv), anatomy_shape=tuple(anatomy.shape[-2:]),
+        )
+        labels = {
+            int(re.search(r"plane(\d+)", path.name).group(1)): path
+            for path in (transform / "functional" / "anatomy").glob("*.tif")
+            if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+        }
+        if set(labels) != set(proposals["plane_idx"].astype(int)):
+            raise ValueError("Transformed ROI labels do not cover every proposed anatomy-midline plane")
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        proposals.to_csv(csv_path, index=False)
+        fig = render_anatomy_midline_proposal_grid(
+            proposals, anatomy, transformed_roi_labels=labels,
+        )
+        fig.savefig(png_path, dpi=180, bbox_inches="tight")
+        plt.close(fig)
+        status, errors = "pass", ()
+    except Exception as exc:
+        status, errors = "fail", (str(exc),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION, stage_name="make-anatomy-midline-proposal",
+        fish_id=config.fish_id, status=status, dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=inputs, outputs=tuple(describe_manifest_path(path) for path in (csv_path, png_path)),
+        parameters={"pipeline_root": str(paths.pipeline_root), "proposal_only": True},
+        errors=errors,
+    )
+
+
+def run_materialize_anatomy_midline_stage(
+    config: SingleFishPipelineConfig, *, reviewer: str,
+    logbook_decision_path: str | Path, force_recompute: bool = False,
+) -> StageManifest:
+    """Materialize a validated anatomy-grid input after a logbook gate decision."""
+    import hashlib
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from .plots.qc_midline import render_anatomy_midline_proposal_grid
+    from .spatial import imread_any
+
+    paths = resolve_pipeline_paths(config)
+    proposal_root = _stage_root(paths, "make-anatomy-midline-proposal") / "qa"
+    proposal_csv = proposal_root / "anatomy_midline_proposals.csv"
+    proposal_png = proposal_root / "anatomy_midline_proposals.png"
+    refs_path = functional_to_anatomy_registration_root(paths) / "plane_refs_summary.json"
+    anatomy_path = prepared_in_vivo_anatomy_path(paths)
+    logbook_path = Path(logbook_decision_path).expanduser().resolve()
+    stage_root = _stage_root(paths, "materialize-anatomy-midline")
+    json_path = stage_root / "anatomy_midline.json"
+    lines_path = stage_root / "anatomy_midline_lines.csv"
+    accepted_png = stage_root / "qa" / "anatomy_midline_accepted_overlay.png"
+    inputs = tuple(describe_manifest_path(path) for path in (
+        proposal_csv, proposal_png, refs_path, anatomy_path, logbook_path,
+    ))
+    try:
+        if not str(reviewer).strip():
+            raise ValueError("Materializing an accepted midline requires a reviewer")
+        if any(path.exists() for path in (json_path, lines_path, accepted_png)) and not force_recompute:
+            raise FileExistsError("Anatomy midline artifact already exists; refusing overwrite")
+        if not logbook_path.is_file():
+            raise FileNotFoundError(logbook_path)
+        from .midline_review import validate_logbook_midline_gate
+        proposals = pd.read_csv(proposal_csv)
+        refs = load_plane_refs_summary(refs_path)
+        expected = {int(ref["index"]) for ref in refs}
+        observed = set(proposals["plane_idx"].astype(int))
+        if observed != expected or proposals["plane_idx"].duplicated().any():
+            raise ValueError("Anatomy-midline proposal does not cover each registered plane exactly once")
+        required = {"x0", "y0", "theta_deg", "fit_rmse_px", "requires_human_acceptance"}
+        if not required.issubset(proposals):
+            raise ValueError("Anatomy-midline proposal is incomplete")
+        if not proposals["requires_human_acceptance"].astype(bool).all():
+            raise ValueError("Anatomy-midline proposal does not declare the human gate")
+        if not np.isfinite(proposals[["x0", "y0", "theta_deg", "fit_rmse_px"]].to_numpy(dtype=float)).all():
+            raise ValueError("Anatomy-midline proposal contains non-finite values")
+        def sha(path: Path) -> str:
+            digest = hashlib.sha256()
+            with path.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        source_paths = (proposal_csv, proposal_png, refs_path, anatomy_path)
+        validate_logbook_midline_gate(
+            logbook_path, fish_id=config.fish_id,
+            proposal_csv_sha256=sha(proposal_csv), proposal_png_sha256=sha(proposal_png),
+        )
+        payload = {
+            "schema": "codeants_anatomy_midline_materialization_v1",
+            "fish_id": config.fish_id, "coordinate_space": "anatomy pixel grid",
+            "accepted": True, "reviewer": str(reviewer).strip(),
+            "logbook_decision_path": str(logbook_path),
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "lines_by_plane": {
+                str(int(row.plane_idx)): {
+                    "x0": float(row.x0), "y0": float(row.y0),
+                    "theta_deg": float(row.theta_deg),
+                }
+                for row in proposals.itertuples(index=False)
+            },
+            "source_artifacts": [
+                {"path": str(path), "sha256": sha(path)} for path in source_paths
+            ],
+        }
+        stage_root.mkdir(parents=True, exist_ok=True)
+        proposals.to_csv(lines_path, index=False)
+        json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        labels = {
+            int(re.search(r"plane(\d+)", path.name).group(1)): path
+            for path in (functional_roi_anatomy_transform_root(paths) / "functional" / "anatomy").glob("*.tif")
+            if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+        }
+        fig = render_anatomy_midline_proposal_grid(
+            proposals, imread_any(anatomy_path),
+            transformed_roi_labels=labels, accepted=True,
+        )
+        accepted_png.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(accepted_png, dpi=180, bbox_inches="tight")
+        plt.close(fig)
+        status, errors = "pass", ()
+    except Exception as exc:
+        status, errors = "fail", (str(exc),)
+    return StageManifest(
+        manifest_version=PIPELINE_MANIFEST_VERSION, stage_name="materialize-anatomy-midline",
+        fish_id=config.fish_id, status=status, dry_run=False,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        inputs=inputs, outputs=tuple(describe_manifest_path(path) for path in (json_path, lines_path, accepted_png)),
+        parameters={"pipeline_root": str(paths.pipeline_root), "logbook_decision_path": str(logbook_path)},
+        errors=errors,
+    )
 
 
 def run_register_hcr_to_anatomy_stage(
@@ -9884,6 +10171,8 @@ __all__ = [
     "run_register_functional_to_anatomy_stage",
     "run_transform_functional_rois_to_anatomy_stage",
     "run_make_functional_registration_qc_stage",
+    "run_make_anatomy_midline_proposal_stage",
+    "run_materialize_anatomy_midline_stage",
     "run_register_hcr_to_anatomy_stage",
     "run_match_roi_to_anatomy_stage",
     "run_segment_ex_vivo_anatomy_cellpose_stage",
@@ -9892,6 +10181,7 @@ __all__ = [
     "run_single_fish_export_canonical_tables_stage",
     "run_single_fish_freeze_legacy_baseline_stage",
     "run_single_fish_make_figures_stage",
+    "run_single_fish_make_motion_auc_tables_stage",
     "run_single_fish_make_qa_report_stage",
     "resolve_pipeline_paths",
     "run_single_fish_audit_inputs_stage",

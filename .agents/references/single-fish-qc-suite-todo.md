@@ -29,13 +29,11 @@ and preserving pre-existing remote work. Read data from
 - All QC notebooks `00`–`06` point at this root. Stored notebook outputs are
   cleared when the root changes so an old rendered path cannot masquerade as
   current evidence.
-- The full fresh writer chain currently reaches canonical export and QA report,
-  and all seven QC notebooks execute without cell errors after the final
-  functional-registration-through-export freshness rerun. All completed stage
-  manifests are current. Keep the root active:
-  `make-figures` is still blocked because L765_f04 has no
-  `motion_auc_plot_points.csv` or `motion_auc_plot_counts.csv`; do not fill that
-  gap with another fish's files.
+- The fresh writer chain reaches canonical export and QA report. The
+  2026-09-17 anatomy-midline proposal, logbook-gated materialization, and
+  motion-AUC table stages now pass in this same root. Notebook 06 consumes
+  their same-root outputs. Keep the root active until the final figure writer
+  and all seven QC notebooks are revalidated after these changes.
 - The 2026-09-15 consolidation audit found that the fish-local spatial manifest
   had backfilled legacy May individual-plane and motion-corrected products as
   canonical XY even though all ten fresh references were exact left-right
@@ -49,12 +47,11 @@ and preserving pre-existing remote work. Read data from
 - Reuse the scientific question, population, thresholds, categories, colours,
   and visual grammar of the relevant legacy cell unless a documented defect is
   being corrected.
-- QC reads persisted stage outputs. It does not silently recompute, promote, or
-  change geometry, identity, activity, or BPI assignments. An explicitly named
-  review action may write a hash-bound decision/provenance sidecar—for example,
-  accepted or corrected midline coordinates—but it must not overwrite a
-  scientific stage table. Laterality analysis may consume the accepted midline
-  sidecar only after that review gate is passed.
+- QC notebooks read persisted stage outputs and write nothing. Gate decisions
+  and progress belong in wikiLogbook after agent/user evidence review. Explicit
+  pipeline stages, never notebook cells, materialize hash-bound accepted
+  computational inputs and derived tables. Laterality analysis consumes the
+  anatomy-grid midline only after the logbook gate is passed.
 - Show sample sizes and authoritative cut-offs on distribution plots.
 - Keep ROI-centric whole-population outputs separate from HCR-centric
   identified-cell outputs. Hybrid views must say exactly which denominator and
@@ -250,6 +247,18 @@ anatomy-grid, hash-bound sidecar required by Notebook 06; anatomy-space
 laterality and laterality-dependent AUC remain blocked until that coordinate-
 space provenance exists.
 
+**Implemented and visually reviewed (2026-09-17):** The backend now projects
+the saved native-functional fixed-consensus proposal through the selected
+scale/NCC/ANTs chain onto the anatomy grid and renders all ten planes over
+anatomy and transformed ROI outlines. The user-confirmed midline separates
+the bilateral fields in the full-grid visual review. wikiLogbook
+`daily/2026/2026-09-17.md` owns the accepted gate and exact proposal CSV/PNG
+hashes; `materialize-anatomy-midline` wrote the hash-bound anatomy-grid JSON,
+line table, and accepted overlay. Notebook 01 only displays the proposal;
+Notebook 06 only reads the materialized line and laterality tables. The old
+notebook/GUI sidecar writer was removed. Cross-fish automation remains a
+separate validation question.
+
 ### Q2.1 Functional/anatomy plane and label linkage — Notebook 02
 
 **Question:** Does Cell 11 show the anatomy intensity page used by functional
@@ -415,6 +424,27 @@ by default, and provides display-only gene, response-status, and flagged-record
 filters. It never writes an exclusion or changes pair membership. Manual
 inspection of merged masks and vessel/background artifacts remains required.
 
+**Physical-spacing correction (2026-09-17):** Notebook 05 Cell 04 previously
+read the anatomy-label TIFF's default `1 px = 1 µm` metadata, inflating XY
+offsets and the radius reference while understating Z offsets. The centroid
+offset builder now requires the prepared anatomy NRRD as an explicit voxel
+source, records that provenance and spacing in its review table, and labels the
+reference as the all-label maximum-XY-section equivalent radius. Notebook 03
+retains its intentionally different matched-label, resolved-plane-section
+reference; both now use the same physical anatomy grid. The complete Notebook
+03 and Notebook 05 cell sequences execute without errors on the active L765_f04
+root; visual review confirms the expected 2.94 µm matched-plane reference in
+Notebook 03 and corrected 2.87 µm all-label max-section reference in Notebook
+05, with legible unclipped XY/Z panels.
+
+**Shared-radius resolution (2026-09-17):** The earlier 2.94 µm
+matched-plane reference was not the intended plausibility population.
+Notebook 03, Notebook 05, and package matching/QA now use one computed
+median of each anatomy label's maximal XY-section equivalent radius across
+the entire 3-D label volume, with physical anatomy XY spacing. L765_f04
+currently computes to 2.874 µm (15,761 labels); no fish-specific constant
+is hardcoded. This supersedes the differing-reference statement above.
+
 ### Q7. Functional activity and BPI gate — Notebook 06
 
 **Legacy source:** `[50l]`, `[56g]`.
@@ -455,6 +485,14 @@ ipsilateral/contralateral AUC panel
 continues to fail closed because the distinct accepted anatomy-grid midline
 sidecar and L765_f04 motion-AUC point/count tables do not exist. This preserves
 the original Q7 work without falsely declaring the laterality branch complete.
+
+**Laterality/AUC backend completed (2026-09-17):** The first
+`make-motion-auc-tables` run correctly exposed a parser gap for this fish's
+`LB/RB/LC/RC_trajectory` log names. The central stimulus parser now recognizes
+those unilateral circular-motion conditions while excluding approach, whole-
+field, and mixed conditions. The rerun passed and wrote same-root point,
+count, and ROI-panel CSVs from the accepted anatomy-grid midline. Notebook 06
+now reads these tables. A subsequent audit showed the pinned working root still used 7-s BPI-eligible windows, so its motion-AUC and figure products are superseded and Notebook 06 now blocks its AUC panel. A distinct `20260917T1150Z_RESPONSE_WINDOW_RECOMPUTE/L765_f04` continuation recomputed scoring, identity, canonical export, motion-AUC, and figures using the same fixed 12.5-s movement-onset windows. This is computational validation, not acceptance of biological BPI interpretation or registration in the new root.
 
 ### Q8. Deferred until identity and functional response are merged
 

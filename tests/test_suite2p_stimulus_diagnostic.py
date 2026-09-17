@@ -337,6 +337,7 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
                 activity_config=ActivityConfig(
                     min_trials_per_class=1,
                     stim_onset_delay_sec=0.0,
+                    response_window_sec=2.0,
                     response_min_auc=5.0,
                     response_null_q=0.5,
                     response_null_min_windows=1,
@@ -388,6 +389,7 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
                 ),
                 activity_config=ActivityConfig(
                     min_trials_per_class=1, stim_onset_delay_sec=0.0,
+                    response_window_sec=2.0,
                     response_min_auc=5.0, response_null_min_windows=1,
                     response_null_bootstrap_n=100, zscore_min_points=1,
                 ),

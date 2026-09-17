@@ -47,6 +47,41 @@ def imread_any(path: str | Path) -> np.ndarray:
     return tifffile.imread(target)
 
 
+def anatomy_max_section_xy_radii_um(
+    labels_zyx: np.ndarray, *, dx_um: float, dy_um: float,
+) -> tuple[pd.DataFrame, dict[str, float | int | str]]:
+    """Measure every anatomy label at its largest XY section in physical units.
+
+    Each 3-D label contributes once, regardless of functional-plane coverage
+    or whether an ROI/HCR label was matched to it. This is a QC reference,
+    never an assignment gate.
+    """
+    labels = np.asarray(labels_zyx)
+    if labels.ndim != 3 or labels.dtype.kind not in "uib":
+        raise ValueError("Anatomy labels must be a nonnegative integer ZYX volume")
+    dx, dy = float(dx_um), float(dy_um)
+    if not np.isfinite([dx, dy]).all() or min(dx, dy) <= 0:
+        raise ValueError("Anatomy XY spacing must be finite and positive")
+    max_areas: dict[int, int] = {}
+    for section in labels:
+        ids, counts = np.unique(section[section > 0], return_counts=True)
+        for label, count in zip(ids, counts):
+            key = int(label)
+            max_areas[key] = max(max_areas.get(key, 0), int(count))
+    rows = [
+        {"anat_label": label, "maximum_xy_area_px": area,
+         "equivalent_xy_radius_um": float(np.sqrt(area * dx * dy / np.pi))}
+        for label, area in sorted(max_areas.items())
+    ]
+    table = pd.DataFrame(rows, columns=["anat_label", "maximum_xy_area_px", "equivalent_xy_radius_um"])
+    summary = {
+        "median_xy_radius_um": float(table["equivalent_xy_radius_um"].median()) if len(table) else float("nan"),
+        "n_labels": int(len(table)), "dx_um": dx, "dy_um": dy,
+        "definition": "all-label maximum-XY-section equivalent radius",
+    }
+    return table, summary
+
+
 def zproject_mean(stack: np.ndarray) -> np.ndarray:
     return np.asarray(stack).mean(axis=0)
 
@@ -1889,6 +1924,7 @@ __all__ = [
     "best_z_by_ncc",
     "corrcoef_img",
     "build_functional_references_stage",
+    "anatomy_max_section_xy_radii_um",
     "imread_any",
     "infer_voxels_tiff",
     "local_unsharp",

@@ -2102,36 +2102,23 @@ def compute_anatomy_median_xy_radius_um(
     vox_x: float = 1.0,
     vox_y: float = 1.0,
 ) -> dict[str, float | int]:
-    anat_arr = _ensure_uint_labels(anat_labels_all)
-    planes: list[np.ndarray] = []
-    if anat_arr.ndim == 3 and plane_refs:
-        depth = int(anat_arr.shape[0])
-        for plane_idx, plane_ref in enumerate(plane_refs):
-            best_z = int(plane_ref.get("best_z", plane_idx))
-            if 0 <= best_z < depth:
-                planes.append(anat_arr[best_z])
-    elif anat_arr.ndim == 3:
-        planes = [anat_arr[z] for z in range(int(anat_arr.shape[0]))]
-    else:
-        planes = [anat_arr]
+    """Compatibility API for the all-label maximum-XY-section radius.
 
-    diameters_um: list[float] = []
-    px_area_um2 = float(max(vox_x, 1e-12)) * float(max(vox_y, 1e-12))
-    for slice_labels in planes:
-        labels, counts = np.unique(slice_labels, return_counts=True)
-        for label, count in zip(labels.tolist(), counts.tolist()):
-            if int(label) <= 0 or int(count) <= 0:
-                continue
-            area_um2 = float(count) * px_area_um2
-            diameter_um = 2.0 * np.sqrt(area_um2 / np.pi)
-            diameters_um.append(float(diameter_um))
-    if not diameters_um:
-        return {"median_xy_diameter_um": 0.0, "median_xy_radius_um": 0.0, "n_labels": 0}
-    median_diameter = float(np.median(np.asarray(diameters_um, dtype=float)))
+    ``plane_refs`` is retained for callers but never restricts the reference
+    population to functional planes.
+    """
+    from ..spatial import anatomy_max_section_xy_radii_um
+
+    _, summary = anatomy_max_section_xy_radii_um(
+        _ensure_uint_labels(anat_labels_all), dx_um=vox_x, dy_um=vox_y,
+    )
+    radius = float(summary["median_xy_radius_um"])
+    if not np.isfinite(radius):
+        radius = 0.0
     return {
-        "median_xy_diameter_um": median_diameter,
-        "median_xy_radius_um": float(median_diameter / 2.0),
-        "n_labels": int(len(diameters_um)),
+        "median_xy_diameter_um": 2.0 * radius,
+        "median_xy_radius_um": radius,
+        "n_labels": int(summary["n_labels"]),
     }
 
 

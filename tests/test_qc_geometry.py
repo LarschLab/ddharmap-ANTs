@@ -272,8 +272,8 @@ def test_stored_vs_physical_xy_offset_audit_requires_anatomy_match_outcome(tmp_p
         build_stored_vs_physical_xy_offset_audit(legacy, qc, dx_um=1.0, dy_um=1.0)
 
 
-def test_notebook_03_review_writer_is_opt_in() -> None:
+def test_notebook_03_is_read_only() -> None:
     notebook = Path("notebooks/qc/03_roi_anatomy_geometry_qc.ipynb")
     source = notebook.read_text()
-    assert "SAVE_REVIEW = False" in source
-    assert "DECISION = 'review_required'" in source
+    assert "SAVE_REVIEW" not in source
+    assert "write_qc_review_record" not in source

@@ -646,6 +646,7 @@ def build_single_fish_motion_auc_plot_tables(
     accepted_midline_sidecar: str | Path | None = None,
     experiment_log_csv: str | Path | None = None,
     experiment_meta_csv: str | Path | None = None,
+    scored_windows_csv: str | Path | None = None,
     points_csv: str | Path | None = None,
     counts_csv: str | Path | None = None,
     roi_panel_csv: str | Path | None = None,
@@ -755,21 +756,69 @@ def build_single_fish_motion_auc_plot_tables(
         remove_interblock_gaps=bool(cfg.remove_interblock_gaps),
         onset_delay_sec=float(cfg.onset_delay_sec),
     )
-    plane_stim_contexts = resolve_plane_stimulus_contexts(
-        fish_dir=fish_dir,
-        fish_id=fish_id,
-        plane_indices=plane_indices,
-        experiment_log_csv=experiment_log_csv,
-        experiment_meta_csv=experiment_meta_csv,
-        config=stim_cfg,
-    )
+    scored_windows: pd.DataFrame | None = None
+    if scored_windows_csv is not None:
+        scored_path = Path(scored_windows_csv)
+        scored_windows = pd.read_csv(scored_path)
+        required_windows = {
+            "fish_id", "plane_idx", "session_label", "block", "stim_idx", "stim_type",
+            "used_for_bpi", "scored_onset_frame", "scored_offset_frame",
+            "scored_duration_sec", "response_window_policy", "fps", "timing_coordinate",
+        }
+        missing_windows = sorted(required_windows - set(scored_windows.columns))
+        if missing_windows:
+            raise ValueError(f"Scored-window provenance lacks {missing_windows}: {scored_path}")
+        scored_windows = scored_windows.loc[scored_windows["fish_id"].astype(str).eq(str(fish_id))].copy()
+        bpi_eligible = scored_windows["used_for_bpi"].astype(str).str.lower().isin({"true", "1"})
+        scored_windows = scored_windows.loc[bpi_eligible].copy()
+        if scored_windows.empty or set(scored_windows["plane_idx"].astype(int)) != set(plane_indices):
+            raise ValueError("Fixed-window AUC input lacks BPI-eligible windows for every ROI plane")
+        if set(scored_windows["response_window_policy"].astype(str)) != {"fixed_from_movement_onset_matched_prestim"}:
+            raise ValueError("Motion AUC requires the fixed movement-onset scoring-window policy")
+        if not np.allclose(scored_windows["scored_duration_sec"].astype(float), 12.5, rtol=0, atol=1e-6):
+            raise ValueError("Motion AUC requires 12.5-second scored windows")
+        if set(scored_windows["timing_coordinate"].astype(str)) != {"suite2p_full_trace"}:
+            raise ValueError("Motion AUC requires full-Suite2p-trace window coordinates")
+        side_modes = scored_windows["stim_type"].map(parse_unilateral_stim)
+        scored_windows["stim_side"] = side_modes.map(lambda value: value[0])
+        scored_windows["stim_mode"] = side_modes.map(lambda value: value[1])
+        if scored_windows[["stim_side", "stim_mode"]].isna().any(axis=None):
+            raise ValueError("BPI-eligible scored windows include a non-unilateral stimulus")
+        scored_windows["trial_id"] = (
+            scored_windows["block"].astype(str) + "_stim" +
+            scored_windows["stim_idx"].astype(str) + "_" +
+            scored_windows["stim_type"].astype(str)
+        )
+        scored_windows["motion_start"] = scored_windows["scored_onset_frame"].astype(float) / scored_windows["fps"].astype(float)
+        scored_windows["motion_end"] = scored_windows["scored_offset_frame"].astype(float) / scored_windows["fps"].astype(float)
+        plane_stim_contexts = {}
+    else:
+        plane_stim_contexts = resolve_plane_stimulus_contexts(
+            fish_dir=fish_dir,
+            fish_id=fish_id,
+            plane_indices=plane_indices,
+            experiment_log_csv=experiment_log_csv,
+            experiment_meta_csv=experiment_meta_csv,
+            config=stim_cfg,
+        )
     inferred_fps = infer_frame_rate_from_detail(detail_side_df, suite2p_root=suite2p_root)
 
     roi_trial_tables: list[pd.DataFrame] = []
     stim_trial_tables: list[pd.DataFrame] = []
     source_rows: list[dict[str, Any]] = []
     for plane_idx in plane_indices:
-        ctx = plane_stim_contexts.get(int(plane_idx))
+        if scored_windows is not None:
+            plane_windows = scored_windows.loc[scored_windows["plane_idx"].astype(int).eq(int(plane_idx))].copy()
+            frame_rates = plane_windows["fps"].astype(float).unique()
+            if len(frame_rates) != 1 or not np.isfinite(frame_rates[0]) or frame_rates[0] <= 0:
+                raise ValueError(f"Plane {plane_idx} has ambiguous scored-window frame rate")
+            ctx = {
+                "frame_rate": float(frame_rates[0]), "df_stim": plane_windows,
+                "session_label": ";".join(sorted(plane_windows["session_label"].astype(str).unique())),
+                "log_path": Path(scored_windows_csv), "meta_path": None,
+            }
+        else:
+            ctx = plane_stim_contexts.get(int(plane_idx))
         if ctx is None or int(plane_idx) not in s2p_map:
             continue
         fps_value = ctx.get("frame_rate")

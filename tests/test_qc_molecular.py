@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+import SimpleITK as sitk
 import tifffile
 
 from codeants_2pf_hcr.plots.qc_molecular import (
@@ -297,6 +298,7 @@ def test_cross_modality_size_plot_draws_red_xy_q95_limits() -> None:
 
 def test_hcr_anatomy_centroid_offset_plot_uses_accepted_pairs_with_lateral_xy_distance(tmp_path: Path) -> None:
     anatomy = tmp_path / "anatomy_labels.tif"
+    anatomy_voxel_source = tmp_path / "anatomy.nrrd"
     hcr = tmp_path / "L765_f04_r2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"
     pairs = tmp_path / "L765_f04_r2_channel2_sst1_2_cp_masks_in_2p_final_pairs.csv"
     anatomy_arr = np.zeros((3, 5, 5), dtype="uint16")
@@ -305,25 +307,52 @@ def test_hcr_anatomy_centroid_offset_plot_uses_accepted_pairs_with_lateral_xy_di
     hcr_arr[2, 3, 1] = 4
     tifffile.imwrite(anatomy, anatomy_arr, imagej=True, metadata={"axes": "ZYX", "spacing": 2.0, "unit": "um"})
     tifffile.imwrite(hcr, hcr_arr, imagej=True, metadata={"axes": "ZYX", "spacing": 2.0, "unit": "um"})
+    anatomy_image = sitk.GetImageFromArray(anatomy_arr)
+    anatomy_image.SetSpacing((0.5, 0.75, 2.0))
+    sitk.WriteImage(anatomy_image, str(anatomy_voxel_source), useCompression=False)
     _csv(pairs, [{"conf_label": 4, "twoP_label": 7}])
 
     offsets = build_hcr_anatomy_centroid_offset_table(
         anatomy_labels_path=anatomy,
+        anatomy_voxel_source_path=anatomy_voxel_source,
         hcr_label_paths=[hcr],
         final_pair_paths=[pairs],
     )
 
     assert offsets["gene"].unique().tolist() == ["sst1.2"]
-    assert offsets.set_index("axis").loc["x", "offset_um"] == -1.0
-    assert offsets.set_index("axis").loc["y", "offset_um"] == 1.0
+    assert offsets.set_index("axis").loc["x", "offset_um"] == -0.5
+    assert offsets.set_index("axis").loc["y", "offset_um"] == 0.75
     assert offsets.set_index("axis").loc["z", "offset_um"] == 2.0
-    assert offsets["median_anatomy_xy_radius_um"].iloc[0] > 0
+    assert offsets["median_anatomy_xy_radius_um"].iloc[0] == pytest.approx(np.sqrt((0.5 * 0.75) / np.pi))
+    assert offsets["anatomy_dx_um"].unique().tolist() == [0.5]
+    assert offsets["anatomy_dy_um"].unique().tolist() == [0.75]
+    assert offsets["anatomy_dz_um"].unique().tolist() == [2.0]
+    assert offsets["anatomy_voxel_source_path"].unique().tolist() == [str(anatomy_voxel_source)]
     figure = plot_hcr_anatomy_centroid_offsets(offsets)
     assert len(figure.axes) == 2
     assert figure.axes[0].get_title() == "XY offset"
     assert figure.axes[1].get_title() == "Z offset"
-    assert "Median anatomy-mask radius" in figure.axes[0].get_legend().get_texts()[0].get_text()
+    assert "Median all-label max-section anatomy radius" in figure.axes[0].get_legend().get_texts()[0].get_text()
     plt.close(figure)
+
+
+def test_hcr_anatomy_centroid_offsets_require_explicit_voxel_source(tmp_path: Path) -> None:
+    anatomy = tmp_path / "anatomy_labels.tif"
+    hcr = tmp_path / "L765_f04_r2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"
+    pairs = tmp_path / "pairs.csv"
+    mask = np.zeros((2, 3, 3), dtype="uint16")
+    mask[0, 1, 1] = 1
+    tifffile.imwrite(anatomy, mask)
+    tifffile.imwrite(hcr, mask)
+    _csv(pairs, [{"conf_label": 1, "twoP_label": 1}])
+
+    with pytest.raises(FileNotFoundError, match="Anatomy voxel source"):
+        build_hcr_anatomy_centroid_offset_table(
+            anatomy_labels_path=anatomy,
+            anatomy_voxel_source_path=tmp_path / "missing.nrrd",
+            hcr_label_paths=[hcr],
+            final_pair_paths=[pairs],
+        )
 
 
 def test_identity_qc_accepts_attachment_when_geometry_is_frozen_and_unchanged(tmp_path: Path) -> None:

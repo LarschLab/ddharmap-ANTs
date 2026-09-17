@@ -20,7 +20,7 @@ import pandas as pd
 import tifffile
 
 from ..matching import resolve_anatomy_label_z
-from ..spatial import imread_any, load_or_cache_voxels, norm01
+from ..spatial import anatomy_max_section_xy_radii_um, imread_any, load_or_cache_voxels, norm01
 
 
 REQUIRED_GEOMETRY_COLUMNS = (
@@ -443,28 +443,15 @@ def render_geometry_placement_overview(bundle: GeometryReviewBundle) -> plt.Figu
 
 
 def _anatomy_radius_reference_um(bundle: GeometryReviewBundle) -> float | None:
-    """Estimate the median visible anatomy-label radius from verified image geometry."""
-    matches = bundle.matches[_as_bool(bundle.matches["has_unique_anat_match"])].copy()
-    columns = ("centroid_x_func_anat", "centroid_y_func_anat", "centroid_x_anat", "centroid_y_anat", "selected_dist_um")
-    if any(column not in matches for column in columns):
+    """Return the whole-volume, all-label maximum-section reference."""
+    if bundle.anatomy_labels_path is None:
         return None
-    values = matches.loc[:, columns].apply(pd.to_numeric, errors="coerce").dropna()
-    try:
-        spacing_x_um, spacing_y_um = _anatomy_xy_spacing_um(bundle)
-        pixel_area_um2 = spacing_x_um * spacing_y_um
-    except (KeyError, OSError, RuntimeError, TypeError, ValueError):
-        return None
-    if "selected_anat_label" not in matches:
-        return None
-    radii_um: list[float] = []
-    for plane in sorted(matches["plane_idx"].dropna().astype(int).unique()):
-        _, labels, _, _, _ = _spatial_plane_data(bundle, plane)
-        areas = np.bincount(np.asarray(labels, dtype=np.int64).ravel())
-        selected_labels = pd.to_numeric(matches.loc[matches["plane_idx"].eq(plane), "selected_anat_label"], errors="coerce").dropna().astype(int).unique()
-        for label in selected_labels:
-            if 0 < label < len(areas) and areas[label] > 0:
-                radii_um.append(float(np.sqrt(areas[label] * pixel_area_um2 / np.pi)))
-    return float(np.median(radii_um)) if radii_um else None
+    dx, dy = _anatomy_xy_spacing_um(bundle)
+    _, summary = anatomy_max_section_xy_radii_um(
+        imread_any(bundle.anatomy_labels_path), dx_um=dx, dy_um=dy,
+    )
+    value = float(summary["median_xy_radius_um"])
+    return value if np.isfinite(value) else None
 
 
 def _anatomy_xy_spacing_um(bundle: GeometryReviewBundle) -> tuple[float, float]:
@@ -543,7 +530,7 @@ def render_centroid_offset_detail(bundle: GeometryReviewBundle, *, plane_idx: in
         violin_ax.text(position, 0.0, "<2 pairs", ha="center", va="bottom", rotation=90, fontsize=8, color="#6c757d")
     radius = _anatomy_radius_reference_um(bundle)
     if radius is not None:
-        violin_ax.axhline(radius, color="#D55E00", linestyle="--", linewidth=1.5, label=f"Median anatomy-label radius ({radius:.2f} µm)")
+        violin_ax.axhline(radius, color="#D55E00", linestyle="--", linewidth=1.5, label=f"Median all-label max-section anatomy radius ({radius:.2f} µm)")
     violin_ax.set_xticks(np.arange(len(planes)), [str(plane) for plane in planes])
     violin_ax.set_xlabel("Functional plane")
     refs = json.loads(bundle.plane_refs_path.read_text()) if bundle.plane_refs_path is not None else []

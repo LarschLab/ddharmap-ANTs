@@ -19,7 +19,6 @@ Generated manually for the current extracted package surface.
 - `resolve_qc_notebook_context`: Validate fish identity, direct-root layout, pipeline containment, and any persisted manifest fish/root claims before review.
 - `build_qc_stage_inventory`: Build a read-only declared-stage artifact/manifest inventory for notebook `00`.
 - `load_qc_csv`, `load_qc_json`, `load_qc_image`: Read persisted review evidence without changing it, with optional fish-table validation.
-- `write_qc_review_record`: The sole QC-notebook writer; creates a hash-bound non-promoting JSON sidecar under the reviewed stage's `reviews/` directory and refuses cross-stage artifacts or overwrite.
 
 ## `codeants_2pf_hcr.plots.qc_functional`
 
@@ -34,9 +33,18 @@ Generated manually for the current extracted package surface.
 
 - `build_automatic_anatomy_midline_qc`, `render_automatic_anatomy_midline_qc`: Compute per-plane anatomical-axis estimates and a fish-consensus automatic midline proposal in anatomy space. These legacy read-only QC proposals cannot accept a midline or assign laterality.
 - `build_automatic_native_functional_midline_qc`, `render_automatic_native_functional_midline_qc`: Compute the mounted-drive reviewed native-functional dark-corridor-plus-symmetry proposal, then fit one fixed axial angle with a separate robust depth translation for each acquisition session. It is a native-functional review artifact only and cannot provide anatomy-space laterality.
-- `MidlineAnnotationSession`, `show_midline_annotation_gui`: Review-only, click-two-endpoint annotation for a midline per functional plane. Complete manually accepted sets write hash-bound sidecars and do not modify canonical midline, laterality, or stage data.
-- `load_accepted_anatomy_midline_context`, `build_midline_laterality_qc_tables`, `render_midline_laterality_plane_grid`, `render_midline_activity_plane_grid`: Read-only Notebook 06 `[56f-qc]` all-ROI and `[56f-qc-activity]` persisted-response-subset anatomy-space views. They fail closed without a complete, accepted, hash-bound anatomy-grid sidecar; proposal lines are diagnostic only.
+- `MidlineAnnotationSession`, `show_midline_annotation_gui`: Review-only, click-two-endpoint annotation for a midline per functional plane. Annotations remain in memory for review; this UI writes no sidecar or stage data.
+- `load_accepted_anatomy_midline_context`, `build_midline_laterality_qc_tables`, `render_midline_laterality_plane_grid`, `render_midline_activity_plane_grid`: Read-only Notebook 06 `[56f-qc]` all-ROI and `[56f-qc-activity]` persisted-response-subset anatomy-space views. They fail closed without a complete, logbook-accepted, hash-bound anatomy-grid materialization; proposal lines are diagnostic only.
 - `load_native_functional_midline_annotation_session`, `load_suite2p_meanimg_midline_session`, `load_motion_corrected_mean_midline_session`: Load native-functional reference planes from persisted normalized TIFFs, metadata-oriented Suite2p `ops.npy` `meanImg` arrays, or bounded sampled means of motion-corrected movies. All are read-only review inputs; the movie fallback fails closed without explicit or metadata-validated orientation.
+
+## `codeants_2pf_hcr.midline_review`
+
+- `project_native_midline_to_anatomy`, `build_anatomy_midline_proposal_table`: Project persisted native-functional fixed-consensus lines through selected scale/NCC/ANTs registration and require exact registered-plane coverage.
+- `validate_logbook_midline_gate`, `load_accepted_anatomy_midline_context`: Require fish-specific logbook acceptance bound to proposal CSV/PNG hashes and verify the materialized anatomy-grid input and its source artifacts.
+
+## `codeants_2pf_hcr.spatial`
+
+- `anatomy_max_section_xy_radii_um`: Compute each 3-D anatomy label's maximal XY-section equivalent radius using physical XY spacing and summarize the all-label median; shared by Notebook 03/05 QC and matching.
 
 ## `codeants_2pf_hcr.midline`
 
@@ -54,7 +62,7 @@ Generated manually for the current extracted package surface.
 - `inspect_molecular_geometry_qc`, `plot_molecular_geometry_qc`: Keep direct rbest-to-in-vivo, rbest-to-ex-vivo, ex-vivo-to-in-vivo, and later-round-to-ex-vivo evidence distinct while reviewing anatomy-space masks and pair ambiguity in notebook `04`; distinguish available masks from candidate matching that has not yet started.
 - `MolecularLabelViewerData`, `load_molecular_label_viewer`, `load_hcr_match_overlay_viewer`, `show_molecular_label_viewer`: Preload same-grid in-vivo anatomy and explicitly selected HCR labels; the match-overlay loader classifies saved final-pair labels as accepted and saved-review-only labels as rejected, then provides read-only ipympl visibility toggles without callback disk I/O, matching, identity assignment, or pair updates.
 - `build_cross_modality_mask_size_table`, `plot_cross_modality_mask_sizes`: Measure persisted anatomy, transformed functional, and retained HCR label bounding boxes with legacy max-minus-min physical X/Y/Z metrics; apply modality-local XY q05 drop/q95 flag policy and render all-modality plus HCR gene/round XY/Z review distributions.
-- `build_hcr_anatomy_centroid_offset_table`, `plot_hcr_anatomy_centroid_offsets`: Read accepted HCR/anatomy final-pair tables and render lateral XY-distance plus signed Z-offset violins by gene, accepted-pair sample sizes, and the physical median anatomy-label XY-radius reference for notebook `05`; review-only and never recompute pair membership.
+- `build_hcr_anatomy_centroid_offset_table`, `plot_hcr_anatomy_centroid_offsets`: Read accepted HCR/anatomy final-pair tables and render lateral XY-distance plus signed Z-offset violins by gene, accepted-pair sample sizes, and the physical all-label maximum-XY-section anatomy-radius reference for notebook `05`; requires an explicit anatomy-grid voxel source (normally the prepared NRRD) because label TIFF metadata may be absent, and remains review-only without recomputing pair membership.
 - `resolve_hcr_matching_artifact_root`, `build_hcr_anatomy_match_outcome_table`, `plot_hcr_anatomy_match_outcome_donuts`: Select one persisted HCR artifact root (staged when present, otherwise the legacy fish-local set) and render the legacy `[50]` one-ring per-gene anatomical outcome donuts from saved labels, match tables, q95 metadata, and saved plane representation; no matching or assignment is recomputed.
 - `build_hcr_functional_plane_status_donut_table`, `plot_hcr_functional_plane_status_donuts`: Recreate the legacy two-ring functional-plane representation audit in notebook `04`: inner scope is within/outside/unmatched after the q95 exclusion, and the outer ring partitions saved within-plane HCR activity status or records the outside/unmatched outcome; both functions are read-only.
 - `inspect_molecular_identity_qc`, `plot_molecular_identity_qc`: Enforce frozen geometry and compare geometry fields before/after identity attachment in notebook `05`.
@@ -103,6 +111,8 @@ Generated manually for the current extracted package surface.
 - `run_single_fish_score_activity_bpi_stage`: Recompute response/BPI tables from frozen ROI/anatomy geometry plus Suite2p trace provenance through `activity.build_response_bpi_tables(precomputed_scored_bpi_df=None)`, then write staged score CSVs under `pipeline_root/score-activity-bpi/registration`. It does not use molecular identity and refuses overwrite without `force_recompute`.
 - `run_single_fish_export_canonical_tables_stage`: Assemble the staged canonical registration CSV bundle under `pipeline_root/export-canonical-tables/registration` from staged score outputs and staged or explicit HCR/identity roots, refusing overwrite without `force_recompute`.
 - `run_single_fish_make_qa_report_stage`: Generate staged `qa_report.md`, `qa_report.html`, `qa_report.pdf`, and `qa_report_summary.json` under `pipeline_root/make-qa-report` from staged canonical export inputs, including canonical table rows, staged output status, per-plane registration/matching QA summaries from existing staged overlay/match CSVs, a manual review checklist with image readability/dimension metadata, and inline image previews for existing QA/figure PNG artifacts; refuses overwrite without `force_recompute`.
+- `run_make_anatomy_midline_proposal_stage`, `run_materialize_anatomy_midline_stage`: Write projected anatomy-grid midline proposal evidence, then materialize it only after the fish-specific logbook gate and proposal CSV/PNG hashes match.
+- `run_single_fish_make_motion_auc_tables_stage`: Write laterality-dependent AUC tables from canonical rows and the accepted anatomy-grid artifact; notebooks do not run this writer.
 - `run_single_fish_make_figures_stage`: Stage the declared figure artifacts under `pipeline_root/make-figures/04_plots` after verifying staged canonical export CSV inputs and declared `[56i]` AUC table inputs, rendering package-owned `compound_50j_56i_unified.png`, `bpi_all_pairs.png`, `per_gene_stimulus_trace_with_hcr_status_56h.png`, responsive identity donut, and HCR anatomy coexpression summary, and refusing overwrite without `force_recompute`.
 - `build_single_fish_downstream_stage_manifest`: Build a read-only manifest for an existing post-preprocessing staged output folder.
 - `build_single_fish_downstream_stage_manifests`: Build read-only manifests for all current post-preprocessing staged output folders.
@@ -302,7 +312,7 @@ Generated manually for the current extracted package surface.
 - `build_prestim_trial_windows`: Build per-trial prestim windows for null sampling.
 - `build_null_window_start_map`: Build null AUC bootstrap start indices by duration.
 - `compute_zscore_stats`: Compute pooled-baseline z-score parameters and validity masks.
-- `parse_unilateral_stim`: Parse unilateral stimulus code to side/mode.
+- `parse_unilateral_stim`: Parse legacy `LLB/RLC` and current `LB/RB/LC/RC_trajectory` unilateral circular-motion codes to side/mode; exclude approach, whole-field, and mixed conditions.
 - `build_stim_tables`: Build block and trial tables from event logs.
 - `resolve_stimulus_context`: End-to-end notebook-facing stimulus loader for `[55]`.
 - `resolve_plane_stimulus_contexts`: Resolve per-plane stimulus contexts so multi-session fish use the session-specific experiment/meta CSVs.
@@ -359,7 +369,7 @@ Generated manually for the current extracted package surface.
 - `annotate_midline_side`: Add `midline_signed_dist_px`, `midline_side`, `midline_uncertain`, and `midline_space` columns using package-owned midline semantics.
 - `filter_high_confidence_pairs`: Drop HCR/functional pair rows flagged by known low-confidence columns while optionally returning filter counts.
 - `extract_window_with_padding`: Extract trace windows with notebook-compatible `pad_nan` and `strict` behavior.
-- `build_single_fish_motion_auc_plot_tables`: Build the single-fish motion-window AUC ROI panel / plot points / plot counts tables for `[50l]` / `[56i]`, preserving current ROI-centric all-neuron and HCR-centric gene-group semantics. When passed an accepted anatomy-midline review sidecar, laterality is recomputed in anatomy space and persisted with its sidecar hash.
+- `build_single_fish_motion_auc_plot_tables`: Build the single-fish motion-window AUC ROI panel / plot points / plot counts tables for `[50l]` / `[56i]`, preserving current ROI-centric all-neuron and HCR-centric gene-group semantics. When passed a logbook-gated accepted anatomy-midline artifact, laterality is recomputed in anatomy space and persisted with its artifact hash.
 - `export_suite2p_trace_metadata`: Export deduplicated HCR-selected Suite2p dF/F traces and metadata for `[51]`.
 - `prepare_pairs_for_unique_cells`: Validate and normalize HCR-centric pair tables before trace analyses.
 - `resolve_conf_func_csv_analysis`: Resolve the analysis-ready `conf_to_func_pairs.csv` path for `[51]`, `[56]`, `[56h]`, and `[57]`.
@@ -374,7 +384,7 @@ Generated manually for the current extracted package surface.
 - `show_ants_registration_region_selector_stage`: Notebook-facing NCC-guided per-plane fixed-region square writer for `[19a]` masked ANTs in-plane registration.
 - `show_inplane_registration_method_comparison_stage`: Notebook-facing regional ANTs-vs-NCC in-plane placement and ROI/anatomy-boundary review for `[22e]`, using stored `[20]` method outputs, Suite2p labels, anatomy labels, and the `[22d]` crop.
 - `show_regional_match_review_stage`: Notebook-facing anatomy-space ROI/anatomy regional overlay for `[34c]`, using the `[22d]` crop and selected in-plane transform to warp functional labels forward.
-- `compute_anatomy_median_xy_radius_um`: Compute anatomy-label XY diameter/radius reference (microns) for centroid-QA initialization.
+- `compute_anatomy_median_xy_radius_um`: Compatibility wrapper for the all-3-D-label maximal-XY-section radius reference (microns), independent of functional-plane selection.
 - `render_cohort_53a_summary`: Render the 2x2 cohort [53a]-analogue summary figure for `multi_fish_56h_56g.ipynb` (`[53a-cohort]`).
 - `render_functional_anatomy_center_overlay_qc_png`: Render center-crop anatomy-space overlays of transformed functional ROI outlines and anatomy-label outlines over the best-Z anatomy image for manual functional/anatomy registration QA.
 - `render_functional_anatomy_plane_qc_row_png`: Render one functional-plane QA row per plane with functional reference, native Suite2p ROI boundaries, best-Z in vivo anatomy, anatomy-label boundaries, and the positioned functional reference in anatomy space; writes PNG plus per-plane review CSV for manual orientation/segmentation QA.

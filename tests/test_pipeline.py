@@ -1359,11 +1359,14 @@ def test_register_functional_to_anatomy_stage_writes_ncc_outputs(tmp_path: Path)
     qc_plane_refs = json.loads((qc_dir.parent / "plane_refs_summary_qc.json").read_text())
     assert qc_plane_refs[0]["anat_label_z_mode"] == "reverse"
     assert qc_plane_refs[0]["anat_label_z"] == 3 - qc_plane_refs[0]["best_z"]
-    assert len(tuple(qc_dir.glob("*.png"))) == 5
+    assert len(tuple(qc_dir.glob("*.png"))) == 6
     assert (qc_dir / "functional_automatic_midline_proposals.png").exists()
     automatic_midlines = pd.read_csv(qc_dir / "functional_automatic_midline_proposals.csv")
     assert automatic_midlines["requires_manual_acceptance"].tolist() == [True]
-    assert len(tuple(qc_dir.glob("*.csv"))) == 5
+    anatomy_midlines = pd.read_csv(qc_dir / "anatomy_midline_proposals.csv")
+    assert anatomy_midlines["requires_human_acceptance"].tolist() == [True]
+    assert (qc_dir / "anatomy_midline_proposals.png").exists()
+    assert len(tuple(qc_dir.glob("*.csv"))) == 6
 
 
 def test_register_functional_to_anatomy_stage_can_limit_reference_planes(tmp_path: Path) -> None:
@@ -5264,6 +5267,15 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
     _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
+    scored_windows = output_root / "score-activity-bpi" / "registration" / "scored_stimulus_windows.csv"
+    scored_windows.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"fish_id": [fish_dir.name], "used_for_bpi": [True], "response_window_policy": ["old"], "scored_duration_sec": [7.0]}).to_csv(scored_windows, index=False)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, pipeline_root=output_root, strict=True)
+    blocked = run_single_fish_make_figures_stage(config)
+    assert blocked.status == "fail"
+    assert any(check.label == "make-figures scorer window provenance" and check.status == "fail" for check in blocked.checks)
+    assert not (output_root / "make-figures" / "04_plots").exists()
+    pd.DataFrame({"fish_id": [fish_dir.name], "used_for_bpi": [True], "response_window_policy": ["fixed_from_movement_onset_matched_prestim"], "scored_duration_sec": [12.5]}).to_csv(scored_windows, index=False)
 
     manifest = run_single_fish_make_figures_stage(
         SingleFishPipelineConfig(

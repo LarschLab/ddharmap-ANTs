@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import nbformat
+import pytest
 
 import codeants_2pf_hcr as codeants
 
@@ -38,6 +39,12 @@ FORBIDDEN_WRITER_CALLS = {
     "run_single_fish_export_canonical_tables_stage",
     "run_single_fish_make_qa_report_stage",
     "run_single_fish_make_figures_stage",
+    "run_make_anatomy_midline_proposal_stage",
+    "run_materialize_anatomy_midline_stage",
+    "run_single_fish_make_motion_auc_tables_stage",
+    "write_qc_review_record",
+    "write_text", "write_bytes", "to_csv", "to_json", "savefig",
+    "mkdir", "dump",
 }
 
 
@@ -65,7 +72,6 @@ def test_qc_notebook_public_apis_are_exported() -> None:
         "QCNotebookConfig",
         "resolve_qc_notebook_context",
         "build_qc_stage_inventory",
-        "write_qc_review_record",
         "load_geometry_review_bundle",
         "load_functional_reference_drift_qc",
         "load_functional_registration_qc",
@@ -114,3 +120,30 @@ def test_functional_reference_notebook_renders_persisted_numeric_early_response_
     assert "suite2p_stimulus_locked_summary_23b.csv" in source
     assert "score-activity-bpi" in source
     assert "build_early_response_qc_from_raw" not in source
+
+@pytest.mark.parametrize(
+    ("notebook_name", "plot_module"),
+    [
+        ("03_roi_anatomy_geometry_qc.ipynb", "qc_geometry"),
+        ("04_molecular_geometry_qc.ipynb", "qc_molecular"),
+        ("05_molecular_identity_qc.ipynb", "qc_molecular"),
+    ],
+)
+def test_geometry_review_reload_recovers_stale_spatial_module(
+    monkeypatch, notebook_name: str, plot_module: str,
+) -> None:
+    import importlib
+    import codeants_2pf_hcr.spatial as spatial
+
+    importlib.import_module("codeants_2pf_hcr.plots." + plot_module)
+    notebook = nbformat.read(REPO_ROOT / "notebooks" / "qc" / notebook_name, as_version=4)
+    cell_source = next(
+        cell.source for cell in notebook.cells
+        if cell.cell_type == "code" and f"{plot_module} = importlib.reload" in cell.source
+    )
+    import_block = cell_source.split("import importlib\n", 1)[1].split(
+        f"from codeants_2pf_hcr.plots.{plot_module} import", 1
+    )[0]
+    monkeypatch.delattr(spatial, "anatomy_max_section_xy_radii_um")
+    exec("import importlib\n" + import_block, {})
+    assert callable(spatial.anatomy_max_section_xy_radii_um)

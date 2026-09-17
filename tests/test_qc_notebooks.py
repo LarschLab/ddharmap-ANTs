@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 
@@ -16,7 +14,6 @@ from codeants_2pf_hcr.qc_notebooks import (
     load_qc_image,
     load_qc_json,
     resolve_qc_notebook_context,
-    write_qc_review_record,
 )
 
 
@@ -154,101 +151,3 @@ def test_read_only_loaders_parse_and_validate_identity(tmp_path: Path) -> None:
     assert load_qc_image(image_path).size == (3, 2)
     with pytest.raises(ValueError, match="contains fish IDs"):
         load_qc_csv(csv_path, expected_fish_id="L765_f05")
-
-
-def test_review_writer_hashes_artifacts_and_only_writes_review_sidecar(tmp_path: Path) -> None:
-    local_root, _ = _fish_root(tmp_path)
-    pipeline_root = tmp_path / "staged" / FISH_ID
-    artifact = pipeline_root / "match-roi-to-anatomy" / "registration" / "matches.csv"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b"fish_id,value\nL765_f04,1\n")
-    context = resolve_qc_notebook_context(
-        QCNotebookConfig(FISH_ID, local_root, pipeline_root=pipeline_root)
-    )
-
-    review_path = write_qc_review_record(
-        context,
-        stage_name="match-roi-to-anatomy",
-        decision="accepted",
-        reviewer="DD",
-        reviewed_artifacts=[artifact],
-        notes="Plane review complete.",
-        timestamp=datetime(2026, 8, 11, 9, 30, tzinfo=timezone.utc),
-    )
-    assert review_path == (
-        pipeline_root
-        / "match-roi-to-anatomy"
-        / "reviews"
-        / "review_20260811T093000.000000Z.json"
-    ).resolve()
-    payload = json.loads(review_path.read_text())
-    assert payload["fish_id"] == FISH_ID
-    assert payload["stage_name"] == "match-roi-to-anatomy"
-    assert payload["promoted_outputs"] is False
-    assert payload["reviewed_artifacts"][0]["sha256"] == hashlib.sha256(
-        artifact.read_bytes()
-    ).hexdigest()
-    assert artifact.read_bytes() == b"fish_id,value\nL765_f04,1\n"
-
-
-def test_review_writer_refuses_ambiguous_stage_cross_stage_artifact_and_overwrite(
-    tmp_path: Path,
-) -> None:
-    local_root, _ = _fish_root(tmp_path)
-    pipeline_root = tmp_path / "staged" / FISH_ID
-    artifact = pipeline_root / "match-roi-to-anatomy" / "registration" / "matches.csv"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_text("a\n1\n")
-    other = pipeline_root / "assign-hcr-identity" / "registration" / "identity.csv"
-    other.parent.mkdir(parents=True)
-    other.write_text("a\n1\n")
-    context = resolve_qc_notebook_context(
-        QCNotebookConfig(FISH_ID, local_root, pipeline_root=pipeline_root)
-    )
-    kwargs = {
-        "context": context,
-        "decision": "accepted",
-        "reviewer": "DD",
-        "timestamp": "2026-08-11T09:30:00+00:00",
-    }
-
-    with pytest.raises(ValueError, match="Unknown or ambiguous"):
-        write_qc_review_record(
-            stage_name="geometry", reviewed_artifacts=[artifact], **kwargs
-        )
-    with pytest.raises(ValueError, match="must belong to stage"):
-        write_qc_review_record(
-            stage_name="match-roi-to-anatomy", reviewed_artifacts=[other], **kwargs
-        )
-    write_qc_review_record(
-        stage_name="match-roi-to-anatomy", reviewed_artifacts=[artifact], **kwargs
-    )
-    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
-        write_qc_review_record(
-            stage_name="match-roi-to-anatomy", reviewed_artifacts=[artifact], **kwargs
-        )
-
-
-def test_review_writer_rejects_forged_ambiguous_fish_context(tmp_path: Path) -> None:
-    local_root, fish_dir = _fish_root(tmp_path)
-    context = resolve_qc_notebook_context(QCNotebookConfig(FISH_ID, local_root))
-    artifact = context.stage_paths["match-roi-to-anatomy"] / "artifact.csv"
-    artifact.parent.mkdir(parents=True)
-    artifact.write_text("a\n1\n")
-    forged = QCNotebookContext(
-        fish_id=FISH_ID,
-        local_root=context.local_root,
-        fish_dir=fish_dir.parent / "L765_f05",
-        pipeline_root=context.pipeline_root,
-        stage_paths=context.stage_paths,
-        manifest_paths=context.manifest_paths,
-        provenance=context.provenance,
-    )
-    with pytest.raises(ValueError, match="fish_dir is ambiguous"):
-        write_qc_review_record(
-            forged,
-            stage_name="match-roi-to-anatomy",
-            decision="accepted",
-            reviewer="DD",
-            reviewed_artifacts=[artifact],
-        )

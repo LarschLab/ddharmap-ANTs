@@ -29,6 +29,12 @@ class StimulusTests(unittest.TestCase):
     def test_parse_unilateral_stim(self) -> None:
         self.assertEqual(parse_unilateral_stim("LLB"), ("left", "bout"))
         self.assertEqual(parse_unilateral_stim("RLC"), ("right", "continuous"))
+        self.assertEqual(parse_unilateral_stim("LB_trajectory"), ("left", "bout"))
+        self.assertEqual(parse_unilateral_stim("RB_trajectory"), ("right", "bout"))
+        self.assertEqual(parse_unilateral_stim("LC_trajectory"), ("left", "continuous"))
+        self.assertEqual(parse_unilateral_stim("RC_trajectory"), ("right", "continuous"))
+        self.assertEqual(parse_unilateral_stim("LAB_trajectory"), (None, None))
+        self.assertEqual(parse_unilateral_stim("LB_trajectory+RC_trajectory"), (None, None))
 
     def test_classify_stim_type(self) -> None:
         self.assertEqual(classify_stim_type("LLB"), "bout")

@@ -9,9 +9,8 @@ import numpy as np
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QMessageBox, QPushButton, QSplitter, QTextEdit, QVBoxLayout,
-    QWidget,
+    QApplication, QComboBox, QFormLayout, QLabel,
+    QMainWindow, QPushButton, QSplitter, QWidget,
 )
 
 from codeants_2pf_hcr.plots.qc_midline import (
@@ -76,9 +75,9 @@ class MidlineAnnotationWindow(QMainWindow):
         self.setWindowTitle("Manual Midline Annotation — review-only"); self.resize(1180, 820)
         self.fish_select = QComboBox(); self.fish_select.addItems([path.name for path in fish_roots]); self.fish_select.currentIndexChanged.connect(self._change_fish)
         self.plane_select = QComboBox(); self.plane_select.currentIndexChanged.connect(self._change_plane)
-        self.status = QLabel(); self.reviewer = QLineEdit(); self.notes = QTextEdit(); self.notes.setFixedHeight(75); self.canvas = AnnotationCanvas(self)
-        copy = QPushButton("Copy prior line"); copy.clicked.connect(self.copy_prior); clear = QPushButton("Clear current line"); clear.clicked.connect(self.clear_current); save = QPushButton("Save accepted sidecar"); save.clicked.connect(self.save)
-        controls = QWidget(); form = QFormLayout(controls); form.addRow("Fish", self.fish_select); form.addRow("Functional plane", self.plane_select); form.addRow(copy); form.addRow(clear); form.addRow("Reviewer", self.reviewer); form.addRow("Notes", self.notes); form.addRow(save); form.addRow("Status", self.status)
+        self.status = QLabel(); self.canvas = AnnotationCanvas(self)
+        copy = QPushButton("Copy prior line"); copy.clicked.connect(self.copy_prior); clear = QPushButton("Clear current line"); clear.clicked.connect(self.clear_current)
+        controls = QWidget(); form = QFormLayout(controls); form.addRow("Fish", self.fish_select); form.addRow("Functional plane", self.plane_select); form.addRow(copy); form.addRow(clear); form.addRow("Status", self.status)
         splitter = QSplitter(Qt.Orientation.Horizontal); splitter.addWidget(controls); splitter.addWidget(self.canvas); splitter.setStretchFactor(1, 1); self.setCentralWidget(splitter)
         QApplication.instance().installEventFilter(self); self._change_fish()
 
@@ -100,8 +99,8 @@ class MidlineAnnotationWindow(QMainWindow):
         self.plane_select.setCurrentIndex((self.plane_select.currentIndex() + direction) % self.plane_select.count())
         self.canvas.setFocus(Qt.FocusReason.ShortcutFocusReason)
     def eventFilter(self, watched, event):
-        """Keep text entry intact while making canvas/control focus navigable."""
-        if event.type() == QEvent.Type.KeyPress and not isinstance(QApplication.focusWidget(), (QLineEdit, QTextEdit)):
+        """Make canvas/control focus navigable by keyboard."""
+        if event.type() == QEvent.Type.KeyPress:
             handlers = {Qt.Key.Key_Q: lambda: self._move_fish(-1), Qt.Key.Key_E: lambda: self._move_fish(1), Qt.Key.Key_A: lambda: self._move_plane(-1), Qt.Key.Key_D: lambda: self._move_plane(1)}
             handler = handlers.get(event.key())
             if handler is not None:
@@ -122,15 +121,9 @@ class MidlineAnnotationWindow(QMainWindow):
     def _refresh(self) -> None:
         complete, total = len(self.session.lines_by_plane), len(self.session.plane_best_z)
         self.status.setText(f"{self.session.fish_id}: {complete}/{total} planes annotated. Click two endpoints to set or correct; Q/E fish, A/D plane (outside Reviewer/Notes)."); self.canvas.update()
-    def save(self) -> None:
-        self.session.accepted = True
-        try: target = self.session.write_sidecar(self.fish_roots[self.fish_select.currentIndex()] / "03_analysis/functional/midline_annotation_reviews", reviewer=self.reviewer.text(), notes=self.notes.toPlainText())
-        except (ValueError, OSError) as exc: self.session.accepted = False; QMessageBox.warning(self, "Cannot save annotation", str(exc)); return
-        QMessageBox.information(self, "Accepted review sidecar saved", str(target)); self.status.setText(f"Saved: {target.name}")
-
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Launch review-only manual midline annotation.")
+    parser = argparse.ArgumentParser(description="Launch review-only manual midline review.")
     parser.add_argument("--fish-root", action="append", type=Path)
     parser.add_argument("--training-cohort", action="store_true")
     parser.add_argument("--native-functional", action="store_true", help="Annotate persisted native functional reference grids without anatomy registration.")

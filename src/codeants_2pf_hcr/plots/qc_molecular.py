@@ -21,7 +21,7 @@ import tifffile
 from scipy import ndimage as ndi
 
 from ..matching import compute_centroids, gene_from_mask, idx_to_um
-from ..spatial import imread_any, infer_voxels_tiff, load_or_cache_voxels, norm01
+from ..spatial import anatomy_max_section_xy_radii_um, imread_any, load_or_cache_voxels, norm01
 
 __all__ = [
     "MOLECULAR_GEOMETRY_TRACKS",
@@ -223,18 +223,18 @@ def _viewer_label_name(path: Path, seen: set[str]) -> str:
     return name
 
 
-def _tiff_voxel_zyx_um(path: Path) -> dict[str, float]:
-    vox = infer_voxels_tiff(path)
-    dz = float(vox.get("Z", 1.0))
-    with tifffile.TiffFile(path) as tiff:
-        metadata = tiff.imagej_metadata or {}
-    try:
-        imagej_spacing = float(metadata.get("spacing", dz))
-        if np.isfinite(imagej_spacing) and imagej_spacing > 0:
-            dz = imagej_spacing
-    except (TypeError, ValueError):
-        pass
-    return {"dz": dz, "dy": float(vox.get("Y", 1.0)), "dx": float(vox.get("X", 1.0))}
+def _anatomy_grid_voxel_zyx_um(path: Path) -> dict[str, float]:
+    """Load explicit physical spacing for an anatomy-grid label measurement."""
+
+    vox = load_or_cache_voxels(path)
+    missing = [axis for axis in ("X", "Y", "Z") if axis not in vox]
+    if missing:
+        raise ValueError(f"Anatomy voxel source lacks physical spacing for {missing}: {path}")
+    values = {"dz": float(vox["Z"]), "dy": float(vox["Y"]), "dx": float(vox["X"])}
+    invalid = [axis for axis, value in values.items() if not np.isfinite(value) or value <= 0]
+    if invalid:
+        raise ValueError(f"Anatomy voxel source has invalid physical spacing for {invalid}: {path}")
+    return values
 
 
 def load_molecular_label_viewer(
@@ -775,6 +775,7 @@ def plot_cross_modality_mask_sizes(size_table: pd.DataFrame, *, fish_id: str) ->
 def build_hcr_anatomy_centroid_offset_table(
     *,
     anatomy_labels_path: str | Path,
+    anatomy_voxel_source_path: str | Path,
     hcr_label_paths: Sequence[str | Path],
     final_pair_paths: Sequence[str | Path],
 ) -> pd.DataFrame:
@@ -782,13 +783,17 @@ def build_hcr_anatomy_centroid_offset_table(
 
     All masks must already share the in-vivo anatomy grid.  The function reads
     only persisted masks and ``*_final_pairs.csv`` tables; it never proposes or
-    changes a molecular/anatomy pairing.  Offsets are in microns when TIFF
-    voxel metadata is available, otherwise in the shared image-pixel scale.
+    changes a molecular/anatomy pairing.  Physical spacing is required from an
+    explicit anatomy-grid source (normally the prepared anatomy NRRD); label
+    TIFF metadata is not trusted because segmentation exports may omit it.
     """
 
     anatomy_path = _path(anatomy_labels_path)
     if anatomy_path is None or not anatomy_path.is_file():
         raise FileNotFoundError(f"Anatomy label stack does not exist: {anatomy_labels_path}")
+    voxel_source_path = _path(anatomy_voxel_source_path)
+    if voxel_source_path is None or not voxel_source_path.is_file():
+        raise FileNotFoundError(f"Anatomy voxel source does not exist: {anatomy_voxel_source_path}")
     if len(hcr_label_paths) != len(final_pair_paths):
         raise ValueError("Provide one final-pair table for each selected HCR label mask.")
 
@@ -796,19 +801,11 @@ def build_hcr_anatomy_centroid_offset_table(
     if anatomy.ndim != 3:
         raise ValueError(f"Anatomy label stack must be 3D ZYX, got {anatomy.shape}: {anatomy_path}")
     anatomy_centroids = compute_centroids(anatomy)
-    vox_zyx = _tiff_voxel_zyx_um(anatomy_path)
-    xy_pixel_area_um2 = float(vox_zyx["dy"] * vox_zyx["dx"])
-    largest_xy_area_by_label: dict[int, int] = {}
-    for z_slice in anatomy:
-        labels, areas = np.unique(z_slice[z_slice > 0], return_counts=True)
-        for label_id, area_px in zip(labels.astype(int), areas.astype(int)):
-            largest_xy_area_by_label[label_id] = max(largest_xy_area_by_label.get(label_id, 0), int(area_px))
-    anatomy_xy_radii_um = [
-        float(np.sqrt((area_px * xy_pixel_area_um2) / np.pi))
-        for area_px in largest_xy_area_by_label.values()
-        if area_px
-    ]
-    median_anatomy_xy_radius_um = float(np.median(anatomy_xy_radii_um)) if anatomy_xy_radii_um else np.nan
+    vox_zyx = _anatomy_grid_voxel_zyx_um(voxel_source_path)
+    _, radius_summary = anatomy_max_section_xy_radii_um(
+        anatomy, dx_um=vox_zyx["dx"], dy_um=vox_zyx["dy"],
+    )
+    median_anatomy_xy_radius_um = float(radius_summary["median_xy_radius_um"])
     anatomy_um = anatomy_centroids.loc[:, ["label", "z", "y", "x"]].copy()
     anatomy_um[["z_um", "y_um", "x_um"]] = idx_to_um(anatomy_centroids, vox_zyx)
 
@@ -845,13 +842,23 @@ def build_hcr_anatomy_centroid_offset_table(
                         "conf_label": merged["conf_label"].astype(int),
                         "anat_label": merged["twoP_label"].astype(int),
                         "median_anatomy_xy_radius_um": median_anatomy_xy_radius_um,
+                        "anatomy_radius_definition": radius_summary["definition"],
+                        "anatomy_dx_um": float(vox_zyx["dx"]),
+                        "anatomy_dy_um": float(vox_zyx["dy"]),
+                        "anatomy_dz_um": float(vox_zyx["dz"]),
+                        "anatomy_voxel_source_path": str(voxel_source_path),
                         "mask_path": str(mask_path),
                         "final_pairs_path": str(pairs_path),
                     }
                 )
             )
     return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(
-        columns=["gene", "axis", "offset_um", "conf_label", "anat_label", "median_anatomy_xy_radius_um", "mask_path", "final_pairs_path"]
+        columns=[
+            "gene", "axis", "offset_um", "conf_label", "anat_label",
+            "median_anatomy_xy_radius_um", "anatomy_radius_definition",
+            "anatomy_dx_um", "anatomy_dy_um", "anatomy_dz_um",
+            "anatomy_voxel_source_path", "mask_path", "final_pairs_path",
+        ]
     )
 
 
@@ -904,7 +911,14 @@ def plot_hcr_anatomy_centroid_offsets(offset_table: pd.DataFrame) -> plt.Figure:
             radii = pd.to_numeric(offset_table.get("median_anatomy_xy_radius_um"), errors="coerce").dropna()
             if not radii.empty:
                 radius = float(radii.median())
-                ax.axhline(radius, color="#D55E00", linestyle="--", linewidth=1.5, zorder=1, label=f"Median anatomy-mask radius ({radius:.2f} µm)")
+                ax.axhline(
+                    radius,
+                    color="#D55E00",
+                    linestyle="--",
+                    linewidth=1.5,
+                    zorder=1,
+                    label=f"Median all-label max-section anatomy radius ({radius:.2f} µm)",
+                )
                 ax.legend(loc="upper right", fontsize=8)
     fig.suptitle("Accepted HCR/anatomy pairs: lateral XY distance and axial Z displacement")
     fig.tight_layout()

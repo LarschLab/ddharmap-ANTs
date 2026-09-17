@@ -17,6 +17,7 @@ from codeants_2pf_hcr.spatial import (
     _ants_rigid_affine_in_plane_result,
     _select_square_region_spec_for_plane,
     apply_func_orientation,
+    anatomy_max_section_xy_radii_um,
     apply_square_region_mask,
     best_z_by_ncc,
     corrcoef_img,
@@ -27,7 +28,18 @@ from codeants_2pf_hcr.spatial import (
 
 
 class SpatialTests(unittest.TestCase):
-    def test_imread_any_prefers_simpleitk_zyx_for_nrrd(self) -> None:
+    def test_anatomy_radius_uses_all_labels_and_each_maximal_xy_section(self) -> None:
+        labels = np.zeros((3, 12, 12), dtype=np.uint16)
+        labels[0, 1:3, 1:3] = 1
+        labels[1, 1:4, 1:4] = 1
+        labels[2, 7:9, 7:9] = 2
+        table, summary = anatomy_max_section_xy_radii_um(labels, dx_um=0.5, dy_um=0.8)
+        self.assertEqual(table["anat_label"].tolist(), [1, 2])
+        self.assertEqual(table["maximum_xy_area_px"].tolist(), [9, 4])
+        expected = np.median([np.sqrt(9 * 0.5 * 0.8 / np.pi), np.sqrt(4 * 0.5 * 0.8 / np.pi)])
+        self.assertAlmostEqual(summary["median_xy_radius_um"], expected)
+        self.assertEqual(summary["n_labels"], 2)
+
         expected = np.zeros((7, 6, 5), dtype=np.uint8)
         fake_sitk = types.SimpleNamespace(
             ReadImage=lambda path: ("image", path),

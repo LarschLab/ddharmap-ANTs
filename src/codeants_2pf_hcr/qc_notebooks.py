@@ -1,19 +1,16 @@
 """Shared read-only infrastructure for single-fish QC notebooks.
 
-Notebook cells should contain only explicit configuration and calls into this
-module.  Analysis artifacts are read-only; the sole writer in this module
-creates review sidecars beneath a selected stage's ``reviews`` directory.
+Notebook cells contain only explicit configuration and read-only package calls.
+Scientific decisions are recorded by the agent in wikiLogbook.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import pandas as pd
 
@@ -311,117 +308,6 @@ def load_qc_image(path: Path | str) -> Any:
         return image.copy()
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _review_timestamp(value: datetime | str | None) -> tuple[datetime, str]:
-    if value is None:
-        moment = datetime.now(timezone.utc)
-    elif isinstance(value, datetime):
-        moment = value
-    else:
-        try:
-            moment = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError(f"Invalid review timestamp {value!r}; expected ISO-8601") from exc
-    if moment.tzinfo is None:
-        raise ValueError("Review timestamp must include a timezone")
-    moment = moment.astimezone(timezone.utc)
-    filename_stamp = moment.strftime("%Y%m%dT%H%M%S.%fZ")
-    return moment, filename_stamp
-
-
-def write_qc_review_record(
-    context: QCNotebookContext,
-    *,
-    stage_name: str,
-    decision: str,
-    reviewer: str,
-    reviewed_artifacts: Sequence[Path | str],
-    notes: str | None = None,
-    timestamp: datetime | str | None = None,
-) -> Path:
-    """Write a non-promoting, hash-bound review sidecar for one stage."""
-
-    if not FISH_ID_PATTERN.fullmatch(str(context.fish_id)):
-        raise ValueError(f"Review context has invalid fish_id {context.fish_id!r}")
-    expected_fish_dir = _resolved(context.local_root) / context.fish_id
-    if _resolved(context.fish_dir) != expected_fish_dir:
-        raise ValueError(
-            "Review context fish_dir is ambiguous: "
-            f"expected {expected_fish_dir}, got {_resolved(context.fish_dir)}"
-        )
-    if stage_name not in context.stage_paths:
-        raise ValueError(f"Unknown or ambiguous QC stage {stage_name!r}")
-    decision_value = str(decision).strip()
-    reviewer_value = str(reviewer).strip()
-    if not decision_value:
-        raise ValueError("decision must be non-empty")
-    if not reviewer_value:
-        raise ValueError("reviewer must be non-empty")
-    if not reviewed_artifacts:
-        raise ValueError("At least one reviewed artifact is required")
-
-    stage_root = _resolved(context.stage_paths[stage_name])
-    if not _is_within(stage_root, context.pipeline_root):
-        raise ValueError(f"Stage root escapes selected pipeline root: {stage_root}")
-    artifacts: list[dict[str, Any]] = []
-    seen: set[Path] = set()
-    for raw_path in reviewed_artifacts:
-        artifact_path = _resolved(raw_path)
-        if artifact_path in seen:
-            continue
-        seen.add(artifact_path)
-        if not artifact_path.is_file():
-            raise FileNotFoundError(f"Reviewed artifact is not an existing file: {artifact_path}")
-        if not _is_within(artifact_path, stage_root):
-            raise ValueError(
-                f"Reviewed artifact must belong to stage {stage_name!r}: {artifact_path}"
-            )
-        if _is_within(artifact_path, stage_root / "reviews"):
-            raise ValueError("A review sidecar cannot itself be a reviewed analysis artifact")
-        stat = artifact_path.stat()
-        artifacts.append(
-            {
-                "path": str(artifact_path),
-                "relative_to_stage_root": str(artifact_path.relative_to(stage_root)),
-                "sha256": _sha256(artifact_path),
-                "size_bytes": stat.st_size,
-                "mtime_ns": stat.st_mtime_ns,
-            }
-        )
-
-    moment, filename_stamp = _review_timestamp(timestamp)
-    review_dir = stage_root / "reviews"
-    if not _is_within(review_dir, stage_root):
-        raise ValueError(f"Review directory escapes stage root: {review_dir}")
-    review_dir.mkdir(parents=True, exist_ok=True)
-    review_path = review_dir / f"review_{filename_stamp}.json"
-    payload = {
-        "review_schema": "codeants_single_fish_qc_review_v1",
-        "fish_id": context.fish_id,
-        "stage_name": stage_name,
-        "pipeline_root": str(context.pipeline_root),
-        "stage_root": str(stage_root),
-        "reviewed_at": moment.isoformat().replace("+00:00", "Z"),
-        "reviewer": reviewer_value,
-        "decision": decision_value,
-        "notes": None if notes is None else str(notes),
-        "reviewed_artifacts": artifacts,
-        "promoted_outputs": False,
-    }
-    try:
-        with review_path.open("x", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-    except FileExistsError as exc:
-        raise FileExistsError(f"Refusing to overwrite existing review record: {review_path}") from exc
-    return review_path
 
 
 __all__ = [
@@ -433,5 +319,4 @@ __all__ = [
     "load_qc_image",
     "load_qc_json",
     "resolve_qc_notebook_context",
-    "write_qc_review_record",
 ]

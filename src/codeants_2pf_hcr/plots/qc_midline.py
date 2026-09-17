@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-import hashlib
-import json
 from pathlib import Path
 import pathlib
 import re
@@ -25,14 +22,6 @@ from ..midline import (
     propose_fish_consensus_midline,
     propose_native_dark_corridor_midline,
 )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _line_from_points(points: list[tuple[float, float]]) -> dict[str, float]:
@@ -107,6 +96,37 @@ def build_automatic_anatomy_midline_qc(
         "consensus": consensus,
         "anatomy_stack_path": anatomy_path,
     }
+
+
+def render_anatomy_midline_proposal_grid(
+    proposals: pd.DataFrame, anatomy_zyx: np.ndarray, *,
+    transformed_roi_labels: Mapping[int, str | Path] | None = None,
+    accepted: bool = False,
+) -> plt.Figure:
+    """Render every proposed line over its anatomy Z with optional ROI outlines."""
+    planes = sorted(proposals["plane_idx"].astype(int).unique())
+    ncols = min(5, len(planes))
+    nrows = int(np.ceil(len(planes) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 3.7 * nrows), squeeze=False, layout="constrained")
+    for ax, plane in zip(axes.flat, planes):
+        row = proposals.loc[proposals["plane_idx"].eq(plane)].iloc[0]
+        image = np.asarray(anatomy_zyx[int(row["best_z"])])
+        ax.imshow(norm01(image), cmap="gray")
+        path = (transformed_roi_labels or {}).get(plane)
+        if path is not None:
+            labels = np.asarray(imread_any(path))
+            if labels.shape != image.shape:
+                raise ValueError(f"Plane {plane} ROI labels are not on the anatomy grid")
+            ax.contour(labels > 0, levels=[0.5], colors="#ff4dd2", linewidths=0.28, alpha=0.7)
+        _midline_line(ax, row, image.shape)
+        ax.set_xlim(-0.5, image.shape[1] - 0.5)
+        ax.set_ylim(image.shape[0] - 0.5, -0.5)
+        ax.set_title(f"plane {plane} · z={int(row['best_z'])} · fit RMSE={row['fit_rmse_px']:.2f}px", fontsize=8)
+        ax.axis("off")
+    for ax in axes.flat[len(planes):]:
+        ax.axis("off")
+    fig.suptitle("Accepted anatomy-grid midline — logbook gate" if accepted else "Anatomy-grid midline projection — proposal only; logbook acceptance required", fontweight="bold")
+    return fig
 
 
 def build_automatic_native_functional_midline_qc(
@@ -256,7 +276,6 @@ class MidlineAnnotationSession:
     coordinate_space: str = "anatomy pixel grid"
     functional_roi_centroids_by_plane: Mapping[int, np.ndarray] = field(default_factory=dict)
     lines_by_plane: dict[int, dict[str, float]] = field(default_factory=dict)
-    accepted: bool = False
     _anatomy_stack: np.ndarray | None = field(default=None, init=False, repr=False)
 
     def anatomy_plane(self, plane_idx: int) -> np.ndarray:
@@ -295,24 +314,6 @@ class MidlineAnnotationSession:
         if not previous:
             raise ValueError("no earlier plane annotation is available to copy")
         self.lines_by_plane[int(plane_idx)] = dict(self.lines_by_plane[max(previous)])
-
-    def write_sidecar(self, review_dir: str | Path, *, reviewer: str, notes: str = "") -> Path:
-        """Persist explicit accepted coordinates as a hash-bound, non-promoting sidecar."""
-        if not self.accepted:
-            raise ValueError("set accepted=True only after reviewing every intended plane")
-        expected = set(int(value) for value in self.plane_best_z)
-        if set(self.lines_by_plane) != expected:
-            raise ValueError("every functional plane needs an explicit line before acceptance")
-        reviewer = str(reviewer).strip()
-        if not reviewer:
-            raise ValueError("reviewer is required")
-        root = Path(review_dir).resolve(); root.mkdir(parents=True, exist_ok=True)
-        artifacts = list(dict.fromkeys((*(() if self.anatomy_stack_path is None else (self.anatomy_stack_path,)), *self.source_artifacts, *self.functional_label_paths.values(), *self.plane_image_paths.values())))
-        payload = {"schema": "codeants_midline_annotation_review_v1", "fish_id": self.fish_id, "coordinate_space": self.coordinate_space, "requires_manual_acceptance": True, "accepted": True, "reviewer": reviewer, "reviewed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "notes": str(notes), "lines_by_plane": self.lines_by_plane, "source_artifacts": [{"path": str(path), "sha256": _sha256(path)} for path in artifacts]}
-        target = root / f"midline_annotation_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}.json"
-        with target.open("x", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True); handle.write("\n")
-        return target
 
 
 def show_midline_annotation_gui(session: MidlineAnnotationSession):
@@ -536,13 +537,20 @@ _ROI_KEYS = ("plane_idx", "func_label")
 
 def _read_roi_table(path: str | Path, fish_id: str, *, activity: bool = False) -> pd.DataFrame:
     table = pd.read_csv(path)
-    required = set(_ROI_KEYS) | {"fish_id"}
+    required = set(_ROI_KEYS)
     if activity:
         required |= {"activity_mag"}
+    else:
+        required |= {"fish_id"}
     missing = sorted(required - set(table.columns))
     if missing:
         raise ValueError(f"{Path(path).name} lacks required columns {missing}")
-    table = table.loc[table["fish_id"].astype(str).eq(str(fish_id))].copy()
+    if "fish_id" in table:
+        table = table.loc[table["fish_id"].astype(str).eq(str(fish_id))].copy()
+    elif activity:
+        if str(fish_id) not in Path(path).resolve().parts:
+            raise ValueError("Fish-less BPI cells must come from the selected fish's staged root")
+        table = table.assign(fish_id=str(fish_id))
     if table.empty:
         raise ValueError(f"{Path(path).name} has no rows for {fish_id}")
     if table.duplicated(list(_ROI_KEYS)).any():
@@ -578,9 +586,12 @@ def build_midline_laterality_qc_tables(
     )
     all_rois = annotate_midline_side(all_rois, context, x_col=x_col, y_col=y_col)
     spatial = all_rois[list(_ROI_KEYS) + [x_col, y_col]].copy()
-    activity = activity.merge(spatial, on=list(_ROI_KEYS), how="left", validate="one_to_one")
-    if activity[[x_col, y_col]].isna().any(axis=None):
+    activity = activity.merge(spatial, on=list(_ROI_KEYS), how="left", validate="one_to_one", indicator=True)
+    if activity["_merge"].ne("both").any():
         raise ValueError("Persisted response-scored keys are absent from the ROI inventory; cannot make a spatial QC map")
+    activity = activity.drop(columns="_merge")
+    # ROIs without anatomy-grid centroids remain in the exact scored subset
+    # and receive the explicit 'unknown' laterality rather than disappearing.
     activity["activity_mag"] = pd.to_numeric(activity["activity_mag"], errors="coerce")
     activity = activity.loc[np.isfinite(activity["activity_mag"])].copy()
     if activity.empty:
@@ -619,6 +630,8 @@ def render_midline_laterality_plane_grid(
         _midline_line(ax, lines[str(plane)] if str(plane) in lines else lines[plane], image.shape)
         if proposal_lines and plane in proposal_lines:
             _midline_line(ax, proposal_lines[plane], image.shape, style="--")
+        ax.set_xlim(-0.5, image.shape[1] - 0.5)
+        ax.set_ylim(image.shape[0] - 0.5, -0.5)
         counts = sub["midline_side"].value_counts().reindex(_SIDE_COLORS, fill_value=0)
         ax.set_title(f"plane {plane}: " + ", ".join(f"{s[0].upper()}={int(counts[s])}" for s in _SIDE_COLORS), fontsize=8)
         ax.axis("off")
@@ -641,6 +654,8 @@ def render_midline_activity_plane_grid(
         last = ax.scatter(sub[x_col], sub[y_col], s=18, c=sub["activity_mag"], cmap="magma", vmin=0, vmax=vmax, edgecolors=[_SIDE_COLORS.get(s, "#777777") for s in sub["midline_side"]], linewidths=0.55)
         _midline_line(ax, lines[str(plane)] if str(plane) in lines else lines[plane], image.shape)
         if proposal_lines and plane in proposal_lines: _midline_line(ax, proposal_lines[plane], image.shape, style="--")
+        ax.set_xlim(-0.5, image.shape[1] - 0.5)
+        ax.set_ylim(image.shape[0] - 0.5, -0.5)
         counts = sub["midline_side"].value_counts().reindex(_SIDE_COLORS, fill_value=0)
         ax.set_title(f"plane {plane}: scored n={len(sub)}; L/R/M/U=" + "/".join(str(int(counts[s])) for s in _SIDE_COLORS), fontsize=8); ax.axis("off")
     for ax in axes.flat[len(planes):]: ax.axis("off")
@@ -649,4 +664,4 @@ def render_midline_activity_plane_grid(
     return fig
 
 
-__all__ = ["MidlineAnnotationSession", "build_automatic_anatomy_midline_qc", "render_automatic_anatomy_midline_qc", "build_automatic_native_functional_midline_qc", "render_automatic_native_functional_midline_qc", "load_legacy_midline_annotation_session", "load_motion_corrected_mean_midline_session", "load_native_functional_midline_annotation_session", "load_suite2p_meanimg_midline_session", "show_midline_annotation_gui", "load_accepted_anatomy_midline_context", "build_midline_laterality_qc_tables", "render_midline_laterality_plane_grid", "render_midline_activity_plane_grid"]
+__all__ = ["MidlineAnnotationSession", "build_automatic_anatomy_midline_qc", "render_automatic_anatomy_midline_qc", "render_anatomy_midline_proposal_grid", "build_automatic_native_functional_midline_qc", "render_automatic_native_functional_midline_qc", "load_legacy_midline_annotation_session", "load_motion_corrected_mean_midline_session", "load_native_functional_midline_annotation_session", "load_suite2p_meanimg_midline_session", "show_midline_annotation_gui", "load_accepted_anatomy_midline_context", "build_midline_laterality_qc_tables", "render_midline_laterality_plane_grid", "render_midline_activity_plane_grid"]

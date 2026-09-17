@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import matplotlib
 import numpy as np
@@ -11,6 +12,10 @@ import pytest
 
 matplotlib.use("Agg")
 
+from codeants_2pf_hcr.midline_review import (
+    load_accepted_anatomy_midline_context,
+    project_native_midline_to_anatomy,
+)
 from codeants_2pf_hcr.plots.qc_midline import (
     build_midline_laterality_qc_tables,
     render_midline_activity_plane_grid,
@@ -76,3 +81,75 @@ def test_midline_qc_rejects_sidecar_when_review_artifact_changed(tmp_path: Path)
     sidecar.with_name("review-source.csv").write_text("changed after review\n")
     with pytest.raises(ValueError, match="artifact hash changed"):
         build_midline_laterality_qc_tables(master, bpi, sidecar, fish_id=FISH)
+
+
+def test_materialized_midline_requires_fish_specific_proposal_hash_gate(tmp_path: Path) -> None:
+    csv_path = tmp_path / "anatomy_midline_proposals.csv"
+    png_path = tmp_path / "anatomy_midline_proposals.png"
+    csv_path.write_text("""plane_idx,x0,y0
+0,5,5
+""")
+    png_path.write_bytes(b"reviewed overlay")
+    csv_hash = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+    png_hash = hashlib.sha256(png_path.read_bytes()).hexdigest()
+    logbook = tmp_path / "decision.md"
+    logbook.write_text(f"""---
+fish_id: {FISH}
+midline_gate: accepted
+midline_proposal_csv_sha256: {csv_hash}
+midline_proposal_png_sha256: {png_hash}
+---
+""")
+    artifact = tmp_path / "anatomy_midline.json"
+    artifact.write_text(json.dumps({
+        "schema": "codeants_anatomy_midline_materialization_v1",
+        "fish_id": FISH, "accepted": True,
+        "coordinate_space": "anatomy pixel grid",
+        "logbook_decision_path": str(logbook),
+        "lines_by_plane": {"0": {"x0": 5, "y0": 5, "theta_deg": -90}},
+        "source_artifacts": [
+            {"path": str(csv_path), "sha256": csv_hash},
+            {"path": str(png_path), "sha256": png_hash},
+        ],
+    }))
+    context = load_accepted_anatomy_midline_context(artifact, fish_id=FISH, required_planes=[0])
+    assert context["review"]["accepted"] is True
+    logbook.write_text(logbook.read_text().replace("midline_gate: accepted", "midline_gate: review_required"))
+    with pytest.raises(ValueError, match="midline_gate"):
+        load_accepted_anatomy_midline_context(artifact, fish_id=FISH, required_planes=[0])
+
+
+def test_native_midline_projection_uses_saved_scale_and_ncc_placement() -> None:
+    ref = {"index": 0, "best_z": 2, "ref_shape": [10, 10],
+           "ref_scaled_shape": [20, 20], "ncc_xy": {"x0": 3, "y0": 4}}
+    with patch("codeants_2pf_hcr.matching.resolve_plane_transform", return_value={"type": "identity"}), patch(
+        "codeants_2pf_hcr.matching.transform_points_between_spaces",
+        side_effect=lambda x, y, transform: (x, y),
+    ):
+        row = project_native_midline_to_anatomy(
+            ref, x0=5, y0=5, theta_deg=0, anatomy_shape=(30, 30), n_samples=5,
+        )
+    assert row["plane_idx"] == 0
+    assert row["best_z"] == 2
+    assert row["x0"] == pytest.approx(13)
+    assert row["y0"] == pytest.approx(14)
+    assert row["fit_rmse_px"] == pytest.approx(0)
+
+
+def test_midline_qc_retains_scored_rois_without_anatomy_centroids_as_unknown(tmp_path: Path) -> None:
+    fish_root = tmp_path / FISH
+    fish_root.mkdir()
+    master = _csv(fish_root / "master.csv", [
+        {"fish_id": FISH, "plane_idx": 0, "func_label": 1, "centroid_x_anat": 7, "centroid_y_anat": 4},
+        {"fish_id": FISH, "plane_idx": 0, "func_label": 2, "centroid_x_anat": np.nan, "centroid_y_anat": np.nan},
+    ])
+    bpi = _csv(fish_root / "bpi.csv", [
+        {"plane_idx": 0, "func_label": 1, "activity_mag": 1.0},
+        {"plane_idx": 0, "func_label": 2, "activity_mag": 2.0},
+    ])
+    all_rois, activity, _ = build_midline_laterality_qc_tables(
+        master, bpi, _sidecar(fish_root / "accepted.json"), fish_id=FISH,
+    )
+    assert len(all_rois) == 2
+    assert len(activity) == 2
+    assert activity.set_index("func_label").loc[2, "midline_side"] == "unknown"

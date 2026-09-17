@@ -29,6 +29,8 @@ from codeants_2pf_hcr.pipeline import (
     run_register_functional_to_anatomy_stage,
     run_transform_functional_rois_to_anatomy_stage,
     run_make_functional_registration_qc_stage,
+    run_make_anatomy_midline_proposal_stage,
+    run_materialize_anatomy_midline_stage,
     run_register_hcr_to_anatomy_stage,
     run_match_roi_to_anatomy_stage,
     run_segment_ex_vivo_anatomy_cellpose_stage,
@@ -37,6 +39,7 @@ from codeants_2pf_hcr.pipeline import (
     run_single_fish_export_canonical_tables_stage,
     run_single_fish_freeze_legacy_baseline_stage,
     run_single_fish_make_figures_stage,
+    run_single_fish_make_motion_auc_tables_stage,
     run_single_fish_make_qa_report_stage,
     run_single_fish_audit_inputs_stage,
     run_single_fish_score_activity_bpi_stage,
@@ -203,6 +206,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     make_qa_report.add_argument("--force-recompute", action="store_true")
 
+    make_auc = subparsers.add_parser(
+        "make-motion-auc-tables",
+        help="Writer stage: build laterality AUC tables from accepted anatomy-midline provenance.",
+    )
+    _add_common_fish_args(make_auc)
+    make_auc.add_argument("--accepted-midline-path", type=Path)
+    make_auc.add_argument("--force-recompute", action="store_true")
+
     make_figures = subparsers.add_parser(
         "make-figures",
         help="Writer stage: stage final figure artifacts behind the make-figures manifest contract.",
@@ -218,6 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit source figure root. Defaults to the fish 04_plots directory.",
     )
+    make_figures.add_argument("--accepted-midline-path", type=Path)
     make_figures.add_argument("--force-recompute", action="store_true")
 
     prepare_func_refs = subparsers.add_parser(
@@ -317,6 +329,22 @@ def build_parser() -> argparse.ArgumentParser:
     func_qc.add_argument("--output-root", type=Path)
     func_qc.add_argument("--anatomy-label-z-mode", choices=("auto", "direct", "reverse"), default="auto")
     func_qc.add_argument("--force-recompute", action="store_true")
+
+    proposal = subparsers.add_parser(
+        "make-anatomy-midline-proposal",
+        help="Writer stage: backfill anatomy-grid proposal evidence without replacing registration QC.",
+    )
+    _add_common_fish_args(proposal)
+    proposal.add_argument("--force-recompute", action="store_true")
+
+    materialize = subparsers.add_parser(
+        "materialize-anatomy-midline",
+        help="Writer stage: materialize a logbook-accepted anatomy-grid midline.",
+    )
+    _add_common_fish_args(materialize)
+    materialize.add_argument("--reviewer", required=True)
+    materialize.add_argument("--logbook-decision-path", required=True, type=Path)
+    materialize.add_argument("--force-recompute", action="store_true")
 
     register_hcr = subparsers.add_parser(
         "register-hcr-to-anatomy",
@@ -603,6 +631,20 @@ def main(argv: list[str] | None = None) -> int:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
         sys.stdout.write(stage_manifest_to_json(manifest))
         return 1 if manifest.status == "fail" else 0
+    if args.command == "make-motion-auc-tables":
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id, local_root=args.local_root, owner=args.owner,
+            strict=args.strict, dry_run=False, write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        manifest = run_single_fish_make_motion_auc_tables_stage(
+            config, accepted_midline_path=args.accepted_midline_path,
+            force_recompute=args.force_recompute,
+        )
+        if args.write_manifest:
+            write_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
     if args.command == "make-figures":
         config = SingleFishPipelineConfig(
             fish_id=args.fish_id,
@@ -617,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             canonical_input_root=args.canonical_input_root,
             figure_input_root=args.figure_input_root,
+            accepted_midline_path=args.accepted_midline_path,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:
@@ -722,6 +765,26 @@ def main(argv: list[str] | None = None) -> int:
             anatomy_label_z_mode=args.anatomy_label_z_mode,
             force_recompute=args.force_recompute,
         )
+        if args.write_manifest:
+            write_stage_manifest(manifest, resolve_pipeline_paths(config))
+        sys.stdout.write(stage_manifest_to_json(manifest))
+        return 1 if manifest.status == "fail" else 0
+    if args.command in {"make-anatomy-midline-proposal", "materialize-anatomy-midline"}:
+        config = SingleFishPipelineConfig(
+            fish_id=args.fish_id, local_root=args.local_root, owner=args.owner,
+            strict=args.strict, dry_run=False, write_manifest=args.write_manifest,
+            pipeline_root=args.pipeline_root,
+        )
+        if args.command == "make-anatomy-midline-proposal":
+            manifest = run_make_anatomy_midline_proposal_stage(
+                config, force_recompute=args.force_recompute,
+            )
+        else:
+            manifest = run_materialize_anatomy_midline_stage(
+                config, reviewer=args.reviewer,
+                logbook_decision_path=args.logbook_decision_path,
+                force_recompute=args.force_recompute,
+            )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
         sys.stdout.write(stage_manifest_to_json(manifest))

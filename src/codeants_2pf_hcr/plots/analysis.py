@@ -1377,8 +1377,9 @@ def render_single_fish_50l_global_auc_panel(
 def render_accepted_global_laterality_auc_qc(
     *, fish_id: str, master_roi_csv: str | Path, points_csv: str | Path,
     counts_csv: str | Path, accepted_midline_sidecar: str | Path,
+    scored_windows_csv: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Render Q7 global AUC only with exact accepted-sidecar provenance.
+    """Render Q7 global AUC only with accepted midline and scoring provenance.
 
     Legacy midline bundles and caches without the current review hash are
     intentionally blocked rather than relabelled at display time.
@@ -1408,6 +1409,25 @@ def render_accepted_global_laterality_auc_qc(
             + ", ".join(stale_auc_paths)
             + "; rebuild [56i] before interpreting laterality."
         )
+    if scored_windows_csv is not None:
+        scored_path = Path(scored_windows_csv)
+        if not scored_path.is_file():
+            return blocked(f"Missing scored-window provenance: {scored_path}")
+        try:
+            scored = pd.read_csv(scored_path)
+            required = {"fish_id", "used_for_bpi", "response_window_policy", "scored_duration_sec"}
+            if not required.issubset(scored.columns):
+                return blocked("Scored-window table predates the fixed 12.5 s movement-onset policy; rerun scoring and AUC.")
+            scored = scored.loc[scored["fish_id"].astype(str).eq(str(fish_id))]
+            eligible = scored.loc[scored["used_for_bpi"].astype(str).str.lower().eq("true")]
+            if eligible.empty:
+                return blocked("No BPI-eligible scored windows were found for this fish.")
+            if set(eligible["response_window_policy"].astype(str)) != {"fixed_from_movement_onset_matched_prestim"} or not np.allclose(pd.to_numeric(eligible["scored_duration_sec"], errors="coerce"), 12.5, rtol=0, atol=1e-6):
+                return blocked("The pinned scoring run uses an old AUC window; review the fixed 12.5 s response-window run instead.")
+            if scored_path.stat().st_mtime_ns > min(points_path.stat().st_mtime_ns, counts_path.stat().st_mtime_ns):
+                return blocked("Scored windows are newer than AUC tables; rebuild make-motion-auc-tables.")
+        except Exception as exc:
+            return blocked(f"Cannot verify scored-window provenance: {exc}")
     try:
         master = pd.read_csv(master_path)
         if not {"fish_id", "plane_idx"}.issubset(master.columns):

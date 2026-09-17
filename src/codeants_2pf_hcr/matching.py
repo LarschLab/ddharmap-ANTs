@@ -16,6 +16,7 @@ from skimage.measure import regionprops_table
 from skimage.segmentation import find_boundaries
 from skimage.transform import AffineTransform, SimilarityTransform, resize, warp
 
+from .spatial import anatomy_max_section_xy_radii_um
 from .single_fish_notebook_stages import (
     run_single_fish_cell_44_stage,
     run_single_fish_cell_46_stage,
@@ -1054,13 +1055,10 @@ def build_hcr_anatomy_match_tables(
     # Review-only XY reference. Confocal axial PSF broadening makes Z centroid
     # displacement less diagnostic than lateral displacement. This never
     # changes ``within_gate``, quality, or membership in final_pairs.
-    xy_pixel_area_um2 = float(vox_anat_um.get("dy", 1.0)) * float(vox_anat_um.get("dx", 1.0))
-    radii_xy_um = []
-    for label in twop_vol:
-        max_area_px = max((int(np.count_nonzero(anat_arr[z] == label)) for z in range(anat_arr.shape[0])), default=0)
-        if max_area_px > 0:
-            radii_xy_um.append(float(np.sqrt((max_area_px * xy_pixel_area_um2) / np.pi)))
-    median_anatomy_xy_radius_um = float(np.median(radii_xy_um)) if radii_xy_um else np.nan
+    _, radius_summary = anatomy_max_section_xy_radii_um(
+        anat_arr, dx_um=vox_anat_um["dx"], dy_um=vox_anat_um["dy"],
+    )
+    median_anatomy_xy_radius_um = float(radius_summary["median_xy_radius_um"])
     matches["conf_vol"] = matches["conf_label"].map(conf_vol).fillna(0).astype(int)
     matches["twoP_vol"] = matches["twoP_label"].map(twop_vol).fillna(0).astype(int)
     den = matches["conf_vol"] + matches["twoP_vol"] - matches["overlap_voxels"]

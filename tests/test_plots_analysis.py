@@ -43,6 +43,25 @@ class PlotsAnalysisTests(unittest.TestCase):
             finally:
                 plt.close(result["fig"])
 
+    def test_q7_global_auc_blocks_old_scoring_window(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            master, points, counts, scored = (root / name for name in ("master.csv", "points.csv", "counts.csv", "scored.csv"))
+            pd.DataFrame({"fish_id": ["fishA"], "plane_idx": [0]}).to_csv(master, index=False)
+            pd.DataFrame({"group": ["All neurons"]}).to_csv(points, index=False)
+            pd.DataFrame({"group": ["All neurons"]}).to_csv(counts, index=False)
+            pd.DataFrame({"fish_id": ["fishA"], "used_for_bpi": [True], "scored_duration_sec": [9.8], "response_window_policy": ["legacy"]}).to_csv(scored, index=False)
+            result = render_accepted_global_laterality_auc_qc(
+                fish_id="fishA", master_roi_csv=master, points_csv=points,
+                counts_csv=counts, accepted_midline_sidecar=root / "missing.json",
+                scored_windows_csv=scored,
+            )
+            try:
+                self.assertEqual(result["status"], "blocked")
+                self.assertIn("old AUC window", result["reason"])
+            finally:
+                plt.close(result["fig"])
+
     def test_q7_global_auc_requires_matching_accepted_sidecar_hash(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

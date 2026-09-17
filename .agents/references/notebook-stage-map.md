@@ -110,13 +110,17 @@ scientific gate rather than one notebook per executable stage:
    `score-activity-bpi` stage before canonical export, with separate optional
    HCR identity context and preserved ROI-centric/HCR-centric scopes. It also
    renders the required read-only all-ROI and persisted-response-subset
-   anatomy-space midline consequence grids only from a complete manually
-   accepted hash-bound sidecar; laterality-dependent AUC stays out of scope.
+   anatomy-space midline consequence grids only from a complete,
+   logbook-accepted, hash-bound pipeline materialization. Laterality-dependent
+   AUC reads tables written by `make-motion-auc-tables` from the scorer-owned
+   fixed 12.5-s movement-onset windows, never computed by the notebook. The
+   read-only Q7 panel verifies the pinned scorer policy and blocks historical
+   7-s AUC caches.
 
 Reusable QC loading, provenance, filtering, and plotting logic is package
-owned. Notebook cells contain explicit knobs and package calls only. An
-explicit save may write a hash-bound review JSON beneath the reviewed stage's
-`reviews/` directory; it never writes or promotes scientific outputs.
+owned. Notebook cells contain explicit knobs and package calls only. No QC notebook cell writes a review JSON, figure, table, or other artifact.
+An agent records gate decisions and progress in wikiLogbook; explicit pipeline
+stages materialize accepted computational inputs and downstream tables.
 
 ## Navigation notes
 

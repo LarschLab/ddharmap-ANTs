@@ -21,7 +21,6 @@ _EXPORT_TO_MODULE = {
     "load_qc_image": "qc_notebooks",
     "load_qc_json": "qc_notebooks",
     "resolve_qc_notebook_context": "qc_notebooks",
-    "write_qc_review_record": "qc_notebooks",
     "AnatomyNormalizationStageConfig": "context",
     "AnatomyUint8PreprocessingConfig": "context",
     "ContextStageConfig": "context",
