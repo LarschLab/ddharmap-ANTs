@@ -45,9 +45,10 @@ to the anatomy grid, the logbook binds acceptance to the proposal CSV/PNG
 hashes, and `materialize-anatomy-midline` creates the accepted input.
 `make-motion-auc-tables` consumes that input and the same-run fixed 12.5-s
 scored windows before notebook 06 displays laterality-dependent evidence.
-Notebook 06 checks the pinned scoring-window policy and blocks the older
-L765_f04 7-s AUC tables. The corrected response-window continuation lives at
-`/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260917T1150Z_RESPONSE_WINDOW_RECOMPUTE/L765_f04`; it is a separate staged analysis, not an implicit replacement for the pinned registration-QC root.
+Notebook 06 checks the pinned scoring-window policy and blocks historical
+7-s AUC tables. For the L765_f04 pipeline test, corrected scoring and every
+dependent output are recomputed in the single pinned working root rather than
+reviewed from a second pipeline root.
 
 For historical functional-registration runs that predate
 `prepare-in-vivo-anatomy-stack`, notebook 02 records the explicitly selected

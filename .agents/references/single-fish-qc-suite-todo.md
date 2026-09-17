@@ -492,7 +492,7 @@ the original Q7 work without falsely declaring the laterality branch complete.
 those unilateral circular-motion conditions while excluding approach, whole-
 field, and mixed conditions. The rerun passed and wrote same-root point,
 count, and ROI-panel CSVs from the accepted anatomy-grid midline. Notebook 06
-now reads these tables. A subsequent audit showed the pinned working root still used 7-s BPI-eligible windows, so its motion-AUC and figure products are superseded and Notebook 06 now blocks its AUC panel. A distinct `20260917T1150Z_RESPONSE_WINDOW_RECOMPUTE/L765_f04` continuation recomputed scoring, identity, canonical export, motion-AUC, and figures using the same fixed 12.5-s movement-onset windows. This is computational validation, not acceptance of biological BPI interpretation or registration in the new root.
+now reads these tables. A subsequent audit showed that its first generation used 7-s BPI-eligible windows. On 2026-09-17 scoring, identity attachment, canonical export, motion-AUC, QA report, and figures were recomputed in place in the pinned working root; all 160 BPI-eligible windows now use the fixed 12.5-s movement-onset policy, and Notebook 06 cell 09 executes with status `ready`. The earlier separate continuation remains diagnostic provenance only. This is computational validation, not acceptance of biological BPI interpretation.
 
 ### Q8. Deferred until identity and functional response are merged
 
