@@ -40,6 +40,8 @@ modules when rerun in an existing kernel, avoiding stale package imports.
 
 Notebook 04 reads the backend `hcr_label_metrics.csv` to display retained large masks as low-confidence segmentation; its XY bounding-box quantiles are display diagnostics, not the eligibility rule. Notebook 05 reads candidate match-table gate flags for the radius audit and the identity writer's ROI master for actual assignments. Canonical export takes that identity-enriched master from the identity stage, with BPI cells/summary from the score stage.
 
+For individual HCR-label inspection, the backend wrapper `tools/render_hcr_match_inspector.py` writes standalone HTML from a specified fish directory and pinned pipeline root. It shows every HCR label, saved anatomy candidate/final-pair status, size and XY-radius gates, same-grid mask overlays, and anatomy-linked functional ROI context. This is an optional review artifact, not a notebook output or gate decision. The grayscale backdrop is 2P anatomy intensity, not HCR fluorescence; missing native HCR masks remain marked as aligned-grid size measurements.
+
 The logbook owns gate decisions; the pipeline owns computational artifacts.
 An executed notebook is evidence of inspection, never an acceptance signal.
 For midline review, the pipeline projects persisted native-functional lines

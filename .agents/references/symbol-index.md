@@ -70,6 +70,10 @@ Generated manually for the current extracted package surface.
 - `inspect_activity_export_qc`, `plot_activity_export_qc`: Review session-aware response/BPI provenance, canonical keys, figures, and ROI-centric versus HCR-centric scopes in notebook `06`.
 - `build_activity_bpi_gate_table`, `plot_activity_bpi_gate`: Read persisted response classes and strict BPI preferences for ROI-centric Notebook 06 review; non-BPI summaries use every response-assessable ROI, BPI panels use response-positive ROIs only, preference is color-coded, response-test class is marker-coded, and the all-ROI donut retains unavailable rows.
 
+## `codeants_2pf_hcr.hcr_match_inspector`
+
+- `render_hcr_match_inspector`: Render a self-contained, read-only HTML inventory of every transformed HCR label from saved metrics, candidate/final-pair tables, the geometry Z sidecar, anatomy/functional masks, and the identity-writer ROI table. It does not recompute matches or record gate decisions. The thin CLI is `tools/render_hcr_match_inspector.py`.
+
 ## `codeants_2pf_hcr.pipeline`
 
 - `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the single-fish staged pipeline.
