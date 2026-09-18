@@ -276,7 +276,16 @@ def render_hcr_match_inspector(
         "candidate": sum(bool(r["candidates"]) for r in rows),
         "with_functional": sum(bool(r["rois"]) for r in rows),
     }
-    page = _HTML.replace("__FISH__", fish_id).replace("__ROOT__", str(pipeline_root)).replace("__GENERATED__", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")).replace("__RADIUS__", str(radius))
+    small_refs = set(metrics.min_component_voxels_reference)
+    large_quantiles = set(metrics.large_mask_quantile)
+    if len(small_refs) != 1 or len(large_quantiles) != 1:
+        raise ValueError("HCR label-quality policy differs across saved masks")
+    page = (_HTML.replace("__FISH__", fish_id)
+            .replace("__ROOT__", str(pipeline_root))
+            .replace("__GENERATED__", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+            .replace("__RADIUS__", str(radius))
+            .replace("__SMALL_REF__", str(int(next(iter(small_refs)))))
+            .replace("__LARGE_PERCENTILE__", str(round(float(next(iter(large_quantiles))) * 100))))
     payload = json.dumps({"rows": rows, "summary": summary}, separators=(",", ":"), allow_nan=False).replace("</", "<\\/")
     page = page.replace("__DATA__", payload)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -315,6 +324,7 @@ footer{padding:9px 20px;color:#9fb3c2;font-size:11px;background:#172431;border-t
 </style></head><body>
 <header><h1>__FISH__ · HCR–anatomy match inspector</h1>
 <p>Every transformed HCR label, including small speckles, large low-confidence masks, and unmatched labels. Read-only evidence; no gate decisions are saved here.</p>
+<p>Small means below the physical-volume equivalent of __SMALL_REF__ native HCR voxels. Large means above the within-mask __LARGE_PERCENTILE__th percentile of non-small equivalent-volume diameters. Both are excluded from accepted identity; large masks remain visible for review.</p>
 <div id="summary" class="stats"></div></header>
 <main><aside><div class="controls">
 <input id="search" type="search" placeholder="Search marker, mask, HCR ID, anatomy ID, or ROI">
