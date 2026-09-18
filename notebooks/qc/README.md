@@ -18,7 +18,7 @@ modules when rerun in an existing kernel, avoiding stale package imports.
 | `03_roi_anatomy_geometry_qc.ipynb` | geometry-only ROI-to-anatomy assignments | freeze geometry or return it for review |
 | `04_molecular_geometry_qc.ipynb` | ex-vivo/HCR segmentation and distinct bridge-registration tracks | molecular geometry accepted or review required |
 | `05_molecular_identity_qc.ipynb` | molecular identity attached after frozen geometry | identities accepted, ambiguous, coexpressing, or unmatched |
-| `06_activity_and_export_qc.ipynb` | response/BPI annotation, canonical tables, QA reports, and figures | final scientific interpretation ready or blocked |
+| `06_activity_and_export_qc.ipynb` | response/BPI annotation plus read-only merged identity-functional response structure, marker traces/AUC, HCR fate, responsive-identity coverage, and anatomy map | final scientific interpretation ready or blocked |
 
 ## Safety contract
 

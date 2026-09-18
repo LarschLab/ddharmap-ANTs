@@ -113,6 +113,13 @@ scientific gate rather than one notebook per executable stage:
    fixed 12.5-s movement-onset windows, never computed by the notebook. The
    read-only Q7 panel verifies the pinned scorer policy and blocks historical
    7-s AUC caches.
+   Its Q8 section then cross-checks the canonical ROI master, selected HCR
+   pairs/status, hash-bound Q1 trace payload, accepted midline, and persisted
+   marker AUC tables. It shows all trace-available Suite2p-cell response structure, HCR-centric marker
+   traces and AUC, separate HCR-fate and ROI-centric coverage denominators, and
+   exact-combination anatomy maps without recomputing identity or response.
+   These views are review evidence only and do not imply biological acceptance
+   or canonical promotion.
 
 Reusable QC loading, provenance, filtering, and plotting logic is package
 owned. Notebook cells contain explicit knobs and package calls only. No QC notebook cell writes a review JSON, figure, table, or other artifact.

@@ -496,15 +496,24 @@ now reads these tables. A subsequent audit showed that its first generation used
 
 **2026-09-18 LRI review extension:** Notebook 06 now pairs the persisted ipsi/contra motion-AUC points into left and right stimulus AUC for each side-assigned ROI and mode, then displays `(left-right)/(left+right)` on the accepted anatomy midline and as mode-separated count histograms with a notebook-editable visual `|LRI| > 0.1` guide. Only rows passing the corresponding bout or continuous response test receive left/right preference colors; other scored ROIs remain context. Negative AUC and unstable-denominator rows are flagged, and this diagnostic does not change canonical response/BPI classes. Danin accepted current BPI preference classes provisionally; whether negative AUC relative to baseline should count as response and whether the 6-of-8 trial-sign check should affect classification remain for discussion with Johannes. Canonical promotion waits for laterality review.
 
-### Q8. Deferred until identity and functional response are merged
+### Q8. Identity-functional merged review — Notebook 06
 
 **Legacy source:** `[51]`, `[56]`, `[56h]`, `[57]`, `[57a]`, `[57b]`.
 
-After both Identity and Activity/BPI gates are accepted, add HCR-identified
-stimulus-aligned traces, the `[56h]` combined identity/response summary,
-full-session per-gene traces, responsive-identity coverage, and anatomy-label
-co-expression summaries. `[56h]` must remain deferred until the identity and
-functional response branches are explicitly merged.
+Notebook 06 now adds five read-only views after the independently persisted
+identity and activity branches: an all-trace-available Suite2p-cell response-similarity raster with
+identity/response/side annotation strips, HCR-centric responsive-marker traces,
+persisted marker AUC by accepted laterality, separate HCR-fate and ROI-centric
+responsive-identity coverage panels, and an accepted-midline anatomy map of
+exact identity combinations and response classes. The loader rejects mixed Q1
+trace generations and marker AUC whose midline hash does not match the accepted
+sidecar. Coexpression stays as an exact multi-marker ROI combination; it is not
+duplicated into the ROI-centric coverage denominator.
+
+This implementation provides the review surface but does not itself accept the
+biology or promote the run. Full-session per-gene traces and a selectivity
+summary remain deferred pending the Johannes discussion about negative AUCs and
+the diagnostic 6-of-8 expected-sign check.
 
 Targeted rejected-mask exports/plots from `[50f]` and `[50g]` remain escalation
 tools for a suspicious gene or failure category rather than mandatory views for
@@ -522,8 +531,8 @@ every fish.
    the direct stimulus views; add the global ipsilateral/contralateral AUC view
    only after accepted midline provenance.
 7. Q3 colour-only overlay adjustment.
-8. Q8 merged identity-response views after both gates are accepted; begin with
-   marker-stratified individual-stimulus responses before any gene-level ratio.
+8. Q8 merged identity-response views in Notebook 06; keep selectivity metrics
+   deferred until the unresolved response-sign policy is decided.
 
 Each slice requires focused tests, real L765_f04 execution on Linnaeus, and
 visual inspection of the resulting notebook/figure before it is marked done.
