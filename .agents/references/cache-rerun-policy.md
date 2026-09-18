@@ -32,6 +32,7 @@
 - Do not mix old cached outputs with newly regenerated authoritative tables.
 - Distrust cached outputs whenever upstream writer-stage semantics changed, even if filenames and schemas stayed stable.
 - Single-fish `[50l]` now auto-invalidates cached `[56i]` motion AUC tables when `functional_roi_activity_identity.csv`, `hcr_activity_status.csv`, or `midline_params_func_ref.json` is newer than `motion_auc_plot_points.csv` or `motion_auc_plot_counts.csv`.
+- Staged `make-figures` fails before rendering when its `make-motion-auc-tables` points or counts predate the current canonical ROI/HCR tables, scorer windows, or accepted anatomy midline. Rerun `make-motion-auc-tables` after those inputs change, then render figures.
 
 ## Smoke-tier policy (efficient failure localization)
 

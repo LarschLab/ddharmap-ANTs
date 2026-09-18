@@ -5903,7 +5903,26 @@ def run_single_fish_make_figures_stage(
                 expected="fixed 12.5 s movement-onset BPI-eligible windows",
                 observed=str(exc),
             ))
-    if not missing_required and window_check_pass and (force_recompute or not existing_outputs):
+    auc_inputs_current = True
+    if staged_auc_root.is_dir():
+        auc_tables = tuple(staged_auc_root / filename for filename in COMPOSITE_50L_RENDER_INPUT_FILES)
+        upstream = tuple(path for path in (
+            canonical_root / "functional_roi_activity_identity.csv",
+            canonical_root / "hcr_activity_status.csv",
+            scored_windows_path,
+            accepted_midline,
+        ) if path is not None and path.is_file())
+        stale_auc = tuple(path.name for path in auc_tables if path.is_file() and any(
+            source.stat().st_mtime_ns > path.stat().st_mtime_ns for source in upstream
+        ))
+        if stale_auc:
+            auc_inputs_current = False
+            checks.append(StageCheckRecord(
+                label="make-figures motion AUC freshness", status="fail",
+                detail="Regenerate motion AUC tables after changing canonical, scored-window, or midline inputs.",
+                expected="motion AUC tables newer than all upstream inputs", observed=",".join(stale_auc),
+            ))
+    if not missing_required and window_check_pass and auc_inputs_current and (force_recompute or not existing_outputs):
         output_by_name = {Path(spec.path).name: Path(spec.path) for spec in output_specs}
         for filename in LEGACY_COPIED_FIGURE_FILES:
             source_path = figure_sources[filename]

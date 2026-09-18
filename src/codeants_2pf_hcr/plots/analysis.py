@@ -1391,7 +1391,7 @@ def render_accepted_global_laterality_auc_qc(
             axis.clear(); axis.axis("off")
         fig.text(0.5, 0.55, "Global ipsilateral/contralateral AUC is blocked", ha="center", va="center", fontsize=13, fontweight="bold")
         fig.text(0.5, 0.43, reason, ha="center", va="center", fontsize=9, wrap=True)
-        fig.suptitle("Q7 laterality-dependent AUC — awaiting accepted anatomy-midline provenance", fontweight="bold")
+        fig.suptitle("Q7 laterality-dependent AUC — blocked", fontweight="bold")
         return {"status": "blocked", "reason": reason, "fig": fig, "panel_results": {}}
 
     master_path, points_path, counts_path = map(Path, (master_roi_csv, points_csv, counts_csv))
@@ -1461,10 +1461,11 @@ def render_accepted_global_laterality_auc_qc(
     if points.empty or counts.empty:
         return blocked("Accepted-sidecar AUC outputs contain no valid left/right ROI rows.")
     fig.clear()
-    grid = fig.add_gridspec(4, 2, height_ratios=(4, 4, 4, 1), hspace=0.08, wspace=0.06)
-    ipsi, contra = fig.add_subplot(grid[:3, 0]), fig.add_subplot(grid[:3, 1])
+    fig.set_size_inches(8.0, 6.0)
+    grid = fig.add_gridspec(2, 2, height_ratios=(4, 1.3), hspace=0.24, wspace=0.10)
+    ipsi, contra = fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])
     contra.sharey(ipsi)
-    ipsi_strip, contra_strip = fig.add_subplot(grid[3, 0], sharex=ipsi), fig.add_subplot(grid[3, 1], sharex=contra)
+    ipsi_strip, contra_strip = fig.add_subplot(grid[1, 0], sharex=ipsi), fig.add_subplot(grid[1, 1], sharex=contra)
     limits = _resolve_single_fish_50l_y_limits(points, 0.0, None)
     results = {
         "ipsi": render_single_fish_50l_global_auc_panel(ipsi, ipsi_strip, points, counts, "ipsi", "Ipsi", limits, show_ylabel=True, show_count_ylabel=True),
