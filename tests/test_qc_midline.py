@@ -18,6 +18,9 @@ from codeants_2pf_hcr.midline_review import (
 )
 from codeants_2pf_hcr.plots.qc_midline import (
     build_midline_laterality_qc_tables,
+    build_left_right_index_qc_table,
+    render_left_right_index_histogram,
+    render_left_right_index_plane_grid,
     render_midline_activity_plane_grid,
     render_midline_laterality_plane_grid,
 )
@@ -153,3 +156,42 @@ def test_midline_qc_retains_scored_rois_without_anatomy_centroids_as_unknown(tmp
     assert len(all_rois) == 2
     assert len(activity) == 2
     assert activity.set_index("func_label").loc[2, "midline_side"] == "unknown"
+
+
+def test_left_right_index_review_pairs_by_roi_side_and_flags_signed_auc(tmp_path: Path) -> None:
+    rois = pd.DataFrame([
+        {"plane_idx": 0, "func_label": 1, "centroid_x_anat": 7, "centroid_y_anat": 4, "midline_side": "left", "bout_response_pass": True, "cont_response_pass": False},
+        {"plane_idx": 0, "func_label": 2, "centroid_x_anat": 3, "centroid_y_anat": 4, "midline_side": "right", "bout_response_pass": True, "cont_response_pass": False},
+        {"plane_idx": 0, "func_label": 3, "centroid_x_anat": 8, "centroid_y_anat": 6, "midline_side": "left", "bout_response_pass": True, "cont_response_pass": False},
+        {"plane_idx": 0, "func_label": 4, "centroid_x_anat": 2, "centroid_y_anat": 6, "midline_side": "right", "bout_response_pass": True, "cont_response_pass": False},
+    ])
+    points = []
+    for label, ipsi, contra in ((1, 0.6, 0.2), (2, 0.2, 0.6), (3, -0.2, 0.2), (4, 0.3, -0.1)):
+        for laterality, auc in (("ipsi", ipsi), ("contra", contra)):
+            points.append({
+                "group": "All neurons", "plane_idx": 0, "func_label": label,
+                "stim_mode": "bout", "laterality": laterality, "auc_dff": auc,
+                "response_is_active": True, "accepted_midline_sidecar_sha256": "review-hash",
+            })
+    source = _csv(tmp_path / "points.csv", points)
+    context = {"sidecar_sha256": "review-hash", "review": {"lines_by_plane": {"0": {"x0": 5, "y0": 5, "theta_deg": -90}}}}
+    rows = build_left_right_index_qc_table(rois, source, context)
+    keyed = rows.set_index("func_label")
+    assert keyed.loc[1, "left_auc"] == pytest.approx(0.6)
+    assert keyed.loc[2, "left_auc"] == pytest.approx(0.6)
+    assert keyed.loc[1, "lri"] == pytest.approx(0.5)
+    assert keyed.loc[2, "lri"] == pytest.approx(0.5)
+    assert keyed.loc[3, "lri_qc_class"] == "unavailable"
+    assert keyed.loc[4, "lri_qc_class"] == "negative AUC review"
+    assert (keyed.loc[[1, 2], "lri_qc_class"] == "left-preferring").all()
+    wider_guide = build_left_right_index_qc_table(rois, source, context, threshold=0.6)
+    assert (wider_guide.set_index("func_label").loc[[1, 2], "lri_qc_class"] == "within threshold").all()
+    fig = render_left_right_index_plane_grid(rows, context, np.zeros((1, 10, 10)), {0: 0})
+    assert len(fig.axes) == 2
+    histogram = render_left_right_index_histogram(rows)
+    assert len(histogram.axes) == 2
+    assert all(ax.get_xlim()[0] > ax.get_xlim()[1] for ax in histogram.axes)
+    assert sum(bar.get_height() for bar in histogram.axes[0].patches if hasattr(bar, "get_height") and bar.get_height() > 0) == 2
+    assert sum(bar.get_height() for bar in histogram.axes[1].patches if hasattr(bar, "get_height") and bar.get_height() > 0) == 0
+    with pytest.raises(ValueError, match="accepted anatomy midline"):
+        build_left_right_index_qc_table(rois, source, {**context, "sidecar_sha256": "other"})

@@ -494,6 +494,8 @@ field, and mixed conditions. The rerun passed and wrote same-root point,
 count, and ROI-panel CSVs from the accepted anatomy-grid midline. Notebook 06
 now reads these tables. A subsequent audit showed that its first generation used 7-s BPI-eligible windows. On 2026-09-17 scoring, identity attachment, canonical export, motion-AUC, QA report, and figures were recomputed in place in the pinned working root; all 160 BPI-eligible windows now use the fixed 12.5-s movement-onset policy, and Notebook 06 cell 09 executes with status `ready`. The earlier separate continuation remains diagnostic provenance only. This is computational validation, not acceptance of biological BPI interpretation.
 
+**2026-09-18 LRI review extension:** Notebook 06 now pairs the persisted ipsi/contra motion-AUC points into left and right stimulus AUC for each side-assigned ROI and mode, then displays `(left-right)/(left+right)` on the accepted anatomy midline and as mode-separated count histograms with a notebook-editable visual `|LRI| > 0.1` guide. Only rows passing the corresponding bout or continuous response test receive left/right preference colors; other scored ROIs remain context. Negative AUC and unstable-denominator rows are flagged, and this diagnostic does not change canonical response/BPI classes. Danin accepted current BPI preference classes provisionally; whether negative AUC relative to baseline should count as response and whether the 6-of-8 trial-sign check should affect classification remain for discussion with Johannes. Canonical promotion waits for laterality review.
+
 ### Q8. Deferred until identity and functional response are merged
 
 **Legacy source:** `[51]`, `[56]`, `[56h]`, `[57]`, `[57a]`, `[57b]`.

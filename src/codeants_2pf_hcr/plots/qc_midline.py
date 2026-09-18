@@ -8,6 +8,8 @@ import re
 from typing import Mapping, Sequence
 
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 import numpy as np
 import pandas as pd
 import tifffile
@@ -664,4 +666,125 @@ def render_midline_activity_plane_grid(
     return fig
 
 
-__all__ = ["MidlineAnnotationSession", "build_automatic_anatomy_midline_qc", "render_automatic_anatomy_midline_qc", "render_anatomy_midline_proposal_grid", "build_automatic_native_functional_midline_qc", "render_automatic_native_functional_midline_qc", "load_legacy_midline_annotation_session", "load_motion_corrected_mean_midline_session", "load_native_functional_midline_annotation_session", "load_suite2p_meanimg_midline_session", "show_midline_annotation_gui", "load_accepted_anatomy_midline_context", "build_midline_laterality_qc_tables", "render_midline_laterality_plane_grid", "render_midline_activity_plane_grid"]
+
+def build_left_right_index_qc_table(
+    all_rois: pd.DataFrame, points_csv: str | Path, context: Mapping, *, threshold: float = 0.1,
+) -> pd.DataFrame:
+    """Pair persisted ipsi/contra AUCs into review-only left/right indices."""
+    if not 0 < threshold < 1:
+        raise ValueError("LRI threshold must lie between zero and one")
+    x_col, y_col = _anatomy_xy_columns(all_rois)
+    if not (set(_ROI_KEYS) | {"midline_side", "bout_response_pass", "cont_response_pass"}).issubset(all_rois):
+        raise ValueError("LRI review needs accepted-midline ROI sides and persisted mode response calls")
+    points = pd.read_csv(points_csv)
+    required = set(_ROI_KEYS) | {"group", "laterality", "stim_mode", "auc_dff", "response_is_active", "accepted_midline_sidecar_sha256"}
+    missing = sorted(required - set(points))
+    if missing:
+        raise ValueError(f"Motion-AUC point table lacks {missing}")
+    points = points.loc[points["group"].eq("All neurons")].copy()
+    if points.empty or set(points["accepted_midline_sidecar_sha256"].dropna().astype(str)) != {str(context["sidecar_sha256"])}:
+        raise ValueError("Motion-AUC points do not match the accepted anatomy midline")
+    points = points.loc[points["laterality"].isin({"ipsi", "contra"}) & points["stim_mode"].isin({"bout", "continuous"})].copy()
+    keys = list(_ROI_KEYS) + ["stim_mode"]
+    if points.duplicated(keys + ["laterality"]).any():
+        raise ValueError("Motion-AUC points contain duplicate ROI/mode/laterality keys")
+    if points.groupby(keys)["response_is_active"].nunique().gt(1).any():
+        raise ValueError("Motion-AUC response flags disagree between stimulus sides")
+    paired = points.pivot(index=keys, columns="laterality", values="auc_dff").reset_index()
+    response = points.loc[points["laterality"].eq("ipsi"), keys + ["response_is_active"]]
+    paired = paired.merge(response, on=keys, how="left", validate="one_to_one")
+    spatial = all_rois[list(_ROI_KEYS) + [x_col, y_col, "midline_side", "bout_response_pass", "cont_response_pass"]]
+    if spatial.duplicated(list(_ROI_KEYS)).any():
+        raise ValueError("ROI inventory contains duplicate keys")
+    paired = paired.merge(spatial, on=list(_ROI_KEYS), how="left", validate="many_to_one", indicator=True)
+    if paired["_merge"].ne("both").any() or paired["midline_side"].isna().any():
+        raise ValueError("Motion-AUC ROI keys are absent from the accepted-midline inventory")
+    paired = paired.drop(columns="_merge")
+    paired["left_auc"] = np.where(paired["midline_side"].eq("left"), paired["ipsi"], paired["contra"])
+    paired["right_auc"] = np.where(paired["midline_side"].eq("right"), paired["ipsi"], paired["contra"])
+    paired["auc_sum"] = paired["left_auc"] + paired["right_auc"]
+    valid_sum = np.isfinite(paired["auc_sum"]) & (paired["auc_sum"].abs() > 1e-12)
+    lri = np.full(len(paired), np.nan, dtype=float)
+    np.divide(paired["left_auc"] - paired["right_auc"], paired["auc_sum"], out=lri, where=valid_sum)
+    paired["lri"] = lri
+    response_column = np.where(paired["stim_mode"].eq("bout"), paired["bout_response_pass"], paired["cont_response_pass"])
+    mode_active = pd.Series(response_column, index=paired.index).astype(str).str.lower().isin({"true", "1"})
+    negative = (paired["left_auc"] < 0) | (paired["right_auc"] < 0)
+    complete = paired["midline_side"].isin({"left", "right"}) & paired[[x_col, y_col, "left_auc", "right_auc"]].notna().all(axis=1)
+    paired["lri_qc_class"] = np.select(
+        [~complete | ~valid_sum, negative, ~mode_active, paired["lri"] > threshold, paired["lri"] < -threshold],
+        ["unavailable", "negative AUC review", "not mode-responsive", "left-preferring", "right-preferring"],
+        default="within threshold",
+    )
+    return paired
+
+
+def render_left_right_index_plane_grid(
+    lri_rows: pd.DataFrame, context: Mapping, anatomy_zyx: np.ndarray, plane_z: Mapping[int, int], *, threshold: float = 0.1,
+) -> plt.Figure:
+    """Map the diagnostic LRI for response-positive ROIs on accepted anatomy."""
+    x_col, y_col = _anatomy_xy_columns(lri_rows)
+    planes = sorted(lri_rows["plane_idx"].astype(int).unique())
+    ncols = min(5, len(planes))
+    mode_rows = int(np.ceil(len(planes) / ncols))
+    fig, axes = plt.subplots(2 * mode_rows, ncols, figsize=(3.6 * ncols, 3.8 * 2 * mode_rows), squeeze=False)
+    fig.subplots_adjust(left=0.025, right=0.985, bottom=0.08, top=0.93, hspace=0.16, wspace=0.05)
+    styles = {
+        "left-preferring": ("#d1495b", "o", 24),
+        "right-preferring": ("#2878b5", "o", 24),
+        "within threshold": ("#f0c44f", "o", 17),
+        "not mode-responsive": ("#aaaaaa", ".", 5),
+        "negative AUC review": ("#9b59b6", "x", 26),
+        "unavailable": ("#222222", "x", 26),
+    }
+    lines = context["review"]["lines_by_plane"]
+    for mode_index, mode in enumerate(("bout", "continuous")):
+        for plane_index, plane in enumerate(planes):
+            ax = axes[mode_index * mode_rows + plane_index // ncols, plane_index % ncols]
+            image = np.asarray(anatomy_zyx[int(plane_z[plane])])
+            ax.imshow(norm01(image), cmap="gray")
+            sub = lri_rows.loc[lri_rows["plane_idx"].eq(plane) & lri_rows["stim_mode"].eq(mode)]
+            for label, (color, marker, size) in styles.items():
+                rows = sub.loc[sub["lri_qc_class"].eq(label)]
+                if not rows.empty:
+                    ax.scatter(rows[x_col], rows[y_col], c=color, marker=marker, s=size, alpha=0.82, linewidths=0.7)
+            _midline_line(ax, lines[str(plane)] if str(plane) in lines else lines[plane], image.shape)
+            counts = sub["lri_qc_class"].value_counts()
+            ax.set_title(f"{mode} · plane {plane} · n={len(sub)}\nL/R/neutral={counts.get('left-preferring', 0)}/{counts.get('right-preferring', 0)}/{counts.get('within threshold', 0)}", fontsize=8)
+            ax.set_xlim(-0.5, image.shape[1] - 0.5)
+            ax.set_ylim(image.shape[0] - 0.5, -0.5)
+            ax.axis("off")
+    for ax in axes.flat:
+        if not ax.has_data():
+            ax.axis("off")
+    handles = [Line2D([0], [0], marker=marker, color="none", markerfacecolor=color, markeredgecolor=color, markersize=7, label=label) for label, (color, marker, _) in styles.items()]
+    fig.legend(handles=handles, loc="lower center", ncol=3, fontsize=8)
+    fig.suptitle(f"Left and right stimulus preference across anatomy planes · LRI guide ±{threshold:g}", fontweight="bold")
+    return fig
+
+
+def render_left_right_index_histogram(lri_rows: pd.DataFrame, *, threshold: float = 0.1) -> plt.Figure:
+    """Show LRI distributions for the same response-positive rows colored on the map."""
+    if not 0 < threshold < 1:
+        raise ValueError("LRI threshold must lie between zero and one")
+    included = {"left-preferring", "right-preferring", "within threshold"}
+    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharex=True, layout="constrained")
+    bins = np.linspace(-1, 1, 41)
+    for ax, mode, color in zip(axes, ("bout", "continuous"), ("#2c7fb8", "#d95f0e")):
+        rows = lri_rows.loc[lri_rows["stim_mode"].eq(mode) & lri_rows["lri_qc_class"].isin(included)]
+        values = pd.to_numeric(rows["lri"], errors="coerce").dropna().to_numpy()
+        ax.axvspan(-threshold, threshold, color="#f0c44f", alpha=0.25)
+        ax.hist(values, bins=bins, color=color, edgecolor="white", linewidth=0.4)
+        ax.axvline(0, color="#555555", lw=0.8)
+        for boundary in (-threshold, threshold):
+            ax.axvline(boundary, color="#a87800", lw=1, ls="--")
+        ax.set_xlim(1.025, -1.025)
+        ax.set_title(f"{mode.capitalize()} responses · n={len(values)}", fontsize=11)
+        ax.set_xlabel("Left–right index (L−R)/(L+R)")
+        ax.set_ylabel("ROI count")
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    fig.suptitle("Left–right preference distributions among mode-responsive ROIs", fontweight="bold")
+    return fig
+
+
+__all__ = ["MidlineAnnotationSession", "build_automatic_anatomy_midline_qc", "render_automatic_anatomy_midline_qc", "render_anatomy_midline_proposal_grid", "build_automatic_native_functional_midline_qc", "render_automatic_native_functional_midline_qc", "load_legacy_midline_annotation_session", "load_motion_corrected_mean_midline_session", "load_native_functional_midline_annotation_session", "load_suite2p_meanimg_midline_session", "show_midline_annotation_gui", "load_accepted_anatomy_midline_context", "build_midline_laterality_qc_tables", "render_midline_laterality_plane_grid", "render_midline_activity_plane_grid", "build_left_right_index_qc_table", "render_left_right_index_plane_grid", "render_left_right_index_histogram"]
