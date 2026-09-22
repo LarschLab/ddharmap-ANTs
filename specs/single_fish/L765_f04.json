@@ -1,0 +1,227 @@
+{
+  "schema_version": 1,
+  "fish_id": "L765_f04",
+  "paths": {
+    "repo_root": "/Users/ddharmap/gitRepo/codeANTs",
+    "data_root": "/Volumes/dataDrive/dataProcessing/2p_processing",
+    "pipeline_root": "/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260915T093051Z_WORKING_PIPELINE_AND_QC/L765_f04",
+    "state_root": "{pipeline_root}/single-fish-run"
+  },
+  "git": {
+    "commit": "dfbc3b83b3d6fa81236ff999f25fd86e427ef3de",
+    "policy": "scientific-surface",
+    "authoritative_paths": [
+      "src/codeants_2pf_hcr/activity.py",
+      "src/codeants_2pf_hcr/matching.py",
+      "src/codeants_2pf_hcr/midline.py",
+      "src/codeants_2pf_hcr/pipeline.py",
+      "src/codeants_2pf_hcr/qc_notebooks.py",
+      "src/codeants_2pf_hcr/spatial.py",
+      "src/codeants_2pf_hcr/stimulus.py",
+      "src/codeants_2pf_hcr/suite2p.py",
+      "src/codeants_2pf_hcr/traces.py",
+      "src/codeants_2pf_hcr/plots",
+      "tools/notebook_run.py",
+      "tools/single_fish_pipeline.py",
+      ".agents/contracts/scientific-artifacts.json"
+    ]
+  },
+  "interpreter": {
+    "executable": "/Users/ddharmap/miniforge3/envs/cellmatching/bin/python",
+    "python_version": "3.10.20",
+    "packages": {
+      "antspyx": "0.6.3",
+      "matplotlib": "3.10.9",
+      "nbclient": "0.10.4",
+      "numpy": "2.2.6",
+      "pandas": "2.3.3",
+      "scikit-image": "0.25.2",
+      "scipy": "1.15.2"
+    }
+  },
+  "environment": {
+    "MPLBACKEND": "Agg",
+    "PYTHONHASHSEED": "0"
+  },
+  "accepted_choices": {
+    "functional_polarity": "south",
+    "functional_polarity_source": "2026-05-13-1027_fL765_f04_metadata.csv:fish_orientation",
+    "functional_input_xy_frame": "two_photon_acquisition_xy",
+    "functional_reference_xy_frame": "codeants_2p_canonical_xy_v1",
+    "exclude_first_functional_block": true,
+    "anatomy_label_z_mode": "reverse",
+    "hcr_source": "03_analysis/confocal/aligned accepted label and table bundle",
+    "hcr_warp_route": "exvivo_bridge",
+    "midline_gate": "accepted",
+    "midline_logbook_decision": "/Users/ddharmap/gitRepo/wikis/wikiLogbook/daily/2026/2026-09-17.md"
+  },
+  "scientific_parameters": {
+    "ants_deterministic_seed": 0,
+    "response_rng_seed": 50,
+    "response_null_bootstrap_n": 2000,
+    "response_null_q_total_two_sided": 0.99,
+    "response_window_sec": 12.5,
+    "response_null_min_windows": 20,
+    "response_null_step_sec": 0.5,
+    "minimum_trials_per_class": 3,
+    "stimulus_onset_delay_sec": 10.0,
+    "measurement_start_block": 1,
+    "measurement_start_event": "start",
+    "remove_interblock_gaps": true,
+    "early_23c_familywise_scope": "all presented stimuli and both tails",
+    "early_23c_expected_stimulus_count": 10,
+    "early_23c_applied_lower_quantile": 0.0005,
+    "early_23c_applied_upper_quantile": 0.9995
+  },
+  "provenance_pins": [
+    {
+      "name": "accepted anatomy-midline proposal CSV",
+      "path": "{pipeline_root}/make-anatomy-midline-proposal/qa/anatomy_midline_proposals.csv",
+      "sha256": "b7244748bcffdef387823c1eb638318d60965967250837ffb177922d1577df3b"
+    },
+    {
+      "name": "accepted anatomy-midline proposal PNG",
+      "path": "{pipeline_root}/make-anatomy-midline-proposal/qa/anatomy_midline_proposals.png",
+      "sha256": "c31ff26f3b5a832271a3e576a1638add43692bc4ef5b375465b40443786fd979"
+    },
+    {
+      "name": "accepted in-vivo anatomy stack",
+      "path": "{fish_dir}/02_reg/00_preprocessing/2p_anatomy/L765_f04_anatomy_2P_GCaMP.nrrd",
+      "sha256": "44021c1ed524e03a03e5bb9f3ab5d2916364bcb5f01b045987626ece0bae02f0"
+    }
+  ],
+  "stages": [
+    {
+      "name": "010-prepare-in-vivo-anatomy",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "prepare-in-vivo-anatomy-stack", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{fish_dir}/02_reg/00_preprocessing/2p_anatomy/L765_f04_anatomy_2P_GCaMP.nrrd"],
+      "outputs": ["{fish_dir}/02_reg/00_preprocessing/2p_anatomy/L765_f04_anatomy_2P_GCaMP.nrrd", "{fish_dir}/03_analysis/functional/pipeline_manifests/prepare-in-vivo-anatomy-stack_manifest.json"]
+    },
+    {
+      "name": "020-prepare-functional-references-and-23c",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "prepare-functional-reference-stacks", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--run-23c", "--force-recompute"],
+      "inputs": ["{fish_dir}/02_reg/00_preprocessing/2p_functional/01_individualPlanes/L765_f04_preprocessing_metadata.json", "{fish_dir}/02_reg/00_preprocessing/2p_functional/02_motionCorrected", "{fish_dir}/03_analysis/functional/suite2P"],
+      "outputs": ["{pipeline_root}/prepare-functional-reference-stacks", "{fish_dir}/03_analysis/functional/pipeline_manifests/prepare-functional-reference-stacks_manifest.json"]
+    },
+    {
+      "name": "030-register-functional-to-anatomy",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "register-functional-to-anatomy", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--ants-deterministic-seed", "0", "--no-ants-fixed-mask-required", "--force-recompute"],
+      "inputs": ["{pipeline_root}/prepare-functional-reference-stacks/functional/raw", "{fish_dir}/02_reg/00_preprocessing/2p_anatomy/L765_f04_anatomy_2P_GCaMP.nrrd"],
+      "outputs": ["{pipeline_root}/register-functional-to-anatomy", "{fish_dir}/03_analysis/functional/pipeline_manifests/register-functional-to-anatomy_manifest.json"]
+    },
+    {
+      "name": "040-transform-functional-rois",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "transform-functional-rois-to-anatomy", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/register-functional-to-anatomy/plane_refs_summary.json", "{fish_dir}/03_analysis/functional/suite2P"],
+      "outputs": ["{pipeline_root}/transform-functional-rois-to-anatomy", "{fish_dir}/03_analysis/functional/pipeline_manifests/transform-functional-rois-to-anatomy_manifest.json"]
+    },
+    {
+      "name": "050-functional-registration-qc",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "make-functional-registration-qc", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--anatomy-label-z-mode", "reverse", "--force-recompute"],
+      "inputs": ["{pipeline_root}/register-functional-to-anatomy/plane_refs_summary.json", "{pipeline_root}/transform-functional-rois-to-anatomy", "{fish_dir}/03_analysis/structural/cp_masks/L765_f04_anatomy_00001_uint8_8bit_cp_masks.tif"],
+      "outputs": ["{pipeline_root}/make-functional-registration-qc", "{fish_dir}/03_analysis/functional/pipeline_manifests/make-functional-registration-qc_manifest.json"]
+    },
+    {
+      "name": "060-stage-hcr-alignment",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "register-hcr-to-anatomy", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--source-root", "{fish_dir}/03_analysis/confocal/aligned", "--hcr-warp-route", "exvivo_bridge", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{fish_dir}/03_analysis/confocal/aligned", "{fish_dir}/03_analysis/structural/cp_masks/L765_f04_anatomy_00001_uint8_8bit_cp_masks.tif"],
+      "outputs": ["{pipeline_root}/register-hcr-to-anatomy", "{fish_dir}/03_analysis/functional/pipeline_manifests/register-hcr-to-anatomy_manifest.json"]
+    },
+    {
+      "name": "070-match-roi-to-anatomy",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "match-roi-to-anatomy", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--anatomy-label-z-mode", "reverse", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/register-functional-to-anatomy/plane_refs_summary.json", "{pipeline_root}/transform-functional-rois-to-anatomy", "{fish_dir}/03_analysis/functional/suite2P", "{fish_dir}/03_analysis/structural/cp_masks/L765_f04_anatomy_00001_uint8_8bit_cp_masks.tif"],
+      "outputs": ["{pipeline_root}/match-roi-to-anatomy", "{fish_dir}/03_analysis/functional/pipeline_manifests/match-roi-to-anatomy_manifest.json"]
+    },
+    {
+      "name": "080-score-activity-bpi",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "score-activity-bpi", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--geometry-input-path", "{pipeline_root}/match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv", "{fish_dir}/03_analysis/functional/suite2P", "{fish_dir}/01_raw/2p/metadata"],
+      "outputs": ["{pipeline_root}/score-activity-bpi", "{fish_dir}/03_analysis/functional/pipeline_manifests/score-activity-bpi_manifest.json"]
+    },
+    {
+      "name": "090-attach-hcr-identity",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "assign-hcr-identity", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--activity-input-path", "{pipeline_root}/score-activity-bpi/registration/functional_roi_activity_identity.csv", "--roi-anatomy-root", "{pipeline_root}/match-roi-to-anatomy/registration", "--hcr-anatomy-root", "{pipeline_root}/register-hcr-to-anatomy/confocal/aligned", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/score-activity-bpi/registration/functional_roi_activity_identity.csv", "{pipeline_root}/match-roi-to-anatomy/registration", "{pipeline_root}/register-hcr-to-anatomy/confocal/aligned"],
+      "outputs": ["{pipeline_root}/assign-hcr-identity", "{fish_dir}/03_analysis/functional/pipeline_manifests/assign-hcr-identity_manifest.json"]
+    },
+    {
+      "name": "100-export-canonical-tables",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "export-canonical-tables", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/score-activity-bpi/registration", "{pipeline_root}/assign-hcr-identity/registration"],
+      "outputs": ["{pipeline_root}/export-canonical-tables", "{fish_dir}/03_analysis/functional/pipeline_manifests/export-canonical-tables_manifest.json"]
+    },
+    {
+      "name": "110-generate-qa",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "make-qa-report", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/export-canonical-tables/registration", "{pipeline_root}/make-functional-registration-qc", "{pipeline_root}/match-roi-to-anatomy/registration"],
+      "outputs": ["{pipeline_root}/make-qa-report", "{fish_dir}/03_analysis/functional/pipeline_manifests/make-qa-report_manifest.json"]
+    },
+    {
+      "name": "120-materialize-accepted-midline",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "materialize-anatomy-midline", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--reviewer", "user-confirmed; agent-verified anatomy projection", "--logbook-decision-path", "/Users/ddharmap/gitRepo/wikis/wikiLogbook/daily/2026/2026-09-17.md", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/make-anatomy-midline-proposal/qa/anatomy_midline_proposals.csv", "{pipeline_root}/make-anatomy-midline-proposal/qa/anatomy_midline_proposals.png", "/Users/ddharmap/gitRepo/wikis/wikiLogbook/daily/2026/2026-09-17.md"],
+      "outputs": ["{pipeline_root}/materialize-anatomy-midline", "{fish_dir}/03_analysis/functional/pipeline_manifests/materialize-anatomy-midline_manifest.json"]
+    },
+    {
+      "name": "130-generate-motion-auc-tables",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "make-motion-auc-tables", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--accepted-midline-path", "{pipeline_root}/materialize-anatomy-midline/anatomy_midline.json", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/materialize-anatomy-midline/anatomy_midline.json", "{pipeline_root}/score-activity-bpi/registration/scored_stimulus_windows.csv", "{pipeline_root}/export-canonical-tables/registration"],
+      "outputs": ["{pipeline_root}/make-motion-auc-tables", "{fish_dir}/03_analysis/functional/pipeline_manifests/make-motion-auc-tables_manifest.json"]
+    },
+    {
+      "name": "140-generate-final-figures",
+      "command": ["{python}", "tools/single_fish_pipeline.py", "make-figures", "--fish-id", "{fish_id}", "--local-root", "{data_root}", "--pipeline-root", "{pipeline_root}", "--accepted-midline-path", "{pipeline_root}/materialize-anatomy-midline/anatomy_midline.json", "--strict", "--write-manifest", "--force-recompute"],
+      "inputs": ["{pipeline_root}/export-canonical-tables/registration", "{pipeline_root}/make-motion-auc-tables/registration", "{pipeline_root}/materialize-anatomy-midline/anatomy_midline.json"],
+      "outputs": ["{pipeline_root}/make-figures", "{fish_dir}/03_analysis/functional/pipeline_manifests/make-figures_manifest.json"]
+    },
+    {
+      "name": "150-contract-checks",
+      "command": ["{python}", "-m", "pytest", "-q", "tests/test_scientific_artifact_contracts.py", "tests/test_qc_notebook_contract.py"],
+      "inputs": ["{pipeline_root}/export-canonical-tables/registration", "{pipeline_root}/make-figures/04_plots", "{fish_dir}/03_analysis/functional/pipeline_manifests"],
+      "outputs": []
+    },
+    {
+      "name": "160-qc-notebook-00",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/00_single_fish_pipeline_overview.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/export-canonical-tables", "{pipeline_root}/make-qa-report"],
+      "outputs": []
+    },
+    {
+      "name": "161-qc-notebook-01",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/01_functional_reference_and_drift_qc.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/prepare-functional-reference-stacks", "{pipeline_root}/make-functional-registration-qc"],
+      "outputs": []
+    },
+    {
+      "name": "162-qc-notebook-02",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/02_functional_registration_qc.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/register-functional-to-anatomy", "{pipeline_root}/make-functional-registration-qc"],
+      "outputs": []
+    },
+    {
+      "name": "163-qc-notebook-03",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/03_roi_anatomy_geometry_qc.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/match-roi-to-anatomy"],
+      "outputs": []
+    },
+    {
+      "name": "164-qc-notebook-04",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/04_molecular_geometry_qc.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/register-hcr-to-anatomy", "{pipeline_root}/match-roi-to-anatomy"],
+      "outputs": []
+    },
+    {
+      "name": "165-qc-notebook-05",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/05_molecular_identity_qc.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/assign-hcr-identity", "{pipeline_root}/export-canonical-tables"],
+      "outputs": []
+    },
+    {
+      "name": "166-qc-notebook-06",
+      "command": ["{python}", "tools/notebook_run.py", "notebooks/qc/06_activity_and_export_qc.ipynb", "--kernel", "cellmatching"],
+      "inputs": ["{pipeline_root}/score-activity-bpi", "{pipeline_root}/export-canonical-tables", "{pipeline_root}/make-motion-auc-tables", "{pipeline_root}/make-figures"],
+      "outputs": []
+    }
+  ]
+}

@@ -465,3 +465,16 @@ Generated manually for the current extracted package surface.
 - `find_top_level_defs`: Find code cells that still define top-level `def`/`class` blocks.
 - `find_figure_contract_violations`: Find late figure cells that are not package-renderer driven.
 - `check_notebook_contract`: Summarize static notebook and figure contract violations for smoke/tests.
+
+## `codeants_2pf_hcr.single_fish_run`
+
+- `RunSpecError`: Invalid declarative single-fish run specification error.
+- `StageSpec`: Immutable command/input/output/validator declaration for one ordered stage.
+- `RunSpec`: Validated fish, path, Git, interpreter, provenance, environment, and DAG declaration.
+- `load_run_spec`: Load and strictly validate a versioned JSON run specification.
+- `describe_path`: Compute a deterministic SHA-256 content record for a file, symlink, or directory tree.
+- `validate_spec_environment`: Verify the clean scientific-code pin, interpreter/package versions, required roots, and accepted provenance hashes.
+- `build_run_plan`: Produce the ordered run or resume plan without executing a stage.
+- `execute_run`: Execute the declared DAG, saving full logs and atomic per-stage provenance/hash state; resume skips only hash-current stages.
+- `build_run_status`: Report saved stage state and currentness without executing commands.
+- `verify_run`: Verify the pinned environment/provenance and every saved input/output hash.
