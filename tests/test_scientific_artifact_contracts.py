@@ -49,10 +49,13 @@ def test_contract_owners_and_validation_tests_resolve() -> None:
         module_path = REPO_ROOT / "src" / Path(*contract["renderer_owner"].split(".")).with_suffix(".py")
         assert module_path.is_file(), (contract["artifact_id"], module_path)
         for nodeid in contract["validation_tests"]:
-            relative_path, test_name = nodeid.split("::", 1)
+            relative_path, *test_parts = nodeid.split("::")
+            test_name = test_parts[-1]
             test_path = REPO_ROOT / relative_path
             assert test_path.is_file(), nodeid
             source = test_path.read_text()
+            for class_name in test_parts[:-1]:
+                assert re.search(rf"class {re.escape(class_name)}\b", source), nodeid
             assert re.search(rf"def {re.escape(test_name)}\s*\(", source), nodeid
 
 

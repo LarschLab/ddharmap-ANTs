@@ -12,6 +12,7 @@ from codeants_2pf_hcr.activity import (
     SingleFishBpiDiagnosticsConfig,
     _build_activity_stimulus_context,
     _compute_bootstrap_null_quantiles,
+    build_presented_stimulus_response_tables,
     build_response_bpi_tables,
     build_scored_stimulus_windows_table,
     build_suite2p_response_seed_table,
@@ -33,6 +34,111 @@ class ActivityTests(unittest.TestCase):
         np.testing.assert_allclose(called_quantiles, [0.99, 0.995, 0.005])
         self.assertTrue(np.all(result["bout_upper"] >= result["bout"]))
         self.assertTrue(np.all(result["bout_lower"] <= result["bout"]))
+
+    def test_presented_stimulus_screen_controls_both_tails_across_the_family(self) -> None:
+        dff = np.zeros((4, 30), dtype=np.float32)
+        dff[0, 20:22] = 2.0
+        dff[1, 24:26] = -2.0
+        dff[3, :] = np.nan
+        events = [
+            {
+                "stim_type": "A", "session_label": "r1", "duration_frames": 2,
+                "idx0": 20, "idx1": 22, "baseline_idx0": 18, "baseline_idx1": 20,
+            },
+            {
+                "stim_type": "B", "session_label": "r1", "duration_frames": 2,
+                "idx0": 24, "idx1": 26, "baseline_idx0": 22, "baseline_idx1": 24,
+            },
+        ]
+        response_result = {
+            "presented_stim_events_by_plane": {0: events},
+            "s2p_map": {0: {"dff": dff}},
+            "fps_by_plane": {0: 1.0},
+            "prestim_trial_windows_by_plane": {0: []},
+        }
+        roi_keys = pd.DataFrame({"plane_idx": [0, 0, 0, 0], "func_label": [1, 2, 3, 4]})
+        cfg = ActivityConfig(
+            min_trials_per_class=1,
+            response_min_auc=0.5,
+            response_null_q=0.99,
+            response_null_bootstrap_n=10,
+            response_null_min_windows=1,
+        )
+
+        with (
+            patch(
+                "codeants_2pf_hcr.activity.build_null_window_start_map",
+                return_value={2: np.asarray([0, 2, 4], dtype=int)},
+            ),
+            patch("codeants_2pf_hcr.activity.np.quantile", wraps=np.quantile) as quantile,
+        ):
+            per_stim, any_response = build_presented_stimulus_response_tables(
+                response_result, roi_keys, fish_id="L758_f02", config=cfg,
+            )
+
+        called_quantiles = [float(call.args[1]) for call in quantile.call_args_list]
+        np.testing.assert_allclose(called_quantiles, [0.9975, 0.0025, 0.9975, 0.0025])
+        np.testing.assert_allclose(per_stim["null_upper_quantile_familywise"], 0.9975)
+        np.testing.assert_allclose(per_stim["null_lower_quantile_familywise"], 0.0025)
+        self.assertTrue((per_stim["null_auc_upper_threshold"].dropna() == 0.0).all())
+        self.assertTrue((per_stim["null_auc_lower_threshold"].dropna() == 0.0).all())
+        pd.testing.assert_series_equal(per_stim["null_auc_threshold"], per_stim["null_auc_upper_threshold"], check_names=False)
+        pd.testing.assert_series_equal(per_stim["null_quantile_familywise"], per_stim["null_upper_quantile_familywise"], check_names=False)
+        calls = per_stim.set_index(["func_label", "stim_type"])
+        self.assertTrue(calls.loc[(1, "A"), "positive_response_pass"])
+        self.assertEqual(calls.loc[(1, "A"), "response_valence"], "activated")
+        self.assertTrue(calls.loc[(2, "B"), "negative_response_pass"])
+        self.assertEqual(calls.loc[(2, "B"), "response_valence"], "suppressed")
+        any_calls = any_response.set_index("func_label")
+        self.assertTrue(any_calls.loc[1, "any_presented_response_is_active"])
+        self.assertTrue(any_calls.loc[2, "any_presented_response_has_suppression"])
+        self.assertEqual(any_calls.loc[3, "any_presented_response_state"], "nonresponsive")
+
+        self.assertEqual(any_calls.loc[4, "any_presented_response_state"], "unavailable")
+
+    def test_presented_stimulus_screen_rejects_old_upper_boundary(self) -> None:
+        dff = np.zeros((1, 20), dtype=np.float32)
+        dff[0, 10:12] = 0.525
+        event = {
+            "stim_type": "A", "session_label": "r1", "duration_frames": 2,
+            "idx0": 10, "idx1": 12, "baseline_idx0": 8, "baseline_idx1": 10,
+        }
+        response_result = {
+            "presented_stim_events_by_plane": {0: [event]},
+            "s2p_map": {0: {"dff": dff}},
+            "fps_by_plane": {0: 1.0},
+            "prestim_trial_windows_by_plane": {0: []},
+        }
+        seen_quantiles: list[float] = []
+
+        def fake_quantile(values, q, axis):
+            seen_quantiles.append(float(q))
+            threshold = 1.1 if float(q) > 0.5 else -1.1
+            return np.full(values.shape[0], threshold, dtype=np.float32)
+
+        with (
+            patch(
+                "codeants_2pf_hcr.activity.build_null_window_start_map",
+                return_value={2: np.asarray([0, 2, 4], dtype=int)},
+            ),
+            patch("codeants_2pf_hcr.activity.np.quantile", side_effect=fake_quantile),
+        ):
+            per_stim, any_response = build_presented_stimulus_response_tables(
+                response_result,
+                pd.DataFrame({"plane_idx": [0], "func_label": [1]}),
+                fish_id="L758_f02",
+                config=ActivityConfig(
+                    min_trials_per_class=1, response_min_auc=0.0,
+                    response_null_q=0.99, response_null_bootstrap_n=10,
+                    response_null_min_windows=1,
+                ),
+            )
+
+        np.testing.assert_allclose(seen_quantiles, [0.995, 0.005])
+        self.assertAlmostEqual(float(per_stim.loc[0, "mean_auc_dff"]), 1.05, places=6)
+        self.assertGreater(float(per_stim.loc[0, "mean_auc_dff"]), 1.0)
+        self.assertFalse(bool(per_stim.loc[0, "response_pass"]))
+        self.assertEqual(any_response.loc[0, "any_presented_response_state"], "nonresponsive")
 
     def test_scored_window_provenance_retains_plane_keys_for_shared_sessions(self) -> None:
         events = {0: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}], 1: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}]}

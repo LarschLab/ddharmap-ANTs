@@ -1270,8 +1270,9 @@ def build_presented_stimulus_response_tables(
     """Screen every presented condition without changing balanced BPI calls.
 
     Per-condition AUCs use the same delayed motion windows and prestimulus
-    null pool as BPI. A Bonferroni-adjusted null quantile controls the ten-way
-    any-stimulus screen; no condition is added to the BPI pools.
+    null pool as BPI. Bonferroni-adjusted lower and upper null quantiles
+    control one family spanning every presented stimulus and both response
+    tails; no condition is added to the BPI pools.
     """
     cfg = config or ActivityConfig()
     keys = roi_keys[["plane_idx", "func_label"]].drop_duplicates().copy()
@@ -1279,7 +1280,9 @@ def build_presented_stimulus_response_tables(
     types = sorted({str(event["stim_type"]) for events in events_by_plane.values() for event in events})
     if not types:
         raise RuntimeError("no presented stimulus events available for response screening")
-    null_quantile = 1.0 - (1.0 - float(cfg.response_null_q)) / len(types)
+    familywise_tail_alpha = (1.0 - float(cfg.response_null_q)) / (2.0 * len(types))
+    null_upper_quantile = 1.0 - familywise_tail_alpha
+    null_lower_quantile = familywise_tail_alpha
     s2p_map = response_result["s2p_map"]
     fps_by_plane = response_result["fps_by_plane"]
     rows: list[dict[str, Any]] = []
@@ -1320,7 +1323,8 @@ def build_presented_stimulus_response_tables(
                         auc = float(np.nansum(segment - np.nanmean(baseline)) / fps)
                         if np.isfinite(auc):
                             observed[pos].append(auc)
-            null_threshold = np.full(len(roi_indices), np.nan, dtype=np.float32)
+            null_upper = np.full(len(roi_indices), np.nan, dtype=np.float32)
+            null_lower = np.full(len(roi_indices), np.nan, dtype=np.float32)
             if type_events and all(len(null_starts.get(int(event["duration_frames"]), [])) >= 2 for event in type_events):
                 rng = np.random.default_rng(int(cfg.response_rng_seed) + plane_idx * 100 + type_idx)
                 boot = np.zeros((len(roi_indices), int(cfg.response_null_bootstrap_n)), dtype=np.float32)
@@ -1334,12 +1338,24 @@ def build_presented_stimulus_response_tables(
                     boot += ((csum[roi_indices[:, None], response_start + duration] - csum[roi_indices[:, None], response_start])
                              - (csum[roi_indices[:, None], baseline_start + duration] - csum[roi_indices[:, None], baseline_start])) / fps
                 boot /= float(len(type_events))
-                null_threshold = np.quantile(boot, null_quantile, axis=1).astype(np.float32)
+                null_upper = np.quantile(boot, null_upper_quantile, axis=1).astype(np.float32)
+                null_lower = np.quantile(boot, null_lower_quantile, axis=1).astype(np.float32)
             for pos, roi_idx in enumerate(roi_indices):
                 n_valid = len(observed[pos])
                 mean_auc = float(np.mean(observed[pos])) if n_valid else np.nan
-                threshold = float(null_threshold[pos])
-                available = n_valid >= int(cfg.min_trials_per_class) and np.isfinite(threshold)
+                upper_threshold = float(null_upper[pos])
+                lower_threshold = float(null_lower[pos])
+                available = (
+                    n_valid >= int(cfg.min_trials_per_class)
+                    and np.isfinite(upper_threshold)
+                    and np.isfinite(lower_threshold)
+                )
+                positive_pass = bool(
+                    available and mean_auc >= max(float(cfg.response_min_auc), upper_threshold)
+                )
+                negative_pass = bool(
+                    available and mean_auc <= min(-float(cfg.response_min_auc), lower_threshold)
+                )
                 rows.append({
                     "fish_id": str(fish_id),
                     "plane_idx": plane_idx,
@@ -1348,11 +1364,22 @@ def build_presented_stimulus_response_tables(
                     "stim_type": stim_type,
                     "n_valid_trials": n_valid,
                     "mean_auc_dff": mean_auc,
-                    "null_auc_threshold": threshold,
+                    "null_auc_threshold": upper_threshold,
+                    "null_auc_upper_threshold": upper_threshold,
+                    "null_auc_lower_threshold": lower_threshold,
                     "response_auc_floor": float(cfg.response_min_auc),
-                    "null_quantile_familywise": null_quantile,
+                    "response_null_quantile": float(cfg.response_null_q),
+                    "null_quantile_familywise": null_upper_quantile,
+                    "null_upper_quantile_familywise": null_upper_quantile,
+                    "null_lower_quantile_familywise": null_lower_quantile,
                     "response_available": bool(available),
-                    "response_pass": bool(available and mean_auc >= max(float(cfg.response_min_auc), threshold)),
+                    "positive_response_pass": positive_pass,
+                    "negative_response_pass": negative_pass,
+                    "response_pass": bool(positive_pass or negative_pass),
+                    "response_valence": (
+                        "activated" if positive_pass else "suppressed" if negative_pass
+                        else "not-significant" if available else "unavailable"
+                    ),
                 })
 
     per_stim = pd.DataFrame(rows)
@@ -1361,8 +1388,11 @@ def build_presented_stimulus_response_tables(
         .agg(any_presented_response_is_active=("response_pass", "any"),
              all_presented_responses_available=("response_available", "all"),
              n_presented_stimuli_tested=("response_available", "sum"),
-             n_presented_stimuli_passed=("response_pass", "sum"))
+             n_presented_stimuli_passed=("response_pass", "sum"),
+             n_presented_stimuli_activated=("positive_response_pass", "sum"),
+             n_presented_stimuli_suppressed=("negative_response_pass", "sum"))
     )
+    any_response["any_presented_response_has_suppression"] = any_response["n_presented_stimuli_suppressed"] > 0
     any_response["any_presented_response_state"] = np.where(
         any_response["any_presented_response_is_active"], "responsive",
         np.where(any_response["all_presented_responses_available"], "nonresponsive", "unavailable"),

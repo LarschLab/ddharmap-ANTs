@@ -364,7 +364,7 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
 
     if bool(cfg.skip_build_if_cached) and not bool(cfg.force_build):
         loaded = load_cohort_suite2p_23c_outputs_from_disk(outdir)
-        if {"trace_mean_df", "tvec", "heatmap_payloads"}.issubset(loaded) and loaded.get("trace_cohort_policy") == "any_presented_stimulus_v1":
+        if {"trace_mean_df", "tvec", "heatmap_payloads"}.issubset(loaded) and loaded.get("trace_cohort_policy") == "any_presented_stimulus_two_sided_v2":
             bindings = dict(env)
             bindings.update(loaded)
             bindings["cohort_suite2p_23c_cache_paths"] = paths
@@ -511,7 +511,7 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
             {
                 "trace_mean_df": trace_mean_df,
                 "trace_panel_df": trace_panel_df,
-                "trace_cohort_policy": "any_presented_stimulus_v1",
+                "trace_cohort_policy": "any_presented_stimulus_two_sided_v2",
                 "tvec": tvec_ref,
                 "stim_order": stim_order,
                 "duration_by_stim": duration_summary,
@@ -529,7 +529,7 @@ def build_cohort_suite2p_23c_stage(config: CohortSuite2p23cConfig | None = None)
             "response_counts_df": response_counts_df,
             "trace_mean_df": trace_mean_df,
             "trace_panel_df": trace_panel_df,
-            "trace_cohort_policy": "any_presented_stimulus_v1",
+            "trace_cohort_policy": "any_presented_stimulus_two_sided_v2",
             "tvec": tvec_ref,
             "stim_order": stim_order,
             "duration_by_stim": duration_summary,

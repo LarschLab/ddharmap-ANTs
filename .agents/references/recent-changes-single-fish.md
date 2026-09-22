@@ -4235,3 +4235,36 @@
   - the current `[23c]` writer still applies only an upper-tail response gate.
     Its scorer, schemas, tests, and downstream diagnostic artifacts require a
     separate implementation and validation pass before policy parity is met.
+
+### 2026-09-22 - implement two-sided family-wise `[23c]` response screen
+
+- Slice goal:
+  - bring the early any-presented-stimulus writer into parity with the accepted
+    two-sided policy before freezing or promoting the L765_f04 run.
+- What changed:
+  - split total alpha across every presented stimulus and both response tails;
+    at 0.99 family confidence and ten types the applied null quantiles are
+    0.0005 and 0.9995;
+  - persisted explicit lower/upper thresholds and quantiles, positive/negative
+    pass flags, response valence, suppression presence, and signed pass counts;
+  - retained `null_auc_threshold` and `null_quantile_familywise` as documented
+    upper-tail compatibility aliases;
+  - bumped the cohort trace-cache policy to
+    `any_presented_stimulus_two_sided_v2` so upper-tail-only caches cannot be
+    silently reused.
+- Validation:
+  - regression coverage includes activated and suppressed responders,
+    compatibility aliases, symmetric effect floors, unavailable versus
+    nonresponsive state, and rejection above the old but below the new upper
+    boundary;
+  - focused/integration tests passed: 195 passed, 1 skipped;
+  - two isolated L765_f04 writer jobs succeeded and produced identical SHA-256
+    hashes for the per-stimulus calls, per-ROI calls, trace PNG, heatmap rows,
+    scored-window table, and pre-identity response/BPI table;
+  - the real run persisted 24,500 stimulus/ROI rows and 2,450 ROI summaries,
+    with ten stimuli, Q0.0005/Q0.9995, 933 responsive ROIs, 1,517
+    nonresponsive ROIs, and 6 responsive ROIs with at least one suppressed
+    condition; the trace figure passed nonblank/dimension checks and visual
+    inspection;
+  - an independent subagent reviewed the implementation and its requested
+    contract, boundary, alias, unavailable-state, cache, and documentation

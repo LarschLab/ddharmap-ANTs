@@ -52,7 +52,9 @@ Representative column groups:
 ### `suite2p_presented_stimulus_response_23c.csv` and `suite2p_any_presented_response_23c.csv`
 
 - Authority: early, pre-identity all-presented-stimulus response diagnostics and the fixed trace-panel cohort only.
-- Per-stimulus and per-ROI screens use motion-window AUCs with a family-wise-adjusted prestimulus null. They do not replace `[50ia]` response/BPI fields or the ROI-centric master table.
+- Per-stimulus and per-ROI screens use motion-window AUCs with a two-sided prestimulus null and one Bonferroni family across every presented stimulus and both tails.
+- Explicit lower/upper thresholds, quantiles, signed pass flags, and valence own interpretation. `null_auc_threshold` and `null_quantile_familywise` are upper-tail compatibility aliases.
+- These diagnostics do not replace `[50ia]` response/BPI fields or the ROI-centric master table.
 
 ### `anatomy_identity_lookup.csv`
 

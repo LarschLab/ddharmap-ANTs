@@ -397,7 +397,8 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             calls = result["presented_stimulus_response_df"]
             any_calls = result["any_presented_response_df"].set_index("func_label")
             self.assertEqual(len(calls), 9)
-            self.assertAlmostEqual(float(calls["null_quantile_familywise"].iloc[0]), 1 - 0.01 / 3)
+            self.assertAlmostEqual(float(calls["null_upper_quantile_familywise"].iloc[0]), 1 - 0.01 / (2 * 3))
+            self.assertAlmostEqual(float(calls["null_lower_quantile_familywise"].iloc[0]), 0.01 / (2 * 3))
             self.assertEqual(set(result["trace_panel_df"]["func_label"]), {1, 2})
             self.assertEqual(any_calls.loc[3, "any_presented_response_state"], "nonresponsive")
             self.assertTrue(calls[(calls["func_label"] == 2) & (calls["stim_type"] == "WFCl")]["response_pass"].iloc[0])
