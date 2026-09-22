@@ -42,6 +42,34 @@ and preserving pre-existing remote work. Read data from
   Functional references must record acquisition input -> canonical output and
   reproduce the reviewed orientation before registration proceeds.
 
+## Deferred numbered-stage outline deviation
+
+**Decision (2026-09-22):** do not rename, renumber, or reorder the working
+pipeline to match the proposed 010–150 outline yet. The current pipeline is
+operational, and preserving its live contracts is more important than
+conforming paths to a prospective presentation order. Revisit this only as an
+explicit migration with fresh stage-status and downstream-consumer validation.
+
+The current implementation differs from a simple numbered linear outline in
+these material ways:
+
+- It exposes 17 semantic stages. Preprocessing is split into five granular
+  writers before registration and geometry matching.
+- `make-anatomy-midline-proposal`,
+  `materialize-anatomy-midline`, and `make-motion-auc-tables` are explicit
+  gates/writers and must not disappear inside broader numbered steps.
+- The dependency graph is not purely linear: identity attachment and
+  activity/BPI scoring both consume frozen geometry, canonical export joins
+  their outputs, and QA/motion-AUC/figure branches have distinct dependencies.
+- Run-level `_history`, `source-provenance`, and `review-artifacts`
+  directories are lifecycle/provenance surfaces rather than analysis stages.
+- Existing stage names, manifests, output paths, notebook loaders, and
+  freshness checks are active compatibility contracts.
+
+**To do:** when the numbered outline is revisited, first map each proposed
+number to the live stage DAG and list every path/manifest/notebook consumer
+that would migrate. No implementation change is authorized by this note.
+
 ## Non-negotiable review principles
 
 - Reuse the scientific question, population, thresholds, categories, colours,
@@ -494,7 +522,7 @@ field, and mixed conditions. The rerun passed and wrote same-root point,
 count, and ROI-panel CSVs from the accepted anatomy-grid midline. Notebook 06
 now reads these tables. A subsequent audit showed that its first generation used 7-s BPI-eligible windows. On 2026-09-17 scoring, identity attachment, canonical export, motion-AUC, QA report, and figures were recomputed in place in the pinned working root; all 160 BPI-eligible windows now use the fixed 12.5-s movement-onset policy, and Notebook 06 cell 09 executes with status `ready`. The earlier separate continuation remains diagnostic provenance only. This is computational validation, not acceptance of biological BPI interpretation.
 
-**2026-09-18 LRI review extension:** Notebook 06 now pairs the persisted ipsi/contra motion-AUC points into left and right stimulus AUC for each side-assigned ROI and mode, then displays `(left-right)/(left+right)` on the accepted anatomy midline and as mode-separated count histograms with a notebook-editable visual `|LRI| > 0.1` guide. Only rows passing the corresponding bout or continuous response test receive left/right preference colors; other scored ROIs remain context. Negative AUC and unstable-denominator rows are flagged, and this diagnostic does not change canonical response/BPI classes. Danin accepted current BPI preference classes provisionally; whether negative AUC relative to baseline should count as response and whether the 6-of-8 trial-sign check should affect classification remain for discussion with Johannes. Canonical promotion waits for laterality review.
+**2026-09-18 LRI review extension:** Notebook 06 now pairs the persisted ipsi/contra motion-AUC points into left and right stimulus AUC for each side-assigned ROI and mode, then displays `(left-right)/(left+right)` on the accepted anatomy midline and as mode-separated count histograms with a notebook-editable visual `|LRI| > 0.1` guide. Only rows passing the corresponding bout or continuous response test receive left/right preference colors; other scored ROIs remain context. Negative AUC and unstable-denominator rows are flagged, and this diagnostic does not change canonical response/BPI classes. Danin accepted current BPI preference classes provisionally. On 2026-09-22, Danin accepted significant negative AUC as a suppressed response and chose the stricter two-sided null rule: 0.995 for activation and 0.005 for suppression, preserving a combined 1% false-positive allowance. The 6-of-8 trial-sign check remains diagnostic only until it can be compared across several fish. Canonical promotion waits for an isolated L765_f04 rerun and laterality review.
 
 ### Q8. Identity-functional merged review — Notebook 06
 
@@ -511,9 +539,10 @@ sidecar. Coexpression stays as an exact multi-marker ROI combination; it is not
 duplicated into the ROI-centric coverage denominator.
 
 This implementation provides the review surface but does not itself accept the
-biology or promote the run. Full-session per-gene traces and a selectivity
-summary remain deferred pending the Johannes discussion about negative AUCs and
-the diagnostic 6-of-8 expected-sign check.
+biology or promote the run. Full-session per-gene traces and a selectivity summary remain deferred until
+the accepted signed-response and stricter two-sided classifier have been
+rerun and reviewed on L765_f04. The 6-of-8 expected-sign check remains
+diagnostic only pending comparison across several fish.
 
 Targeted rejected-mask exports/plots from `[50f]` and `[50g]` remain escalation
 tools for a suspicious gene or failure category rather than mandatory views for

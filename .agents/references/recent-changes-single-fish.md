@@ -4152,3 +4152,86 @@
 - Validation: 22 focused unittest cases passed; QC notebook and scientific-artifact contract checks passed; both notebooks parse; full real-data in-memory rerun scored 3,553 ROIs (2,450 quality-eligible), with 282 responsive and 275 responsive strict-preferential (r1 192, r2 83). The redesigned six-panel figure rendered from the current in-memory result at `/tmp/codeants_bpi_redesign.TuDM2V/bpi_gate_redesigned.png` and was visually inspected for truthful denominators, axis units, clipping, outliers, collisions, and the three BPI guides.
 - Remaining breakpoint: the dated working root still contains old score and [23c] outputs. No writer ran and no output was promoted from this dirty development checkout. Generate a distinct clean-checkout pipeline root, rerun [23c] and score-activity-bpi, then review Q1/Q7 and downstream canonical consumers before replacing the pinned run.
 - First downstream consumer check: merging the new in-memory score table into the 3,553-row ROI master preserved unique ROI keys, and the HCR response lookup retained all 3,553 keys and all 282 responsive calls.
+
+### 2026-09-22 - signed response valence and parallel condition contrast
+
+- User-approved scientific change:
+  - count significant negative condition AUCs as responsive-suppressed;
+  - keep response significance separate from response valence;
+  - preserve legacy rectified BPI while adding a signed condition contrast.
+- What changed:
+  - the activity writer now persists upper and lower bootstrap-null thresholds,
+    positive/negative pass flags, per-condition valence, suppression presence,
+    absolute signed response magnitude, and
+    `(bout_auc-cont_auc)/(abs(bout_auc)+abs(cont_auc))`;
+  - raw signed condition AUCs remain authoritative and exact contrast
+    boundaries are not treated as clipping;
+  - required canonical schemas and the scientific-artifact contract now expose
+    signed valence/contrast fields;
+  - the QC work register records why the proposed 010–150 stage ordering is
+    deferred and lists its deviations from the live stage DAG.
+- Validation:
+  - focused suppression/contrast test passed;
+  - the synthetic contract includes unequal, both-negative AUCs where signed
+    contrast remains finite and legacy BPI is unavailable;
+  - the retained 0.99 quantile is documented as a per-tail gate (0.02 combined
+    two-tail alpha), preserving the former positive threshold;
+  - an independent subagent review identified and then verified fixes for
+    valence completeness, per-tail error-rate documentation, and the
+    both-negative test gap;
+  - `tests/test_activity.py`, `tests/test_pipeline.py`,
+    `tests/test_package_exports.py`, and `tests/test_agent_docs.py` passed
+    together: 165 passed, 1 skipped.
+- Rerun implication:
+  - no real-data artifact was overwritten in this slice. L765_f04 must rerun
+    `score-activity-bpi`, identity attachment, canonical export, QA,
+    motion-AUC tables, and figures before the new calls can be reviewed or the
+    active run promoted.
+
+### 2026-09-22 - stricter two-sided response-null gate
+
+- User-approved threshold decision:
+  - interpret `response_null_q=0.99` as 99% total two-sided confidence;
+  - split the 1% false-positive allowance across response directions, using
+    the bootstrap-null 0.995 quantile for activation and 0.005 for suppression;
+  - retain the 6-of-8 expected-sign check as diagnostic only.
+- What changed:
+  - classification now uses explicit upper/lower null thresholds;
+  - the applied quantiles are persisted as
+    `response_null_upper_quantile` and `response_null_lower_quantile`;
+  - legacy `*_null_q99_auc` values remain side-by-side for comparison and no
+    longer control the two-sided classifier;
+  - schemas, scientific contracts, activity semantics, and the QC work
+    register record the accepted policy.
+- Validation:
+  - a focused unit test asserts null-quantile calls at 0.99, 0.995, and 0.005
+    and confirms the stricter upper threshold is no lower than legacy q99;
+  - a classifier boundary regression proves an AUC above legacy Q99 but below
+    Q99.5 is rejected;
+  - the suppression/contrast end-to-end test persists 0.995/0.005 metadata;
+  - legacy precomputed score tables now fail closed unless all four applied
+    upper/lower thresholds and both quantile-provenance fields are present;
+  - the population figure labels the actual Q0.5-Q99.5 null interval;
+  - an independent subagent re-review found no remaining blocker;
+  - the focused/integration suite passed: 166 passed, 1 skipped.
+- Rerun implication:
+  - no real L765_f04 output was overwritten. The next gate is an isolated
+    `score-activity-bpi` rerun and review against the legacy q99 comparison
+    fields before downstream promotion.
+
+### 2026-09-22 - two-sided any-presented-stimulus policy
+
+- User-approved scientific decision:
+  - significant activated and suppressed responses both qualify a cell for the
+    early `responsive to any presented stimulus` cohort;
+  - response significance remains separate from response valence;
+  - nonresponsive requires every presented stimulus to be assessable and
+    neither response tail to pass.
+- Policy update:
+  - `scientific-policy.md` now states that `[23c]` is a two-sided screen and
+    that its family-wise correction must cover all presented stimuli and both
+    response tails without changing the balanced BPI stimulus pools.
+- Remaining implementation gap:
+  - the current `[23c]` writer still applies only an upper-tail response gate.
+    Its scorer, schemas, tests, and downstream diagnostic artifacts require a
+    separate implementation and validation pass before policy parity is met.

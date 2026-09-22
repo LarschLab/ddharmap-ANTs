@@ -180,24 +180,43 @@ def _merge_scored_response_table(
         "mean_bout_dff",
         "mean_cont_dff",
         "response_magnitude_auc",
+        "response_absolute_magnitude_auc",
         "mean_bout_zdff",
         "mean_cont_zdff",
         "mean_bout_auc_dff",
         "mean_cont_auc_dff",
         "bout_null_q99_auc",
         "cont_null_q99_auc",
+        "bout_null_upper_auc",
+        "cont_null_upper_auc",
+        "bout_null_lower_auc",
+        "cont_null_lower_auc",
+        "bout_positive_response_pass",
+        "bout_negative_response_pass",
+        "cont_positive_response_pass",
+        "cont_negative_response_pass",
         "bout_response_pass",
         "cont_response_pass",
+        "bout_response_valence",
+        "cont_response_valence",
+        "response_valence_pattern",
+        "response_has_suppression",
+        "response_valence_complete",
         "response_is_active",
         "response_class",
         "response_summary_class",
         "response_auc_threshold",
         "response_null_quantile",
+        "response_null_upper_quantile",
+        "response_null_lower_quantile",
         "response_null_bootstrap_n",
         "denom",
         "denom_z",
         "bpi",
         "bpi_z",
+        "signed_condition_contrast",
+        "signed_condition_contrast_denom",
+        "signed_condition_contrast_data_available",
         "activity_mag",
         "bpi_preference",
         "bpi_status",
@@ -220,8 +239,36 @@ def _merge_scored_response_table(
         detail["bout_response_pass"] = False
     if "cont_response_pass" not in detail.columns:
         detail["cont_response_pass"] = False
-    detail["bout_response_pass"] = _as_bool_series(detail.get("bout_response_pass", False)).astype(bool)
-    detail["cont_response_pass"] = _as_bool_series(detail.get("cont_response_pass", False)).astype(bool)
+    bool_defaults = [
+        "bout_positive_response_pass",
+        "bout_negative_response_pass",
+        "cont_positive_response_pass",
+        "cont_negative_response_pass",
+        "bout_response_pass",
+        "cont_response_pass",
+        "response_has_suppression",
+        "response_valence_complete",
+        "signed_condition_contrast_data_available",
+    ]
+    for col in bool_defaults:
+        if col not in detail.columns:
+            detail[col] = False
+        detail[col] = _as_bool_series(detail[col]).astype(bool)
+    for col in ["bout_response_valence", "cont_response_valence", "response_valence_pattern"]:
+        if col not in detail.columns:
+            detail[col] = "unavailable"
+        detail[col] = detail[col].fillna("unavailable")
+    for col in [
+        "response_absolute_magnitude_auc",
+        "bout_null_upper_auc",
+        "cont_null_upper_auc",
+        "bout_null_lower_auc",
+        "cont_null_lower_auc",
+        "signed_condition_contrast",
+        "signed_condition_contrast_denom",
+    ]:
+        if col not in detail.columns:
+            detail[col] = np.nan
     detail["response_class"] = detail["response_class"].fillna(cfg.response_unavailable)
     if "bpi_preference" not in detail.columns:
         detail["bpi_preference"] = "unavailable"
@@ -245,6 +292,13 @@ def _merge_scored_response_table(
     if "response_null_quantile" not in detail.columns:
         detail["response_null_quantile"] = float(cfg.response_null_q)
     detail["response_null_quantile"] = detail["response_null_quantile"].fillna(float(cfg.response_null_q))
+    two_sided_tail = (1.0 - float(cfg.response_null_q)) / 2.0
+    if "response_null_upper_quantile" not in detail.columns:
+        detail["response_null_upper_quantile"] = 1.0 - two_sided_tail
+    detail["response_null_upper_quantile"] = detail["response_null_upper_quantile"].fillna(1.0 - two_sided_tail)
+    if "response_null_lower_quantile" not in detail.columns:
+        detail["response_null_lower_quantile"] = two_sided_tail
+    detail["response_null_lower_quantile"] = detail["response_null_lower_quantile"].fillna(two_sided_tail)
     if "response_null_bootstrap_n" not in detail.columns:
         detail["response_null_bootstrap_n"] = int(cfg.response_null_bootstrap_n)
     detail["response_null_bootstrap_n"] = detail["response_null_bootstrap_n"].fillna(int(cfg.response_null_bootstrap_n))
@@ -282,6 +336,10 @@ def _compute_bootstrap_null_quantiles(
     out = {
         "bout": np.full(n_roi, np.nan, dtype=np.float32),
         "continuous": np.full(n_roi, np.nan, dtype=np.float32),
+        "bout_upper": np.full(n_roi, np.nan, dtype=np.float32),
+        "continuous_upper": np.full(n_roi, np.nan, dtype=np.float32),
+        "bout_lower": np.full(n_roi, np.nan, dtype=np.float32),
+        "continuous_lower": np.full(n_roi, np.nan, dtype=np.float32),
     }
     if dff is None or getattr(dff, "ndim", 0) != 2 or not stim_events:
         return out
@@ -315,7 +373,10 @@ def _compute_bootstrap_null_quantiles(
         if not usable:
             continue
         boot /= float(len(class_events))
+        two_sided_tail = (1.0 - float(q)) / 2.0
         out[stim_class] = np.quantile(boot, float(q), axis=1).astype(np.float32)
+        out[f"{stim_class}_upper"] = np.quantile(boot, 1.0 - two_sided_tail, axis=1).astype(np.float32)
+        out[f"{stim_class}_lower"] = np.quantile(boot, two_sided_tail, axis=1).astype(np.float32)
     return out
 
 
@@ -532,20 +593,39 @@ def build_response_bpi_tables(
         "mean_bout_auc_dff",
         "mean_cont_auc_dff",
         "response_magnitude_auc",
+        "response_absolute_magnitude_auc",
         "bout_null_q99_auc",
         "cont_null_q99_auc",
+        "bout_null_upper_auc",
+        "cont_null_upper_auc",
+        "bout_null_lower_auc",
+        "cont_null_lower_auc",
+        "bout_positive_response_pass",
+        "bout_negative_response_pass",
+        "cont_positive_response_pass",
+        "cont_negative_response_pass",
         "bout_response_pass",
         "cont_response_pass",
+        "bout_response_valence",
+        "cont_response_valence",
+        "response_valence_pattern",
+        "response_has_suppression",
+        "response_valence_complete",
         "response_is_active",
         "response_class",
         "response_summary_class",
         "response_auc_threshold",
         "response_null_quantile",
+        "response_null_upper_quantile",
+        "response_null_lower_quantile",
         "response_null_bootstrap_n",
         "denom",
         "denom_z",
         "bpi",
         "bpi_z",
+        "signed_condition_contrast",
+        "signed_condition_contrast_denom",
+        "signed_condition_contrast_data_available",
         "activity_mag",
         "bpi_status",
         "bpi_preference",
@@ -562,7 +642,18 @@ def build_response_bpi_tables(
     detail["func_label"] = pd.to_numeric(detail["func_label"], errors="coerce").astype("Int64")
 
     if precomputed_scored_bpi_df is not None and not precomputed_scored_bpi_df.empty:
-        required_precomputed = {"plane_idx", "func_label", "response_is_active", "response_class"}
+        required_precomputed = {
+            "plane_idx",
+            "func_label",
+            "response_is_active",
+            "response_class",
+            "bout_null_upper_auc",
+            "cont_null_upper_auc",
+            "bout_null_lower_auc",
+            "cont_null_lower_auc",
+            "response_null_upper_quantile",
+            "response_null_lower_quantile",
+        }
         missing_precomputed = sorted(required_precomputed - set(precomputed_scored_bpi_df.columns))
         if missing_precomputed:
             raise RuntimeError(f"precomputed response table missing columns: {missing_precomputed}")
@@ -734,22 +825,41 @@ def build_response_bpi_tables(
             "mean_bout_zdff": np.nan,
             "mean_cont_zdff": np.nan,
             "response_magnitude_auc": np.nan,
+            "response_absolute_magnitude_auc": np.nan,
             "mean_bout_auc_dff": np.nan,
             "mean_cont_auc_dff": np.nan,
             "bout_null_q99_auc": np.nan,
             "cont_null_q99_auc": np.nan,
+            "bout_null_upper_auc": np.nan,
+            "cont_null_upper_auc": np.nan,
+            "bout_null_lower_auc": np.nan,
+            "cont_null_lower_auc": np.nan,
+            "bout_positive_response_pass": False,
+            "bout_negative_response_pass": False,
+            "cont_positive_response_pass": False,
+            "cont_negative_response_pass": False,
             "bout_response_pass": False,
             "cont_response_pass": False,
+            "bout_response_valence": "unavailable",
+            "cont_response_valence": "unavailable",
+            "response_valence_pattern": "unavailable",
+            "response_has_suppression": False,
+            "response_valence_complete": False,
             "response_is_active": False,
             "response_class": cfg.response_unavailable,
             "response_summary_class": response_summary_unavailable,
             "response_auc_threshold": float(cfg.response_min_auc),
             "response_null_quantile": float(cfg.response_null_q),
+            "response_null_upper_quantile": 1.0 - (1.0 - float(cfg.response_null_q)) / 2.0,
+            "response_null_lower_quantile": (1.0 - float(cfg.response_null_q)) / 2.0,
             "response_null_bootstrap_n": int(cfg.response_null_bootstrap_n),
             "denom": np.nan,
             "denom_z": np.nan,
             "bpi": np.nan,
             "bpi_z": np.nan,
+            "signed_condition_contrast": np.nan,
+            "signed_condition_contrast_denom": np.nan,
+            "signed_condition_contrast_data_available": False,
             "activity_mag": np.nan,
             "bpi_preference": "unavailable",
             "bpi_data_available": False,
@@ -861,6 +971,13 @@ def build_response_bpi_tables(
         cont_magnitude = max(0.0, c_auc_mean) if np.isfinite(c_auc_mean) else np.nan
         if np.isfinite(bout_magnitude) and np.isfinite(cont_magnitude):
             base_row["response_magnitude_auc"] = 0.5 * (bout_magnitude + cont_magnitude)
+        if np.isfinite(b_auc_mean) and np.isfinite(c_auc_mean):
+            base_row["response_absolute_magnitude_auc"] = 0.5 * (abs(b_auc_mean) + abs(c_auc_mean))
+            signed_denom = abs(b_auc_mean) + abs(c_auc_mean)
+            base_row["signed_condition_contrast_denom"] = float(signed_denom)
+            if signed_denom > float(cfg.denom_eps):
+                base_row["signed_condition_contrast"] = float((b_auc_mean - c_auc_mean) / signed_denom)
+                base_row["signed_condition_contrast_data_available"] = True
         b_z_mean = float(np.nanmean(bout_z)) if n_b_z > 0 else np.nan
         c_z_mean = float(np.nanmean(cont_z)) if n_c_z > 0 else np.nan
         denom = bout_magnitude + cont_magnitude
@@ -879,25 +996,84 @@ def build_response_bpi_tables(
         plane_null = null_q_by_plane.get(plane_idx, {})
         bout_null = plane_null.get("bout", np.full(dff.shape[0], np.nan, dtype=np.float32))
         cont_null = plane_null.get("continuous", np.full(dff.shape[0], np.nan, dtype=np.float32))
+        bout_null_upper = plane_null.get("bout_upper", np.full(dff.shape[0], np.nan, dtype=np.float32))
+        cont_null_upper = plane_null.get("continuous_upper", np.full(dff.shape[0], np.nan, dtype=np.float32))
+        bout_null_lower = plane_null.get("bout_lower", np.full(dff.shape[0], np.nan, dtype=np.float32))
+        cont_null_lower = plane_null.get("continuous_lower", np.full(dff.shape[0], np.nan, dtype=np.float32))
         if roi_idx < len(bout_null):
             base_row["bout_null_q99_auc"] = float(bout_null[roi_idx]) if np.isfinite(bout_null[roi_idx]) else np.nan
         if roi_idx < len(cont_null):
             base_row["cont_null_q99_auc"] = float(cont_null[roi_idx]) if np.isfinite(cont_null[roi_idx]) else np.nan
+        if roi_idx < len(bout_null_upper):
+            base_row["bout_null_upper_auc"] = (
+                float(bout_null_upper[roi_idx]) if np.isfinite(bout_null_upper[roi_idx]) else np.nan
+            )
+        if roi_idx < len(cont_null_upper):
+            base_row["cont_null_upper_auc"] = (
+                float(cont_null_upper[roi_idx]) if np.isfinite(cont_null_upper[roi_idx]) else np.nan
+            )
+        if roi_idx < len(bout_null_lower):
+            base_row["bout_null_lower_auc"] = (
+                float(bout_null_lower[roi_idx]) if np.isfinite(bout_null_lower[roi_idx]) else np.nan
+            )
+        if roi_idx < len(cont_null_lower):
+            base_row["cont_null_lower_auc"] = (
+                float(cont_null_lower[roi_idx]) if np.isfinite(cont_null_lower[roi_idx]) else np.nan
+            )
 
-        bout_pass = (
+        bout_assessable = (
             n_b >= int(cfg.min_trials_per_class)
             and np.isfinite(b_auc_mean)
-            and np.isfinite(base_row["bout_null_q99_auc"])
-            and float(b_auc_mean) >= max(float(cfg.response_min_auc), float(base_row["bout_null_q99_auc"]))
+            and np.isfinite(base_row["bout_null_upper_auc"])
+            and np.isfinite(base_row["bout_null_lower_auc"])
         )
-        cont_pass = (
+        cont_assessable = (
             n_c >= int(cfg.min_trials_per_class)
             and np.isfinite(c_auc_mean)
-            and np.isfinite(base_row["cont_null_q99_auc"])
-            and float(c_auc_mean) >= max(float(cfg.response_min_auc), float(base_row["cont_null_q99_auc"]))
+            and np.isfinite(base_row["cont_null_upper_auc"])
+            and np.isfinite(base_row["cont_null_lower_auc"])
         )
+        bout_positive_pass = (
+            bout_assessable
+            and float(b_auc_mean) >= max(float(cfg.response_min_auc), float(base_row["bout_null_upper_auc"]))
+        )
+        bout_negative_pass = (
+            bout_assessable
+            and float(b_auc_mean) <= min(-float(cfg.response_min_auc), float(base_row["bout_null_lower_auc"]))
+        )
+        cont_positive_pass = (
+            cont_assessable
+            and float(c_auc_mean) >= max(float(cfg.response_min_auc), float(base_row["cont_null_upper_auc"]))
+        )
+        cont_negative_pass = (
+            cont_assessable
+            and float(c_auc_mean) <= min(-float(cfg.response_min_auc), float(base_row["cont_null_lower_auc"]))
+        )
+        bout_pass = bool(bout_positive_pass or bout_negative_pass)
+        cont_pass = bool(cont_positive_pass or cont_negative_pass)
+        base_row["bout_positive_response_pass"] = bool(bout_positive_pass)
+        base_row["bout_negative_response_pass"] = bool(bout_negative_pass)
+        base_row["cont_positive_response_pass"] = bool(cont_positive_pass)
+        base_row["cont_negative_response_pass"] = bool(cont_negative_pass)
         base_row["bout_response_pass"] = bool(bout_pass)
         base_row["cont_response_pass"] = bool(cont_pass)
+        base_row["bout_response_valence"] = (
+            (
+                "activated" if bout_positive_pass else "suppressed" if bout_negative_pass else "not-significant"
+            )
+            if bout_assessable else "unavailable"
+        )
+        base_row["cont_response_valence"] = (
+            (
+                "activated" if cont_positive_pass else "suppressed" if cont_negative_pass else "not-significant"
+            )
+            if cont_assessable else "unavailable"
+        )
+        base_row["response_valence_pattern"] = (
+            f'{base_row["bout_response_valence"]}|{base_row["cont_response_valence"]}'
+        )
+        base_row["response_has_suppression"] = bool(bout_negative_pass or cont_negative_pass)
+        base_row["response_valence_complete"] = bool(bout_assessable and cont_assessable)
         base_row["response_is_active"] = bool(bout_pass or cont_pass)
 
         if bout_pass and cont_pass:
@@ -909,7 +1085,7 @@ def build_response_bpi_tables(
         elif cont_pass:
             base_row["response_class"] = cfg.response_cont
             base_row["response_summary_class"] = response_summary_responsive
-        elif n_b >= int(cfg.min_trials_per_class) and n_c >= int(cfg.min_trials_per_class):
+        elif bout_assessable and cont_assessable:
             base_row["response_class"] = cfg.response_low
             base_row["response_summary_class"] = response_summary_low
         else:
@@ -971,21 +1147,40 @@ def build_response_bpi_tables(
             "mean_cont_zdff",
             "mean_bout_auc_dff",
             "response_magnitude_auc",
+            "response_absolute_magnitude_auc",
             "mean_cont_auc_dff",
             "bout_null_q99_auc",
             "cont_null_q99_auc",
+            "bout_null_upper_auc",
+            "cont_null_upper_auc",
+            "bout_null_lower_auc",
+            "cont_null_lower_auc",
+            "bout_positive_response_pass",
+            "bout_negative_response_pass",
+            "cont_positive_response_pass",
+            "cont_negative_response_pass",
             "bout_response_pass",
             "cont_response_pass",
+            "bout_response_valence",
+            "cont_response_valence",
+            "response_valence_pattern",
+            "response_has_suppression",
+            "response_valence_complete",
             "response_is_active",
             "response_class",
             "response_summary_class",
             "response_auc_threshold",
             "response_null_quantile",
+            "response_null_upper_quantile",
+            "response_null_lower_quantile",
             "response_null_bootstrap_n",
             "denom",
             "denom_z",
             "bpi",
             "bpi_z",
+            "signed_condition_contrast",
+            "signed_condition_contrast_denom",
+            "signed_condition_contrast_data_available",
             "activity_mag",
             "bpi_status",
             "bpi_data_available",
@@ -996,8 +1191,20 @@ def build_response_bpi_tables(
         ]
         detail = detail.merge(scored_bpi_df[merge_cols], on=["plane_idx", "func_label"], how="left")
         detail["response_is_active"] = _as_bool_series(detail.get("response_is_active", False)).astype(bool)
-        detail["bout_response_pass"] = _as_bool_series(detail.get("bout_response_pass", False)).astype(bool)
-        detail["cont_response_pass"] = _as_bool_series(detail.get("cont_response_pass", False)).astype(bool)
+        for col in [
+            "bout_positive_response_pass",
+            "bout_negative_response_pass",
+            "cont_positive_response_pass",
+            "cont_negative_response_pass",
+            "bout_response_pass",
+            "cont_response_pass",
+            "response_has_suppression",
+            "response_valence_complete",
+            "signed_condition_contrast_data_available",
+        ]:
+            detail[col] = _as_bool_series(detail.get(col, False)).astype(bool)
+        for col in ["bout_response_valence", "cont_response_valence", "response_valence_pattern"]:
+            detail[col] = detail[col].fillna("unavailable")
         detail["response_class"] = detail["response_class"].fillna(cfg.response_unavailable)
         detail["response_summary_class"] = detail["response_summary_class"].fillna(response_summary_unavailable)
         detail["bpi_preference"] = detail["bpi_preference"].fillna("unavailable")
@@ -1008,6 +1215,9 @@ def build_response_bpi_tables(
         detail["bpi_activity_threshold"] = detail["bpi_activity_threshold"].fillna(float(cfg.response_min_auc))
         detail["response_auc_threshold"] = detail["response_auc_threshold"].fillna(float(cfg.response_min_auc))
         detail["response_null_quantile"] = detail["response_null_quantile"].fillna(float(cfg.response_null_q))
+        two_sided_tail = (1.0 - float(cfg.response_null_q)) / 2.0
+        detail["response_null_upper_quantile"] = detail["response_null_upper_quantile"].fillna(1.0 - two_sided_tail)
+        detail["response_null_lower_quantile"] = detail["response_null_lower_quantile"].fillna(two_sided_tail)
         detail["response_null_bootstrap_n"] = detail["response_null_bootstrap_n"].fillna(int(cfg.response_null_bootstrap_n))
 
         summary_df = (

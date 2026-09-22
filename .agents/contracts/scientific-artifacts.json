@@ -20,8 +20,9 @@
       "denominator": "One row per fish_id, plane_idx, and func_label key.",
       "units": {
         "BPI": "unitless ratio",
+        "signed_condition_contrast": "unitless signed ratio",
         "geometry": "Inherited unchanged from the geometry writer; unit corrections require a schema decision.",
-        "response_AUC": "Baseline-subtracted dF/F·s over a fixed 12.5 s from movement onset, paired with a 12.5 s true-prestimulus interval in the same session."
+        "response_AUC": "Signed baseline-subtracted dF/F\u00b7s over a fixed 12.5 s from movement onset, paired with a 12.5 s true-prestimulus interval in the same session."
       },
       "grouping": [
         "fish_id",
@@ -30,16 +31,17 @@
       ],
       "thresholds": {
         "authority": ".agents/references/activity-semantics.md",
-        "rule": "The activity writer persists AUC/null response gates and strict |BPI| > 0.5 preference separately; response_class and bpi_category report significant condition passes, not preference."
+        "rule": "The activity writer persists mirrored two-sided AUC/null response gates and response valence separately. response_null_quantile is the total two-sided confidence level; at 0.99 the classifier splits alpha equally, using the 0.995 upper and 0.005 lower null quantiles for a combined two-tail alpha of 0.01. Applied upper/lower quantiles and thresholds are explicit, while legacy q99 AUC fields remain comparison-only. response_class and bpi_category report condition passes in either direction; valence fields distinguish activated from suppressed. Legacy rectified BPI and signed condition contrast coexist during validation."
       },
       "forbidden_reinterpretations": [
         "Do not drop suite2p_is_cell false rows from the ROI inventory.",
         "Do not use identity, response, or BPI to change geometry.",
-        "Do not replace this whole-population authority with HCR-centric exports."
+        "Do not replace this whole-population authority with HCR-centric exports.",
+        "Do not infer suppression valence from legacy rectified BPI or discard the signed condition AUC columns."
       ],
       "validation_tests": [
         "tests/test_pipeline.py::test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_source_identity",
-        "tests/test_activity.py::test_build_response_bpi_tables_uses_plane_session_stimulus_metadata"
+        "tests/test_activity.py::ActivityTests::test_response_scoring_preserves_suppression_valence_and_signed_contrast"
       ]
     },
     {

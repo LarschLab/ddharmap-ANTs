@@ -22,6 +22,24 @@ Current conservative policy:
 - `suite2p_is_cell=False` remains in the master ROI inventory but is currently labeled low-quality trace and marked response-unavailable in `[50ia]`.
 - This is a conservative trace-quality gate: these rows are treated as having no extractable cellular response information for the current trace analysis, not as a biological inactivity or absence claim.
 
+## Response significance and valence
+
+- A statistically significant positive response AUC is an activated response.
+- A statistically significant negative response AUC is a suppressed response.
+- Activated and suppressed responses both qualify as responsive. Response
+  significance and response valence must remain separate in persisted tables
+  and downstream interpretation.
+- The early `[23c]` all-presented-stimulus screen is two-sided. A cell qualifies
+  as `responsive to any presented stimulus` when at least one assessable
+  stimulus passes either the positive or negative response gate.
+- A cell is `nonresponsive` in that screen only when every presented stimulus
+  is assessable and none passes either response gate. Otherwise its screen state
+  is `unavailable`.
+- Family-wise error control for the all-presented-stimulus screen must account
+  for both the complete presented-stimulus vocabulary and the two tested tails.
+- This broader response qualification does not add conditions to the balanced
+  bout-versus-continuous BPI pools or change BPI preference semantics.
+
 ## Authoritative matching policy
 
 1. Match functional ROIs to anatomy labels in shared anatomy space.

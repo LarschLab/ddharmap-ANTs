@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from tempfile import TemporaryDirectory
 
 import numpy as np
@@ -10,6 +11,7 @@ from codeants_2pf_hcr.activity import (
     ActivityConfig,
     SingleFishBpiDiagnosticsConfig,
     _build_activity_stimulus_context,
+    _compute_bootstrap_null_quantiles,
     build_response_bpi_tables,
     build_scored_stimulus_windows_table,
     build_suite2p_response_seed_table,
@@ -18,6 +20,20 @@ from codeants_2pf_hcr.activity import (
 
 
 class ActivityTests(unittest.TestCase):
+    def test_two_sided_null_splits_one_percent_across_both_tails(self) -> None:
+        dff = np.arange(20, dtype=np.float32)[None, :]
+        events = [{"stim_class": "bout", "duration_frames": 2}]
+        starts = {2: np.array([0, 2, 4, 6, 8], dtype=int)}
+        with patch("codeants_2pf_hcr.activity.np.quantile", wraps=np.quantile) as quantile:
+            result = _compute_bootstrap_null_quantiles(
+                dff, events, starts, fps=1.0, n_boot=25, q=0.99, seed=7,
+            )
+
+        called_quantiles = [float(call.args[1]) for call in quantile.call_args_list]
+        np.testing.assert_allclose(called_quantiles, [0.99, 0.995, 0.005])
+        self.assertTrue(np.all(result["bout_upper"] >= result["bout"]))
+        self.assertTrue(np.all(result["bout_lower"] <= result["bout"]))
+
     def test_scored_window_provenance_retains_plane_keys_for_shared_sessions(self) -> None:
         events = {0: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}], 1: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}]}
         source = {plane: pd.DataFrame([{"block": "B1", "stim_idx": 0, "type": "LLB", "start": 2.0, "end": 4.0}]) for plane in events}
@@ -104,6 +120,126 @@ class ActivityTests(unittest.TestCase):
             self.assertEqual([event["idx0"] for event in events], [12, 22])
             self.assertGreater(result["scored_bpi_df"].loc[0, "mean_bout_dff"], 2.5)
             self.assertGreater(result["scored_bpi_df"].loc[0, "mean_cont_dff"], 1.5)
+
+            boundary_null = {
+                "bout": np.array([5.0], dtype=np.float32),
+                "continuous": np.array([3.0], dtype=np.float32),
+                "bout_upper": np.array([7.0], dtype=np.float32),
+                "continuous_upper": np.array([3.5], dtype=np.float32),
+                "bout_lower": np.array([-7.0], dtype=np.float32),
+                "continuous_lower": np.array([-3.5], dtype=np.float32),
+            }
+            with patch(
+                "codeants_2pf_hcr.activity._compute_bootstrap_null_quantiles",
+                return_value=boundary_null,
+            ):
+                strict_result = build_response_bpi_tables(
+                    detail,
+                    fish_dir=fish_dir,
+                    fish_id=fish_id,
+                    suite2p_dff_map={0: {"dff": dff}},
+                    config=ActivityConfig(
+                        min_trials_per_class=1,
+                        stim_onset_delay_sec=0.0,
+                        response_window_sec=2.0,
+                        response_null_min_windows=1,
+                        response_null_bootstrap_n=5,
+                        zscore_min_points=1,
+                    ),
+                )
+
+            strict_row = strict_result["scored_bpi_df"].iloc[0]
+            self.assertGreater(strict_row["mean_bout_auc_dff"], strict_row["bout_null_q99_auc"])
+            self.assertLess(strict_row["mean_bout_auc_dff"], strict_row["bout_null_upper_auc"])
+            self.assertFalse(strict_row["bout_response_pass"])
+            self.assertTrue(strict_row["cont_response_pass"])
+
+    def test_response_scoring_preserves_suppression_valence_and_signed_contrast(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            fish_id = "L765_f04"
+            fish_dir = Path(tmpdir) / fish_id
+            metadata = fish_dir / "01_raw" / "2p" / "metadata"
+            metadata.mkdir(parents=True)
+            (metadata / f"2026_f{fish_id}_metadata.csv").write_text("parameter,value\nframerate,1.0\n")
+            (metadata / f"2026_f{fish_id}_experiment_log.csv").write_text(
+                "event,timestamp\n"
+                "B0_start,0\nB0_end,10\n"
+                "B1_start,10\nB1_prestim0_pause,10\nB1_stim0_LLB,12\nB1_poststim0_pause,14\nB1_end,20\n"
+                "B2_start,20\nB2_prestim1_pause,20\nB2_stim1_RLC,22\nB2_poststim1_pause,24\nB2_end,30\n"
+            )
+            (metadata / f"2026_f{fish_id}_planned_schedule.csv").write_text(
+                "kind,label,start_sec,duration_sec,end_sec,trial_index,block_num,stimulus_name\n"
+                "rest,Baseline rest,0,10,10,,0,\n"
+                "trigger,B1_start,10,0,10,,1,\n"
+                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,LLB\n"
+                "stimulus,LLB,12,2,14,0,1,LLB\n"
+                "trigger,B2_start,20,0,20,,2,\n"
+                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RLC\n"
+                "stimulus,RLC,22,2,24,1,2,RLC\n"
+            )
+            dff = np.ones((2, 30), dtype=np.float32)
+            dff[0, 12:14] = -1.0
+            dff[0, 22:24] = 3.0
+            dff[1, 12:14] = 0.0
+            dff[1, 22:24] = 0.5
+            detail = pd.DataFrame(
+                {
+                    "plane_idx": [0, 0],
+                    "func_label": [1, 2],
+                    "activity_class": ["Active neurons", "Active neurons"],
+                    "is_active": [True, True],
+                }
+            )
+
+            result = build_response_bpi_tables(
+                detail,
+                fish_dir=fish_dir,
+                fish_id=fish_id,
+                suite2p_dff_map={0: {"dff": dff}},
+                config=ActivityConfig(
+                    min_trials_per_class=1,
+                    stim_onset_delay_sec=0.0,
+                    response_window_sec=2.0,
+                    response_min_auc=0.05,
+                    response_null_min_windows=1,
+                    response_null_bootstrap_n=25,
+                    zscore_min_points=1,
+                ),
+            )
+
+            scored_rows = result["scored_bpi_df"].sort_values("func_label").reset_index(drop=True)
+            scored = scored_rows.iloc[0]
+            self.assertLess(scored["mean_bout_auc_dff"], 0.0)
+            self.assertGreater(scored["mean_cont_auc_dff"], 0.0)
+            self.assertAlmostEqual(scored["response_null_quantile"], 0.99)
+            self.assertAlmostEqual(scored["response_null_upper_quantile"], 0.995)
+            self.assertAlmostEqual(scored["response_null_lower_quantile"], 0.005)
+            self.assertTrue(scored["bout_negative_response_pass"])
+            self.assertFalse(scored["bout_positive_response_pass"])
+            self.assertTrue(scored["cont_positive_response_pass"])
+            self.assertFalse(scored["cont_negative_response_pass"])
+            self.assertTrue(scored["bout_response_pass"])
+            self.assertTrue(scored["cont_response_pass"])
+            self.assertEqual(scored["response_class"], "both-responsive")
+            self.assertEqual(scored["bout_response_valence"], "suppressed")
+            self.assertEqual(scored["cont_response_valence"], "activated")
+            self.assertEqual(scored["response_valence_pattern"], "suppressed|activated")
+            self.assertTrue(scored["response_has_suppression"])
+            self.assertTrue(scored["response_valence_complete"])
+            self.assertAlmostEqual(scored["signed_condition_contrast"], -1.0)
+            self.assertAlmostEqual(scored["response_absolute_magnitude_auc"], 4.0)
+            self.assertAlmostEqual(scored["bpi"], -1.0)
+
+            both_suppressed = scored_rows.iloc[1]
+            self.assertEqual(both_suppressed["response_valence_pattern"], "suppressed|suppressed")
+            self.assertTrue(both_suppressed["bout_negative_response_pass"])
+            self.assertTrue(both_suppressed["cont_negative_response_pass"])
+            self.assertTrue(both_suppressed["response_valence_complete"])
+            self.assertAlmostEqual(both_suppressed["mean_bout_auc_dff"], -2.0)
+            self.assertAlmostEqual(both_suppressed["mean_cont_auc_dff"], -1.0)
+            self.assertAlmostEqual(both_suppressed["signed_condition_contrast"], -1.0 / 3.0)
+            self.assertFalse(both_suppressed["bpi_data_available"])
+            self.assertTrue(pd.isna(both_suppressed["bpi"]))
 
     def test_response_scoring_includes_complete_presented_stimulus_vocabulary(self) -> None:
         with TemporaryDirectory() as tmpdir:
@@ -355,6 +491,23 @@ class ActivityTests(unittest.TestCase):
             }
         )
 
+        with self.assertRaisesRegex(RuntimeError, "precomputed response table missing columns"):
+            build_response_bpi_tables(
+                detail,
+                fish_dir=Path("."),
+                fish_id="fishA",
+                precomputed_scored_bpi_df=precomputed,
+                config=ActivityConfig(),
+            )
+
+        precomputed = precomputed.assign(
+            bout_null_upper_auc=[1.0, 1.0],
+            cont_null_upper_auc=[1.0, 1.0],
+            bout_null_lower_auc=[-1.0, -1.0],
+            cont_null_lower_auc=[-1.0, -1.0],
+            response_null_upper_quantile=[0.995, 0.995],
+            response_null_lower_quantile=[0.005, 0.005],
+        )
         result = build_response_bpi_tables(
             detail,
             fish_dir=Path("."),
@@ -365,6 +518,12 @@ class ActivityTests(unittest.TestCase):
 
         out = result["detail_df"].sort_values("func_label").reset_index(drop=True)
         self.assertEqual(list(out["response_is_active"].astype(bool)), [True, False])
+        self.assertEqual(list(out["bout_response_valence"]), ["unavailable", "unavailable"])
+        self.assertEqual(list(out["cont_response_valence"]), ["unavailable", "unavailable"])
+        self.assertEqual(list(out["response_has_suppression"].astype(bool)), [False, False])
+        self.assertTrue(out["signed_condition_contrast"].isna().all())
+        self.assertEqual(list(out["response_valence_complete"].astype(bool)), [False, False])
+        self.assertEqual(list(out["signed_condition_contrast_data_available"].astype(bool)), [False, False])
         self.assertEqual(result["stim_source"], "precomputed")
 
 def test_prepare_single_fish_bpi_diagnostics_stage_backfills_response_columns() -> None:

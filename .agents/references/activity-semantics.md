@@ -45,9 +45,28 @@ block offsets can differ. The Q1 timing audit retains both clocks.
 
 ### Stage 1: response-state classification
 
-- **Responsive**: passes AUC null-threshold test in bout and/or continuous condition.
+- **Responsive**: passes the two-sided AUC null-threshold test in the positive
+  or negative direction for bout and/or continuous condition.
 - **Low activity**: extractable/high-quality trace with sufficient trials but fails both response thresholds.
 - **Response unavailable**: insufficient trials or low-quality trace policy gate, including the current `suite2p_is_cell=False` policy.
+
+Response significance and response valence are separate. A significant
+positive AUC is `activated`; a significant negative AUC is `suppressed`.
+The condition-level response pass is true for either valence. Consequently,
+`response_class` continues to report which condition classes are responsive,
+while the valence fields report the sign of those responses.
+
+`response_valence_complete=True` means both bout and continuous valence were
+assessable; false never means that suppression was measured and absent.
+
+`response_null_quantile` is the retained total two-sided confidence level.
+With the default value 0.99, the remaining 0.01 false-positive allowance is
+split equally across both response directions: the activation gate is the
+0.995 null quantile and the suppression gate is the 0.005 null quantile.
+`response_null_upper_quantile` and `response_null_lower_quantile` persist
+those applied values explicitly. The legacy `bout_null_q99_auc` and
+`cont_null_q99_auc` fields remain comparison-only during validation;
+classification uses the explicit upper/lower threshold fields.
 
 Primary fields:
 
@@ -55,13 +74,30 @@ Primary fields:
 - `response_class`
 - `response_summary_class`
 - `bout_response_pass`, `cont_response_pass`
-- trial-count and null-threshold fields
+- `bout_positive_response_pass`, `bout_negative_response_pass`,
+  `cont_positive_response_pass`, `cont_negative_response_pass`
+- `bout_response_valence`, `cont_response_valence`,
+  `response_valence_pattern`, `response_has_suppression`,
+  `response_valence_complete`
+- trial-count and upper/lower null-threshold fields
 
 ### Stage 2: BPI preference, separate from response class
 
 BPI formula: `(max(0, bout_auc) - max(0, cont_auc)) / (max(0, bout_auc) + max(0, cont_auc))`,
 using session-local, baseline-subtracted mean condition AUCs. The ratio is
 unavailable when its denominator is negligible.
+
+The legacy `bpi` remains unchanged during validation so existing plots and
+controls remain comparable. It is intentionally rectified and therefore does
+not preserve suppression valence. The parallel signed condition contrast is:
+
+`(bout_auc - cont_auc) / (abs(bout_auc) + abs(cont_auc))`
+
+This contrast is unavailable when its denominator is negligible. Exact -1 or
++1 values are legitimate and are not clipping: they occur when one condition
+is zero or when the condition AUCs have opposite signs. The raw
+`mean_bout_auc_dff` and `mean_cont_auc_dff` columns remain the authoritative
+values whenever the individual condition magnitudes and valences matter.
 
 - `response_class` and compatibility `bpi_category` encode which response
   tests passed: bout, continuous, both, low activity, or unavailable.
@@ -73,6 +109,10 @@ unavailable when its denominator is negligible.
 Primary fields:
 
 - `response_magnitude_auc` (mean nonnegative bout/continuous AUC; dF/F·s)
+- `response_absolute_magnitude_auc` (mean absolute signed condition AUC; dF/F·s)
+- `mean_bout_auc_dff`, `mean_cont_auc_dff` (signed condition AUCs; dF/F·s)
+- `signed_condition_contrast`, `signed_condition_contrast_denom`,
+  `signed_condition_contrast_data_available`
 - `bpi`
 - `bpi_z`
 - `denom` (sum of nonnegative condition AUCs; dF/F·s)

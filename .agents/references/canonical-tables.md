@@ -23,7 +23,10 @@ Representative column groups:
 - ROI/geometry: `plane_idx`, `func_label`, `selected_anat_label`, overlap/distance and match outcome fields.
 - Identity: `anat_label`, `identity_label`, `has_identity_assigned`, `identity_display_label`.
 - Suite2p provenance: `suite2p_is_cell`, `suite2p_activity_class`.
-- Response/BPI: `response_is_active`, `response_class`, `response_summary_class`, `bpi`, `bpi_category`, trial/AUC/null-threshold fields.
+- Response/BPI: `response_is_active`, `response_class`,
+  `response_summary_class`, per-condition response valence, signed condition
+  AUCs and contrast, legacy rectified `bpi`, `bpi_category`, and
+  trial/upper-and-lower-null-threshold fields.
 
 ## Derived helper tables
 
@@ -40,6 +43,9 @@ Representative column groups:
 - Authority:
   - response/BPI scoring diagnostics written by `[50ia]`
 - Per-ROI response/BPI scoring export from `[50ia]`.
+- Persists the applied two-sided bootstrap-null gates explicitly: 0.995 upper
+  and 0.005 lower at the default 0.99 total confidence. Legacy q99 AUC fields
+  remain comparison-only and do not drive classification.
 - Useful for response/BPI diagnostics.
 - Not an independent identity source.
 

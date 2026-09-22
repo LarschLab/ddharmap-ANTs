@@ -2220,9 +2220,16 @@ def render_single_fish_50l_composite(
     ax_donut.add_artist(plt.Circle((donut_center_x, 0.0), centre_radius, fc="white", ec="white"))
     zero_band = _resolve_reference_threshold(detail_df, "bpi_zero_band", 0.10)
     auc_thr = _resolve_reference_threshold(detail_df, "response_auc_threshold", 0.05)
-    null_q = _resolve_reference_threshold(detail_df, "response_null_quantile", 0.99)
+    null_confidence = _resolve_reference_threshold(detail_df, "response_null_quantile", 0.99)
+    default_tail = (1.0 - null_confidence) / 2.0
+    null_upper_q = _resolve_reference_threshold(
+        detail_df, "response_null_upper_quantile", 1.0 - default_tail,
+    )
+    null_lower_q = _resolve_reference_threshold(
+        detail_df, "response_null_lower_quantile", default_tail,
+    )
     ax_donut.text(donut_center_x, float(run_config_d.get("COMPOSITE_50L_DONUT_SAMPLE_N_Y", 0.14)), f"n = {int(len(detail_df))}", ha="center", va="center", fontsize=panel_fs, fontweight="bold")
-    ax_donut.text(donut_center_x, -0.14, f"inner=response\nouter=stim bias\nAUC ≥ {auc_thr:.3f}\n> Q{100.0 * null_q:.0f} baseline\n|BPI| ≤ {zero_band:.2f} -> both", ha="center", va="center", fontsize=float(run_config_d.get("COMPOSITE_50L_DONUT_CENTER_FONTSIZE", 10.0)))
+    ax_donut.text(donut_center_x, -0.14, f"inner=response\nouter=stim bias\n|AUC| ≥ {auc_thr:.3f}\noutside Q{100.0 * null_lower_q:.1f}-Q{100.0 * null_upper_q:.1f} null\n|BPI| ≤ {zero_band:.2f} -> both", ha="center", va="center", fontsize=float(run_config_d.get("COMPOSITE_50L_DONUT_CENTER_FONTSIZE", 10.0)))
     ax_donut.set_title("Population response classes", fontsize=panel_fs, pad=10)
     view_scale = float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_SCALE", 0.8))
     ax_donut.set_xlim(float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_XMIN", -1.66)) * view_scale, float(run_config_d.get("COMPOSITE_50L_DONUT_VIEW_XMAX", 1.72)) * view_scale)
