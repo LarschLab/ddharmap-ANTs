@@ -113,3 +113,5 @@ PYTHONPATH=src ~/miniforge3/envs/manualIdentity/bin/python -m pytest \
 ```
 
 GUI checks use the native macOS Qt platform. `MANUAL_IDENTITY_SCREENSHOT=/tmp/manual-identity-gui.png` captures a complete fixture window during the GUI test. No real scientific annotations or existing pipeline outputs are written by tests.
+
+Validation completed on implementation commit `e774e02`: 57 annotation/GUI/matching/lazy-import/documentation checks plus 6 existing canonical-export regressions passed. A requested independent subagent review reproduced seven initial findings and one journal-failure edge case; all were corrected and independently rechecked with no remaining actionable issues. Native GUI screenshots were inspected, including anisotropic orthogonal context and readable scrollable controls. This validates software behavior on synthetic fixtures, not scientific identity accuracy on a real fish.

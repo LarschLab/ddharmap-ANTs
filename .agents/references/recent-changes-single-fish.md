@@ -4277,3 +4277,5 @@
 - Remaining scientific prerequisites: verified real-fish registered intensity/coverage bundle, authoritative eligibility, and reviewed ex-vivo/in-vivo correspondence. HCR-centric exports are explicitly blocked rather than populated with fake IDs.
 
 - Independent subagent review of `b3a0dc5` reproduced empty-queue shortcuts, orthogonal physical-aspect distortion, misleading checkpoint failures/lost undo, missing-column drops, stale identity gene lists, fractional label truncation, and incomplete portable provenance. Follow-up fixes add guards and regression checks for each finding; frozen input metadata and reviewed correspondence now travel with exports.
+
+- Final verification on implementation `e774e02`: 63 relevant checks passed (57 annotation/native-GUI/matching/lazy-import/docs + 6 existing canonical export regressions). Independent reviewer rechecked all fixes, including uncertain journal-write lockout/replay, and reported no remaining actionable issues. Native screenshots were visually inspected. Real-fish scientific validation remains pending a verified prepared bundle and reviewed correspondence.
