@@ -57,7 +57,7 @@ Select one marker stack. Click an eligible anatomy mask or choose a cell from th
 
 Calls: unreviewed, positive, negative, uncertain, unassessable. Shortcuts 1–5 correspond to those calls, N/P navigate the current queue. Issue and note fields are committed with the call button. A blocking issue prevents positive export without modifying anatomy eligibility. The unreviewed queue advances after a decision; an empty queue disables call buttons. Annotation history undo/redo is available within the current process; committed events survive restart.
 
-Every call is journaled and autosaved. The current marker, cell, filter, and display settings are saved. Freeze creates `annotations-rNNNNNN.json`, a versioned immutable snapshot. The complete annotation CSV preserves all states; missing canonical identity does not imply a reviewed negative.
+Every call is durably journaled before CSV/session checkpoints are updated. A failed checkpoint is reported as saved to the journal, retains undo/redo, and can be recovered on restart. The current marker, cell, filter, and display settings are saved. Freeze creates `annotations-rNNNNNN.json`, a versioned immutable snapshot. The complete annotation CSV preserves all states; missing canonical identity does not imply a reviewed negative.
 
 A session permits one writer. After a crash, inspect `writer.lock` and recover only the recorded dead process on the same host:
 
@@ -83,7 +83,7 @@ python tools/manual_hcr_identity.py export \
   --output /path/new_manual_export
 ```
 
-Use the current pipeline's configured gene order. The output directory must be new. Positive calls form an independent manual identity source, replacing old identity fields in the new table; historical identity is not silently unioned. `anatomy_identity_lookup.csv` and `functional_roi_activity_identity.csv` keep the existing schemas and coexpression strings. The full calls and mapping-loss/conflict audit are separate files. A source manifest binds all output hashes.
+Use the current pipeline's configured gene order. The output directory must be new. Positive calls form an independent manual identity source, replacing old identity fields in the new table; historical identity is not silently unioned. `anatomy_identity_lookup.csv` and `functional_roi_activity_identity.csv` keep the existing schemas and coexpression strings. The full calls and mapping-loss/conflict audit are separate files. A source manifest binds all output hashes. Frozen dataset metadata, the annotation snapshot, and the reviewed correspondence are included, with original source paths and mapping target/status/metrics in the audit, so moving the bundle preserves its provenance. Large source image volumes remain external.
 
 ## Canonical export and consumers
 
@@ -98,7 +98,7 @@ python tools/single_fish_pipeline.py export-canonical-tables \
 
 Alternatively use `tools/manual_hcr_identity.py canonical --manual-root ... --score-root ... --output ...`.
 
-Manual mode writes an explicit **ROI-only** canonical bundle: ROI identity, anatomy lookup, BPI cells/summary, annotations, mapping audit, and provenance. It verifies unchanged ROI keys and shared geometry/response fields against the score-stage master, validates source output hashes, and refuses existing output directories or an additional HCR input root. `--force-recompute` does not override the new-directory requirement in manual mode.
+Manual mode writes an explicit **ROI-only** canonical bundle: ROI identity, anatomy lookup, BPI cells/summary, annotations, mapping audit, and provenance. It rejects missing geometry/response columns and verifies unchanged ROI keys and geometry/response fields against the score-stage master, validates source output hashes, and refuses existing output directories or an additional HCR input root. `--force-recompute` does not override the new-directory requirement in manual mode.
 
 ROI-centric consumers can read the unchanged ROI table from this isolated run. The first cohort geometry deduplication consumer is exercised by the integration test. Legacy cohort discovery still defaults to accepted fish-local paths; do not copy manual outputs into those paths until scientific review and promotion are explicitly approved.
 

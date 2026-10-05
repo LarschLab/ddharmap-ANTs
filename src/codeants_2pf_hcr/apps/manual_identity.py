@@ -15,7 +15,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     from qtpy.QtCore import Qt
     from qtpy.QtGui import QImage, QPixmap
     from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-        QPushButton, QLineEdit, QCheckBox, QMessageBox)
+        QPushButton, QLineEdit, QCheckBox, QMessageBox, QScrollArea)
 
     viewer = napari.Viewer(title=f"Manual HCR identity — {dataset.manifest['fish_id']}", show=show)
     spacing = tuple(reversed(dataset.manifest['grid']['spacing_xyz']))
@@ -84,7 +84,10 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     layout.addWidget(xz)
     layout.addWidget(yz)
     layout.addStretch()
-    viewer.window.add_dock_widget(panel, name='Identity review', area='right')
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setWidget(panel)
+    viewer.window.add_dock_widget(scroll, name='Identity review', area='right')
 
     def orthogonal_pixmap(a, h, mask, scale_y, scale_x):
         def norm(array, limits):
@@ -103,7 +106,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         image = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888).copy()
         width = 290
         height = max(1, int(width * rgb.shape[0] * scale_y / (rgb.shape[1] * scale_x)))
-        return QPixmap.fromImage(image).scaled(width, height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return QPixmap.fromImage(image).scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
 
     def update_orthos(*_):
         z, y, x = centers[state['label']]
@@ -161,7 +164,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
             anatomy_contrast=list(anatomy.contrast_limits), zoom=float(viewer.camera.zoom))
         session.view.setdefault('stacks', {})[state['stack']] = dict(
             contrast=list(marker_layer.contrast_limits), opacity=float(marker_layer.opacity))
-        session.snapshot()
+        session.checkpoint()
 
     def change_stack(*_):
         save_view()
@@ -181,10 +184,13 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         update_orthos()
 
     def decision(call):
+        if not cell_select.count():
+            return
         try:
             session.set_call(state['stack'], state['label'], call, issue=issue.currentText(),
                              blocking=blocking.isChecked(), note=note.text())
             refresh_queue()
+            report_checkpoint()
         except (ValueError, OSError) as exc:
             QMessageBox.warning(panel, 'Decision not saved', str(exc))
 
@@ -192,13 +198,26 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         if cell_select.count():
             cell_select.setCurrentIndex((cell_select.currentIndex() + direction) % cell_select.count())
 
+    def report_checkpoint():
+        if session.last_snapshot_error:
+            QMessageBox.warning(panel, 'Decision saved to journal',
+                'The decision is saved in the journal, but CSV/session checkpoints could not be updated. '
+                'Resolve the storage problem before continuing: ' + session.last_snapshot_error)
+
     def history(action):
-        getattr(session, action)()
-        refresh_queue()
+        try:
+            getattr(session, action)()
+            refresh_queue()
+            report_checkpoint()
+        except OSError as exc:
+            QMessageBox.warning(panel, 'History could not be saved', str(exc))
 
     def freeze_snapshot():
         save_view()
-        QMessageBox.information(panel, 'Frozen annotations', str(session.freeze()))
+        try:
+            QMessageBox.information(panel, 'Frozen annotations', str(session.freeze()))
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(panel, 'Snapshot could not be written', str(exc))
 
     @labels.mouse_drag_callbacks.append
     def click_mask(layer, event):
@@ -239,7 +258,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     if controls is None:
         controls = {}
     controls.update(dict(panel=panel, stack=stack_select, queue=filter_select,
-        cells=cell_select, calls=call_buttons, undo=undo, redo=redo, freeze=freeze, status=status, save_view=save_view))
+        cells=cell_select, calls=call_buttons, undo=undo, redo=redo, freeze=freeze, status=status, save_view=save_view, orthogonal_labels=(xz, yz)))
     return viewer
 
 

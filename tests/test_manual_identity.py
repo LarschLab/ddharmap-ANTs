@@ -288,3 +288,92 @@ def test_pipeline_manual_source_selection_and_legacy_guard(dataset, tmp_path):
     mixed = run_single_fish_export_canonical_tables_stage(config, score_input_root=score, hcr_input_root=manual, manual_identity_root=manual)
     assert mixed.status == 'fail'
     assert 'cannot be combined' in mixed.errors[0]
+
+
+def test_committed_decision_survives_checkpoint_error_with_history(dataset, tmp_path, monkeypatch):
+    session = AnnotationSession(dataset, tmp_path / 'session', 'one')
+    def fail():
+        raise OSError('checkpoint storage failure')
+    monkeypatch.setattr(session, 'snapshot', fail)
+    session.set_call('pth2-r1', 11, 'positive')
+    assert session.rows[('pth2-r1', 11)]['call'] == 'positive'
+    assert len(session.undo_stack) == 1
+    assert 'storage failure' in session.last_snapshot_error
+    session.undo()
+    assert session.rows[('pth2-r1', 11)]['call'] == 'unreviewed'
+    session.redo()
+    assert session.rows[('pth2-r1', 11)]['call'] == 'positive'
+    session.close()
+    resumed = AnnotationSession(dataset, tmp_path / 'session', 'two')
+    assert resumed.rows[('pth2-r1', 11)]['call'] == 'positive'
+    resumed.close()
+
+
+@pytest.mark.parametrize('bad_id', [11.9, True, '11'])
+def test_rejects_noninteger_correspondence_and_eligibility(dataset, tmp_path, bad_id):
+    session = AnnotationSession(dataset, tmp_path / 'session', 'one')
+    session.set_call('pth2-r1', 11, 'positive')
+    frozen = session.freeze()
+    session.close()
+    geometry, master, mapping_path = export_inputs(dataset, tmp_path)
+    mapping = json.loads(mapping_path.read_text())
+    mapping['rows'][0]['exvivo_label_id'] = bad_id
+    mapping_path.write_text(json.dumps(mapping))
+    with pytest.raises(ValueError, match='integer'):
+        export_manual_identity(dataset, frozen, mapping_path, geometry, master, tmp_path / 'export', [])
+    eligibility_path = Path(dataset.manifest['eligibility']['path'])
+    eligibility = json.loads(eligibility_path.read_text())
+    eligibility['eligible_label_ids'] = [bad_id, 22]
+    eligibility_path.write_text(json.dumps(eligibility))
+    dataset.manifest['eligibility']['sha256'] = sha256(eligibility_path)
+    dataset.path.write_text(json.dumps(dataset.manifest))
+    with pytest.raises(ValueError, match='integer'):
+        Dataset(dataset.path)
+
+
+def test_rejects_missing_geometry_and_score_columns(dataset, tmp_path):
+    from codeants_2pf_hcr.manual_identity import export_manual_canonical_tables
+    session = AnnotationSession(dataset, tmp_path / 'session', 'one')
+    frozen = session.freeze()
+    session.close()
+    geometry, master, mapping = export_inputs(dataset, tmp_path)
+    frame = pd.read_csv(geometry)
+    frame['new_geometry'] = [1, 2, 3]
+    frame.to_csv(geometry, index=False)
+    mapping_data = json.loads(mapping.read_text())
+    mapping_data['geometry_sha256'] = sha256(geometry)
+    mapping.write_text(json.dumps(mapping_data))
+    with pytest.raises(ValueError, match='lacks geometry'):
+        export_manual_identity(dataset, frozen, mapping, geometry, master, tmp_path / 'rejected', [])
+    frame.drop(columns='new_geometry').to_csv(geometry, index=False)
+    mapping_data['geometry_sha256'] = sha256(geometry)
+    mapping.write_text(json.dumps(mapping_data))
+    manual_root = tmp_path / 'manual'
+    export_manual_identity(dataset, frozen, mapping, geometry, master, manual_root, [])
+    score_root = tmp_path / 'score'
+    score_root.mkdir()
+    scored = pd.read_csv(master)
+    scored['new_response_field'] = [1, 2, 3]
+    scored.to_csv(score_root / 'functional_roi_activity_identity.csv', index=False)
+    with pytest.raises(ValueError, match='lacks scored'):
+        export_manual_canonical_tables(manual_root, score_root, tmp_path / 'canonical')
+
+
+def test_identity_genes_rebuilt_and_provenance_is_portable(dataset, tmp_path):
+    session = AnnotationSession(dataset, tmp_path / 'session', 'one')
+    session.set_call('pth2-r1', 11, 'positive')
+    frozen = session.freeze()
+    session.close()
+    geometry, master, mapping = export_inputs(dataset, tmp_path)
+    frame = pd.read_csv(master)
+    frame['identity_genes'] = '["legacy"]'
+    frame.to_csv(master, index=False)
+    output = tmp_path / 'manual'
+    result = export_manual_identity(dataset, frozen, mapping, geometry, master, output, ['pth2'])
+    assert result.identity_genes.tolist() == [['pth2'], [], ['pth2']]
+    manifest = json.loads((output / 'manual_identity_export_manifest.json').read_text())
+    for name in ('dataset_manifest.json', 'reviewed_correspondence.json', 'annotations_snapshot.json'):
+        assert (output / name).is_file()
+        assert manifest['output_sha256'][name] == sha256(output / name)
+    audit = pd.read_csv(output / 'manual_identity_mapping_audit.csv')
+    assert {'anat_label', 'mapping_status', 'mapping_metrics', 'mapping_reason'} <= set(audit.columns)

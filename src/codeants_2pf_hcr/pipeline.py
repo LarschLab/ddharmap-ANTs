@@ -4688,6 +4688,7 @@ def run_single_fish_export_canonical_tables_stage(
             "functional_roi_activity_identity.csv", "anatomy_identity_lookup.csv",
             "functional_roi_activity_bpi_cells.csv", "functional_roi_activity_bpi_summary.csv",
             "manual_annotations.csv", "manual_identity_mapping_audit.csv", "manual_identity_export_manifest.json",
+            "dataset_manifest.json", "annotations_snapshot.json", "reviewed_correspondence.json",
         )
         return StageManifest(
             manifest_version=PIPELINE_MANIFEST_VERSION, stage_name="export-canonical-tables",

@@ -35,6 +35,14 @@ def test_viewer_independent_calls_and_controls(tmp_path):
         controls['queue'].setCurrentText('uncertain')
         assert controls['cells'].count() == 0
         assert 'No cells' in controls['status'].text()
+        from napari.utils.key_bindings import coerce_keybinding
+        before = {key: row.copy() for key, row in session.rows.items()}
+        viewer.keymap[coerce_keybinding('2')](viewer)
+        assert session.rows == before
+        # Z spacing is twice XY: physical aspect is twice raw pixel aspect.
+        for label in controls['orthogonal_labels']:
+            pixmap = label.pixmap()
+            assert pixmap.height() / pixmap.width() == pytest.approx(8 * 2 / 24, abs=.01)
         # Native widget render captures panel layout without relying on OpenGL.
         path = os.environ.get('MANUAL_IDENTITY_SCREENSHOT')
         if path:

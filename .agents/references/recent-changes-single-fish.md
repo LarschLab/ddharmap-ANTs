@@ -4275,3 +4275,5 @@
 - Added fixed-mask napari per-marker review, prepared dataset validation, durable independent call records, reviewed-geometry identity export, and ROI-only canonical source selection. Guide: `docs/manual-hcr-identity-gui.md`.
 - Existing mask eligibility and accepted identity/geometry/response artifacts remain unchanged. Three pre-existing untracked freeze-run files were preserved.
 - Remaining scientific prerequisites: verified real-fish registered intensity/coverage bundle, authoritative eligibility, and reviewed ex-vivo/in-vivo correspondence. HCR-centric exports are explicitly blocked rather than populated with fake IDs.
+
+- Independent subagent review of `b3a0dc5` reproduced empty-queue shortcuts, orthogonal physical-aspect distortion, misleading checkpoint failures/lost undo, missing-column drops, stale identity gene lists, fractional label truncation, and incomplete portable provenance. Follow-up fixes add guards and regression checks for each finding; frozen input metadata and reviewed correspondence now travel with exports.

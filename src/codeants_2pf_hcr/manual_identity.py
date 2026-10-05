@@ -15,6 +15,18 @@ import pandas as pd
 CALLS = ('unreviewed', 'positive', 'negative', 'uncertain', 'unassessable')
 
 
+def positive_label_id(value):
+    """Validate exact IDs before normalization; reject fractional values and bools."""
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError('Label ID must be a positive integer, not a boolean')
+    if isinstance(value, (int, np.integer)):
+        if value > 0:
+            return int(value)
+    elif isinstance(value, (float, np.floating)) and np.isfinite(value) and value > 0 and int(value) == value:
+        return int(value)
+    raise ValueError('Label ID must be an exact positive integer')
+
+
 def sha256(path):
     h = hashlib.sha256()
     with Path(path).open('rb') as f:
@@ -81,7 +93,7 @@ class Dataset:
         eligibility = json.loads(self.asset(m['eligibility']).read_text())
         if not eligibility.get('policy_source'):
             raise ValueError('Eligibility must cite its upstream policy/source')
-        self.eligible = [int(n) for n in eligibility['eligible_label_ids']]
+        self.eligible = [positive_label_id(n) for n in eligibility['eligible_label_ids']]
         if not self.eligible or len(set(self.eligible)) != len(self.eligible) or any(n <= 0 for n in self.eligible):
             raise ValueError('Invalid eligible label inventory')
         if not set(self.eligible).issubset(set(np.unique(self.labels))):
@@ -170,6 +182,7 @@ class AnnotationSession:
                     call='unreviewed', issue_code='', issue_blocks_export=False, note='', reviewer='', updated_at_utc='', revision=0)
         self.revision = 0
         self.undo_stack, self.redo_stack = [], []
+        self.last_snapshot_error = None
         journal = self.directory / 'annotation_events.jsonl'
         if journal.exists():
             data = journal.read_bytes()
@@ -204,12 +217,13 @@ class AnnotationSession:
             _, coverage = self.dataset.marker_data(stack)
             if not np.all(coverage[self.dataset.labels == label]):
                 raise ValueError('Incomplete cell coverage: use uncertain or unassessable')
-        key = (stack, int(label))
+        key = (stack, positive_label_id(label))
         old = self.rows[key].copy()
         new = dict(old, call=call, issue_code=issue, issue_blocks_export=bool(blocking), note=note)
         self._record(key, new, 'decision')
         self.undo_stack.append((key, old, new))
         self.redo_stack.clear()
+        self.checkpoint()
 
     def _record(self, key, row, action):
         row = dict(row, reviewer=self.reviewer, updated_at_utc=datetime.now(timezone.utc).isoformat(), revision=self.revision + 1)
@@ -222,19 +236,30 @@ class AnnotationSession:
             os.fsync(f.fileno())
         self.rows[key] = row
         self.revision += 1
-        self.snapshot()
 
     def undo(self):
         if self.undo_stack:
-            key, old, new = self.undo_stack.pop()
+            key, old, new = self.undo_stack[-1]
             self._record(key, old, 'undo')
+            self.undo_stack.pop()
             self.redo_stack.append((key, old, new))
+            self.checkpoint()
 
     def redo(self):
         if self.redo_stack:
-            key, old, new = self.redo_stack.pop()
+            key, old, new = self.redo_stack[-1]
             self._record(key, new, 'redo')
+            self.redo_stack.pop()
             self.undo_stack.append((key, old, new))
+            self.checkpoint()
+
+    def checkpoint(self):
+        try:
+            self.snapshot()
+        except OSError as exc:
+            self.last_snapshot_error = str(exc)
+        else:
+            self.last_snapshot_error = None
 
     def snapshot(self):
         frame = pd.DataFrame(self.rows.values())
@@ -259,9 +284,12 @@ class AnnotationSession:
 def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_path, roi_master_path, output_dir, gene_order):
     """Produce isolated ROI-compatible tables; never fabricate HCR-centric labels."""
     from .matching import attach_identity_to_functional_roi_geometry_df
-    frozen = json.loads(Path(frozen_path).read_text())
+    frozen_bytes = Path(frozen_path).read_bytes()
+    frozen = json.loads(frozen_bytes)
     if frozen['dataset_fingerprint'] != dataset.fingerprint or frozen['manifest'] != dataset.manifest:
         raise ValueError('Frozen annotation dataset mismatch')
+    for row in frozen['annotations']:
+        row['exvivo_label_id'] = positive_label_id(row['exvivo_label_id'])
     rows = pd.DataFrame(frozen['annotations'])
     expected = {(s, n) for s in dataset.markers for n in dataset.eligible}
     keys = list(zip(rows.marker_stack_id, rows.exvivo_label_id))
@@ -269,9 +297,14 @@ def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_p
         raise ValueError('Invalid snapshot annotation inventory')
     for row in frozen['annotations']:
         marker = dataset.markers[row['marker_stack_id']]
-        if row['gene'] != marker['gene'] or row['fish_id'] != dataset.manifest['fish_id'] or not isinstance(row['issue_blocks_export'], bool):
+        if row['dataset_id'] != dataset.manifest['dataset_id'] or row['gene'] != marker['gene'] or row['fish_id'] != dataset.manifest['fish_id'] or not isinstance(row['issue_blocks_export'], bool):
             raise ValueError('Invalid annotation provenance')
-    mapping = json.loads(Path(correspondence_path).read_text())
+    correspondence_bytes = Path(correspondence_path).read_bytes()
+    mapping = json.loads(correspondence_bytes)
+    for row in mapping['rows']:
+        row['exvivo_label_id'] = positive_label_id(row['exvivo_label_id'])
+        if row['status'] == 'accepted':
+            row['anat_label'] = positive_label_id(row['anat_label'])
     for key, expected_value in [('schema_version', 1), ('fish_id', dataset.manifest['fish_id']),
                                 ('exvivo_labels_sha256', dataset.manifest['labels']['sha256']),
                                 ('geometry_sha256', sha256(geometry_path))]:
@@ -313,11 +346,22 @@ def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_p
         raise ValueError('Duplicate ROI keys')
     if set(map(tuple, geometry[roi_keys].to_numpy())) != set(map(tuple, master[roi_keys].to_numpy())):
         raise ValueError('ROI inventory differs')
+    missing_geometry = set(geometry.columns) - set(master.columns)
+    if missing_geometry:
+        raise ValueError(f'ROI master lacks geometry columns: {sorted(missing_geometry)}')
     # Protect every common geometry column against a mismatched master.
     common = [c for c in geometry if c in master and c not in roi_keys]
     left = geometry.set_index(roi_keys).sort_index()[common]
     right = master.set_index(roi_keys).sort_index()[common]
     pd.testing.assert_frame_equal(left, right, check_dtype=False)
+    mapping_rows = {r['exvivo_label_id']: r for r in mapping['rows']}
+    for stack, group in rows.groupby('marker_stack_id'):
+        assessed_ids = set(group.loc[group.call.isin(['positive', 'negative']), 'exvivo_label_id'])
+        if assessed_ids:
+            _, coverage = dataset.marker_data(stack)
+            uncovered_ids = set(np.unique(dataset.labels[coverage == 0])) - {0}
+            if assessed_ids & uncovered_ids:
+                raise ValueError('Frozen positive/negative calls have incomplete cell coverage')
     primary = dataset.manifest.get('primary_stack_by_gene', {})
     memberships, audit = {}, []
     for (label, gene), group in rows.groupby(['exvivo_label_id', 'gene']):
@@ -339,7 +383,10 @@ def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_p
             else:
                 reason = 'exported'
                 memberships.setdefault(links[label], set()).add(gene)
-        audit.append(dict(exvivo_label_id=int(label), gene=gene, primary_stack_id=chosen, outcome=reason))
+        correspondence = mapping_rows.get(label, {})
+        audit.append(dict(exvivo_label_id=int(label), gene=gene, primary_stack_id=chosen, outcome=reason,
+            anat_label=correspondence.get('anat_label'), mapping_status=correspondence.get('status', 'missing'),
+            mapping_reason=correspondence.get('reason', ''), mapping_metrics=json.dumps(correspondence.get('metrics', {}))))
     order = {gene: i for i, gene in enumerate(gene_order)}
     lookup_rows = []
     for label, genes in sorted(memberships.items()):
@@ -347,6 +394,9 @@ def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_p
         lookup_rows.append(dict(anat_label=label, identity_label='/'.join(genes), identity_gene_count=len(genes), identity_genes=genes))
     lookup = pd.DataFrame(lookup_rows, columns=['anat_label', 'identity_label', 'identity_gene_count', 'identity_genes'])
     result = attach_identity_to_functional_roi_geometry_df(geometry, lookup, passthrough_df=master)
+    if 'identity_genes' in master.columns:
+        by_label = {r['anat_label']: r['identity_genes'] for r in lookup_rows}
+        result['identity_genes'] = result['anat_label'].map(lambda label: by_label.get(label, []))
     output = Path(output_dir)
     # New directory is mandatory: no canonical overwrite or accidental source mixing.
     output.mkdir(parents=True, exist_ok=False)
@@ -354,11 +404,16 @@ def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_p
     result.to_csv(output / 'functional_roi_activity_identity.csv', index=False)
     pd.DataFrame(audit).to_csv(output / 'manual_identity_mapping_audit.csv', index=False)
     rows.to_csv(output / 'manual_annotations.csv', index=False)
+    atomic_write(output / 'dataset_manifest.json', json.dumps(dataset.manifest, indent=2))
+    (output / 'reviewed_correspondence.json').write_bytes(correspondence_bytes)
+    (output / 'annotations_snapshot.json').write_bytes(frozen_bytes)
     provenance = dict(schema_version=1, fish_id=dataset.manifest['fish_id'], identity_source='manual_exvivo', dataset_fingerprint=dataset.fingerprint,
-        annotations_sha256=sha256(frozen_path), correspondence_sha256=sha256(correspondence_path),
+        annotations_sha256=hashlib.sha256(frozen_bytes).hexdigest(), correspondence_sha256=hashlib.sha256(correspondence_bytes).hexdigest(),
         geometry_sha256=sha256(geometry_path), roi_master_sha256=sha256(roi_master_path), gene_order=gene_order,
+        source_dataset_manifest=str(dataset.path), source_annotations_snapshot=str(Path(frozen_path).resolve()),
+        source_correspondence=str(Path(correspondence_path).resolve()),
         hcr_centric_supported=False, hcr_centric_reason='Manual assignments do not identify confocal segmented labels')
-    provenance['output_sha256'] = {p.name: sha256(p) for p in output.glob('*.csv')}
+    provenance['output_sha256'] = {p.name: sha256(p) for p in output.iterdir() if p.is_file()}
     atomic_write(output / 'manual_identity_export_manifest.json', json.dumps(provenance, indent=2))
     return result
 
@@ -410,6 +465,9 @@ def export_manual_canonical_tables(manual_root, score_root, output):
     identity_columns = {'identity_label', 'identity_gene_count', 'identity_genes', 'has_identity_assigned', 'identity_display_label'}
     if identity.duplicated(keys).any() or scored.duplicated(keys).any():
         raise ValueError('Duplicate canonical ROI keys')
+    missing_scored = set(scored.columns) - identity_columns - set(identity.columns)
+    if missing_scored:
+        raise ValueError(f'Manual ROI master lacks scored columns: {sorted(missing_scored)}')
     common = [c for c in scored if c in identity and c not in identity_columns and c not in keys]
     pd.testing.assert_frame_equal(identity.set_index(keys).sort_index()[common],
                                   scored.set_index(keys).sort_index()[common], check_dtype=False)
@@ -420,13 +478,13 @@ def export_manual_canonical_tables(manual_root, score_root, output):
     if any((manual_root / name).exists() for name in ['hcr_activity_status.csv', 'conf_to_func_pairs.csv', 'hcr_func_candidates.csv']):
         raise ValueError('Mixed HCR-centric and manual identity sources')
     output.mkdir(parents=True, exist_ok=False)
-    for name in ['functional_roi_activity_identity.csv', 'anatomy_identity_lookup.csv', 'manual_annotations.csv', 'manual_identity_mapping_audit.csv']:
+    for name in ['functional_roi_activity_identity.csv', 'anatomy_identity_lookup.csv', 'manual_annotations.csv', 'manual_identity_mapping_audit.csv', 'dataset_manifest.json', 'annotations_snapshot.json', 'reviewed_correspondence.json']:
         shutil.copyfile(manual_root / name, output / name)
     for name in score_names:
         shutil.copyfile(score_root / name, output / name)
     manifest = dict(manifest, source_manual_root=str(manual_root.resolve()), source_score_root=str(score_root.resolve()),
                     canonical_scope='roi_only', unsupported_consumers=['HCR-centric trace/status exports', 'HCR-dependent compound figures'])
-    manifest['output_sha256'] = {p.name: sha256(p) for p in output.glob('*.csv')}
+    manifest['output_sha256'] = {p.name: sha256(p) for p in output.iterdir() if p.is_file()}
     atomic_write(output / 'manual_identity_export_manifest.json', json.dumps(manifest, indent=2))
     return output
 
