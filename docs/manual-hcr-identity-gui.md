@@ -65,7 +65,7 @@ A session permits one writer. After a crash, inspect `writer.lock` and recover o
 python tools/manual_hcr_identity.py recover-lock --session /path/session --expected-pid 12345
 ```
 
-The command refuses a live process or another host. A partial final journal event is backed up and discarded on resume; complete events remain authoritative.
+The command refuses a live process or another host. A failed journal append/flush/fsync locks out further decisions and freezing until the session is closed and reopened; the UI reports uncertain durability instead of treating the attempt as definitely saved or unsaved. A complete surviving event is replayed. A partial final journal event is backed up and discarded on resume; complete events remain authoritative.
 
 ## Export identities
 

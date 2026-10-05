@@ -156,7 +156,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         cell_select.setCurrentIndex(max(0, ix))
         cell_select.blockSignals(False)
         for button in call_buttons.values():
-            button.setEnabled(bool(cell_select.count()))
+            button.setEnabled(bool(cell_select.count()) and not session.journal_failed)
         if cell_select.count():
             select_cell(cell_select.currentData())
         else:
@@ -196,7 +196,11 @@ def create_viewer(dataset, session, *, show=True, controls=None):
             refresh_queue()
             report_checkpoint()
         except (ValueError, OSError) as exc:
-            QMessageBox.warning(panel, 'Decision not saved', str(exc))
+            if session.journal_failed:
+                for button in [*call_buttons.values(), undo, redo, freeze]:
+                    button.setEnabled(False)
+            title = 'Session needs reopening' if session.journal_failed else 'Decision not saved'
+            QMessageBox.warning(panel, title, str(exc))
 
     def move(direction):
         if cell_select.count():

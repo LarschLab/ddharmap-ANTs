@@ -183,6 +183,7 @@ class AnnotationSession:
         self.revision = 0
         self.undo_stack, self.redo_stack = [], []
         self.last_snapshot_error = None
+        self.journal_failed = False
         journal = self.directory / 'annotation_events.jsonl'
         if journal.exists():
             data = journal.read_bytes()
@@ -210,7 +211,12 @@ class AnnotationSession:
         if row['call'] not in CALLS or not isinstance(row['issue_blocks_export'], bool):
             raise ValueError('Invalid call or blocking flag')
 
+    def require_writable_journal(self):
+        if self.journal_failed:
+            raise OSError('Journal durability is uncertain. Close and reopen this session before editing or exporting.')
+
     def set_call(self, stack, label, call, *, issue='', blocking=False, note=''):
+        self.require_writable_journal()
         if call not in CALLS:
             raise ValueError('Unknown annotation call')
         if call in ('positive', 'negative'):
@@ -226,18 +232,26 @@ class AnnotationSession:
         self.checkpoint()
 
     def _record(self, key, row, action):
+        self.require_writable_journal()
         row = dict(row, reviewer=self.reviewer, updated_at_utc=datetime.now(timezone.utc).isoformat(), revision=self.revision + 1)
         self.validate_row(row)
         event = dict(event_id=uuid.uuid4().hex, revision=row['revision'], action=action,
                      stack=key[0], label=key[1], old=self.rows[key], new=row)
-        with (self.directory / 'annotation_events.jsonl').open('a') as f:
-            f.write(json.dumps(event) + '\n')
-            f.flush()
-            os.fsync(f.fileno())
+        try:
+            with (self.directory / 'annotation_events.jsonl').open('a') as f:
+                f.write(json.dumps(event) + '\n')
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as exc:
+            # A complete or partial event may already exist. Never append a second
+            # event with the same revision or freeze divergent in-memory state.
+            self.journal_failed = True
+            raise OSError('Journal durability is uncertain. Close and reopen this session before editing or exporting.') from exc
         self.rows[key] = row
         self.revision += 1
 
     def undo(self):
+        self.require_writable_journal()
         if self.undo_stack:
             key, old, new = self.undo_stack[-1]
             self._record(key, old, 'undo')
@@ -246,6 +260,7 @@ class AnnotationSession:
             self.checkpoint()
 
     def redo(self):
+        self.require_writable_journal()
         if self.redo_stack:
             key, old, new = self.redo_stack[-1]
             self._record(key, new, 'redo')
@@ -262,12 +277,14 @@ class AnnotationSession:
             self.last_snapshot_error = None
 
     def snapshot(self):
+        self.require_writable_journal()
         frame = pd.DataFrame(self.rows.values())
         atomic_write(self.directory / 'annotations.csv', frame.to_csv(index=False))
         atomic_write(self.directory / 'session.json', json.dumps(dict(schema_version=1, revision=self.revision,
                      dataset_fingerprint=self.dataset.fingerprint, reviewer=self.reviewer, view=self.view), indent=2))
 
     def freeze(self):
+        self.require_writable_journal()
         path = self.directory / f'annotations-r{self.revision:06d}.json'
         contents = json.dumps(dict(schema_version=1, dataset_fingerprint=self.dataset.fingerprint,
             manifest=self.dataset.manifest, revision=self.revision, annotations=list(self.rows.values())), indent=2)

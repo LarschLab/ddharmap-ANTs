@@ -377,3 +377,28 @@ def test_identity_genes_rebuilt_and_provenance_is_portable(dataset, tmp_path):
         assert manifest['output_sha256'][name] == sha256(output / name)
     audit = pd.read_csv(output / 'manual_identity_mapping_audit.csv')
     assert {'anat_label', 'mapping_status', 'mapping_metrics', 'mapping_reason'} <= set(audit.columns)
+
+
+def test_journal_failure_blocks_following_mutation_and_freeze_until_reopen(dataset, tmp_path, monkeypatch):
+    import codeants_2pf_hcr.manual_identity as module
+    path = tmp_path / 'session'
+    session = AnnotationSession(dataset, path, 'one')
+    with monkeypatch.context() as patch:
+        def fail_fsync(fd):
+            raise OSError('disk fsync failed')
+        patch.setattr(module.os, 'fsync', fail_fsync)
+        with pytest.raises(OSError, match='durability is uncertain'):
+            session.set_call('pth2-r1', 11, 'positive')
+    assert session.journal_failed
+    for operation in [lambda: session.set_call('cort-r1', 11, 'positive'),
+                      session.undo, session.redo, session.freeze, session.snapshot]:
+        with pytest.raises(OSError, match='Close and reopen'):
+            operation()
+    session.close()
+    # The complete surviving event is recovered; no duplicate revision was appended.
+    resumed = AnnotationSession(dataset, path, 'two')
+    assert resumed.rows[('pth2-r1', 11)]['call'] == 'positive'
+    assert resumed.rows[('cort-r1', 11)]['call'] == 'unreviewed'
+    resumed.set_call('cort-r1', 11, 'positive')
+    assert resumed.revision == 2
+    resumed.close()
