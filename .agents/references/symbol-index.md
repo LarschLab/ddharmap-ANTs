@@ -478,3 +478,11 @@ Generated manually for the current extracted package surface.
 - `execute_run`: Execute the declared DAG, saving full logs and atomic per-stage provenance/hash state; resume skips only hash-current stages.
 - `build_run_status`: Report saved stage state and currentness without executing commands.
 - `verify_run`: Verify the pinned environment/provenance and every saved input/output hash.
+
+## Manual ex-vivo HCR identity review
+
+- `manual_identity.Dataset`, `AnnotationSession`, `prepare_dataset`: Validate hash-bound, physically aligned registered inputs and authoritative eligible masks; persist independent per-marker calls with a recoverable journal and frozen snapshots.
+- `manual_identity.export_manual_identity`, `export_manual_canonical_tables`: Map approved ex-vivo positives through frozen reviewed geometry to existing in-vivo identity/ROI schemas; preserve ROI inventory and response fields; emit explicit ROI-only canonical bundles without fabricated HCR labels.
+- `apps.manual_identity.create_viewer`: Optional napari/Qt fixed-mask reviewer with independent marker selection and orthogonal context.
+- `run_single_fish_export_canonical_tables_stage`: Optional `manual_identity_root` selects ROI-only manual-source export; incompatible HCR source mixing is blocked.
+- CLI: `tools/manual_hcr_identity.py` (`prepare`, `view`, `export`, `canonical`, `recover-lock`); setup/contracts: `docs/manual-hcr-identity-gui.md`.

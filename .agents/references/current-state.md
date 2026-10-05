@@ -104,3 +104,7 @@
   remain independent timing evidence against the same-root
   `score-activity-bpi/scored_stimulus_windows.csv`. Notebook 02 remains
   registration-only; neither notebook reruns scoring in memory.
+
+## Manual identity app (2026-10-05)
+
+`codex/manual-hcr-identity-gui` adds an optional napari fixed-mask reviewer and explicit ROI-only manual export, based on `codex/qc-notebooks` at `c2a0716`. Existing 2P eligibility is consumed unchanged; HCR intensity is reviewed independently per stack without HCR-mask segmentation. Prepared manifests and reviewed ex-vivo/in-vivo correspondence are prerequisites for real-fish use. No accepted scientific artifacts have been replaced. Run instructions and supported/unsupported consumers are in `docs/manual-hcr-identity-gui.md`.

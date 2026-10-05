@@ -133,3 +133,7 @@ stages materialize accepted computational inputs and downstream tables.
 - For migration caveats in downstream cells: see `current-state.md`.
 - Maintained manual ANTs, transform, BigWarp, and registration-sync entrypoints live under `registrations/`; they do not own stage or table semantics.
 - `notebooks/hcr_activity_replay_qa.ipynb` is a recall/QA notebook for read-only HCR activity replay manifests, candidate tables, and historical warped-label artifacts. It is not a stage owner; reusable replay logic remains package-owned.
+
+### Optional manual ex-vivo identity export
+
+The standalone `tools/manual_hcr_identity.py` app owns manual call persistence and reviewed-geometry adapter outputs, outside notebook orchestration. `export-canonical-tables --manual-identity-root` can consume those outputs to write the existing ROI master and score tables as an explicit ROI-only bundle; HCR-centric outputs are absent and HCR-dependent consumers remain gated. Legacy full export behavior is unchanged. See `docs/manual-hcr-identity-gui.md`.

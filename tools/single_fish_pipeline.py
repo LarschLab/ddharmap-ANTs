@@ -192,6 +192,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit HCR/identity registration CSV root. Defaults to staged assign-hcr-identity output root.",
     )
+    export_canonical.add_argument("--manual-identity-root", type=Path, help="Explicit manual export root; produces ROI-only canonical tables and blocks HCR source mixing.")
     export_canonical.add_argument("--force-recompute", action="store_true")
 
     make_qa_report = subparsers.add_parser(
@@ -606,6 +607,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             score_input_root=args.score_input_root,
             hcr_input_root=args.hcr_input_root,
+            manual_identity_root=args.manual_identity_root,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:

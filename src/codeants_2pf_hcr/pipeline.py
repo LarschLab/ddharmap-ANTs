@@ -4661,6 +4661,7 @@ def run_single_fish_export_canonical_tables_stage(
     *,
     score_input_root: str | Path | None = None,
     hcr_input_root: str | Path | None = None,
+    manual_identity_root: str | Path | None = None,
     force_recompute: bool = False,
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
@@ -4669,6 +4670,40 @@ def run_single_fish_export_canonical_tables_stage(
         score_input_root=score_input_root,
         hcr_input_root=hcr_input_root,
     )
+    if manual_identity_root is not None:
+        from .manual_identity import export_manual_canonical_tables
+        manual_root = Path(manual_identity_root)
+        output_root = _stage_root(paths, "export-canonical-tables") / "registration"
+        errors: tuple[str, ...] = ()
+        try:
+            if hcr_input_root is not None:
+                raise ValueError("Manual identity cannot be combined with an HCR input root")
+            source_manifest = json.loads((manual_root / "manual_identity_export_manifest.json").read_text())
+            if source_manifest.get("fish_id") != config.fish_id:
+                raise ValueError("Manual identity fish does not match pipeline fish")
+            export_manual_canonical_tables(manual_root, score_root, output_root)
+        except (OSError, ValueError, AssertionError, KeyError) as exc:
+            errors = (str(exc),)
+        files = (
+            "functional_roi_activity_identity.csv", "anatomy_identity_lookup.csv",
+            "functional_roi_activity_bpi_cells.csv", "functional_roi_activity_bpi_summary.csv",
+            "manual_annotations.csv", "manual_identity_mapping_audit.csv", "manual_identity_export_manifest.json",
+        )
+        return StageManifest(
+            manifest_version=PIPELINE_MANIFEST_VERSION, stage_name="export-canonical-tables",
+            fish_id=config.fish_id, status="fail" if errors else "warn", dry_run=False,
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            inputs=(describe_manifest_path(manual_root / "manual_identity_export_manifest.json"),
+                    describe_manifest_path(score_root / "functional_roi_activity_identity.csv")),
+            outputs=tuple(describe_manifest_path(output_root / name) for name in files),
+            parameters={"identity_source": "manual_exvivo", "canonical_scope": "roi_only",
+                        "manual_identity_root": str(manual_root), "score_input_root": str(score_root),
+                        "pipeline_root": str(paths.pipeline_root), "hcr_centric_supported": False},
+            warnings=("ROI-only canonical export: HCR-centric tables and HCR-dependent figures are unsupported; no confocal mask IDs are fabricated.",),
+            errors=errors,
+        )
+    if (hcr_root / "manual_identity_export_manifest.json").exists():
+        raise ValueError("Use manual_identity_root for manual exports; legacy bundle assembly would mix identity sources")
     source_paths = _canonical_export_source_paths(
         paths,
         score_input_root=score_input_root,

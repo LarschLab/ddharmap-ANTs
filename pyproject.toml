@@ -20,6 +20,9 @@ dependencies = [
   "tifffile",
 ]
 
+[project.optional-dependencies]
+manual-identity = ["napari[pyqt5]>=0.5,<0.7"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

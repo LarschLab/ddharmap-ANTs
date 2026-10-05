@@ -1,7 +1,7 @@
 # Manual HCR identity annotation GUI — specification v1
 
 Date: 2026-10-05
-Status: design baseline for implementation; no GUI or new identity outputs implemented yet.
+Status: implementation design baseline; see implementation status and user guide below.
 Repository: Linnaeus `/Users/ddharmap/gitRepo/codeANTs`.
 Design branch: `codex/manual-hcr-identity-gui`, based on newest local work branch `codex/qc-notebooks`, commit `c2a0716` (after refreshing origin refs).
 
@@ -138,3 +138,7 @@ Build milestones:
 No further user decision is required to begin building from this specification. Defaults: napari, fixed eligible anatomy masks, independent marker review, five call states, no automated suggestions, separate manual-source exports.
 
 Asset availability, persisted eligibility, geometry-correspondence readiness, runtime dependencies, and HCR-centric consumer routing are technical checks to resolve during implementation. They are not presumed solved by this document. If those checks expose a new scientific threshold or identity-resolution decision, document and discuss it before changing scientific semantics.
+
+## Implementation status, 2026-10-05
+
+The fixed-mask napari viewer, hash-bound preparation, independent per-stack calls, journal/resume/undo/redo, frozen snapshots, reviewed-geometry export, and explicit ROI-only canonical source selection are implemented. Setup and exact manifest/correspondence contracts: [user guide](manual-hcr-identity-gui.md). HCR-centric consumers remain explicitly unsupported and gated; real-fish asset preparation and scientific correspondence review remain prerequisites.

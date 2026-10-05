@@ -113,3 +113,9 @@ Representative column groups:
 - Activity wording -> `activity-semantics.md`.
 - Output ownership -> this file.
 - If code conflicts with docs, follow policy docs unless they are clearly outdated.
+
+## Manual ex-vivo identity source (2026-10-05)
+
+`tools/manual_hcr_identity.py` writes independent per-marker calls keyed by dataset, stack, and ex-vivo label. Reviewed geometry maps positives to in-vivo `anat_label`; old HCR-mask identity is not unioned. Canonical ROI schemas and keys remain unchanged. Complete calls (including negatives and unreviewed/unassessable states) and source hashes remain in sidecars. Legacy no-identity fields do not establish marker negativity.
+
+`export-canonical-tables --manual-identity-root` creates an isolated ROI-only bundle with BPI cells/summary from the validated score root. It refuses HCR root mixing and existing output directories, and returns `warn` for its declared scope. HCR-centric tables/figures are unsupported until an anatomy-centric route is explicitly implemented; consumers retain their missing-input gates. Manual roots supplied as legacy HCR roots are rejected. See `docs/manual-hcr-identity-gui.md`.
