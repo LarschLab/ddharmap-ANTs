@@ -73,7 +73,7 @@ def rollback_promotion(journal: Path) -> None:
     for backup in journal.glob("previous*manifest.json"):
         previous = json.loads(backup.read_text()); target = Path(previous["path"])
         if previous["payload"] is not None: _write_json_atomic(target, previous["payload"])
-        elif target.exists(): target.replace(journal / "uncommitted_manifest.json")
+        elif target.exists(): target.replace(journal / (backup.stem + "-uncommitted.json"))
     _write_json_atomic(journal / "rollback.json", {"state": "rolled_back"})
 
 
@@ -167,7 +167,10 @@ def _native_proposal_manifest(frozen_manifest: Path, frozen: Path, roots: list[s
     if any(record.get("required") and not record["exists"] for record in native["inputs"] + native["outputs"]):
         raise RuntimeError("Native accepted proposal manifest has missing required paths")
     native["parameters"]["native_layout"] = "existing-fish-tree-v1"
-    native["reused_from"] = {"manifest": str(frozen_manifest), "manifest_sha256": _file_hash(frozen_manifest), "writer_generated_at": original["generated_at"], "action": "reuse_verified_reviewed_proposal"}
+    native["parameters"]["pipeline_root"] = str(fish)
+    native["parameters"]["output_root"] = str(fish)
+    native["pipeline_root"] = str(fish)
+    native["reused_from"] = {"manifest": str(frozen_manifest), "manifest_sha256": _file_hash(frozen_manifest), "writer_generated_at": original["generated_at"], "original_pipeline_root": original.get("parameters", {}).get("pipeline_root"), "action": "reuse_verified_reviewed_proposal"}
     native["generated_at"] = _utc_now()
     return native
 

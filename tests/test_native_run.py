@@ -40,6 +40,9 @@ def test_native_accepted_proposal_manifest_tracks_routed_reviewed_bytes(tmp_path
     result = _native_proposal_manifest(manifest,frozen,[str(tmp_path / "graph"),root,str(frozen)],fish)
     assert result["outputs"][0]["path"] == str(target)
     assert result["outputs"][0]["exists"] is True
+    assert result["pipeline_root"] == str(fish)
+    assert result["parameters"]["pipeline_root"] == str(fish)
+    assert result["reused_from"]["original_pipeline_root"] == root
     assert result["reused_from"]["writer_generated_at"] == "reviewed_time"
     target.write_text("corrupted")
     with pytest.raises(RuntimeError,match="reviewed bytes"):
@@ -153,9 +156,14 @@ def test_crash_after_publication_restores_manifest_and_products(tmp_path, prior_
     manifest.write_text(json.dumps({"new": True}))
     proposal = tmp_path / "proposal_manifest.json"
     proposal.write_text(json.dumps({"new_proposal": True}))
-    (journal / "previous_proposal_manifest.json").write_text(json.dumps({"path": str(proposal), "payload": {"reviewed": True}}))
+    (journal / "previous_proposal_manifest.json").write_text(json.dumps({"path": str(proposal), "payload": {"reviewed": True} if prior_manifest else None}))
     rollback_promotion(journal)
-    assert json.loads(proposal.read_text()) == {"reviewed": True}
+    if prior_manifest:
+        assert json.loads(proposal.read_text()) == {"reviewed": True}
+    else:
+        assert not proposal.exists()
+        assert json.loads((journal / "previous_proposal_manifest-uncommitted.json").read_text()) == {"new_proposal": True}
+        assert json.loads((journal / "previous_manifest-uncommitted.json").read_text()) == {"new": True}
     assert target.read_text() == "old"
     if prior_manifest: assert json.loads(manifest.read_text()) == {"old": True}
     else: assert not manifest.exists()
