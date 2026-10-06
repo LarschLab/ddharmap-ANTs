@@ -1,5 +1,12 @@
 # Symbol Index
 
+- `single_fish_readiness.audit_readiness`: read-only, spec-pinned remaining-fish
+  readiness reports; never scientific writers or gate acceptance.
+- `single_fish_readiness.expected_transform_paths`: explicit forward HCR route
+  ordering in ANTs argument order.
+- `single_fish_readiness.resolve_archive_path`: same-fish explicit archive-to-mirror
+  path relocation, without rewriting original provenance.
+
 Generated manually for the current extracted package surface.
 
 ## Trusted patterns
