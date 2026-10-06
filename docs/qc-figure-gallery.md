@@ -24,6 +24,10 @@ path, and manifest SHA-256 association is retained. All seven notebook coverage
 records are included, even when a notebook has no image. Printed blocked or
 unavailable review messages are recorded for interpretation, not silently
 converted to scientific acceptance.
+Cell-level renderer-call/PNG coverage is also recorded so a plot cell that
+executes without serializing its image cannot be overlooked. Execute QC copies
+with inline PNG capture; `MPLBACKEND=Agg` alone does not serialize Matplotlib
+figures into notebook outputs. Scientific writer stages can continue using Agg.
 
 Keep the output directory outside all runner-owned input/output paths so this
 presentation export cannot invalidate scientific stage state. Inputs and notebook

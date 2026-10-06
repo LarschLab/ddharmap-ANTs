@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import ast
 import csv
 import hashlib
 import html
@@ -61,7 +62,7 @@ def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
         payload = json.loads(notebook.read_text())
         notebook_hash = sha256(notebook)
         heading = notebook.stem
-        png_count, code_count, other_images, blocked_messages = 0, 0, [], []
+        png_count, code_count, other_images, blocked_messages, cell_coverage = 0, 0, [], [], []
         for cell_index, cell in enumerate(payload["cells"]):
             source_text = "".join(cell.get("source", []))
             if cell.get("cell_type") == "markdown":
@@ -74,6 +75,14 @@ def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
             code_count += 1
             if cell.get("execution_count") is None:
                 raise ValueError(f"Unexecuted nonempty cell {notebook.name}:{cell_index}")
+            try:
+                calls = [node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+                         for node in ast.walk(ast.parse(source_text))
+                         if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute))]
+                renderer_calls = [name for name in calls if name.startswith(("render_", "plot_"))]
+            except SyntaxError:
+                renderer_calls = []  # Execution-copy IPython backend configuration may use a magic.
+            cell_png_count = 0
             for output_index, output in enumerate(cell.get("outputs", [])):
                 if output.get("output_type") == "error":
                     raise ValueError(f"Notebook error {notebook.name}:{cell_index}: {output.get('evalue')}")
@@ -90,17 +99,22 @@ def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
                 if isinstance(encoded, list):
                     encoded = "".join(encoded)
                 png_count += 1
+                cell_png_count += 1
                 add_png(base64.b64decode(encoded), {
                     "kind": "executed_notebook_png", "path": str(notebook),
                     "notebook_sha256": notebook_hash, "cell_index_zero_based": cell_index,
                     "output_index_zero_based": output_index, "heading": heading,
                 }, f"{notebook.name[:2]} · {heading} · image {png_count}")
+            cell_coverage.append({"cell_index_zero_based": cell_index, "heading": heading,
+                                  "renderer_calls": renderer_calls, "png_outputs": cell_png_count})
         if not notebook.name.startswith("00_") and not png_count:
             raise ValueError(f"QC notebook has no rendered figures: {notebook.name}")
         if other_images:
             raise ValueError(f"Non-PNG notebook figures require explicit retrieval: {notebook.name}: {other_images}")
         notebook_reports.append({"path": str(notebook), "sha256": notebook_hash,
                                  "executed_code_cells": code_count, "png_outputs": png_count,
+                                 "cell_figure_coverage": cell_coverage,
+                                 "renderer_cells_without_png": [entry for entry in cell_coverage if entry["renderer_calls"] and not entry["png_outputs"]],
                                  "blocked_or_unavailable_outputs": blocked_messages})
 
     for manifest in sorted(manifest_dir.glob("*_manifest.json")):
