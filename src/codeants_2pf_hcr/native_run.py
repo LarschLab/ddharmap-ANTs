@@ -2,23 +2,10 @@
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-import ctypes
 import json
 import os
 import shutil
-import sys
 from .native_paths import native_product_path
-
-
-def _exchange(left: Path, right: Path) -> None:
-    library = ctypes.CDLL(None, use_errno=True)
-    if sys.platform == "darwin":
-        code = library.renameatx_np(-2, os.fsencode(left), -2, os.fsencode(right), 2)
-    else:
-        code = library.renameat2(-100, os.fsencode(left), -100, os.fsencode(right), 2)
-    if code:
-        error = ctypes.get_errno()
-        raise OSError(error, os.strerror(error), str(left))
 
 
 def _owned_directory(fish: Path, product: Path) -> Path:
@@ -32,7 +19,7 @@ def _owned_directory(fish: Path, product: Path) -> Path:
     raise ValueError(f"Product has no declared native ownership: {product}")
 
 
-def promote_files(fish: Path, files: dict[Path, Path], journal: Path) -> None:
+def promote_files(fish: Path, files: dict[Path, Path], journal: Path, *, manifest_path: Path | None = None) -> None:
     """Atomically replace individual files; journal a recoverable stage set.
 
     exFAT cannot exchange populated directories. The manifest/state publication
@@ -40,6 +27,8 @@ def promote_files(fish: Path, files: dict[Path, Path], journal: Path) -> None:
     """
     from .single_fish_run import _file_hash, _write_json_atomic
     journal.mkdir(parents=True, exist_ok=False)
+    if manifest_path is not None:
+        _write_json_atomic(journal / "previous_manifest.json", {"path": str(manifest_path), "payload": json.loads(manifest_path.read_text()) if manifest_path.exists() else None})
     try:
         for index, (source, destination) in enumerate(files.items()):
             _owned_directory(fish, destination)
@@ -81,6 +70,11 @@ def rollback_promotion(journal: Path) -> None:
             restored.replace(target)
         else:
             target.replace(journal / (path.stem + "-uncommitted-new"))
+    backup = journal / "previous_manifest.json"
+    if backup.exists():
+        previous = json.loads(backup.read_text()); target = Path(previous["path"])
+        if previous["payload"] is not None: _write_json_atomic(target, previous["payload"])
+        elif target.exists(): target.replace(journal / "uncommitted_manifest.json")
     _write_json_atomic(journal / "rollback.json", {"state": "rolled_back"})
 
 
@@ -153,12 +147,12 @@ def execute_native_run(spec, *, resume: bool):
     graph = spec.state_root / "transaction_graph"
     graph.mkdir(parents=True, exist_ok=True)
     for journal in (spec.state_root / "history").glob("*"):
-        if journal.is_dir() and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():
+        if journal.is_dir() and list(journal.glob("intent-*.json")) and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():
             rollback_promotion(journal)
             backup = journal / "previous_manifest.json"
             if backup.exists():
                 previous = json.loads(backup.read_text())
-                _write_json_atomic(Path(previous["path"]), previous["payload"])
+                if previous["payload"] is not None: _write_json_atomic(Path(previous["path"]), previous["payload"])
     # Accepted proposal is an immutable input, outside the writer DAG.
     proposal = frozen / "make-anatomy-midline-proposal"
     if not (graph / proposal.name).exists():
@@ -243,36 +237,31 @@ def execute_native_run(spec, *, resume: bool):
         if writer == "materialize-anatomy-midline":
             products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in proposal.rglob("*") if p.is_file() and not p.name.startswith("._")})
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
-        promote_files(fish, products, journal)
+        promote_files(fish, products, journal, manifest_path=Path(stage.manifest))
         try:
-            previous_manifest = Path(stage.manifest)
-            if previous_manifest.exists():
-                _write_json_atomic(journal / "previous_manifest.json", {"path": str(previous_manifest), "payload": json.loads(previous_manifest.read_text())})
             manifest["inputs"] = _refresh_records(manifest.get("inputs", []))
             # Native manifests own exact files rather than synthetic stage roots.
             from .pipeline import describe_manifest_path
             manifest["outputs"] = [asdict(describe_manifest_path(destination, label=destination.name)) for destination in products.values()]
             manifest["generated_at"] = _utc_now()
             manifest["parameters"]["output_root"] = str(fish)
-            _write_json_atomic(Path(stage.manifest), manifest)
             if any(not item["exists"] and item.get("required") for item in manifest["inputs"] + manifest["outputs"]):
                 rollback_promotion(journal)
-                if (journal / "previous_manifest.json").exists(): _write_json_atomic(Path(stage.manifest), json.loads((journal / "previous_manifest.json").read_text())["payload"])
                 raise RuntimeError(f"Required native manifest path missing: {writer}")
             env = os.environ.copy();env.update(spec.environment);env["PYTHONPATH"] = str(spec.repo_root / "src")
             for index, validator in enumerate(stage.validators):
                 if _run_command(validator, cwd=spec.repo_root, env=env, log_path=spec.state_root / "logs" / f"{stage.name}.validator-{index}.log"):
                     rollback_promotion(journal)
                     raise RuntimeError(f"Native stage validator failed: {stage.name}")
+            _write_json_atomic(Path(stage.manifest), manifest)
             state = {"schema_version": 1, "fish_id": spec.fish_id, "stage": stage.name, "spec_path": str(spec.path), "spec_sha256": _spec_hash(spec), "command": list(stage.command), "git_commit": environment["git"]["actual_commit"], "scientific_code_commit": spec.git_commit, "interpreter": environment["interpreter"]["actual_executable"], "started_at": started, "finished_at": _utc_now(), "inputs": _describe_paths(stage.inputs + stage.optional_inputs), "outputs": _describe_paths(stage.outputs), "dependencies": _dependency_records(spec, stage), "exit_status": 0, "log": str(log), "action": "reuse_verified_frozen" if imported else "recompute_transaction", "validation": {"status": "pass", "checks": [{"kind": "writer_manifest_and_verified_promotion", "status": "pass"}]}}
-            _write_json_atomic(_state_path(spec, stage), state)
             state["actual_command"] = actual_command;state["execution_root"] = str(graph)
             _write_json_atomic(_state_path(spec, stage), state)
             _write_json_atomic(journal / "stage_commit.json", {"stage": stage.name, "manifest": stage.manifest})
         except Exception:
             rollback_promotion(journal)
             backup = journal / "previous_manifest.json"
-            if backup.exists(): _write_json_atomic(Path(stage.manifest), json.loads(backup.read_text())["payload"])
+            if backup.exists() and json.loads(backup.read_text())["payload"] is not None: _write_json_atomic(Path(stage.manifest), json.loads(backup.read_text())["payload"])
             raise
         results.append({"stage": stage.name, "action": state["action"], "status": "pass"})
         _write_json_atomic(spec.state_root / "current_stage.json", {"stage": stage.name, "state": "committed"})

@@ -53,3 +53,20 @@ def test_unknown_product_fails_without_native_overwrite(tmp_path):
     fish = tmp_path / "L000_f00";source = tmp_path / "new.csv";source.write_text("new")
     with pytest.raises(ValueError,match="ownership"):
         promote_files(fish,{source:fish / "01_raw/unsafe.csv"},tmp_path / "journal")
+
+
+@pytest.mark.parametrize("prior_manifest", [True, False])
+def test_crash_after_publication_restores_manifest_and_products(tmp_path, prior_manifest):
+    fish = tmp_path / "L000_f00"; target = fish / "03_analysis/functional/registration/a.csv"
+    target.parent.mkdir(parents=True);target.write_text("old")
+    manifest = tmp_path / "manifest.json"
+    if prior_manifest: manifest.write_text(json.dumps({"old": True}))
+    source = tmp_path / "new.csv";source.write_text("new");journal = tmp_path / "journal"
+    promote_files(fish,{source:target},journal,manifest_path=manifest)
+    saved = json.loads((journal / "previous_manifest.json").read_text())
+    assert saved["payload"] == ({"old": True} if prior_manifest else None)
+    manifest.write_text(json.dumps({"new": True}))
+    rollback_promotion(journal)
+    assert target.read_text() == "old"
+    if prior_manifest: assert json.loads(manifest.read_text()) == {"old": True}
+    else: assert not manifest.exists()
