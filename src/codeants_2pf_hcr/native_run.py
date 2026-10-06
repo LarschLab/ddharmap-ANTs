@@ -135,6 +135,12 @@ def _verify_reuse_inputs(manifest, fish: Path, original_root: str) -> None:
             raise RuntimeError(f"Frozen input inventory changed; recompute required: {path}")
 
 
+def validate_native_inputs(inputs, destinations) -> None:
+    produced = {str(path) for path in destinations}
+    missing = [path for path in inputs if not Path(path).exists() and path not in produced]
+    if missing: raise RuntimeError(f"Required native input missing before promotion: {missing}")
+
+
 def execute_native_run(spec, *, resume: bool):
     from .single_fish_run import (_utc_now, _runtime_report, validate_spec_environment, _stage_current, _execute_stage, _write_json_atomic, _spec_hash, _describe_paths, _dependency_records, _state_path, _run_command, _file_hash)
     environment = validate_spec_environment(spec)
@@ -237,6 +243,7 @@ def execute_native_run(spec, *, resume: bool):
         products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in output_dir.rglob("*") if p.is_file() and not p.name.startswith("._")}
         if writer == "materialize-anatomy-midline":
             products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in proposal.rglob("*") if p.is_file() and not p.name.startswith("._")})
+        validate_native_inputs(stage.inputs, products.values())
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
         promote_files(fish, products, journal, manifest_path=Path(stage.manifest))
         try:

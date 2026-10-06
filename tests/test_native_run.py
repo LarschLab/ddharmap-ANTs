@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from codeants_2pf_hcr.native_paths import native_product_path
 from codeants_2pf_hcr.native_run import promote_files, rollback_promotion, _rebind
+from codeants_2pf_hcr.native_run import validate_native_inputs
 
 
 def test_routes_preserve_native_consumers(tmp_path):
@@ -10,6 +11,15 @@ def test_routes_preserve_native_consumers(tmp_path):
     assert native_product_path(fish, "register-functional-to-anatomy", "plane_refs_summary.json") == fish / "03_analysis/functional/registration/plane_refs_summary.json"
     assert native_product_path(fish, "make-motion-auc-tables", "registration/motion_auc_plot_points.csv") == fish / "03_analysis/functional/derived/motion_auc_plot_points.csv"
     assert native_product_path(fish, "make-figures", "04_plots/example.png") == fish / "04_plots/example.png"
+
+
+def test_split_native_inputs_reject_synthetic_aggregate_before_promotion(tmp_path):
+    fish = tmp_path / "L000_f00"
+    actual = native_product_path(fish, "transform-functional-rois-to-anatomy", "functional/anatomy/a.tif")
+    actual.parent.mkdir(parents=True);actual.write_text("existing")
+    validate_native_inputs([str(actual)], [])
+    with pytest.raises(RuntimeError, match="before promotion"):
+        validate_native_inputs([str(fish / "functional")], [])
 
 
 def test_rebind_exact_products_and_keep_history(tmp_path):
