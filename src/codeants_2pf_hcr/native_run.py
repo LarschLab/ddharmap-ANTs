@@ -70,8 +70,7 @@ def rollback_promotion(journal: Path) -> None:
             restored.replace(target)
         else:
             target.replace(journal / (path.stem + "-uncommitted-new"))
-    backup = journal / "previous_manifest.json"
-    if backup.exists():
+    for backup in journal.glob("previous*manifest.json"):
         previous = json.loads(backup.read_text()); target = Path(previous["path"])
         if previous["payload"] is not None: _write_json_atomic(target, previous["payload"])
         elif target.exists(): target.replace(journal / "uncommitted_manifest.json")
@@ -149,6 +148,28 @@ def _refresh_records(records):
             current = describe_manifest_path(record["path"], required=record.get("required", True), label=record.get("label"))
         result.append(asdict(current))
     return result
+
+
+def _native_proposal_manifest(frozen_manifest: Path, frozen: Path, roots: list[str], fish: Path):
+    """Publish immutable reviewed proposal files with current native records."""
+    from .single_fish_run import _file_hash, _utc_now
+    original = json.loads(frozen_manifest.read_text())
+    if original.get("errors") or original.get("status") not in {"pass", "warn"}:
+        raise RuntimeError("Frozen proposal manifest did not pass")
+    native = json.loads(_rebind(json.dumps(original), roots, fish))
+    for reviewed, operative in zip(original["outputs"], native["outputs"]):
+        source = frozen / Path(reviewed["path"]).relative_to(roots[1])
+        if _file_hash(source) != _file_hash(Path(operative["path"])):
+            raise RuntimeError("Native accepted proposal differs from frozen reviewed bytes")
+    native["source_writer_inputs"] = original.get("inputs", [])
+    native["inputs"] = _refresh_records(native.get("inputs", []))
+    native["outputs"] = _refresh_records(native["outputs"])
+    if any(record.get("required") and not record["exists"] for record in native["inputs"] + native["outputs"]):
+        raise RuntimeError("Native accepted proposal manifest has missing required paths")
+    native["parameters"]["native_layout"] = "existing-fish-tree-v1"
+    native["reused_from"] = {"manifest": str(frozen_manifest), "manifest_sha256": _file_hash(frozen_manifest), "writer_generated_at": original["generated_at"], "action": "reuse_verified_reviewed_proposal"}
+    native["generated_at"] = _utc_now()
+    return native
 
 
 def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_override: str | None = None) -> None:
@@ -312,6 +333,11 @@ def execute_native_run(spec, *, resume: bool):
                 if _run_command(validator, cwd=spec.repo_root, env=env, log_path=spec.state_root / "logs" / f"{stage.name}.validator-{index}.log"):
                     rollback_promotion(journal)
                     raise RuntimeError(f"Native stage validator failed: {stage.name}")
+            if writer == "materialize-anatomy-midline":
+                proposal_manifest = fish / "03_analysis/functional/pipeline_manifests/make-anatomy-midline-proposal_manifest.json"
+                _write_json_atomic(journal / "previous_proposal_manifest.json", {"path": str(proposal_manifest), "payload": json.loads(proposal_manifest.read_text()) if proposal_manifest.exists() else None})
+                proposal_record = _native_proposal_manifest(Path(policy["frozen_manifests"]) / proposal_manifest.name, frozen, roots, fish)
+                _write_json_atomic(proposal_manifest, proposal_record)
             _write_json_atomic(Path(stage.manifest), manifest)
             state = {"schema_version": 1, "fish_id": spec.fish_id, "stage": stage.name, "spec_path": str(spec.path), "spec_sha256": _spec_hash(spec), "command": list(stage.command), "git_commit": environment["git"]["actual_commit"], "scientific_code_commit": spec.git_commit, "interpreter": environment["interpreter"]["actual_executable"], "started_at": started, "finished_at": _utc_now(), "inputs": _describe_paths(stage.inputs + stage.optional_inputs), "outputs": _describe_paths(stage.outputs), "dependencies": _dependency_records(spec, stage), "exit_status": 0, "log": str(log), "action": "reuse_verified_frozen" if imported else "recompute_transaction", "validation": {"status": "pass", "checks": [{"kind": "writer_manifest_and_verified_promotion", "status": "pass"}]}}
             state["actual_command"] = actual_command;state["execution_root"] = str(graph)

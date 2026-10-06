@@ -28,6 +28,24 @@ def test_native_score_parity_uses_own_stage_control_even_when_missing(tmp_path):
     assert not Path(new[0].control_path).exists()
 
 
+def test_native_accepted_proposal_manifest_tracks_routed_reviewed_bytes(tmp_path):
+    from codeants_2pf_hcr.native_run import _native_proposal_manifest
+    fish = tmp_path / "fish";frozen = tmp_path / "frozen";root = "/reviewed/root"
+    relative = "make-anatomy-midline-proposal/qa/anatomy_midline_proposals.csv"
+    source = frozen / relative;source.parent.mkdir(parents=True);source.write_text("reviewed")
+    target = fish / "03_analysis/functional/qa/anatomy_midline_proposals.csv"
+    target.parent.mkdir(parents=True);target.write_text("reviewed")
+    manifest = tmp_path / "proposal_manifest.json"
+    manifest.write_text(json.dumps({"status": "pass", "errors": [], "generated_at": "reviewed_time", "parameters": {"pipeline_root": root}, "inputs": [], "outputs": [{"path": root + "/" + relative, "kind": "file", "required": True}]}))
+    result = _native_proposal_manifest(manifest,frozen,[str(tmp_path / "graph"),root,str(frozen)],fish)
+    assert result["outputs"][0]["path"] == str(target)
+    assert result["outputs"][0]["exists"] is True
+    assert result["reused_from"]["writer_generated_at"] == "reviewed_time"
+    target.write_text("corrupted")
+    with pytest.raises(RuntimeError,match="reviewed bytes"):
+        _native_proposal_manifest(manifest,frozen,[str(tmp_path / "graph"),root,str(frozen)],fish)
+
+
 def test_split_native_inputs_reject_synthetic_aggregate_before_promotion(tmp_path):
     fish = tmp_path / "L000_f00"
     actual = native_product_path(fish, "transform-functional-rois-to-anatomy", "functional/anatomy/a.tif")
@@ -133,7 +151,11 @@ def test_crash_after_publication_restores_manifest_and_products(tmp_path, prior_
     saved = json.loads((journal / "previous_manifest.json").read_text())
     assert saved["payload"] == ({"old": True} if prior_manifest else None)
     manifest.write_text(json.dumps({"new": True}))
+    proposal = tmp_path / "proposal_manifest.json"
+    proposal.write_text(json.dumps({"new_proposal": True}))
+    (journal / "previous_proposal_manifest.json").write_text(json.dumps({"path": str(proposal), "payload": {"reviewed": True}}))
     rollback_promotion(journal)
+    assert json.loads(proposal.read_text()) == {"reviewed": True}
     assert target.read_text() == "old"
     if prior_manifest: assert json.loads(manifest.read_text()) == {"old": True}
     else: assert not manifest.exists()
