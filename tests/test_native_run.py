@@ -59,6 +59,21 @@ def test_late_copy_failure_rolls_back_first_product(tmp_path, monkeypatch):
     assert a.read_text() == "old-a" and b.read_text() == "old-b"
 
 
+def test_explicit_frozen_aligned_source_checks_existing_masks(tmp_path):
+    from codeants_2pf_hcr.native_run import _verify_reuse_inputs
+    fish = tmp_path / "fish"; aligned = fish / "03_analysis/confocal/aligned"
+    aligned.mkdir(parents=True); override = tmp_path / "frozen";override.mkdir()
+    name = "x_cp_masks_in_2p_labels_uint16.tif"
+    (aligned / name).write_bytes(b"accepted");(override / name).write_bytes(b"accepted")
+    manifest = {"inputs": [{"path": str(aligned), "kind": "glob", "pattern": "*_matches.csv", "required": True, "exists": False}]}
+    with pytest.raises(RuntimeError, match="no longer exists"):
+        _verify_reuse_inputs(manifest, fish, "unused")
+    _verify_reuse_inputs(manifest, fish, "unused", aligned_override=str(override))
+    (aligned / name).write_bytes(b"changed")
+    with pytest.raises(RuntimeError, match="differs"):
+        _verify_reuse_inputs(manifest, fish, "unused", aligned_override=str(override))
+
+
 def test_unknown_product_fails_without_native_overwrite(tmp_path):
     fish = tmp_path / "L000_f00";source = tmp_path / "new.csv";source.write_text("new")
     with pytest.raises(ValueError,match="ownership"):

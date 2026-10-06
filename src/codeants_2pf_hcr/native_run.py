@@ -123,10 +123,24 @@ def _refresh_records(records):
     return result
 
 
-def _verify_reuse_inputs(manifest, fish: Path, original_root: str) -> None:
+def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_override: str | None = None) -> None:
     """Check current immutable raw inputs against the archived writer inventory."""
+    aligned = fish / "03_analysis/confocal/aligned"
+    if aligned_override is not None:
+        # This one accepted-source override imports the frozen aligned bundle,
+        # including matches that were absent from the original source folder.
+        # Existing accepted masks must still agree byte-for-byte.
+        from .single_fish_run import _file_hash
+        override = Path(aligned_override)
+        labels = list(override.glob("*_cp_masks_in_2p_labels_uint16.tif"))
+        if not labels: raise RuntimeError("Accepted frozen aligned override has no labels")
+        for source in labels:
+            current = aligned / source.name
+            if current.exists() and _file_hash(current) != _file_hash(source):
+                raise RuntimeError(f"Accepted native HCR label differs from frozen source: {current}")
     for old in manifest.get("inputs", []):
         path = Path(old["path"])
+        if aligned_override is not None and path == aligned: continue
         if not path.is_relative_to(fish) or str(path).startswith(original_root): continue
         if old.get("kind") not in {"file", "glob"}: continue
         current = _refresh_records([old])[0]
@@ -196,7 +210,13 @@ def execute_native_run(spec, *, resume: bool):
                         copied = output_dir / original.relative_to(frozen / writer)
                         if _file_hash(original) != _file_hash(copied): raise RuntimeError("Frozen reuse hash mismatch")
             manifest = json.loads((Path(policy["frozen_manifests"]) / (writer + "_manifest.json")).read_text())
-            _verify_reuse_inputs(manifest, fish, source_root)
+            override = policy.get("reuse_source_overrides", {}).get(writer)
+            if override is not None:
+                expected = frozen / "register-hcr-to-anatomy/confocal/aligned"
+                if writer != "register-hcr-to-anatomy" or Path(override) != expected or override not in stage.inputs:
+                    raise RuntimeError("Undeclared accepted aligned-source override")
+                manifest["accepted_source_override"] = {"path": override, "reason": "frozen accepted labels and generated matching tables; archived source matching glob was absent", "original_source_inputs": manifest.get("inputs", [])}
+            _verify_reuse_inputs(manifest, fish, source_root, aligned_override=override)
             # Reuse is a separate recorded action, never presented as recompute.
             manifest["reused_from"] = {"root": str(frozen), "writer_generated_at": manifest["generated_at"], "scientific_commit": policy["scientific_commit"]}
             log.parent.mkdir(parents=True, exist_ok=True); log.write_text("Reused verified frozen writer products; no scientific recomputation.\n")

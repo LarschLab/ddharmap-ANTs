@@ -545,6 +545,8 @@ def execute_run(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
                 failed = next((stage for stage in spec.stages if stage.name == current.get("stage")), None)
                 if failed and current.get("state") == "running":
                     _write_json_atomic(_state_path(spec, failed), {"stage": failed.name, "exit_status": 1, "validation": {"status": "fail", "error": str(exc)}})
+                current.update({"state": "failed", "error": str(exc), "finished_at": _utc_now()})
+                _write_json_atomic(marker, current)
                 _write_json_atomic(spec.state_root / "run_summary.json", {"fish_id": spec.fish_id, "status": "fail", "failed_stage": current.get("stage"), "error": str(exc)})
                 raise
     started_at = _utc_now()
