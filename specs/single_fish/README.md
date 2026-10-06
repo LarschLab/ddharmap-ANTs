@@ -19,9 +19,10 @@ interpreter, input hashes, output hashes, exit status, and validation all still
 match. Full combined stdout/stderr lives under the spec's `state_root/logs`;
 compact JSON state lives under `state_root/stages`.
 
-The L765_f04 specification pins the last validated scientific commit with a
+The L765_f04 specification pins scientific base `414f2a9` (including the
+two-sided change and subsequent manual-identity support) with a
 `scientific-surface` policy. Later commits are allowed only when none of the
-listed scientific writers, renderers, contracts, or notebook execution tools
+listed scientific package files, renderers, contracts, or QC notebooks
 changed. The actual checkout must still be clean, and every stage records its
 exact checkout commit. This avoids the self-reference problem of storing a
 spec's own eventual Git commit inside the same committed file while retaining
@@ -29,3 +30,23 @@ a fail-closed scientific-code pin.
 
 The current spec targets the staged working root. It does not promote outputs
 into the actual fish folder. Atomic fish-local promotion is a separate gate.
+
+Every writer must produce a fresh non-dry-run manifest for this fish and root,
+with zero errors and no failed checks. Manifest parameter pins enforce the
+complete ActivityConfig, source orientation, label-page order, and HCR route;
+command pins enforce explicit registration seeds and spatial choices. The
+activity writer owns its defaults, so changing a pinned default requires an
+explicit spec update rather than a downstream override.
+
+Stages declare ordered dependencies. Resume decisions are reevaluated after
+each upstream execution and include saved dependency state. Optional inputs
+are hashed even when absent, so their later appearance invalidates a stage.
+QC commands explicitly select this fish, data root, and pipeline root and save
+executed copies under the separate state directory. Anatomy preparation uses
+an explicit staged output path. The contract test interpreter is separately
+pinned because the scientific environment has no pytest installation.
+
+The contract-test stage verifies executable code/schema policies; it does not
+substitute for scientific acceptance of a particular run. Writer manifests,
+hash verification, and the seven QC notebook stages supply run evidence.
+Step 4 still requires atomic canonical promotion and the user review gates.

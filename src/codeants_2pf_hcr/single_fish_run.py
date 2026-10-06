@@ -35,6 +35,10 @@ class StageSpec:
     inputs: tuple[str, ...]
     outputs: tuple[str, ...]
     validators: tuple[tuple[str, ...], ...] = ()
+    depends_on: tuple[str, ...] = ()
+    manifest: str | None = None
+    parameter_pins: Mapping[str, Any] | None = None
+    optional_inputs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -124,6 +128,12 @@ def load_run_spec(path: Path | str) -> RunSpec:
         )
         if any(not validator for validator in validators):
             raise RunSpecError(f"stage {name!r} has an empty validator")
+        dependencies = tuple(record.get("depends_on", ()))
+        if any(dependency not in names for dependency in dependencies):
+            raise RunSpecError(f"stage {name!r} dependencies must precede it")
+        for flag, value in (record.get("argument_pins") or {}).items():
+            if flag not in command or (value is not True and command[command.index(flag) + 1] != str(value)):
+                raise RunSpecError(f"stage {name!r} command violates pin {flag}")
         stages.append(
             StageSpec(
                 name=name,
@@ -131,6 +141,10 @@ def load_run_spec(path: Path | str) -> RunSpec:
                 inputs=tuple(_expand(str(value), variables) for value in record.get("inputs") or ()),
                 outputs=tuple(_expand(str(value), variables) for value in record.get("outputs") or ()),
                 validators=validators,
+                depends_on=dependencies,
+                manifest=_expand(record["manifest"], variables) if record.get("manifest") else None,
+                parameter_pins=record.get("parameter_pins") or {},
+                optional_inputs=tuple(_expand(str(value), variables) for value in record.get("optional_inputs", ())),
             )
         )
         names.add(name)
@@ -308,6 +322,12 @@ def _spec_hash(spec: RunSpec) -> str:
     return _json_hash(spec.raw)
 
 
+def _dependency_records(spec: RunSpec, stage: StageSpec) -> dict[str, str | None]:
+    by_name = {item.name: item for item in spec.stages}
+    return {name: (_json_hash(state) if (state := _load_state(spec, by_name[name])) else None)
+            for name in stage.depends_on}
+
+
 def _stage_current(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) -> tuple[bool, list[str]]:
     state = _load_state(spec, stage)
     reasons: list[str] = []
@@ -321,7 +341,9 @@ def _stage_current(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
         reasons.append("checkout commit changed")
     if state.get("interpreter") != runtime["interpreter"].get("actual_executable"):
         reasons.append("interpreter changed")
-    current_inputs = _describe_paths(stage.inputs)
+    if state.get("dependencies", {}) != _dependency_records(spec, stage):
+        reasons.append("upstream state changed")
+    current_inputs = _describe_paths(stage.inputs + stage.optional_inputs)
     current_outputs = _describe_paths(stage.outputs)
     if state.get("inputs") != current_inputs:
         reasons.append("inputs changed")
@@ -335,6 +357,12 @@ def _stage_current(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
 def validate_spec_environment(spec: RunSpec) -> dict[str, Any]:
     """Validate checkout, interpreter, package, path, and accepted provenance pins."""
     runtime = _runtime_report(spec)
+    auxiliary = []
+    for pin in spec.raw.get("auxiliary_interpreters", ()):
+        proc = subprocess.run([pin["executable"], "-c", "import sys,importlib.metadata,json; print(json.dumps({version:sys.version.split()[0], packages:{n:importlib.metadata.version(n) for n in " + repr(list(pin.get("packages", {}))) + "}}))"], capture_output=True, text=True)
+        actual = json.loads(proc.stdout) if proc.returncode == 0 else {}
+        auxiliary.append({"executable": pin["executable"], "actual": actual,
+                          "ok": actual.get("version") == pin["python_version"] and actual.get("packages") == pin.get("packages", {})})
     pins: list[dict[str, Any]] = []
     for pin in spec.provenance_pins:
         path = Path(str(pin.get("path", "")))
@@ -357,11 +385,13 @@ def validate_spec_environment(spec: RunSpec) -> dict[str, Any]:
         **runtime,
         "required_paths": required_paths,
         "provenance_pins": pins,
+        "auxiliary_interpreters": auxiliary,
         "ok": (
             runtime["git"]["ok"]
             and runtime["interpreter"]["ok"]
             and all(required_paths.values())
             and all(pin["ok"] for pin in pins)
+            and all(pin["ok"] for pin in auxiliary)
         ),
     }
 
@@ -400,8 +430,8 @@ def _run_command(command: Sequence[str], *, cwd: Path, env: Mapping[str, str], l
 
 def _execute_stage(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) -> dict[str, Any]:
     started_at = _utc_now()
-    inputs = _describe_paths(stage.inputs)
-    missing_inputs = [record["path"] for record in inputs if not record["exists"]]
+    inputs = _describe_paths(stage.inputs + stage.optional_inputs)
+    missing_inputs = [record["path"] for record in inputs if not record["exists"] and record["path"] in stage.inputs]
     log_path = spec.state_root / "logs" / f"{stage.name}.log"
     validation_checks: list[dict[str, Any]] = []
     env = os.environ.copy()
@@ -420,6 +450,21 @@ def _execute_stage(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
         "missing": [record["path"] for record in outputs if not record["exists"]],
     }
     validation_checks.append(output_check)
+    if exit_status == 0 and stage.manifest:
+        try:
+            manifest = json.loads(Path(stage.manifest).read_text())
+            valid = (manifest.get("fish_id") == spec.fish_id
+                     and manifest.get("status") in {"pass", "warn"}
+                     and not manifest.get("errors") and manifest.get("dry_run") is False
+                     and all(check.get("status") != "fail" for check in manifest.get("checks", ())))
+            parameters = manifest.get("parameters", {})
+            valid = valid and parameters.get("pipeline_root") == str(spec.pipeline_root)
+            valid = valid and datetime.fromisoformat(manifest.get("generated_at", "").replace("Z", "+00:00")) >= datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+            valid = valid and all(parameters.get(key) == value for key, value in stage.parameter_pins.items())
+            validation_checks.append({"kind": "writer_manifest", "path": stage.manifest,
+                                      "status": "pass" if valid else "fail"})
+        except (OSError, ValueError) as exc:
+            validation_checks.append({"kind": "writer_manifest", "status": "fail", "error": str(exc)})
     if exit_status == 0 and output_check["status"] == "pass":
         for index, validator in enumerate(stage.validators, start=1):
             validator_log = spec.state_root / "logs" / f"{stage.name}.validator-{index}.log"
@@ -447,6 +492,7 @@ def _execute_stage(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
         "started_at": started_at,
         "finished_at": _utc_now(),
         "inputs": inputs,
+        "dependencies": _dependency_records(spec, stage),
         "outputs": outputs,
         "exit_status": exit_status,
         "log": str(log_path),
@@ -464,7 +510,10 @@ def execute_run(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
         raise RuntimeError("run environment does not match the pinned specification")
     results: list[dict[str, Any]] = []
     for stage, planned in zip(spec.stages, plan["stages"]):
-        if planned["action"] == "skip":
+        # Recompute after every upstream execution: the initial plan is only a
+        # snapshot and cannot safely decide downstream skips.
+        current, _ = _stage_current(spec, stage, plan["environment"])
+        if resume and current:
             results.append({"stage": stage.name, "action": "skip", "status": "pass"})
             continue
         state = _execute_stage(spec, stage, plan["environment"])

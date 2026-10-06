@@ -140,3 +140,50 @@ def test_symlink_hash_tracks_target_content(tmp_path: Path) -> None:
     second = describe_path(link)
     assert first["kind"] == "symlink"
     assert first["sha256"] != second["sha256"]
+
+
+def test_resume_rechecks_downstream_after_upstream_changes(tmp_path: Path) -> None:
+    spec_path, source, pipeline = _build_spec(tmp_path)
+    raw = json.loads(spec_path.read_text())
+    raw["provenance_pins"] = []
+    raw["stages"].append({"name": "020-copy", "depends_on": ["010-copy"],
+        "command": ["{python}", "writer.py", "{pipeline_root}/copy/output.txt", "{pipeline_root}/final.txt"],
+        "inputs": ["{pipeline_root}/copy/output.txt"], "outputs": ["{pipeline_root}/final.txt"]})
+    spec_path.write_text(json.dumps(raw))
+    spec = load_run_spec(spec_path)
+    assert execute_run(spec, resume=False)["status"] == "pass"
+    source.write_text("two\n")
+    result = execute_run(spec, resume=True)
+    assert [row["action"] for row in result["results"]] == ["run", "run"]
+    assert (pipeline / "final.txt").read_text() == "two\n"
+    assert verify_run(spec)["ok"]
+
+
+def test_optional_input_creation_invalidates_stage(tmp_path: Path) -> None:
+    spec_path, _, pipeline = _build_spec(tmp_path)
+    raw = json.loads(spec_path.read_text())
+    raw["stages"][0]["optional_inputs"] = [str(pipeline / "optional.txt")]
+    spec_path.write_text(json.dumps(raw))
+    spec = load_run_spec(spec_path)
+    assert execute_run(spec, resume=False)["status"] == "pass"
+    (pipeline / "optional.txt").write_text("created")
+    assert not verify_run(spec)["ok"]
+
+
+def test_writer_exit_zero_does_not_accept_stale_manifest(tmp_path: Path) -> None:
+    spec_path, _, pipeline = _build_spec(tmp_path)
+    manifest = pipeline / "manifest.json"
+    manifest.write_text(json.dumps({"fish_id": "L000_f00", "status": "pass", "errors": [],
+        "dry_run": False, "generated_at": "2000-01-01T00:00:00Z", "parameters": {"pipeline_root": str(pipeline)}}))
+    raw = json.loads(spec_path.read_text()); raw["stages"][0]["manifest"] = str(manifest)
+    spec_path.write_text(json.dumps(raw))
+    result = execute_run(load_run_spec(spec_path), resume=False)
+    assert result["status"] == "fail"
+
+
+def test_argument_pin_cannot_silently_drift(tmp_path: Path) -> None:
+    spec_path, _, _ = _build_spec(tmp_path)
+    raw = json.loads(spec_path.read_text()); raw["stages"][0]["argument_pins"] = {"--seed": "50"}
+    spec_path.write_text(json.dumps(raw))
+    with pytest.raises(RunSpecError, match="violates pin"):
+        load_run_spec(spec_path)
