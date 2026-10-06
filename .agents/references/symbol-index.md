@@ -479,6 +479,13 @@ Generated manually for the current extracted package surface.
 - `build_run_status`: Report saved stage state and currentness without executing commands.
 - `verify_run`: Verify the pinned environment/provenance and every saved input/output hash.
 
+## `codeants_2pf_hcr.freeze_run`
+
+- `freeze_single_fish_run`: Copy and SHA-256 verify the complete working run plus external manifests; capture scientific commit/runtime and utility checkout provenance; protect the verified snapshot with permissions or a mounted UDRO image.
+- `build_inventory`: Deterministic content inventory of labeled trees, including symlink targets without following them.
+- `verify_read_only_mount`: Verify macOS read-only mount status and rejection of a real file creation with EROFS.
+- CLI: `tools/freeze_single_fish_run.py`; usage and protection limits: `docs/freeze-single-fish-run.md`.
+
 ## Manual ex-vivo HCR identity review
 
 - `manual_identity.Dataset`, `AnnotationSession`, `prepare_dataset`: Validate hash-bound, physically aligned registered inputs and authoritative eligible masks; persist independent per-marker calls with a recoverable journal and frozen snapshots.
