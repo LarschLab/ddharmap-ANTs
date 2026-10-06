@@ -50,3 +50,11 @@ The contract-test stage verifies executable code/schema policies; it does not
 substitute for scientific acceptance of a particular run. Writer manifests,
 hash verification, and the seven QC notebook stages supply run evidence.
 Step 4 still requires atomic canonical promotion and the user review gates.
+
+`audit-artifacts --spec ... [--report /path/to/report.json]` reads real persisted
+tables. It verifies unique ROI key relationships, activation/suppression union,
+family-wise 23c tails, fixed response windows, and pinned BPI pool/geometry
+assignment hashes; it reports responsive/suppressed counts. The contract stage
+saves that report before running code-policy tests. The geometry baseline is
+an assignment-field check, not full coordinate/transform parity. Scientific
+parameter descriptions must agree with writer pins when the spec is loaded.

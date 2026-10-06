@@ -621,7 +621,7 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
         early = tables["23c"]; stimuli = {row["stim_type"] for row in early}
         q = float(spec.raw["scientific_parameters"]["response_null_q_total_two_sided"])
         lower = (1 - q) / (2 * len(stimuli)); upper = 1 - lower
-        check("23c family-wise both tails", all(math.isclose(float(row["null_lower_quantile_familywise"]), lower) and math.isclose(float(row["null_upper_quantile_familywise"]), upper) and truth(row["response_pass"]) == (truth(row["positive_response_pass"]) or truth(row["negative_response_pass"])) for row in early), {"stimulus_count": len(stimuli), "lower": lower, "upper": upper})
+        check("23c family-wise both tails", len(stimuli) == spec.raw["scientific_parameters"].get("early_23c_expected_stimulus_count", len(stimuli)) and all(math.isclose(float(row["null_lower_quantile_familywise"]), lower) and math.isclose(float(row["null_upper_quantile_familywise"]), upper) and truth(row["response_pass"]) == (truth(row["positive_response_pass"]) or truth(row["negative_response_pass"])) for row in early), {"stimulus_count": len(stimuli), "lower": lower, "upper": upper})
         windows = tables["windows"]; pool = [row for row in windows if truth(row["used_for_bpi"])]
         check("fixed scored windows", all(math.isclose(float(row["scored_duration_sec"]), float(spec.raw["scientific_parameters"]["response_window_sec"])) for row in pool), {"total": len(windows), "bpi_pool": len(pool)})
         baseline = spec.raw.get("artifact_baseline", {})
@@ -630,7 +630,7 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
         check("BPI pool membership baseline", pool_hash == baseline.get("bpi_pool_sha256"), pool_hash)
         geometry_hash = _json_hash(sorted([[row.get(key, "") for key in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")] for row in tables["geometry"]]))
         check("geometry baseline", geometry_hash == baseline.get("geometry_assignment_sha256"), geometry_hash)
-        counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
+        counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "activated": sum(truth(row[signed[0]]) or truth(row[signed[2]]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
     except (OSError, KeyError, ValueError, ZeroDivisionError, IndexError) as exc:
         check("artifact readability/schema", False, str(exc)); counts = {}
     return {"fish_id": spec.fish_id, "pipeline_root": str(root), "checks": checks,

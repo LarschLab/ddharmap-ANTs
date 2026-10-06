@@ -19,6 +19,8 @@ The engineering change is to move stateful processing out of notebooks and into 
 
 ## Target Shape
 
+As of 2026-10-06, declarative orchestration is implemented in `single_fish_run.py` with the fish-specific JSON spec under `specs/single_fish/`. Stage writers retain their existing ownership. Fresh manifests and hash-bound state support resume; real canonical/geometry/23c/BPI tables and seven QC notebooks are validated explicitly. The working run plus external manifest directory are frozen together in a verified mounted UDRO image. The remaining actual-folder gate requires atomic output promotion, a full writer-chain run, and scientific review; this freeze/runner work does not mark that gate complete.
+
 The future workflow should be executable without opening a notebook.
 
 Package and CLI stages should own:

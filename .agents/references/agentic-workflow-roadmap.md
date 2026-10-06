@@ -21,6 +21,10 @@ Keep entries compact and current. Move deep details into the owning reference do
 
 ## Current Direction
 
+October 6 checkpoint: steps 2 (verified frozen run plus external manifests) and 3 (package-owned deterministic runner/spec) are implemented. The frozen UDRO payload is browsable at `/Volumes/20261006_L765_f04_dfbc3b8`; its container is under `_frozen_pipeline_runs/20261006_L765_f04_dfbc3b8`. ExFAT cannot enforce ordinary read-only mode bits, so the verified disk image supplies filesystem protection. The original trees remain unchanged. Details: `docs/freeze-single-fish-run.md`.
+
+The runner offers plan/run/resume/status/verify plus a real-table `audit-artifacts` command. The L765_f04 spec executes 22 ordered stages with explicit scientific/input/output pins, fresh writer-manifest checks, separately pinned contract interpreter, persisted logs/state, and seven explicitly rooted QC notebook copies. Resume reevaluates every stage after upstream execution. Twelve runner regression tests, twelve scientific/QC policy tests, all 14 writer command parsers, 17 real-table checks, and all seven notebooks passed. Full writer DAG determinism has not been newly measured in this continuation. Next: discuss step 4, implement same-filesystem atomic stage promotion, then run/validate the canonical chain; scientific acceptance remains a separate user gate.
+
 Build a conservative hybrid workflow where agents and users invoke explicit package-owned stages through thin CLI wrappers, each stage records provenance and validation state, and notebooks remain interpretation/QC surfaces.
 
 The immediate priority is to harden the durable workflow surface before broad behavior changes. First-pass commands must stay read-only/dry-run so they can inspect real fish folders without writing or overwriting staged outputs. Manifest persistence is allowed only through explicit opt-in flags.

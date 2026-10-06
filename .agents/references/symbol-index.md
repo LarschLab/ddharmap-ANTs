@@ -478,6 +478,7 @@ Generated manually for the current extracted package surface.
 - `execute_run`: Execute the declared DAG, saving full logs and atomic per-stage provenance/hash state; resume skips only hash-current stages.
 - `build_run_status`: Report saved stage state and currentness without executing commands.
 - `verify_run`: Verify the pinned environment/provenance and every saved input/output hash.
+- `audit_run_artifacts`: Read-only validation of real ROI key relationships, signed-response union, family-wise 23c tails, fixed response windows, BPI pool and geometry-assignment hashes; reports response/suppression counts.
 
 ## `codeants_2pf_hcr.freeze_run`
 

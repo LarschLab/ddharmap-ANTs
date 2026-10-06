@@ -4,6 +4,15 @@
 
 **Use this file when:** work targets `notebooks/singleFish.ipynb` or single-fish ownership modules.
 
+## Latest completed checkpoint
+
+### 2026-10-06 - Complete L765_f04 freeze and deterministic runner
+
+- Frozen complete working root and separate fish-local writer manifests under `_frozen_pipeline_runs/20261006_L765_f04_dfbc3b8`, browsable at `/Volumes/20261006_L765_f04_dfbc3b8`. Scientific archive dfbc3b8; utility clean checkpoint88be79d; scientific interpreter/packages, paths/parameters, stage statuses, Git state, metadata and SHA inventory captured. Independent rehash passed all420 payload records/760053426bytes (including3AppleDouble files), original trees and provenance hashes. Read-only UDRO mount reports Writable=false and rejects existing-file append with EROFS30. Image SHA256 `5f1be874b9c787d6e2d1e020ed2f79223d8ef5285f13042fa8ff66909aeb019d`. On exFAT, the outer container can still be replaced/deleted; only the mounted verified payload is protected.
+- Runner fixes: dynamic downstream resume decisions and explicit upstream state; complete optional-input tracking; fresh non-dry-run writer manifests with fish/root/status/parameter checks; descriptive/scientific pin consistency; explicit staged anatomy output; independently pinned pytest interpreter; fish/root injection into executed QC copies; real-table contract stage. Scientific base414f2a9 includes signed-response science plus subsequent manual-identity support; the automatic-identity spec does not invoke that manual workflow.
+- Evidence:12 runner regressions plus12 scientific/QC policy tests pass; all14 writer commands parse; real-table audit17checks pass (3553unique ROI keys,267responsive,1suppressed,24500per-stim23c rows,10stimuli,Q.0005/.9995,160fixed12.5s BPIwindows, pinned pool/geometry assignment hashes). Seven QC notebooks pass, with executed copies/logs `/tmp/L765_f04-runner-qc-20261006`. Notebook job `20261006T055957Z-runner-seven-qc-readonly-20261006-d70b` succeeded. Clean actual-root read-only plan at3b450c2 passed environment checks (job `20261006T060137Z-runner-real-readonly-plan-fixed-20261006-2d65`); subsequent artifact validator/consistency commit88be79d was included in the freeze checkpoint.
+- Remaining gate: full writer DAG was not rerun; step4 canonical atomic promotion is not implemented/executed. Geometry audit pins assignment fields, not all floating coordinates/transforms. Code-policy tests are supplemental to actual writer/table evidence. Biological267-versus282 response review and BPI boundary interpretation remain unaccepted. Source working root and actual fish outputs were untouched during these steps.
+
 ## Update template
 
 ### YYYY-MM-DD - short task label
