@@ -487,6 +487,11 @@ Generated manually for the current extracted package surface.
 - `verify_read_only_mount`: Verify macOS read-only mount status and rejection of a real file creation with EROFS.
 - CLI: `tools/freeze_single_fish_run.py`; usage and protection limits: `docs/freeze-single-fish-run.md`.
 
+## `codeants_2pf_hcr.qc_figure_export`
+
+- `export_qc_figure_gallery`: Extract all seven executed QC notebooks' PNGs and current writer PNGs into a deduplicated full-resolution gallery/contact sheets, preserving exact source/cell/output/manifest hashes and coverage records without writing notebook or scientific inputs.
+- CLI: `tools/export_qc_figures.py`; source coverage and output-directory rules: `docs/qc-figure-gallery.md`.
+
 ## Manual ex-vivo HCR identity review
 
 - `manual_identity.Dataset`, `AnnotationSession`, `prepare_dataset`: Validate hash-bound, physically aligned registered inputs and authoritative eligible masks; persist independent per-marker calls with a recoverable journal and frozen snapshots.
