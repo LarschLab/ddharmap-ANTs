@@ -32,5 +32,7 @@ figures into notebook outputs. Scientific writer stages can continue using Agg.
 Keep the output directory outside all runner-owned input/output paths so this
 presentation export cannot invalidate scientific stage state. Inputs and notebook
 code remain untouched. Existing gallery destinations are refused. Rendered
+gallery publication is atomic: failed coverage checks leave no completed gallery.
+Rendered
 artifacts still require visual inspection; passing a notebook or extracting its
 figures does not establish biological acceptance.

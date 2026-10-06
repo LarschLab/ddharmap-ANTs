@@ -10,7 +10,9 @@ import io
 import json
 from pathlib import Path
 import re
+import shutil
 import textwrap
+import uuid
 
 from PIL import Image, ImageDraw, ImageFont, ImageStat
 
@@ -23,7 +25,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path, fish_dir: Path) -> dict:
+def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path, fish_dir: Path) -> dict:
     """Export all rendered PNGs with exact source associations, leaving inputs untouched."""
     if output_dir.exists():
         raise FileExistsError(f"Refusing existing gallery: {output_dir}")
@@ -186,6 +188,23 @@ def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
         cards.append(f"<article><h2>{record['id']} {html.escape(record['title'])}</h2><a href='{record['file']}'><img loading='lazy' src='{record['file']}'></a><details><summary>Source provenance and SHA-256</summary>{sources}<p>{record['sha256']}</p></details></article>")
     (output_dir / "index.html").write_text("<!doctype html><meta charset='utf-8'><title>L765_f04 production QC figures</title><style>body{font:16px system-ui;max-width:1800px;margin:30px auto;padding:20px}article{margin:50px 0;border-top:1px solid #ccc}img{max-width:100%;height:auto}details{overflow-wrap:anywhere}</style><h1>L765_f04: complete production QC figure gallery</h1><p>Full-resolution images extracted from all seven executed QC notebooks and current writer manifests. Notebook 00 is table-only. Exact duplicate PNGs share an entry; all source associations are retained.</p>" + "".join(cards))
     return {"output_dir": str(output_dir), "figure_count": len(figures), "notebook_png_outputs": report["notebook_png_output_count"], "writer_png_references": report["writer_png_reference_count"], "contact_sheets": len(pages), "blocked_messages": sum(len(r["blocked_or_unavailable_outputs"]) for r in notebook_reports)}
+
+
+def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path, fish_dir: Path) -> dict:
+    """Publish a complete gallery only after coverage and image checks pass."""
+    output_dir = output_dir.expanduser().resolve()
+    if output_dir.exists():
+        raise FileExistsError(f"Refusing existing gallery: {output_dir}")
+    staged = output_dir.parent / f".{output_dir.name}.partial-{uuid.uuid4().hex}"
+    try:
+        report = _build_qc_figure_gallery(notebook_dir=notebook_dir, manifest_dir=manifest_dir,
+                                         output_dir=staged, fish_dir=fish_dir)
+        staged.rename(output_dir)
+        return {**report, "output_dir": str(output_dir)}
+    except Exception:
+        if staged.exists():
+            shutil.rmtree(staged)
+        raise
 
 
 __all__ = ["export_qc_figure_gallery"]

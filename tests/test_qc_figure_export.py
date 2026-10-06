@@ -55,6 +55,7 @@ def test_gallery_refuses_unexecuted_qc_cells(tmp_path: Path) -> None:
     path.write_text(json.dumps(nb))
     with pytest.raises(ValueError, match="Unexecuted"):
         export_qc_figure_gallery(notebook_dir=notebooks, manifest_dir=manifests, output_dir=output, fish_dir=fish)
+    assert not output.exists()
 
 
 def test_gallery_refuses_stale_external_writer_png(tmp_path: Path) -> None:
@@ -64,3 +65,4 @@ def test_gallery_refuses_stale_external_writer_png(tmp_path: Path) -> None:
     (manifests / "make-figures_manifest.json").write_text(json.dumps({"outputs": [{"path": str(external)}]}))
     with pytest.raises(ValueError, match="outside actual fish folder"):
         export_qc_figure_gallery(notebook_dir=notebooks, manifest_dir=manifests, output_dir=output, fish_dir=fish)
+    assert not output.exists()
