@@ -1142,6 +1142,13 @@ def _csv_comparison_kwargs(filename: str) -> dict[str, Any]:
     }
 
 
+def _score_control_dir(paths: PipelinePaths) -> Path:
+    registration = paths.functional_registration_dir
+    if (registration.parent / "pipeline_manifests/native_layout.json").exists():
+        return registration.parent / "derived/score-activity-bpi/registration"
+    return registration
+
+
 def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOutputSpec, ...]:
     stage_root = _stage_root(paths, stage_name)
     if stage_name == "prepare-functional-reference-stacks":
@@ -1354,25 +1361,28 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
         )
     if stage_name == "score-activity-bpi":
         registration_dir = stage_root / "registration"
+        # Native canonical masters acquire molecular identity downstream. Compare
+        # a scoring rerun only with its own identity-neutral persisted product.
+        control_dir = _score_control_dir(paths)
         return (
             StageOutputSpec(
                 "staged scored ROI master",
                 str(registration_dir / "functional_roi_activity_identity.csv"),
-                control_path=str(paths.functional_registration_dir / "functional_roi_activity_identity.csv"),
+                control_path=str(control_dir / "functional_roi_activity_identity.csv"),
                 parity="csv_shape",
                 **_csv_comparison_kwargs("functional_roi_activity_identity.csv"),
             ),
             StageOutputSpec(
                 "staged ROI activity/BPI cells",
                 str(registration_dir / "functional_roi_activity_bpi_cells.csv"),
-                control_path=str(paths.functional_registration_dir / "functional_roi_activity_bpi_cells.csv"),
+                control_path=str(control_dir / "functional_roi_activity_bpi_cells.csv"),
                 parity="csv_shape",
                 **_csv_comparison_kwargs("functional_roi_activity_bpi_cells.csv"),
             ),
             StageOutputSpec(
                 "staged ROI activity/BPI summary",
                 str(registration_dir / "functional_roi_activity_bpi_summary.csv"),
-                control_path=str(paths.functional_registration_dir / "functional_roi_activity_bpi_summary.csv"),
+                control_path=str(control_dir / "functional_roi_activity_bpi_summary.csv"),
                 parity="csv_shape",
                 **_csv_comparison_kwargs("functional_roi_activity_bpi_summary.csv"),
             ),
@@ -3050,9 +3060,10 @@ def compare_single_fish_legacy_baseline(
 
 
 def _score_activity_bpi_audit_inputs(paths: PipelinePaths) -> tuple[ManifestPathRecord, ...]:
+    control_dir = _score_control_dir(paths)
     return (
         describe_manifest_path(
-            paths.functional_registration_dir / "functional_roi_activity_identity.csv",
+            control_dir / "functional_roi_activity_identity.csv",
             label="ROI identity master input",
         ),
         describe_manifest_path(paths.functional_suite2p_dir, label="Suite2p root"),
@@ -3067,15 +3078,15 @@ def _score_activity_bpi_audit_inputs(paths: PipelinePaths) -> tuple[ManifestPath
             label="functional preprocessing session metadata",
         ),
         describe_manifest_path(
-            paths.functional_registration_dir / "functional_roi_activity_identity.csv",
+            control_dir / "functional_roi_activity_identity.csv",
             label="control scored ROI master",
         ),
         describe_manifest_path(
-            paths.functional_registration_dir / "functional_roi_activity_bpi_cells.csv",
+            control_dir / "functional_roi_activity_bpi_cells.csv",
             label="control ROI activity/BPI cells",
         ),
         describe_manifest_path(
-            paths.functional_registration_dir / "functional_roi_activity_bpi_summary.csv",
+            control_dir / "functional_roi_activity_bpi_summary.csv",
             label="control ROI activity/BPI summary",
         ),
     )
@@ -3112,6 +3123,7 @@ def build_single_fish_score_activity_bpi_recompute_manifest(
     config: SingleFishPipelineConfig,
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
+    control_dir = _score_control_dir(paths)
     inputs = _score_activity_bpi_audit_inputs(paths)
     checks: list[StageCheckRecord] = []
     missing_required = tuple(record.path for record in inputs if record.required and not record.exists)
@@ -3138,7 +3150,7 @@ def build_single_fish_score_activity_bpi_recompute_manifest(
 
             from .activity import ActivityConfig, build_response_bpi_tables, build_scored_stimulus_windows_table
 
-            identity_path = paths.functional_registration_dir / "functional_roi_activity_identity.csv"
+            identity_path = control_dir / "functional_roi_activity_identity.csv"
             detail_df = pd.read_csv(identity_path)
             raw_required_columns = ("plane_idx", "func_label", "activity_class", "is_active")
             missing_raw_columns = tuple(column for column in raw_required_columns if column not in detail_df.columns)
@@ -3209,34 +3221,34 @@ def build_single_fish_score_activity_bpi_recompute_manifest(
         table_specs = (
             (
                 "scored ROI master",
-                paths.functional_registration_dir / "functional_roi_activity_identity.csv",
+                control_dir / "functional_roi_activity_identity.csv",
                 result.get("detail_df"),
                 StageOutputSpec(
                     "recomputed scored ROI master",
                     "",
-                    control_path=str(paths.functional_registration_dir / "functional_roi_activity_identity.csv"),
+                    control_path=str(control_dir / "functional_roi_activity_identity.csv"),
                     **_csv_comparison_kwargs("functional_roi_activity_identity.csv"),
                 ),
             ),
             (
                 "ROI activity/BPI cells",
-                paths.functional_registration_dir / "functional_roi_activity_bpi_cells.csv",
+                control_dir / "functional_roi_activity_bpi_cells.csv",
                 result.get("scored_bpi_df"),
                 StageOutputSpec(
                     "recomputed ROI activity/BPI cells",
                     "",
-                    control_path=str(paths.functional_registration_dir / "functional_roi_activity_bpi_cells.csv"),
+                    control_path=str(control_dir / "functional_roi_activity_bpi_cells.csv"),
                     **_csv_comparison_kwargs("functional_roi_activity_bpi_cells.csv"),
                 ),
             ),
             (
                 "ROI activity/BPI summary",
-                paths.functional_registration_dir / "functional_roi_activity_bpi_summary.csv",
+                control_dir / "functional_roi_activity_bpi_summary.csv",
                 result.get("summary_df"),
                 StageOutputSpec(
                     "recomputed ROI activity/BPI summary",
                     "",
-                    control_path=str(paths.functional_registration_dir / "functional_roi_activity_bpi_summary.csv"),
+                    control_path=str(control_dir / "functional_roi_activity_bpi_summary.csv"),
                     **_csv_comparison_kwargs("functional_roi_activity_bpi_summary.csv"),
                 ),
             ),

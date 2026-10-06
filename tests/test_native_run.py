@@ -13,6 +13,21 @@ def test_routes_preserve_native_consumers(tmp_path):
     assert native_product_path(fish, "make-figures", "04_plots/example.png") == fish / "04_plots/example.png"
 
 
+def test_native_score_parity_uses_own_stage_control_even_when_missing(tmp_path):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr.pipeline import _stage_output_specs
+    functional = tmp_path / "fish/03_analysis/functional"
+    paths = SimpleNamespace(functional_registration_dir=functional / "registration",
+                            pipeline_root=tmp_path / "graph")
+    old = _stage_output_specs(paths, "score-activity-bpi")
+    assert old[0].control_path == str(functional / "registration/functional_roi_activity_identity.csv")
+    marker = functional / "pipeline_manifests/native_layout.json"
+    marker.parent.mkdir(parents=True);marker.write_text("{}")
+    new = _stage_output_specs(paths, "score-activity-bpi")
+    assert new[0].control_path == str(functional / "derived/score-activity-bpi/registration/functional_roi_activity_identity.csv")
+    assert not Path(new[0].control_path).exists()
+
+
 def test_split_native_inputs_reject_synthetic_aggregate_before_promotion(tmp_path):
     fish = tmp_path / "L000_f00"
     actual = native_product_path(fish, "transform-functional-rois-to-anatomy", "functional/anatomy/a.tif")

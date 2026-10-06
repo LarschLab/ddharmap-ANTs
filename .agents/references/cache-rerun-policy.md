@@ -29,6 +29,7 @@
 ## Safety expectations
 
 - Native promotion of an accepted anatomy-midline sidecar verifies each original reviewed source hash against its frozen source. A changed operative JSON hash is permitted only when its text equals the exact native path-prefix relocation of that source; the original reviewed path/hash remain in `relocation_provenance`. Proposal hashes, line coordinates, and acceptance remain unchanged.
+- With the native-layout manifest present, scoring comparisons use `derived/score-activity-bpi/registration/`, where the identity-neutral scorer owns its products. A missing score-owned control remains a missing-control warning; downstream identity-enriched canonical masters are never score controls. Historical staged comparison paths are unchanged.
 
 - Fail fast if required response columns are missing in downstream HCR-centric consumers.
 - Do not mix old cached outputs with newly regenerated authoritative tables.
