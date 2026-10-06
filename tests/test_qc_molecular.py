@@ -586,3 +586,22 @@ def test_molecular_geometry_reads_geometry_writers_twop_label_column(tmp_path: P
         segmentation_table_path=None, pair_candidates_path=[pairs], pair_candidates_state="expected")
     assert report["status"] == "ready_for_review"
     assert report["pair_ambiguity"].set_index("conf_label").candidate_anatomy_labels.to_dict() == {1: 2, 2: 1}
+
+
+@pytest.mark.parametrize("payload", [[], {"parameters": []}, {"parameters": {"frame_selection_by_plane": []}}, {"parameters": {"frame_selection_by_plane": {"fish_plane0": []}}}])
+def test_activity_sessions_block_malformed_reference_without_crashing(tmp_path: Path, payload) -> None:
+    import json
+    row = {"plane_idx": 0, "func_label": 1, "response_is_active": True, "response_class": "bout-responsive", "bpi": 0.8, "bpi_category": "bout-responsive"}
+    master = _csv(tmp_path / "master.csv", [row])
+    bpi = _csv(tmp_path / "bpi.csv", [row])
+    windows = _csv(tmp_path / "windows.csv", [{"plane_idx": 0, "session_label": "r1"}])
+    if isinstance(payload, dict):
+        payload["fish_id"] = FISH_ID
+    reference = tmp_path / "manifest.json"
+    reference.write_text(json.dumps(payload))
+    report = inspect_activity_export_qc(fish_id=FISH_ID, pipeline_root=tmp_path,
+        roi_master_path=master, bpi_cells_path=bpi, hcr_status_path=None, hcr_pairs_path=None,
+        require_hcr_exports=False, require_trace_meta=False, scored_windows_path=windows,
+        reference_manifest_path=reference)
+    assert report["status"] == "blocked"
+    assert report["issues"].query("area == 'reference session provenance' and status == 'blocked'").shape[0] == 1

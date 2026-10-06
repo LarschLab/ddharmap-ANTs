@@ -1181,11 +1181,16 @@ def inspect_activity_export_qc(
             reference_manifest = json.loads(reference_path.read_text())
             if not isinstance(reference_manifest, dict):
                 raise ValueError("Functional-reference manifest must be a JSON object.")
-            if not isinstance(reference_manifest.get("parameters", {}).get("frame_selection_by_plane", {}), dict):
-                raise ValueError("Functional-reference plane selections must be a JSON object.")
+            parameters = reference_manifest.get("parameters", {})
+            if not isinstance(parameters, dict):
+                raise ValueError("Functional-reference parameters must be a JSON object.")
+            selections = parameters.get("frame_selection_by_plane", {})
+            if not isinstance(selections, dict) or any(not isinstance(row, dict) for row in selections.values()):
+                raise ValueError("Functional-reference plane selections and rows must be JSON objects.")
             if reference_manifest.get("fish_id") != fish_id:
                 raise ValueError("Functional-reference manifest fish does not match.")
         except (OSError, ValueError, TypeError) as exc:
+            reference_manifest = None
             _issue(issues, "reference session provenance", "blocked", str(exc))
 
     for name, table in (("roi_master", master), ("bpi_cells", bpi)):
