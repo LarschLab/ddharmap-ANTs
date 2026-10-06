@@ -20,7 +20,7 @@ import pandas as pd
 import tifffile
 from scipy import ndimage as ndi
 
-from ..matching import compute_centroids, gene_from_mask, idx_to_um
+from ..matching import compute_centroids, gene_from_mask, idx_to_um, resolve_anatomy_label_z, validate_anatomy_label_z_provenance
 from ..spatial import anatomy_max_section_xy_radii_um, imread_any, load_or_cache_voxels, norm01
 
 __all__ = [
@@ -1977,12 +1977,45 @@ def plot_hcr_matching_flow_donuts(donuts: pd.DataFrame, *, fish_id: str) -> plt.
     return fig
 
 
-def build_molecular_identity_fate_table(*, label_paths: Sequence[str | Path], final_pair_paths: Sequence[str | Path], identity_table_path: str | Path, geometry_table_path: str | Path, anatomy_labels_path: str | Path) -> pd.DataFrame:
-    """Classify each segmented molecular label using frozen pair and activity-identity tables."""
+def _molecular_geometry_label_pages(geometry: pd.DataFrame, anatomy_labels: np.ndarray, plane_refs_path: str | Path) -> dict[int, int]:
+    """Validate geometry-owned Z provenance without inferring an orientation."""
+    if anatomy_labels.ndim != 3:
+        raise ValueError("Molecular fate review requires a 3D anatomy-label stack")
+    refs = json.loads(Path(plane_refs_path).read_text())
+    if not isinstance(refs, list) or not all(isinstance(ref, dict) for ref in refs):
+        raise ValueError("Geometry plane references must be a JSON list of objects")
+    errors = validate_anatomy_label_z_provenance(refs, anatomy_labels.shape[0], geometry_df=geometry, anatomy_labels=anatomy_labels)
+    if errors:
+        raise ValueError("Invalid geometry anatomy-label Z provenance: " + "; ".join(errors))
+    plane_z: dict[int, int] = {}
+    for plane_idx, rows in geometry.groupby("plane_idx"):
+        plane_idx = int(plane_idx)
+        selected_refs = [ref for ref in refs if ref.get("index", ref.get("plane_index")) == plane_idx]
+        if len(selected_refs) != 1:
+            raise ValueError(f"Geometry plane {plane_idx} requires exactly one label-Z provenance record")
+        ref = selected_refs[0]
+        if ref.get("anat_label_z_mode") not in {"direct", "reverse"} or ref.get("anat_label_z") in (None, ""):
+            raise ValueError(f"Geometry plane {plane_idx} lacks explicit anatomy-label Z provenance")
+        best_z = pd.to_numeric(rows["best_z"], errors="coerce")
+        if best_z.isna().any() or best_z.nunique() != 1 or not best_z.eq(best_z.astype(int)).all():
+            raise ValueError(f"Geometry plane {plane_idx} has ambiguous best-Z values")
+        bz = int(best_z.iloc[0])
+        if ref.get("best_z") != bz:
+            raise ValueError(f"Geometry plane {plane_idx} best-Z disagrees with its provenance")
+        mode_ref = {key: value for key, value in ref.items() if key != "anat_label_z"}
+        resolved_z = resolve_anatomy_label_z(mode_ref, anatomy_labels.shape[0], best_z=bz)
+        if not 0 <= bz < anatomy_labels.shape[0] or ref["anat_label_z"] != resolved_z or not 0 <= resolved_z < anatomy_labels.shape[0]:
+            raise ValueError(f"Geometry plane {plane_idx} has inconsistent anatomy-label Z provenance")
+        plane_z[plane_idx] = resolved_z
+    return plane_z
+
+
+def build_molecular_identity_fate_table(*, label_paths: Sequence[str | Path], final_pair_paths: Sequence[str | Path], identity_table_path: str | Path, geometry_table_path: str | Path, anatomy_labels_path: str | Path, plane_refs_path: str | Path) -> pd.DataFrame:
+    """Classify molecular labels using frozen tables and geometry-owned label-Z pages."""
     identity = pd.read_csv(identity_table_path)
     geometry = pd.read_csv(geometry_table_path)
     anatomy_labels = imread_any(anatomy_labels_path)
-    plane_z = geometry.groupby("plane_idx")["best_z"].first().dropna().astype(int).to_dict()
+    plane_z = _molecular_geometry_label_pages(geometry, anatomy_labels, plane_refs_path)
     final_by_stem = {Path(p).name.replace("_final_pairs.csv", ""): pd.read_csv(p) for p in final_pair_paths}
     domain = ("unmatched", "out-of-plane anatomy label", "in-plane no functional ROI candidate", "in-plane response unavailable", "in-plane low-activity ROI", "in-plane responsive ROI")
     rows: list[dict] = []
@@ -2044,6 +2077,8 @@ def plot_molecular_correspondence_tiles(
     final_pair_paths: Sequence[str | Path],
     identity_table_path: str | Path,
     functional_label_dir: str | Path,
+    plane_refs_path: str | Path,
+    geometry_table_path: str | Path,
     fish_id: str,
     genes: Sequence[str] | None = None,
     response_statuses: Sequence[str] | None = None,
@@ -2070,10 +2105,15 @@ def plot_molecular_correspondence_tiles(
     if anatomy.ndim != 3 or anatomy_labels.shape != anatomy.shape:
         raise ValueError("Anatomy intensity and anatomy labels must be same-grid 3D ZYX arrays")
     identity = pd.read_csv(identity_table_path)
+    geometry = pd.read_csv(geometry_table_path)
+    label_pages = _molecular_geometry_label_pages(geometry, anatomy_labels, plane_refs_path)
     required_identity = {"anat_label", "plane_idx", "func_label", "best_z"}
     missing_identity = sorted(required_identity.difference(identity.columns))
     if missing_identity:
         raise ValueError(f"Identity table is missing required frozen-geometry columns: {missing_identity}")
+    frozen_z = geometry.groupby("plane_idx")["best_z"].first().to_dict()
+    if not identity["best_z"].eq(identity["plane_idx"].map(frozen_z)).all():
+        raise ValueError("Identity best-Z values disagree with frozen geometry")
     finals = {Path(p).name.replace("_final_pairs.csv", ""): pd.read_csv(p) for p in final_pair_paths}
     functional_dir = Path(functional_label_dir)
     if not functional_dir.is_dir():
@@ -2170,25 +2210,23 @@ def plot_molecular_correspondence_tiles(
     fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows), squeeze=False, constrained_layout=True)
     for ax, record in zip(axes.flat, records):
         z = record["best_z"]
-        if not np.any(anatomy_labels[z] == record["anat_label"]):
-            anatomy_counts = np.count_nonzero(anatomy_labels == record["anat_label"], axis=(1, 2))
-            hcr_counts = np.count_nonzero(record["hcr"] == record["conf_label"], axis=(1, 2))
-            z = int(np.argmax(anatomy_counts if anatomy_counts.max() else hcr_counts))
+        label_z = label_pages[record["plane_idx"]]
+        if not np.any(anatomy_labels[label_z] == record["anat_label"]):
+            raise ValueError(f"Selected anatomy label {record['anat_label']} is absent from geometry-owned label page {label_z}")
         func = _functional_mask(record["plane_idx"])
         func_plane = func[z] if func.ndim == 3 else func
-        anatomy_plane = norm01(anatomy[z]); ay, axx = np.where(anatomy_labels[z] == record["anat_label"])
-        if len(ay) == 0: ay, axx = np.where(record["hcr"][z] == record["conf_label"])
+        anatomy_plane = norm01(anatomy[z]); ay, axx = np.where(anatomy_labels[label_z] == record["anat_label"])
         if len(ay) == 0: continue
         cy, cx = int(np.median(ay)), int(np.median(axx)); y0, y1 = max(0, cy-crop_px), min(anatomy_plane.shape[0], cy+crop_px); x0, x1 = max(0, cx-crop_px), min(anatomy_plane.shape[1], cx+crop_px)
         rgb = np.dstack([anatomy_plane]*3)[y0:y1, x0:x1].copy()
         ax.imshow(rgb)
-        anatomy_boundary = anatomy_labels[z, y0:y1, x0:x1] == record["anat_label"]
+        anatomy_boundary = anatomy_labels[label_z, y0:y1, x0:x1] == record["anat_label"]
         # Draw anatomy first.  The coloured, narrower top contours remain
         # visible even when all three labels coincide exactly; a white flank
         # still identifies the anatomy boundary on bright GCaMP context.
         ax.contour(anatomy_boundary, levels=[.5], colors="#202020", linewidths=3.2)
         ax.contour(anatomy_boundary, levels=[.5], colors="white", linewidths=2.1)
-        ax.contour(record["hcr"][z, y0:y1, x0:x1] == record["conf_label"], levels=[.5], colors="#00c853", linewidths=1.45, linestyles="--")
+        ax.contour(record["hcr"][label_z, y0:y1, x0:x1] == record["conf_label"], levels=[.5], colors="#00c853", linewidths=1.45, linestyles="--")
         ax.contour(func_plane[y0:y1, x0:x1] == record["func_label"], levels=[.5], colors="#ff00ff", linewidths=.75)
         flag_text = ", ".join(record["flags"]) if record["flags"] else "none recorded"
         ax.set_title(f"{record['gene']} {record['round']} | H{record['conf_label']}→A{record['anat_label']}→R{record['func_label']}\n{record['response']} · {record['trace_status']} | flags: {flag_text}", fontsize=7); ax.axis("off")

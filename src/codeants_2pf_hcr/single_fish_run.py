@@ -79,6 +79,16 @@ def _expand(value: str, variables: Mapping[str, str]) -> str:
         raise RunSpecError(f"unknown placeholder {exc.args[0]!r} in {value!r}") from exc
 
 
+def _declared_path(value: Any, variables: Mapping[str, str]) -> str:
+    """Reject accidental cwd hashing; all artifact declarations are absolute."""
+    if not isinstance(value, str) or not value.strip():
+        raise RunSpecError("artifact paths must be nonblank strings")
+    expanded = _expand(value, variables)
+    if not Path(expanded).is_absolute():
+        raise RunSpecError(f"artifact path must be absolute: {expanded!r}")
+    return expanded
+
+
 def load_run_spec(path: Path | str) -> RunSpec:
     """Load and strictly validate one JSON single-fish run specification."""
     spec_path = Path(path).expanduser().resolve()
@@ -140,13 +150,13 @@ def load_run_spec(path: Path | str) -> RunSpec:
             StageSpec(
                 name=name,
                 command=command,
-                inputs=tuple(_expand(str(value), variables) for value in record.get("inputs") or ()),
-                outputs=tuple(_expand(str(value), variables) for value in record.get("outputs") or ()),
+                inputs=tuple(_declared_path(value, variables) for value in record.get("inputs") or ()),
+                outputs=tuple(_declared_path(value, variables) for value in record.get("outputs") or ()),
                 validators=validators,
                 depends_on=dependencies,
-                manifest=_expand(record["manifest"], variables) if record.get("manifest") else None,
+                manifest=_declared_path(record["manifest"], variables) if record.get("manifest") is not None else None,
                 parameter_pins=record.get("parameter_pins") or {},
-                optional_inputs=tuple(_expand(str(value), variables) for value in record.get("optional_inputs", ())),
+                optional_inputs=tuple(_declared_path(value, variables) for value in record.get("optional_inputs", ())),
             )
         )
         names.add(name)
@@ -191,7 +201,7 @@ def load_run_spec(path: Path | str) -> RunSpec:
         provenance_pins=tuple(
             {
                 **{str(k): str(v) for k, v in pin.items()},
-                "path": _expand(str(pin.get("path", "")), variables),
+                "path": _declared_path(pin.get("path"), variables),
             }
             for pin in raw.get("provenance_pins") or ()
         ),
@@ -292,6 +302,8 @@ def _file_hash(path: Path) -> str:
 
 def describe_path(path_value: str | Path) -> dict[str, Any]:
     """Return a deterministic content record for a file, symlink, or tree."""
+    if isinstance(path_value, str) and not path_value.strip():
+        raise RunSpecError("cannot hash a blank path (it would mean the working directory)")
     path = Path(path_value)
     record: dict[str, Any] = {"path": str(path), "exists": path.exists() or path.is_symlink()}
     if path.is_symlink():
@@ -448,7 +460,7 @@ def build_run_plan(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
 def _run_command(command: Sequence[str], *, cwd: Path, env: Mapping[str, str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.run(command, cwd=cwd, env=dict(env), text=True, stdout=log, stderr=subprocess.STDOUT, check=False)
+        process = subprocess.run(command, cwd=cwd, env=dict(env), text=True, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, check=False)
     return int(process.returncode)
 
 

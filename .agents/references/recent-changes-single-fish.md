@@ -6,6 +6,13 @@
 
 ## Latest completed checkpoint
 
+### 2026-10-06 - Unattended finishing job and geometry-owned molecular QC
+
+- Preserve ongoing manual-identity work in the original checkout. The independent clean `codex/unattended-single-fish` worktree owns automatic production execution. `tools/single_fish_job.py` runs hash-aware resume, verification, real-artifact audit, optional no-op proof, and all-QC gallery export without stdin or agent polling; compact terminal reports and detailed logs remain fish-local. Versioned galleries preserve previous evidence.
+- Registration/geometry false freshness failures came from `optional_inputs: [""]`: the empty string hashed the checkout as `.`. Blank/relative declarations now fail closed. The fish-specific adoption audit verifies every retained scientific input/output hash, archives old spec/state, and removes only those two known sentinel records; contracts and all seven QC notebooks execute afresh. No scientific writers need rerunning for this metadata/QC correction.
+- Molecular-fate and correspondence-tile QC now require geometry-owned direct/reversed label-page provenance; neither indexes raw labels with anatomy best-Z nor chooses an unrecorded maximum-section slice. Native 2358-label fate counts become unmatched2051, out-of-plane153, no ROI candidate96, response unavailable20, low activity29, responsive9; canonical scientific tables are unchanged.
+- Regression and real-job proof are recorded in the new fish-local `run_state/20261006_unattended/` and finishing-job reports. Consult their terminal status before claiming unattended validation. Human QC approval is distinct from biological acceptance of response/HCR differences; this implementation does not change accepted scientific decisions.
+
 ### 2026-10-06 - Native L765_f04 production and explained HCR replay drift
 
 - Production now writes the existing fish-local consumer directories from `03_analysis/functional/run_specs/L765_f04.json`; saved state under `run_state/20261006_production/` owns computational status. Eight upstream writers import verified frozen products and six downstream writers recompute. exFAT replacement is atomic per file, with verified backups, journal recovery, and final manifest/state publication; no whole-stage filesystem atomicity is claimed.

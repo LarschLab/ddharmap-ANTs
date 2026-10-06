@@ -13,6 +13,27 @@ def test_routes_preserve_native_consumers(tmp_path):
     assert native_product_path(fish, "make-figures", "04_plots/example.png") == fish / "04_plots/example.png"
 
 
+def test_noop_native_resume_preserves_layout_mtime_and_blocks_mismatch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr import single_fish_run
+    from codeants_2pf_hcr.native_run import execute_native_run
+    fish = tmp_path / "L000_f00"
+    state = fish / "state"
+    frozen = tmp_path / "frozen"
+    (frozen / "make-anatomy-midline-proposal").mkdir(parents=True)
+    spec = SimpleNamespace(data_root=tmp_path, fish_id="L000_f00", state_root=state,
+                           raw={"native_production": {"frozen_root": str(frozen), "original_root": "/old"}}, stages=[])
+    monkeypatch.setattr(single_fish_run, "validate_spec_environment", lambda spec: {"ok": True})
+    execute_native_run(spec, resume=True)
+    layout = fish / "03_analysis/functional/pipeline_manifests/native_layout.json"
+    mtime = layout.stat().st_mtime_ns
+    execute_native_run(spec, resume=True)
+    assert layout.stat().st_mtime_ns == mtime
+    layout.write_text("{}")
+    with pytest.raises(RuntimeError, match="layout disagrees"):
+        execute_native_run(spec, resume=True)
+
+
 def test_native_score_parity_uses_own_stage_control_even_when_missing(tmp_path):
     from types import SimpleNamespace
     from codeants_2pf_hcr.pipeline import _stage_output_specs

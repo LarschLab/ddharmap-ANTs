@@ -229,7 +229,12 @@ def execute_native_run(spec, *, resume: bool):
     proposal = frozen / "make-anatomy-midline-proposal"
     if not (graph / proposal.name).exists():
         shutil.copytree(proposal, graph / proposal.name)
-    _write_json_atomic(fish / "03_analysis/functional/pipeline_manifests/native_layout.json", {"fish_id": spec.fish_id, "pipeline_root": str(fish), "layout": "existing-fish-tree-v1"})
+    layout_path = fish / "03_analysis/functional/pipeline_manifests/native_layout.json"
+    layout = {"fish_id": spec.fish_id, "pipeline_root": str(fish), "layout": "existing-fish-tree-v1"}
+    if not layout_path.exists():
+        _write_json_atomic(layout_path, layout)
+    elif json.loads(layout_path.read_text()) != layout:
+        raise RuntimeError("Existing native layout disagrees with the run specification")
     results = []
     for stage in spec.stages:
         current, _ = _stage_current(spec, stage, environment)

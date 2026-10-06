@@ -70,7 +70,8 @@ Generated manually for the current extracted package surface.
 - `resolve_hcr_matching_artifact_root`, `build_hcr_anatomy_match_outcome_table`, `plot_hcr_anatomy_match_outcome_donuts`: Select one persisted HCR artifact root (staged when present, otherwise the legacy fish-local set) and render the legacy `[50]` one-ring per-gene anatomical outcome donuts from saved labels, match tables, q95 metadata, and saved plane representation; no matching or assignment is recomputed.
 - `build_hcr_functional_plane_status_donut_table`, `plot_hcr_functional_plane_status_donuts`: Recreate the legacy two-ring functional-plane representation audit in notebook `04`: inner scope is within/outside/unmatched after the q95 exclusion, and the outer ring partitions saved within-plane HCR activity status or records the outside/unmatched outcome; both functions are read-only.
 - `inspect_molecular_identity_qc`, `plot_molecular_identity_qc`: Enforce frozen geometry and compare geometry fields before/after identity attachment in notebook `05`.
-- `plot_molecular_correspondence_tiles`: Render persisted HCR→anatomy→functional correspondence crops in anatomy/GCaMP context for notebook `05`, retaining every selected frozen-geometry link by default and exposing display-only gene, response, and flag filters; it never changes final-pair membership or creates exclusions.
+- `build_molecular_identity_fate_table`: Read frozen ROI-centric links and HCR final pairs with required geometry-owned `plane_refs_path`; validate explicit direct/reverse anatomy-label Z provenance before classifying in-plane label fates.
+- `plot_molecular_correspondence_tiles`: Render persisted HCR→anatomy→functional correspondence crops in anatomy/GCaMP context for notebook `05`, requiring geometry table and plane-reference paths to resolve label pages independently of intensity `best_z`; retains every selected frozen-geometry link by default and display-only gene, response, and flag filters, without inferred Z fallback or changed final-pair membership.
 - `inspect_activity_export_qc`, `plot_activity_export_qc`: Review session-aware response/BPI provenance, canonical keys, figures, and ROI-centric versus HCR-centric scopes in notebook `06`; optional `scored_windows_path` and `reference_manifest_path` validate the persisted plane/session mapping without extending ROI schemas.
 - `build_activity_bpi_gate_table`, `plot_activity_bpi_gate`: Read persisted response classes and strict BPI preferences for ROI-centric Notebook 06 review; non-BPI summaries use every response-assessable ROI, BPI panels use response-positive ROIs only, preference is color-coded, response-test class is marker-coded, and the all-ROI donut retains unavailable rows.
 
@@ -479,6 +480,11 @@ Generated manually for the current extracted package surface.
 - `build_run_status`: Report saved stage state and currentness without executing commands.
 - `verify_run`: Verify the pinned environment/provenance and every saved input/output hash.
 - `audit_run_artifacts`: Read-only validation of real ROI key relationships, signed-response union, family-wise 23c tails, fixed response windows, BPI pool and geometry-assignment hashes; reports response/suppression counts.
+
+## `codeants_2pf_hcr.single_fish_job`
+
+- `run_finishing_job`: Noninteractive fish-locked resume, pinned/hash verification, real-artifact audit, optional no-op proof, and complete QC gallery export; saves compact atomic terminal reports and full diagnostics without polling.
+- CLI: `tools/single_fish_job.py`; usage and failure/reuse policy: `docs/single-fish-unattended-job.md`.
 
 ## `codeants_2pf_hcr.freeze_run`
 

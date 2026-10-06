@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +11,7 @@ import tifffile
 from codeants_2pf_hcr.plots.qc_molecular import (
     MOLECULAR_GEOMETRY_TRACKS,
     build_hcr_anatomy_centroid_offset_table,
+    build_molecular_identity_fate_table,
     build_hcr_anatomy_match_outcome_table,
     build_hcr_functional_plane_status_donut_table,
     build_hcr_matching_flow_donut_table,
@@ -39,6 +41,64 @@ FISH_ID = "L765_f04"
 def _csv(path: Path, rows: list[dict]) -> Path:
     pd.DataFrame(rows).to_csv(path, index=False)
     return path
+
+
+def _molecular_fate_inputs(tmp_path: Path, mode: str) -> dict:
+    anatomy = np.zeros((3, 5, 5), dtype=np.uint16)
+    anatomy[0, 1:3, 1:3] = 10
+    anatomy[2, 1:3, 1:3] = 20
+    anatomy_path = tmp_path / "anatomy.tif"
+    tifffile.imwrite(anatomy_path, anatomy, photometric="minisblack")
+    mask_path = tmp_path / "L765_f04_rbest_channel1_sst1.2_cp_masks_in_2p_labels_uint16.tif"
+    tifffile.imwrite(mask_path, anatomy, photometric="minisblack")
+    pair_path = mask_path.with_name(mask_path.name.replace("_labels_uint16.tif", "_final_pairs.csv"))
+    _csv(pair_path, [{"conf_label": 10, "twoP_label": 10}, {"conf_label": 20, "twoP_label": 20}])
+    geometry_path = _csv(tmp_path / "geometry.csv", [{"plane_idx": 0, "best_z": 0}])
+    identity_path = _csv(tmp_path / "identity.csv", [{"anat_label": 20, "has_unique_anat_match": True,
+                                                    "bpi_data_available": True, "response_is_active": True}])
+    refs_path = tmp_path / "plane_refs_summary_geometry.json"
+    refs_path.write_text(json.dumps([{"index": 0, "best_z": 0, "anat_label_z_mode": mode,
+                                     "anat_label_z": 2 if mode == "reverse" else 0}]))
+    return dict(label_paths=[mask_path], final_pair_paths=[pair_path], identity_table_path=identity_path,
+                geometry_table_path=geometry_path, anatomy_labels_path=anatomy_path, plane_refs_path=refs_path)
+
+
+@pytest.mark.parametrize("mode", ["direct", "reverse"])
+def test_molecular_fate_uses_geometry_owned_label_pages(tmp_path: Path, mode: str) -> None:
+    inputs = _molecular_fate_inputs(tmp_path, mode)
+    before = {path: path.read_bytes() for path in tmp_path.iterdir()}
+    counts = build_molecular_identity_fate_table(**inputs).set_index("fate")["n_labels"]
+    assert counts["out-of-plane anatomy label"] == 1
+    assert counts["in-plane responsive ROI"] == (1 if mode == "reverse" else 0)
+    assert counts["in-plane no functional ROI candidate"] == (0 if mode == "reverse" else 1)
+    assert counts.sum() == 2
+    assert len(counts) == 6
+    assert {path: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize("fault", ["missing_file", "missing_plane", "duplicate", "missing_mode", "missing_page",
+                                    "wrong_page", "wrong_best_z", "out_of_bounds", "ambiguous_best_z", "invalid_json_shape"])
+def test_molecular_fate_blocks_invalid_label_z_provenance(tmp_path: Path, fault: str) -> None:
+    inputs = _molecular_fate_inputs(tmp_path, "reverse")
+    refs_path = inputs["plane_refs_path"]
+    refs = json.loads(refs_path.read_text())
+    if fault == "missing_file":
+        inputs["plane_refs_path"] = tmp_path / "absent.json"
+    elif fault == "missing_plane": refs = []
+    elif fault == "duplicate": refs.append(dict(refs[0]))
+    elif fault == "missing_mode": refs[0].pop("anat_label_z_mode")
+    elif fault == "missing_page": refs[0].pop("anat_label_z")
+    elif fault == "wrong_page": refs[0]["anat_label_z"] = 0
+    elif fault == "wrong_best_z": refs[0]["best_z"] = 1
+    elif fault == "out_of_bounds":
+        refs[0].update(best_z=4, anat_label_z=-2)
+        _csv(inputs["geometry_table_path"], [{"plane_idx": 0, "best_z": 4}])
+    elif fault == "ambiguous_best_z":
+        _csv(inputs["geometry_table_path"], [{"plane_idx": 0, "best_z": 0}, {"plane_idx": 0, "best_z": 1}])
+    elif fault == "invalid_json_shape": refs = {}
+    refs_path.write_text(json.dumps(refs))
+    with pytest.raises((ValueError, FileNotFoundError)):
+        build_molecular_identity_fate_table(**inputs)
 
 
 def test_molecular_geometry_keeps_four_tracks_distinct_and_reports_ambiguity(tmp_path: Path) -> None:
@@ -405,7 +465,8 @@ def test_identity_qc_blocks_changed_geometry_and_unfrozen_input(tmp_path: Path) 
     assert len(report["geometry_changes"]) == 1
 
 
-def test_molecular_correspondence_tiles_use_all_persisted_links_and_only_filter_display(tmp_path: Path) -> None:
+@pytest.mark.parametrize("mode", ["direct", "reverse"])
+def test_molecular_correspondence_tiles_use_all_persisted_links_and_only_filter_display(tmp_path: Path, mode: str) -> None:
     anatomy = tmp_path / "anatomy.tif"
     anatomy_labels = tmp_path / "anatomy_labels.tif"
     hcr = tmp_path / "L765_f04_r2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"
@@ -414,7 +475,8 @@ def test_molecular_correspondence_tiles_use_all_persisted_links_and_only_filter_
     functional_dir.mkdir(parents=True)
     shape = (2, 12, 12)
     intensity = np.zeros(shape, dtype=np.uint16)
-    intensity[:, 2:10, 2:10] = 100
+    intensity[0] = np.arange(12)[None, :] * 10
+    intensity[1] = np.arange(12)[:, None] * 10
     anat = np.zeros(shape, dtype=np.uint16)
     anat[0, 3:6, 3:6] = 7
     anat[1, 6:9, 6:9] = 8
@@ -434,17 +496,31 @@ def test_molecular_correspondence_tiles_use_all_persisted_links_and_only_filter_
         tmp_path / "identity.csv",
         [
             {"anat_label": 7, "plane_idx": 0, "func_label": 11, "best_z": 0, "has_unique_anat_match": True, "response_class": "responsive", "bpi_data_available": True},
-            {"anat_label": 7, "plane_idx": 1, "func_label": 13, "best_z": 0, "has_unique_anat_match": True, "response_class": "low activity", "bpi_data_available": True},
+            {"anat_label": 7, "plane_idx": 2, "func_label": 13, "best_z": 0, "has_unique_anat_match": True, "response_class": "low activity", "bpi_data_available": True},
             {"anat_label": 8, "plane_idx": 1, "func_label": 12, "best_z": 1, "has_unique_anat_match": True, "response_class": "low activity", "bpi_data_available": False},
         ],
     )
+    geometry = _csv(tmp_path / "geometry.csv", [{"plane_idx": 0, "best_z": 0}, {"plane_idx": 1, "best_z": 1}, {"plane_idx": 2, "best_z": 0}])
+    refs = tmp_path / "refs.json"
+    refs.write_text(json.dumps([{"index": i, "best_z": z, "anat_label_z_mode": mode,
+                                "anat_label_z": z if mode == "direct" else 1-z} for i, z in [(0, 0), (1, 1), (2, 0)]]))
+    tifffile.imwrite(functional_dir / "L765_f04_plane2_func_mask_in_2p.tif", func1)
+    if mode == "reverse":
+        tifffile.imwrite(anatomy_labels, anat[::-1])
+        tifffile.imwrite(hcr, hcr_mask[::-1])
 
     figure = plot_molecular_correspondence_tiles(
         anatomy_path=anatomy, anatomy_labels_path=anatomy_labels,
         hcr_label_paths=[hcr], final_pair_paths=[final], identity_table_path=identity,
-        functional_label_dir=functional_dir, fish_id=FISH_ID,
+        functional_label_dir=functional_dir, fish_id=FISH_ID, plane_refs_path=refs, geometry_table_path=geometry,
     )
     assert len(figure.axes) == 3
+    # Both label orientations must retain anatomy intensity at frozen best_z,
+    # not silently choose the label-page index or a volume-maximum slice.
+    from codeants_2pf_hcr.spatial import norm01
+    for ax in figure.axes:
+        expected_z = 1 if "→R12" in ax.get_title() else 0
+        np.testing.assert_allclose(ax.images[0].get_array()[..., 0], norm01(intensity[expected_z]))
     assert any("flags: is_low_confidence_segmentation" in ax.get_title() for ax in figure.axes)
     assert any("trace/BPI available" in ax.get_title() for ax in figure.axes)
     assert any("trace/BPI unavailable" in ax.get_title() for ax in figure.axes)
@@ -456,13 +532,20 @@ def test_molecular_correspondence_tiles_use_all_persisted_links_and_only_filter_
     flagged = plot_molecular_correspondence_tiles(
         anatomy_path=anatomy, anatomy_labels_path=anatomy_labels,
         hcr_label_paths=[hcr], final_pair_paths=[final], identity_table_path=identity,
-        functional_label_dir=functional_dir, fish_id=FISH_ID, flagged_only=True,
+        functional_label_dir=functional_dir, fish_id=FISH_ID, flagged_only=True, plane_refs_path=refs, geometry_table_path=geometry,
     )
     assert len(flagged.axes) == 1
     assert "H5→A8→R12" in flagged.axes[0].get_title()
     assert "HCR-centric review: showing 1 of 3 persisted selected links" in flagged._suptitle.get_text()
     assert len(pd.read_csv(final)) == 2  # plotting has not changed final-pair membership.
     plt.close(flagged)
+    refs.unlink()
+    with pytest.raises(FileNotFoundError):
+        plot_molecular_correspondence_tiles(
+            anatomy_path=anatomy, anatomy_labels_path=anatomy_labels,
+            hcr_label_paths=[hcr], final_pair_paths=[final], identity_table_path=identity,
+            functional_label_dir=functional_dir, fish_id=FISH_ID, plane_refs_path=refs, geometry_table_path=geometry,
+        )
 
 
 def test_activity_export_qc_preserves_scopes_and_session_provenance(tmp_path: Path) -> None:

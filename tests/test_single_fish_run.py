@@ -125,6 +125,29 @@ def test_verify_detects_output_tampering(tmp_path: Path) -> None:
     assert "outputs changed" in verified["stages"][0]["reasons"]
 
 
+@pytest.mark.parametrize("field", ["inputs", "outputs", "optional_inputs"])
+@pytest.mark.parametrize("bad", ["", "   ", ".", "relative/input.csv", None])
+def test_artifact_declarations_reject_cwd_sentinels(tmp_path, field, bad):
+    path, _, _ = _build_spec(tmp_path)
+    raw = json.loads(path.read_text())
+    raw["stages"][0][field] = [bad]
+    path.write_text(json.dumps(raw))
+    with pytest.raises(RunSpecError):
+        load_run_spec(path)
+
+
+def test_describe_blank_path_never_hashes_checkout():
+    with pytest.raises(RunSpecError):
+        describe_path("")
+
+
+def test_stage_subprocess_has_closed_stdin(tmp_path):
+    import os
+    from codeants_2pf_hcr.single_fish_run import _run_command
+    assert _run_command([sys.executable, "-c", "import sys; assert sys.stdin.read() == ''"],
+                        cwd=tmp_path, env=os.environ, log_path=tmp_path / "stdin.log") == 0
+
+
 def test_spec_rejects_duplicate_stages(tmp_path: Path) -> None:
     spec_path, _, _ = _build_spec(tmp_path)
     raw = json.loads(spec_path.read_text())
