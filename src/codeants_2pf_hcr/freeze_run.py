@@ -342,13 +342,18 @@ def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: lis
         ])
         if _content_signature(records) != _content_signature(mounted_records):
             raise RuntimeError("Mounted disk-image payload differs from verified source inventory")
-        verify_read_only_mount(mounted)
+        metadata = json.loads((mounted / "freeze_metadata.json").read_text(encoding="utf-8"))
+        for relative, expected in metadata["provenance"].items():
+            if _sha256_file(mounted / relative) != expected:
+                raise RuntimeError(f"Mounted provenance hash mismatch: {relative}")
+        lock = verify_read_only_mount(mounted)
         subprocess.run(["hdiutil", "detach", str(mounted)], check=True, capture_output=True, text=True)
         attached = False
         image_hash = _sha256_file(image)
         _write_json(container / "image_verification.json", {
             "image": "frozen_run.dmg", "sha256": image_hash, "format": "UDRO",
             "hdiutil_verify": "pass", "mounted_payload_matches_source": True,
+            "provenance_hashes_match": True, "lock_verification": lock,
             "protection_scope": "Mounted payload is read-only; exFAT container can still be deleted or replaced.",
         })
         (container / "README.md").write_text(
@@ -395,6 +400,8 @@ def freeze_single_fish_run(
     for source in (pipeline_root, manifest_dir):
         if not source.is_dir():
             raise FileNotFoundError(f"Required freeze source directory is missing: {source}")
+        if destination == source or source in destination.parents:
+            raise ValueError("Freeze destination must be outside the source trees")
     if destination.exists():
         raise FileExistsError(f"Freeze destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -431,6 +438,7 @@ def freeze_single_fish_run(
             "tree": _run_git(repo_root, "rev-parse", f"{scientific_revision}^{{tree}}").strip(),
             "description": _run_git(repo_root, "log", "-1", "--format=%h %ci %s", scientific_revision).strip(),
             "provenance_basis": "Explicit historical run commit; distinct from freeze utility checkout state",
+            "snapshot_type": "committed Git tree archive (no working-tree modifications)",
         }
         subprocess.run(["git", "-C", str(repo_root), "archive", "--format=tar",
                         "--output", str(provenance / "scientific_code.tar"), scientific_revision], check=True)

@@ -91,7 +91,6 @@ def test_freeze_refuses_existing_destination(tmp_path: Path) -> None:
                     reason="Requires explicit macOS mounted-volume test directory")
 def test_read_only_image_on_mounted_volume() -> None:
     import tempfile
-    import shutil
 
     test_root = Path(tempfile.mkdtemp(prefix="freeze-image-test-", dir=os.environ["FREEZE_IMAGE_TEST_ROOT"]))
     mounted = None
