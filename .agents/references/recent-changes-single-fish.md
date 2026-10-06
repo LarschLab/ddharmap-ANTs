@@ -6,6 +6,13 @@
 
 ## Latest completed checkpoint
 
+### 2026-10-06 - Native L765_f04 production and explained HCR replay drift
+
+- Production now writes the existing fish-local consumer directories from `03_analysis/functional/run_specs/L765_f04.json`; saved state under `run_state/20261006_production/` owns computational status. Eight upstream writers import verified frozen products and six downstream writers recompute. exFAT replacement is atomic per file, with verified backups, journal recovery, and final manifest/state publication; no whole-stage filesystem atomicity is claimed.
+- Fixed native scorer parity to use its identity-neutral score-owned controls; fixed accepted-midline relocation to verify exact path-only source changes, retain original reviewed hashes, and publish current proposal provenance with separate rollback records.
+- Frozen ROI score tables, canonical ROI identity master, anatomy identity lookup, fixed BPI windows, and motion-AUC ROI panels match after path rebinding. HCR tables differ: current coherent September geometry gives 18 responsive pairs/490 raw rows/282 candidates versus frozen 19/507/295. The frozen HCR replay overlaid August transforms from the old fish-native comparison; an isolated historical replay reproduces all seven frozen identity-stage tables byte-for-byte after explicit path rebinding.
+- Evidence: `hcr_replay_transform_source_audit.json`, `frozen_native_table_comparison.json`, and `diagnostics/historical-august-hcr-replay/` under the production state root. Native transaction regressions pass (13 tests); final QC consumer fixes/re-execution and scientific review remain gates. Biological acceptance is unchanged.
+
 ### 2026-10-06 - Complete L765_f04 freeze and deterministic runner
 
 - Frozen complete working root and separate fish-local writer manifests under `_frozen_pipeline_runs/20261006_L765_f04_dfbc3b8`, browsable at `/Volumes/20261006_L765_f04_dfbc3b8`. Scientific archive dfbc3b8; utility clean checkpoint88be79d; scientific interpreter/packages, paths/parameters, stage statuses, Git state, metadata and SHA inventory captured. Independent rehash passed all420 payload records/760053426bytes (including3AppleDouble files), original trees and provenance hashes. Read-only UDRO mount reports Writable=false and rejects existing-file append with EROFS30. Image SHA256 `5f1be874b9c787d6e2d1e020ed2f79223d8ef5285f13042fa8ff66909aeb019d`. On exFAT, the outer container can still be replaced/deleted; only the mounted verified payload is protected.
