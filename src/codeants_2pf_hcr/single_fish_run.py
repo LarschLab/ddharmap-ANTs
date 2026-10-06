@@ -359,7 +359,7 @@ def validate_spec_environment(spec: RunSpec) -> dict[str, Any]:
     runtime = _runtime_report(spec)
     auxiliary = []
     for pin in spec.raw.get("auxiliary_interpreters", ()):
-        proc = subprocess.run([pin["executable"], "-c", "import sys,importlib.metadata,json; print(json.dumps({version:sys.version.split()[0], packages:{n:importlib.metadata.version(n) for n in " + repr(list(pin.get("packages", {}))) + "}}))"], capture_output=True, text=True)
+        proc = subprocess.run([pin["executable"], "-c", "import sys,importlib.metadata,json; print(json.dumps(dict(version=sys.version.split()[0], packages={n:importlib.metadata.version(n) for n in " + repr(list(pin.get("packages", {}))) + "})))"], capture_output=True, text=True)
         actual = json.loads(proc.stdout) if proc.returncode == 0 else {}
         auxiliary.append({"executable": pin["executable"], "actual": actual,
                           "ok": actual.get("version") == pin["python_version"] and actual.get("packages") == pin.get("packages", {})})
