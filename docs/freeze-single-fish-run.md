@@ -32,6 +32,9 @@ interpreter/package list, stage parameters/output paths, compact stage statuses,
 and freeze metadata. The image is checked with `hdiutil verify`, mounted at
 `/Volumes/DESTINATION_BASENAME`, rehashed, and tested for read-only filesystem status and an
 actual rejected write (`EROFS`). `image_verification.json` records the image hash.
+Image assembly copies each file literally into a writable HFS+ image before
+converting it to UDRO; this preserves inventoried exFAT AppleDouble sidecar files
+that `hdiutil -srcfolder` would otherwise absorb into extended attributes.
 
 The mounted payload is read-only. The surrounding exFAT container and image file
 can still be deleted or replaced by someone with access to the drive; this is not

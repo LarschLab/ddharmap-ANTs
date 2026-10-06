@@ -280,11 +280,11 @@ def _remove_staging_tree(root: Path) -> None:
     shutil.rmtree(root, onerror=ignore_disappearing_sidecar)
 
 
-def _attach_read_only(image: Path, mountpoint: Path) -> None:
+def _attach_read_only(image: Path, mountpoint: Path, *, read_only: bool = True) -> None:
     # macOS refuses mountpoints nested on exFAT. Let Disk Arbitration mount the
     # HFS+ payload in /Volumes; its unique volume label fixes the browse path.
     result = subprocess.run(
-        ["hdiutil", "attach", "-readonly", "-nobrowse", "-plist", str(image)],
+        ["hdiutil", "attach", *( ["-readonly"] if read_only else [] ), "-nobrowse", "-plist", str(image)],
         check=True, capture_output=True,
     )
     mounted_paths = [entity.get("mount-point") for entity in
@@ -322,17 +322,31 @@ def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: lis
     container = destination.parent / f".{destination.name}.image-{uuid.uuid4().hex}"
     container.mkdir()
     image = container / "frozen_run.dmg"
+    working_image = container / "assembly.dmg"
     volume_name = destination.name
     mounted = Path("/Volumes") / volume_name
     if mounted.exists():
         raise FileExistsError(f"Snapshot mountpoint already exists: {mounted}")
     attached = False
     try:
+        byte_count = sum(path.stat().st_size for path in partial.rglob("*") if path.is_file())
+        size_mb = max(64, (byte_count * 5 // 4) // (1024 * 1024) + 64)
         subprocess.run(
-            ["hdiutil", "create", "-srcfolder", str(partial), "-format", "UDRO",
-             "-fs", "HFS+", "-volname", volume_name, str(image)],
+            ["hdiutil", "create", "-size", f"{size_mb}m",
+             "-fs", "HFS+", "-volname", volume_name, str(working_image)],
             check=True, capture_output=True, text=True,
         )
+        _attach_read_only(working_image, mounted, read_only=False)
+        attached = True
+        # hdiutil -srcfolder interprets valid exFAT AppleDouble files as xattrs
+        # and silently removes their literal entries. Copy every verified file
+        # byte-for-byte into the image, then convert its filesystem blocks.
+        shutil.copytree(partial, mounted, symlinks=True, copy_function=shutil.copyfile, dirs_exist_ok=True)
+        subprocess.run(["hdiutil", "detach", str(mounted)], check=True, capture_output=True, text=True)
+        attached = False
+        subprocess.run(["hdiutil", "convert", str(working_image), "-format", "UDRO", "-o", str(image)],
+                       check=True, capture_output=True, text=True)
+        working_image.unlink()
         subprocess.run(["hdiutil", "verify", str(image)], check=True, capture_output=True, text=True)
         _attach_read_only(image, mounted)
         attached = True
@@ -341,7 +355,13 @@ def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: lis
             ("pipeline_manifests", mounted / "snapshot" / "pipeline_manifests"),
         ])
         if _content_signature(records) != _content_signature(mounted_records):
-            raise RuntimeError("Mounted disk-image payload differs from verified source inventory")
+            expected = {record.path: record for record in records}
+            observed = {record.path: record for record in mounted_records}
+            missing = sorted(expected.keys() - observed.keys())
+            extra = sorted(observed.keys() - expected.keys())
+            changed = [key for key in expected.keys() & observed.keys()
+                       if _content_signature([expected[key]]) != _content_signature([observed[key]])]
+            raise RuntimeError(f"Mounted disk-image payload differs: missing={missing[:10]}, extra={extra[:10]}, changed={changed[:10]}")
         metadata = json.loads((mounted / "freeze_metadata.json").read_text(encoding="utf-8"))
         for relative, expected in metadata["provenance"].items():
             if _sha256_file(mounted / relative) != expected:

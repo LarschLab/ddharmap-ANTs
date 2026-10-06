@@ -99,6 +99,7 @@ def test_read_only_image_on_mounted_volume() -> None:
         output = pipeline_root / "nested" / "deeper" / "result.csv"
         output.parent.mkdir(parents=True)
         output.write_text("roi,value\n1,2\n", encoding="utf-8")
+        subprocess.run(["xattr", "-wx", "com.apple.FinderInfo", "01" + "00" * 31, str(output)], check=True)
         manifests = test_root / "manifests"
         _write_manifest(manifests / "example_manifest.json", pipeline_file=output)
         before = build_inventory([("L765_f04", pipeline_root), ("pipeline_manifests", manifests)])
