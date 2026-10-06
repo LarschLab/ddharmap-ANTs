@@ -320,14 +320,15 @@ def verify_read_only_mount(mountpoint: Path) -> dict[str, Any]:
 def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: list[InventoryRecord]) -> dict[str, Any]:
     """Convert an already verified payload into a UDRO image, then verify its mount."""
     container = destination.parent / f".{destination.name}.image-{uuid.uuid4().hex}"
-    container.mkdir()
     image = container / "frozen_run.dmg"
     working_image = container / "assembly.dmg"
     volume_name = destination.name
     mounted = Path("/Volumes") / volume_name
     if mounted.exists():
         raise FileExistsError(f"Snapshot mountpoint already exists: {mounted}")
+    container.mkdir()
     attached = False
+    promoted = False
     try:
         byte_count = sum(path.stat().st_size for path in partial.rglob("*") if path.is_file())
         size_mb = max(64, (byte_count * 5 // 4) // (1024 * 1024) + 64)
@@ -384,6 +385,7 @@ def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: lis
             "or replaced; the image SHA-256 detects modification.\n", encoding="utf-8",
         )
         container.rename(destination)
+        promoted = True
         _attach_read_only(destination / "frozen_run.dmg", mounted)
         attached = True
         lock = verify_read_only_mount(mounted)
@@ -391,7 +393,7 @@ def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: lis
     except Exception:
         if attached:
             subprocess.run(["hdiutil", "detach", str(mounted)], check=False, capture_output=True)
-        cleanup = destination if destination.exists() else container
+        cleanup = destination if promoted else container
         shutil.rmtree(cleanup, ignore_errors=True)
         raise
 
