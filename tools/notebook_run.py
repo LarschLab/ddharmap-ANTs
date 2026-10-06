@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-root", type=Path)
     parser.add_argument("--pipeline-root", type=Path)
     parser.add_argument("--output", type=Path, help="Save an executed copy; never changes the source notebook.")
+    parser.add_argument("--capture-figures", action="store_true", help="Enable inline PNG MIME output in the executed copy.")
     return parser.parse_args()
 
 
@@ -59,6 +60,8 @@ def main() -> None:
         kernel_name=args.kernel,
         allow_errors=False,
     )
+    if args.capture_figures:
+        nb.cells.insert(0, nbformat.v4.new_code_cell("get_ipython().run_line_magic(\"matplotlib\", \"inline\")"))
     client.execute()
     if args.output:
         output = args.output.expanduser().resolve()

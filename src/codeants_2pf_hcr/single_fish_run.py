@@ -528,6 +528,25 @@ def _execute_stage(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
 
 def execute_run(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
     """Execute the declared DAG, optionally skipping hash-current stages."""
+    if spec.raw.get("native_production"):
+        from .native_run import execute_native_run
+        import fcntl
+        spec.state_root.mkdir(parents=True, exist_ok=True)
+        with (spec.state_root / "run.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("Another native run owns this fish") from exc
+            try:
+                return execute_native_run(spec, resume=resume)
+            except Exception as exc:
+                marker = spec.state_root / "current_stage.json"
+                current = json.loads(marker.read_text()) if marker.exists() else {}
+                failed = next((stage for stage in spec.stages if stage.name == current.get("stage")), None)
+                if failed:
+                    _write_json_atomic(_state_path(spec, failed), {"stage": failed.name, "exit_status": 1, "validation": {"status": "fail", "error": str(exc)}})
+                _write_json_atomic(spec.state_root / "run_summary.json", {"fish_id": spec.fish_id, "status": "fail", "failed_stage": current.get("stage"), "error": str(exc)})
+                raise
     started_at = _utc_now()
     plan = build_run_plan(spec, resume=resume)
     if not plan["environment"]["ok"]:
@@ -605,7 +624,13 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
         checks.append({"label": label, "status": "pass" if ok else "fail", "detail": detail})
     try:
         for name, relative in paths.items():
-            with (root / relative).open(newline="") as handle:
+            stage, relative_product = relative.split("/", 1)
+            if spec.raw.get("native_production"):
+                from .native_paths import native_product_path
+                product_path = native_product_path(root, stage, relative_product)
+            else:
+                product_path = root / relative
+            with product_path.open(newline="") as handle:
                 tables[name] = list(csv.DictReader(handle))
             check(f"{name} nonempty and fish identity", bool(tables[name]) and all(row.get("fish_id") == spec.fish_id for row in tables[name]), len(tables[name]))
         keys = {}
@@ -630,6 +655,15 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
         check("BPI pool membership baseline", pool_hash == baseline.get("bpi_pool_sha256"), pool_hash)
         geometry_hash = _json_hash(sorted([[row.get(key, "") for key in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")] for row in tables["geometry"]]))
         check("geometry baseline", geometry_hash == baseline.get("geometry_assignment_sha256"), geometry_hash)
+        if spec.raw.get("native_production"):
+            from .native_run import _rebind
+            from .native_paths import native_product_path
+            policy = spec.raw["native_production"]; frozen = Path(policy["frozen_root"])
+            original = frozen / "match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv"
+            actual = native_product_path(root, "match-roi-to-anatomy", "registration/functional_roi_anatomy_matches.csv")
+            check("entire frozen geometry table including coordinates", actual.read_text() == _rebind(original.read_text(), [policy["original_root"]], root), str(actual))
+            transforms = list((frozen / "register-functional-to-anatomy").rglob("*.mat"))
+            check("frozen ANTs transform bytes", bool(transforms) and all(_file_hash(path) == _file_hash(native_product_path(root, "register-functional-to-anatomy", path.relative_to(frozen / "register-functional-to-anatomy").as_posix())) for path in transforms), len(transforms))
         counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "activated": sum(truth(row[signed[0]]) or truth(row[signed[2]]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
     except (OSError, KeyError, ValueError, ZeroDivisionError, IndexError) as exc:
         check("artifact readability/schema", False, str(exc)); counts = {}

@@ -6,6 +6,7 @@ activity, promote outputs, or mutate the reviewed tables.
 """
 
 from __future__ import annotations
+from ..native_paths import stage_product_path
 
 from dataclasses import dataclass
 import json
@@ -128,7 +129,7 @@ def load_geometry_review_bundle(
         anatomy_stack = Path(anatomy_stack_path).expanduser().resolve()
         anatomy_labels = Path(anatomy_labels_path).expanduser().resolve()
         refs = Path(plane_refs_path).expanduser().resolve()
-        transformed_dir = Path(transformed_roi_root).expanduser().resolve() / "functional" / "anatomy"
+        transformed_dir = stage_product_path(Path(transformed_roi_root).expanduser().resolve(), "transform-functional-rois-to-anatomy", "functional/anatomy")
         for path, label in ((anatomy_stack, "anatomy stack"), (anatomy_labels, "anatomy labels"), (refs, "plane references")):
             if not path.is_file():
                 raise FileNotFoundError(f"Missing {label}: {path}")

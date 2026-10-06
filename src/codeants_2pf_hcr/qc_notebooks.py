@@ -51,6 +51,12 @@ class QCNotebookContext:
     manifest_paths: Mapping[str, Path]
     provenance: Mapping[str, Any]
 
+    def product_path(self, stage: str, relative: str = "") -> Path:
+        from .native_paths import native_product_path, is_native_root
+        if is_native_root(self.pipeline_root):
+            return native_product_path(self.fish_dir, stage, relative)
+        return self.stage_paths[stage] / relative
+
 
 def _resolved(path: Path | str) -> Path:
     return Path(path).expanduser().resolve(strict=False)
@@ -131,7 +137,9 @@ def resolve_qc_notebook_context(config: QCNotebookConfig) -> QCNotebookContext:
     )
     paths = resolve_pipeline_paths(pipeline_config)
     pipeline_root = _resolved(paths.pipeline_root)
-    stage_paths = {name: pipeline_root / name for name in QC_STAGE_NAMES}
+    from .native_paths import is_native_root
+    native = is_native_root(pipeline_root)
+    stage_paths = {name: fish_dir if native else pipeline_root / name for name in QC_STAGE_NAMES}
     for stage_name, stage_path in stage_paths.items():
         if not _is_within(stage_path, pipeline_root):
             raise ValueError(f"Resolved stage {stage_name!r} escapes pipeline root: {stage_path}")
@@ -148,7 +156,7 @@ def resolve_qc_notebook_context(config: QCNotebookConfig) -> QCNotebookContext:
     # canonical fish manifest directory.  Any such identity evidence must be
     # internally consistent with the selected fish and root.
     root_manifests: list[Path] = []
-    if pipeline_root.is_dir():
+    if pipeline_root.is_dir() and not native:
         root_manifests = sorted(
             path for path in pipeline_root.rglob("*manifest.json") if path.is_file()
         )
@@ -184,6 +192,7 @@ def resolve_qc_notebook_context(config: QCNotebookConfig) -> QCNotebookContext:
         "fish_dir": str(fish_dir),
         "pipeline_root": str(pipeline_root),
         "pipeline_root_explicit": config.pipeline_root is not None,
+        "native_layout": native,
         "pipeline_root_exists": pipeline_root.is_dir(),
         "matching_manifest_paths": tuple(matching_manifests),
     }
@@ -240,7 +249,7 @@ def build_qc_stage_inventory(context: QCNotebookContext) -> pd.DataFrame:
                 )
                 manifest_payload = candidate
         artifacts = _artifact_records_from_manifest(manifest_payload or {})
-        if not artifacts and stage_root.exists():
+        if not artifacts and stage_root.exists() and not context.provenance.get("native_layout"):
             artifacts = [
                 {
                     "path": str(path),

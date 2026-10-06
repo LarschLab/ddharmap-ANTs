@@ -5,6 +5,7 @@ never run a pipeline stage and never write analysis products.
 """
 
 from __future__ import annotations
+from ..native_paths import stage_product_path
 
 import hashlib
 import json
@@ -712,15 +713,15 @@ def load_functional_registration_qc(
     registration_dir = _path(registration_root, label="functional registration stage directory")
     transformed_dir = _path(transformed_roi_root, label="transformed functional ROI stage directory")
     qc_dir = _path(qc_root, label="functional registration QC stage directory")
-    plane_refs_path, plane_refs_payload = _json(registration_dir / "plane_refs_summary.json", label="plane refs summary")
+    plane_refs_path, plane_refs_payload = _json(stage_product_path(registration_dir, "register-functional-to-anatomy", "plane_refs_summary.json"), label="plane refs summary")
     if not isinstance(plane_refs_payload, list) or not plane_refs_payload:
         raise ValueError(f"Plane refs summary has no records: {plane_refs_path}")
     plane_refs = pd.DataFrame(plane_refs_payload)
     if "label" in plane_refs and not plane_refs["label"].astype(str).str.startswith(fish).all():
         raise ValueError(f"Plane refs summary contains a different fish: {plane_refs_path}")
 
-    transforms_path, transforms = _csv(registration_dir / "registration" / "tforms_by_plane.csv", label="per-plane transform table")
-    ncc_path, ncc = _csv(qc_dir / "qa" / "functional_ncc_depth_profiles.csv", label="functional NCC review table")
+    transforms_path, transforms = _csv(stage_product_path(registration_dir, "register-functional-to-anatomy", "registration/tforms_by_plane.csv"), label="per-plane transform table")
+    ncc_path, ncc = _csv(stage_product_path(qc_dir, "make-functional-registration-qc", "qa/functional_ncc_depth_profiles.csv"), label="functional NCC review table")
     for path, frame in ((transforms_path, transforms), (ncc_path, ncc)):
         _validate_table_fish(frame, fish, path)
 
@@ -730,8 +731,8 @@ def load_functional_registration_qc(
         "functional_anatomy_center_label_overlay_200px.png",
         "functional_ncc_depth_profiles.png",
     )
-    qc_pngs = {name: _path(qc_dir / "qa" / name, label=f"registration QC PNG {name}") for name in qc_png_names}
-    anatomy_label_dir = _path(transformed_dir / "functional" / "anatomy", label="anatomy-space transformed ROI labels")
+    qc_pngs = {name: _path(stage_product_path(qc_dir, "make-functional-registration-qc", "qa/" + name), label=f"registration QC PNG {name}") for name in qc_png_names}
+    anatomy_label_dir = _path(stage_product_path(transformed_dir, "transform-functional-rois-to-anatomy", "functional/anatomy"), label="anatomy-space transformed ROI labels")
     transformed_labels = tuple(
         path
         for path in (tuple(sorted(anatomy_label_dir.glob("*.tif"))) + tuple(sorted(anatomy_label_dir.glob("*.tiff"))))
