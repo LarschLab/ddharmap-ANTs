@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import csv
+import math
 import importlib.metadata
 import json
 import os
@@ -150,6 +152,28 @@ def load_run_spec(path: Path | str) -> RunSpec:
         names.add(name)
     if not stages:
         raise RunSpecError("at least one stage is required")
+    activity_pins = next((stage.parameter_pins.get("activity_config") for stage in stages
+                          if stage.parameter_pins.get("activity_config")), None)
+    params = raw.get("scientific_parameters", {})
+    if activity_pins:
+        if params.get("activity_config") != activity_pins:
+            raise RunSpecError("scientific_parameters.activity_config contradicts writer pins")
+        aliases = {"response_null_q_total_two_sided": "response_null_q",
+                   "minimum_trials_per_class": "min_trials_per_class",
+                   "stimulus_onset_delay_sec": "stim_onset_delay_sec",
+                   "measurement_start_block": "measure_start_block",
+                   "measurement_start_event": "measure_start_event"}
+        for key, value in params.items():
+            target = aliases.get(key, key)
+            if target in activity_pins and activity_pins[target] != value:
+                raise RunSpecError(f"scientific parameter {key} contradicts writer pins")
+    choices = raw.get("accepted_choices", {})
+    choice_aliases = {"functional_polarity": "polarity", "exclude_first_functional_block": "exclude_first_block"}
+    for key, value in choices.items():
+        target = choice_aliases.get(key, key)
+        for stage in stages:
+            if target in stage.parameter_pins and stage.parameter_pins[target] != value:
+                raise RunSpecError(f"accepted choice {key} contradicts writer pins")
     return RunSpec(
         path=spec_path,
         fish_id=fish_id,
@@ -564,3 +588,50 @@ def package_version(name: str) -> str | None:
         return importlib.metadata.version(name)
     except importlib.metadata.PackageNotFoundError:
         return None
+
+
+def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
+    """Check real persisted scientific tables without invoking any writer."""
+    root = spec.pipeline_root
+    checks: list[dict[str, Any]] = []
+    tables: dict[str, list[dict[str, str]]] = {}
+    paths = {"geometry": "match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv",
+             "score": "score-activity-bpi/registration/functional_roi_activity_identity.csv",
+             "identity": "assign-hcr-identity/registration/functional_roi_activity_identity.csv",
+             "canonical": "export-canonical-tables/registration/functional_roi_activity_identity.csv",
+             "windows": "score-activity-bpi/registration/scored_stimulus_windows.csv",
+             "23c": "prepare-functional-reference-stacks/qa/suite2p_presented_stimulus_response_23c.csv"}
+    def check(label: str, ok: bool, detail: Any) -> None:
+        checks.append({"label": label, "status": "pass" if ok else "fail", "detail": detail})
+    try:
+        for name, relative in paths.items():
+            with (root / relative).open(newline="") as handle:
+                tables[name] = list(csv.DictReader(handle))
+            check(f"{name} nonempty and fish identity", bool(tables[name]) and all(row.get("fish_id") == spec.fish_id for row in tables[name]), len(tables[name]))
+        keys = {}
+        for name in ("geometry", "score", "identity", "canonical"):
+            rows = tables[name]; key = {(row["plane_idx"], row["func_label"]) for row in rows}; keys[name] = key
+            check(f"{name} unique ROI keys", len(key) == len(rows), len(key))
+        check("canonical key relationships", all(key == keys["geometry"] for key in keys.values()), {name: len(key) for name, key in keys.items()})
+        rows = tables["canonical"]
+        signed = ("bout_positive_response_pass", "bout_negative_response_pass", "cont_positive_response_pass", "cont_negative_response_pass", "response_has_suppression")
+        check("canonical signed response schema", all(column in rows[0] for column in signed), list(signed))
+        truth = lambda value: str(value).lower() in {"true", "1"}
+        check("signed response union", all(truth(row["response_is_active"]) == any(truth(row[column]) for column in signed[:4]) for row in rows), "active = activation or suppression in either class")
+        early = tables["23c"]; stimuli = {row["stim_type"] for row in early}
+        q = float(spec.raw["scientific_parameters"]["response_null_q_total_two_sided"])
+        lower = (1 - q) / (2 * len(stimuli)); upper = 1 - lower
+        check("23c family-wise both tails", all(math.isclose(float(row["null_lower_quantile_familywise"]), lower) and math.isclose(float(row["null_upper_quantile_familywise"]), upper) and truth(row["response_pass"]) == (truth(row["positive_response_pass"]) or truth(row["negative_response_pass"])) for row in early), {"stimulus_count": len(stimuli), "lower": lower, "upper": upper})
+        windows = tables["windows"]; pool = [row for row in windows if truth(row["used_for_bpi"])]
+        check("fixed scored windows", all(math.isclose(float(row["scored_duration_sec"]), float(spec.raw["scientific_parameters"]["response_window_sec"])) for row in pool), {"total": len(windows), "bpi_pool": len(pool)})
+        baseline = spec.raw.get("artifact_baseline", {})
+        membership = sorted([[row[key] for key in ("plane_idx", "session_label", "block", "stim_idx", "stim_type")] for row in pool])
+        pool_hash = _json_hash(membership)
+        check("BPI pool membership baseline", pool_hash == baseline.get("bpi_pool_sha256"), pool_hash)
+        geometry_hash = _json_hash(sorted([[row.get(key, "") for key in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")] for row in tables["geometry"]]))
+        check("geometry baseline", geometry_hash == baseline.get("geometry_assignment_sha256"), geometry_hash)
+        counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
+    except (OSError, KeyError, ValueError, ZeroDivisionError, IndexError) as exc:
+        check("artifact readability/schema", False, str(exc)); counts = {}
+    return {"fish_id": spec.fish_id, "pipeline_root": str(root), "checks": checks,
+            "counts": counts, "ok": bool(checks) and all(item["status"] == "pass" for item in checks)}

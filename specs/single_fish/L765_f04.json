@@ -330,7 +330,7 @@
       ],
       "manifest": "{fish_dir}/03_analysis/functional/pipeline_manifests/make-functional-registration-qc_manifest.json",
       "parameter_pins": {
-        "anatomy_label_z_mode": "auto"
+        "anatomy_label_z_mode": "reverse"
       },
       "argument_pins": {
         "--anatomy-label-z-mode": "reverse"
@@ -741,21 +741,34 @@
     {
       "name": "150-contract-checks",
       "command": [
-        "/Users/ddharmap/miniforge3/bin/python",
-        "-m",
-        "pytest",
-        "-q",
-        "tests/test_scientific_artifact_contracts.py",
-        "tests/test_qc_notebook_contract.py"
+        "{python}",
+        "tools/single_fish_run.py",
+        "audit-artifacts",
+        "--spec",
+        "{spec_dir}/L765_f04.json",
+        "--report",
+        "{data_root}/_single_fish_run_states/L765_f04/artifact-checks.json"
       ],
       "inputs": [
         "{pipeline_root}/export-canonical-tables/registration",
         "{pipeline_root}/make-figures/04_plots",
         "{fish_dir}/03_analysis/functional/pipeline_manifests"
       ],
-      "outputs": [],
+      "outputs": [
+        "{data_root}/_single_fish_run_states/L765_f04/artifact-checks.json"
+      ],
       "depends_on": [
         "140-generate-final-figures"
+      ],
+      "validators": [
+        [
+          "/Users/ddharmap/miniforge3/bin/python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/test_scientific_artifact_contracts.py",
+          "tests/test_qc_notebook_contract.py"
+        ]
       ]
     },
     {
@@ -979,5 +992,12 @@
         "pytest": "9.0.3"
       }
     }
-  ]
+  ],
+  "artifact_baseline": {
+    "source_root": "/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260915T093051Z_WORKING_PIPELINE_AND_QC/L765_f04",
+    "source_scientific_commit": "dfbc3b83b3d6fa81236ff999f25fd86e427ef3de",
+    "geometry_assignment_sha256": "8a2bb676ae898ab14b09ed492f81fb054e8f3cc718f1f5b1541968b231d748e5",
+    "bpi_pool_sha256": "94cf0068548048fab559319430322beafbc307fd362377e9cb6e46fca3f5ab53",
+    "bpi_pool_size": 160
+  }
 }

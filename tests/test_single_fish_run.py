@@ -1,4 +1,5 @@
 import hashlib
+import csv
 import json
 from pathlib import Path
 import subprocess
@@ -14,6 +15,9 @@ from codeants_2pf_hcr.single_fish_run import (
     describe_path,
     load_run_spec,
     verify_run,
+    validate_spec_environment,
+    audit_run_artifacts,
+    _json_hash,
 )
 
 
@@ -187,3 +191,48 @@ def test_argument_pin_cannot_silently_drift(tmp_path: Path) -> None:
     spec_path.write_text(json.dumps(raw))
     with pytest.raises(RunSpecError, match="violates pin"):
         load_run_spec(spec_path)
+
+
+def test_auxiliary_interpreter_is_actually_verified(tmp_path: Path) -> None:
+    spec_path, _, _ = _build_spec(tmp_path)
+    raw = json.loads(spec_path.read_text())
+    raw["auxiliary_interpreters"] = [{"executable": sys.executable, "python_version": sys.version.split()[0], "packages": {}}]
+    spec_path.write_text(json.dumps(raw))
+    assert validate_spec_environment(load_run_spec(spec_path))["ok"]
+
+
+def test_scientific_description_must_agree_with_writer_pins(tmp_path: Path) -> None:
+    spec_path, _, _ = _build_spec(tmp_path)
+    raw = json.loads(spec_path.read_text())
+    raw["stages"][0]["parameter_pins"] = {"activity_config": {"response_rng_seed": 50}}
+    raw["scientific_parameters"] = {"activity_config": {"response_rng_seed": 50}, "response_rng_seed": 51}
+    spec_path.write_text(json.dumps(raw))
+    with pytest.raises(RunSpecError, match="contradicts"):
+        load_run_spec(spec_path)
+
+
+def test_real_table_audit_rejects_upper_tail_only_payload(tmp_path: Path) -> None:
+    spec_path, _, root = _build_spec(tmp_path)
+    raw = json.loads(spec_path.read_text())
+    raw["scientific_parameters"] = {"response_null_q_total_two_sided": .99, "response_window_sec": 12.5}
+    base = {"fish_id": "L000_f00", "plane_idx": "0", "func_label": "1", "anat_label": "2", "selected_anat_label": "2", "has_unique_anat_match": "True"}
+    signed = {**base, "bout_positive_response_pass": "False", "bout_negative_response_pass": "True", "cont_positive_response_pass": "False", "cont_negative_response_pass": "False", "response_has_suppression": "True", "response_is_active": "True"}
+    window = {"fish_id": "L000_f00", "plane_idx": "0", "session_label": "r1", "block": "B1", "stim_idx": "0", "stim_type": "LB", "used_for_bpi": "True", "scored_duration_sec": "12.5"}
+    early = {"fish_id": "L000_f00", "stim_type": "LB", "null_lower_quantile_familywise": ".005", "null_upper_quantile_familywise": ".995", "response_pass": "True", "positive_response_pass": "False", "negative_response_pass": "True"}
+    def write(relative, row):
+        p = root / relative; p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=list(row));w.writeheader();w.writerow(row)
+    write("match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv", base)
+    for stage in ("score-activity-bpi", "assign-hcr-identity", "export-canonical-tables"):
+        write(stage + "/registration/functional_roi_activity_identity.csv", signed)
+    write("score-activity-bpi/registration/scored_stimulus_windows.csv", window)
+    ep = "prepare-functional-reference-stacks/qa/suite2p_presented_stimulus_response_23c.csv"
+    write(ep, early)
+    raw["artifact_baseline"] = {"geometry_assignment_sha256": _json_hash([[base[k] for k in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")]]), "bpi_pool_sha256": _json_hash([[window[k] for k in ("plane_idx", "session_label", "block", "stim_idx", "stim_type")]])}
+    spec_path.write_text(json.dumps(raw));spec = load_run_spec(spec_path)
+    assert audit_run_artifacts(spec)["ok"]
+    early["response_pass"] = "False";write(ep, early)
+    result = audit_run_artifacts(spec)
+    assert not result["ok"]
+    assert next(c for c in result["checks"] if c["label"] == "23c family-wise both tails")["status"] == "fail"
