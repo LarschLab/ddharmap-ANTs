@@ -30,6 +30,33 @@ def test_rebind_exact_products_and_keep_history(tmp_path):
     assert _rebind(value, [root], fish) == str(fish / "03_analysis/functional/registration/functional_roi_anatomy_matches.csv")
 
 
+@pytest.mark.parametrize("corrupt", [False, True])
+def test_midline_relocation_preserves_review_and_rejects_semantic_corruption(tmp_path, corrupt):
+    from codeants_2pf_hcr.native_run import _relocate_accepted_midline
+    from codeants_2pf_hcr.single_fish_run import _file_hash
+    fish = tmp_path / "fish"; frozen = tmp_path / "frozen"; root = "/reviewed/root"
+    relative = "register-functional-to-anatomy/plane_refs_summary.json"
+    source = frozen / relative; source.parent.mkdir(parents=True)
+    source.write_text(json.dumps({"transform": root + "/register-functional-to-anatomy/ncc/a.mat", "x": 1}))
+    target = fish / "03_analysis/functional/registration/plane_refs_summary.json"
+    target.parent.mkdir(parents=True); roots = [str(tmp_path / "graph"), root, str(frozen)]
+    text = _rebind(source.read_text(), roots, fish)
+    target.write_text(text.replace('"x": 1', '"x": 2') if corrupt else text)
+    payload = {"accepted": True, "lines_by_plane": {"0": {"x0": 3}}, "source_artifacts": [{"path": root + "/" + relative, "sha256": _file_hash(source)}]}
+    reviewed = frozen / "materialize-anatomy-midline/anatomy_midline.json"
+    reviewed.parent.mkdir(); reviewed.write_text(json.dumps(payload))
+    sidecar = tmp_path / "sidecar.json"; sidecar.write_text(_rebind(json.dumps(payload), roots, fish))
+    if corrupt:
+        with pytest.raises(RuntimeError, match="exact approved path-only"):
+            _relocate_accepted_midline(sidecar, frozen, roots, fish)
+    else:
+        _relocate_accepted_midline(sidecar, frozen, roots, fish)
+        bound = json.loads(sidecar.read_text())
+        assert bound["lines_by_plane"] == payload["lines_by_plane"]
+        assert bound["source_artifacts"][0]["sha256"] == _file_hash(target)
+        assert bound["relocation_provenance"][0]["reviewed_sha256"] == _file_hash(source)
+
+
 def test_exact_backup_and_crash_rollback(tmp_path):
     fish = tmp_path / "L000_f00"; target = fish / "03_analysis/functional/registration/a.csv"
     target.parent.mkdir(parents=True); target.write_text("old")

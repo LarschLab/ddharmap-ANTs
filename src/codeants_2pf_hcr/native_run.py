@@ -111,6 +111,34 @@ def _relocate_tree(stage_root: Path, roots: list[str], fish: Path) -> None:
                 path.write_text(relocated)
 
 
+def _relocate_accepted_midline(sidecar: Path, frozen: Path, roots: list[str], fish: Path) -> None:
+    """Bind reviewed sources only after proving exact path-only relocation."""
+    from .single_fish_run import _file_hash, _write_json_atomic
+    reviewed = json.loads((frozen / "materialize-anatomy-midline/anatomy_midline.json").read_text())
+    operative = json.loads(sidecar.read_text())
+    expected = json.loads(_rebind(json.dumps(reviewed), roots, fish))
+    if operative != expected:
+        raise RuntimeError("Accepted midline sidecar differs from reviewed path-only relocation")
+    provenance = []
+    for original, artifact in zip(reviewed["source_artifacts"], operative["source_artifacts"]):
+        source = Path(original["path"])
+        if source.is_relative_to(roots[1]):
+            source = frozen / source.relative_to(roots[1])
+        if _file_hash(source) != original["sha256"]:
+            raise RuntimeError(f"Reviewed frozen midline source hash mismatch: {source}")
+        target = Path(artifact["path"])
+        actual = _file_hash(target)
+        if actual == original["sha256"]:
+            continue
+        if source.suffix != ".json" or target.read_text() != _rebind(source.read_text(), roots, fish):
+            raise RuntimeError(f"Midline source is not an exact approved path-only relocation: {target}")
+        artifact["sha256"] = actual
+        provenance.append({"reviewed_path": original["path"], "reviewed_sha256": original["sha256"], "frozen_path": str(source), "operative_path": str(target), "operative_sha256": actual, "change": "exact path-prefix relocation only"})
+    if provenance:
+        operative["relocation_provenance"] = provenance
+    _write_json_atomic(sidecar, operative)
+
+
 def _refresh_records(records):
     from .pipeline import describe_manifest_path, describe_glob
     result = []
@@ -244,6 +272,8 @@ def execute_native_run(spec, *, resume: bool):
         # Bind paths by individual product prefixes, preserving explicit history.
         roots = [str(graph), source_root, str(frozen)]
         _relocate_tree(output_dir, roots, fish)
+        if writer == "materialize-anatomy-midline":
+            _relocate_accepted_midline(output_dir / "anatomy_midline.json", frozen, roots, fish)
         if writer == "make-qa-report":
             from .pipeline import _write_qa_report_pdf
             _write_qa_report_pdf(json.loads((output_dir / "qa_report_summary.json").read_text()), output_dir / "qa_report.pdf")
