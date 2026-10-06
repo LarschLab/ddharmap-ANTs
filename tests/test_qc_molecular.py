@@ -249,6 +249,19 @@ def test_hcr_functional_plane_status_donuts_use_legacy_two_ring_partition(tmp_pa
     plt.close(figure)
 
 
+def test_hcr_plane_status_prefers_exact_aligned_mask_over_legacy_name(tmp_path: Path) -> None:
+    label = tmp_path / "L765_f04_r2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"
+    tifffile.imwrite(label, np.array([[[1, 2]]], dtype="uint16"))
+    status = _csv(tmp_path / "hcr_activity_status.csv", [
+        {"conf_mask": label.name, "conf_label": 1, "gene": "sst1.2", "represented_on_func_plane": True, "functional_status": "in-plane responsive ROI"},
+        {"conf_mask": "L765_f04_r2_channel2_sst1_2_cp_masks.tif", "conf_label": 1, "gene": "sst1.2", "represented_on_func_plane": False, "functional_status": "out-of-plane anatomy label"},
+        {"conf_mask": label.name, "conf_label": 2, "gene": "sst1.2", "represented_on_func_plane": False, "functional_status": "out-of-plane anatomy label"},
+    ])
+    counts = build_hcr_functional_plane_status_donut_table(label_paths=[label], activity_status_path=status)
+    inner = counts.query("panel == 'All genes' and ring == 'inner'").set_index("category").n_labels
+    assert inner.to_dict() == {"within plane": 1, "outside plane": 1, "unmatched": 0}
+
+
 def test_cross_modality_sizes_use_legacy_max_minus_min_bbox_dimensions(tmp_path: Path) -> None:
     anatomy, functional, hcr = (tmp_path / name for name in ("anatomy.tif", "functional.tif", "L765_f04_r2_channel2_sst1_2_cp_masks_in_2p_labels_uint16.tif"))
     # A label spanning z=0..2, y=0..1, x=1..3 has legacy dimensions 2, 1, 2 pixels.
@@ -532,3 +545,44 @@ def test_activity_bpi_gate_uses_persisted_thresholds_and_all_categories(tmp_path
     assert figure.axes[3].get_ylim()[1] >= 1.4
     assert figure.axes[2].get_ylabel() == "Fraction response-positive"
     plt.close(figure)
+
+
+@pytest.mark.parametrize("failure", [None, "ambiguous", "missing_plane", "reference_mismatch", "source_mismatch"])
+def test_activity_sessions_resolve_persisted_windows_without_schema_changes(tmp_path: Path, failure) -> None:
+    import json
+    master_rows = [
+        {"fish_id": FISH_ID, "plane_idx": plane, "func_label": 1, "func_source": str(tmp_path / "suite2P" / f"plane{plane}"), "response_is_active": True, "response_class": "bout-responsive", "bpi": 0.8, "bpi_category": "bout-responsive"}
+        for plane in (0, 5)
+    ]
+    if failure == "source_mismatch":
+        master_rows[0]["func_source"] = str(tmp_path / "suite2P" / "plane5")
+    master = _csv(tmp_path / "master.csv", master_rows)
+    bpi = _csv(tmp_path / "bpi.csv", [{k: v for k, v in row.items() if k != "func_source"} for row in master_rows])
+    window_rows = [{"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r1"}, {"fish_id": FISH_ID, "plane_idx": 5, "session_label": "r2"}]
+    if failure == "ambiguous":
+        window_rows.append({"fish_id": FISH_ID, "plane_idx": 0, "session_label": "r2"})
+    if failure == "missing_plane":
+        window_rows.pop()
+    windows = _csv(tmp_path / "scored_stimulus_windows.csv", window_rows)
+    reference = tmp_path / "reference_manifest.json"
+    reference.write_text(json.dumps({"fish_id": FISH_ID, "parameters": {"frame_selection_by_plane": {
+        "L765_f04_plane0_mcorrected_flipX": {"session_label": "r2" if failure == "reference_mismatch" else "r1"},
+        "L765_f04_plane5_mcorrected_flipX": {"session_label": "r2"},
+    }}}))
+    report = inspect_activity_export_qc(fish_id=FISH_ID, pipeline_root=tmp_path, roi_master_path=master,
+        bpi_cells_path=bpi, hcr_status_path=None, hcr_pairs_path=None, require_hcr_exports=False,
+        require_trace_meta=False, scored_windows_path=windows, reference_manifest_path=reference)
+    assert report["status"] == ("ready_for_review" if failure is None else "blocked")
+    assert "session_id" not in pd.read_csv(master).columns
+
+
+def test_molecular_geometry_reads_geometry_writers_twop_label_column(tmp_path: Path) -> None:
+    pairs = _csv(tmp_path / "mask_matches.csv", [
+        {"conf_label": 1, "twoP_label": 11}, {"conf_label": 1, "twoP_label": 12},
+        {"conf_label": 2, "twoP_label": 13},
+    ])
+    report = inspect_molecular_geometry_qc(fish_id=FISH_ID, pipeline_root=tmp_path,
+        track_artifacts={name: [tmp_path] for name in MOLECULAR_GEOMETRY_TRACKS},
+        segmentation_table_path=None, pair_candidates_path=[pairs], pair_candidates_state="expected")
+    assert report["status"] == "ready_for_review"
+    assert report["pair_ambiguity"].set_index("conf_label").candidate_anatomy_labels.to_dict() == {1: 2, 2: 1}

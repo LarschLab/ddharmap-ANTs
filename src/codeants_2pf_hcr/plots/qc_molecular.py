@@ -527,7 +527,7 @@ def inspect_molecular_geometry_qc(
     ambiguity = pd.DataFrame()
     if pairs is not None:
         label_col = next((c for c in ("hcr_label", "conf_label", "molecular_label") if c in pairs), None)
-        anatomy_col = next((c for c in ("anat_label", "anatomy_label") if c in pairs), None)
+        anatomy_col = next((c for c in ("anat_label", "anatomy_label", "twoP_label") if c in pairs), None)
         if label_col and anatomy_col:
             group = ["source_file", label_col] if "source_file" in pairs else [label_col]
             counts = pairs.groupby(group, dropna=False)[anatomy_col].nunique().rename("candidate_anatomy_labels")
@@ -1039,6 +1039,74 @@ def plot_molecular_identity_qc(report: Mapping) -> plt.Figure:
     return fig
 
 
+def _inspect_response_sessions(table: pd.DataFrame | None, *, area: str, windows: pd.DataFrame | None,
+                               reference_manifest: Mapping | None, issues: list[dict]) -> None:
+    """Validate existing plane/session provenance without extending canonical tables."""
+    if table is None or "plane_idx" not in table:
+        return
+    planes = pd.to_numeric(table["plane_idx"], errors="coerce")
+    if planes.isna().any() or (planes % 1).ne(0).any():
+        _issue(issues, area, "blocked", "ROI plane indices are missing or nonintegral.")
+        return
+    required_planes = set(planes.astype(int))
+    session_col = next((c for c in ("session_id", "session", "functional_session", "response_session", "session_label") if c in table), None)
+    sources = []
+    if session_col:
+        sources.append(("ROI table", table, session_col))
+    if windows is not None:
+        sources.append(("scored stimulus windows", windows, "session_label"))
+    if not sources:
+        _issue(issues, area, "blocked", "Session-aware provenance requires explicit ROI sessions or persisted scored stimulus windows.")
+        return
+    mappings = []
+    for name, frame, column in sources:
+        if not {"plane_idx", column}.issubset(frame.columns):
+            _issue(issues, area, "blocked", f"{name} lacks plane/session provenance columns.")
+            return
+        numeric = pd.to_numeric(frame["plane_idx"], errors="coerce")
+        labels = frame[column].astype("string").str.strip()
+        if numeric.isna().any() or (numeric % 1).ne(0).any() or labels.isna().any() or labels.eq("").any():
+            _issue(issues, area, "blocked", f"{name} contains missing or invalid plane/session provenance.")
+            return
+        pairs = pd.DataFrame({"plane": numeric.astype(int), "session": labels}).drop_duplicates()
+        if pairs.groupby("plane")["session"].nunique().gt(1).any():
+            _issue(issues, area, "blocked", f"{name} assigns more than one session to a plane.")
+            return
+        mapping = dict(zip(pairs.plane, pairs.session))
+        if not required_planes.issubset(mapping):
+            _issue(issues, area, "blocked", f"{name} omits ROI planes {sorted(required_planes.difference(mapping))}.")
+            return
+        mappings.append(mapping)
+    mapping = mappings[0]
+    if any(any(other[plane] != mapping[plane] for plane in required_planes) for other in mappings[1:]):
+        _issue(issues, area, "blocked", "ROI session provenance disagrees with scored stimulus windows.")
+        return
+    if reference_manifest is not None:
+        selections = reference_manifest.get("parameters", {}).get("frame_selection_by_plane", {})
+        reference_rows = []
+        for label, record in selections.items():
+            match = re.search(r"_plane(\d+)(?:_|$)", label)
+            if match:
+                reference_rows.append({"plane_idx": int(match.group(1)), "session_label": record.get("session_label")})
+        refs = pd.DataFrame(reference_rows)
+        if refs.empty or refs.session_label.isna().any() or refs.session_label.astype(str).str.strip().eq("").any():
+            _issue(issues, area, "blocked", "Functional-reference manifest lacks valid per-plane session selections.")
+            return
+        if refs.groupby("plane_idx").session_label.nunique().gt(1).any():
+            _issue(issues, area, "blocked", "Functional-reference selections assign multiple sessions to a plane.")
+            return
+        refmap = dict(zip(refs.plane_idx, refs.session_label))
+        if not required_planes.issubset(refmap) or any(refmap[plane] != mapping[plane] for plane in required_planes):
+            _issue(issues, area, "blocked", "Scored sessions disagree with functional-reference plane selections.")
+            return
+    if "func_source" in table:
+        source_planes = table.func_source.astype(str).str.extract(r"(?:^|/)plane(\d+)(?:/|$)", expand=False)
+        if source_planes.isna().any() or pd.to_numeric(source_planes).ne(planes).any():
+            _issue(issues, area, "blocked", "ROI functional sources disagree with their persisted plane indices.")
+            return
+    _issue(issues, area, "pass", f"Unique sessions verified for {len(required_planes)} ROI planes from persisted provenance.")
+
+
 def inspect_activity_export_qc(
     *,
     fish_id: str,
@@ -1052,6 +1120,8 @@ def inspect_activity_export_qc(
     require_hcr_exports: bool = True,
     require_trace_meta: bool = True,
     expected_figure_paths: Sequence[str | Path] = (),
+    scored_windows_path: str | Path | None = None,
+    reference_manifest_path: str | Path | None = None,
 ) -> dict:
     """Review response/BPI provenance and canonical ROI/HCR export scopes."""
     _validate_fish(fish_id)
@@ -1098,14 +1168,32 @@ def inspect_activity_export_qc(
     if trace_meta is not None:
         _require_columns(trace_meta, _ROI_KEYS, area="trace_meta", issues=issues)
 
+    windows = None
+    if scored_windows_path is not None:
+        windows_path, windows = _load_csv(scored_windows_path, area="session provenance", issues=issues)
+        _check_root(windows_path, roots, area="session provenance", issues=issues)
+        _fish_check(windows, fish_id, area="session provenance", issues=issues)
+    reference_manifest = None
+    if reference_manifest_path is not None:
+        reference_path = _path(reference_manifest_path)
+        _check_root(reference_path, roots, area="reference session provenance", issues=issues)
+        try:
+            reference_manifest = json.loads(reference_path.read_text())
+            if not isinstance(reference_manifest, dict):
+                raise ValueError("Functional-reference manifest must be a JSON object.")
+            if not isinstance(reference_manifest.get("parameters", {}).get("frame_selection_by_plane", {}), dict):
+                raise ValueError("Functional-reference plane selections must be a JSON object.")
+            if reference_manifest.get("fish_id") != fish_id:
+                raise ValueError("Functional-reference manifest fish does not match.")
+        except (OSError, ValueError, TypeError) as exc:
+            _issue(issues, "reference session provenance", "blocked", str(exc))
+
     for name, table in (("roi_master", master), ("bpi_cells", bpi)):
         if table is None:
             continue
         if all(c in table for c in _ROI_KEYS) and table.duplicated(list(_ROI_KEYS)).any():
             _issue(issues, name, "blocked", "Canonical ROI key (plane_idx, func_label) is not unique.")
-        session_col = next((c for c in ("session_id", "session", "functional_session", "response_session") if c in table), None)
-        if session_col is None:
-            _issue(issues, name, "blocked", "Session-aware response provenance column is missing.")
+        _inspect_response_sessions(table, area=name, windows=windows, reference_manifest=reference_manifest, issues=issues)
 
     scope_rows = [
         {"artifact": "functional_roi_activity_identity.csv", "scope": "ROI-centric whole population", "rows": 0 if master is None else len(master)},
@@ -1614,7 +1702,9 @@ def build_hcr_functional_plane_status_donut_table(
         gene, round_name = _gene_round(path)
         raw_mask_name = path.name.replace("_in_2p_labels_uint16.tif", ".tif")
         for label in sorted(labels - q95_labels):
-            row = status_by_key.get((raw_mask_name, int(label)))
+            row = status_by_key.get((path.name, int(label)))
+            if row is None:
+                row = status_by_key.get((raw_mask_name, int(label)))
             if row is None:
                 scope, outer = "unmatched", "unmatched"
             elif _as_bool(row.represented_on_func_plane):

@@ -58,3 +58,5 @@ For historical functional-registration runs that predate
 `prepare-in-vivo-anatomy-stack`, notebook 02 records the explicitly selected
 in-vivo anatomy NRRD as `legacy_unmanifested`; it does not fabricate a
 preparation manifest or treat the anatomy as newly accepted.
+
+Notebook 04 reads the completed per-mask `*_matches.csv` candidate bundle and resolves saved HCR status by exact aligned-mask basename before the legacy native-mask alias. Notebook 06 verifies session provenance through the persisted scored-window plane/session mapping and functional-reference frame selections when canonical ROI tables do not carry a session column. Missing planes, ambiguous sessions, and source/reference disagreements remain blocked; QC does not extend canonical schemas.
