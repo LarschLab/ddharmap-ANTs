@@ -1,5 +1,19 @@
 # Recent Changes - Single-Fish Workflow
 
+## 2026-10-06 — Remaining-fish unattended readiness (not full analysis)
+
+Added package-owned read-only readiness jobs and CLI with explicit per-round
+HCR forward-chain checks, same-fish archive relocation, grid/count/dtype checks,
+input hashes, session/plane eligibility and existing QC copies. Four retained
+fish only; no excluded fish, scientific writer, registration or canonical
+replacement. L765_f05 is R2-only; L765_f02 selects plane-4 retry-v2 plus nine
+original planes; L758_f07 retains accepted NCC placement, not invented ANTs.
+Full production remains gated on marker acceptance, anatomy-label Z/midline
+provenance and generalizing the L765_f04 frozen-input native spec. Missing
+native masks and absent historical transform hashes stay explicit limits.
+See `docs/remaining-fish-readiness.md`. Eight focused route/relocation tests
+pass; real detached audit results are saved fish-local.
+
 **Purpose:** rolling handoff log for meaningful single-fish work, remaining breakpoints, and rerun implications.
 
 **Use this file when:** work targets `notebooks/singleFish.ipynb` or single-fish ownership modules.
