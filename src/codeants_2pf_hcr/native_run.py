@@ -222,6 +222,7 @@ def execute_native_run(spec, *, resume: bool):
             from .pipeline import _write_qa_report_pdf
             _write_qa_report_pdf(json.loads((output_dir / "qa_report_summary.json").read_text()), output_dir / "qa_report.pdf")
         manifest = json.loads(_rebind(json.dumps(manifest), roots, fish))
+        manifest["source_writer_inputs"] = manifest.get("inputs", [])
         parameters = manifest.setdefault("parameters", {})
         parameters.pop("log_lines", None)
         parameters["pipeline_root"] = str(fish); parameters["native_layout"] = "existing-fish-tree-v1"
@@ -239,7 +240,8 @@ def execute_native_run(spec, *, resume: bool):
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
         promote_files(fish, products, journal, manifest_path=Path(stage.manifest))
         try:
-            manifest["inputs"] = _refresh_records(manifest.get("inputs", []))
+            from .pipeline import describe_manifest_path
+            manifest["inputs"] = [asdict(describe_manifest_path(path, required=True)) for path in stage.inputs] + [asdict(describe_manifest_path(path, required=False)) for path in stage.optional_inputs]
             # Native manifests own exact files rather than synthetic stage roots.
             from .pipeline import describe_manifest_path
             manifest["outputs"] = [asdict(describe_manifest_path(destination, label=destination.name)) for destination in products.values()]
