@@ -3348,6 +3348,19 @@ def _build_activity_detail_from_geometry(
         config=Suite2pStageConfig(verbose=False),
     )
     seed, dff_map = build_suite2p_response_seed_table(loaded["suite2p_by_ref_idx"], fish_id=fish_id)
+    if "func_source" not in geometry.columns or geometry["func_source"].isna().any():
+        raise RuntimeError("Frozen geometry requires explicit Suite2p func_source provenance")
+    sources = geometry[["plane_idx", "func_label", "func_source"]].merge(
+        seed[["plane_idx", "func_label", "func_source"]],
+        on=["plane_idx", "func_label"], how="left", validate="one_to_one",
+        suffixes=("_geometry", "_trace"),
+    )
+    wrong_source = sources["func_source_trace"].notna() & (
+        sources["func_source_geometry"].map(lambda value: str(Path(value).resolve()))
+        != sources["func_source_trace"].map(lambda value: str(Path(value).resolve()) if pd.notna(value) else None)
+    )
+    if wrong_source.any():
+        raise RuntimeError(f"Suite2p source-plane mismatch for {int(wrong_source.sum())} frozen geometry ROI rows")
     trace_columns = ["plane_idx", "func_label", "activity_class", "is_active"]
     detail = geometry.merge(seed[trace_columns], on=["plane_idx", "func_label"], how="left", validate="one_to_one")
     if detail[["activity_class", "is_active"]].isna().any(axis=None):

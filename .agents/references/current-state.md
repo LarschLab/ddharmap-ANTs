@@ -6,6 +6,12 @@
 
 ## Current mixed state (intentional)
 
+- Subset-plane geometry exports preserve acquisition indices; selected-list
+  offsets must never become canonical ROI keys. Suite2p loading with explicit
+  references skips unselected planes. Scoring fails on source-plane mismatch
+  even when numeric ROI keys overlap. The f05 R2-only failure exposed this
+  previously hidden full-ten-plane assumption.
+
 - Fresh recipes now preflight Suite2p input identity, trace frame counts and
   frame declarations and pin the spatial manifest. Moved legacy inputs require
   explicit hash/fingerprint-bound reconciliation, never basename-only bypass.

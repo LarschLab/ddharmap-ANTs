@@ -13,6 +13,9 @@
   - whole-population activity/BPI views after `[50ia]`
   - default figure filtering semantics unless a figure is explicitly HCR-centric
 - One row per functional ROI (`plane_idx`, `func_label`).
+- `plane_idx` is the original acquisition-plane index, not the position in a
+  selected reference list. R2-only planes 5–9 retain those keys. Array/list
+  positions remain internal; scoring verifies the matching Suite2p source path.
 - Includes all segmented ROIs (including `suite2p_is_cell=False`).
 - Carries geometry match status, identity annotation, and post-`[50ia]` response/BPI fields.
 - This is the default source for whole-population analyses and figure filtering.

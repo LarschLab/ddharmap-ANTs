@@ -1731,7 +1731,7 @@ def build_functional_anatomy_debug_df(
         plane_label = str(plane_ref.get("label", f"plane{p_idx}"))
         best_z = _resolve_best_z(plane_ref)
         row = {
-            "plane_idx": int(p_idx),
+            "plane_idx": int(plane_ref.get("index", p_idx)),
             "plane": plane_label,
             "best_z": int(best_z),
             "n_func": np.nan,
@@ -1934,7 +1934,7 @@ def build_functional_roi_master_df(
         base_template = {
             "fish_id": fish_id,
             "plane": plane_label,
-            "plane_idx": int(p_idx),
+            "plane_idx": int(plane_ref.get("index", p_idx)),
             "best_z": best_z if best_z >= 0 else pd.NA,
             "func_source": str(func_source) if func_source is not None else None,
         }
@@ -1943,7 +1943,7 @@ def build_functional_roi_master_df(
             plane_meta_rows.append(
                 {
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": plane_ref.get("best_z", np.nan),
                     "n_rois_requested": int(len(roi_indices)),
                     "n_rois_rendered": int(len(raw_df)),
@@ -1987,7 +1987,7 @@ def build_functional_roi_master_df(
             plane_meta_rows.append(
                 {
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": plane_ref.get("best_z", np.nan),
                     "n_rois_requested": int(len(roi_indices)),
                     "n_rois_rendered": int(len(raw_df)),
@@ -2011,7 +2011,7 @@ def build_functional_roi_master_df(
             plane_meta_rows.append(
                 {
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": int(best_z),
                     "n_rois_requested": int(len(roi_indices)),
                     "n_rois_rendered": int(len(raw_df)),
@@ -2029,7 +2029,7 @@ def build_functional_roi_master_df(
         plane_meta_rows.append(
             {
                 "plane": plane_label,
-                "plane_idx": int(p_idx),
+                "plane_idx": int(plane_ref.get("index", p_idx)),
                 "best_z": int(best_z),
                 "n_rois_requested": int(len(roi_indices)),
                 "n_rois_rendered": int(len(fdf)),
@@ -2401,7 +2401,7 @@ def build_hcr_activity_tables(
             plane_meta_rows.append(
                 {
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": plane_ref.get("best_z", np.nan),
                     "n_rois_requested": int(len(roi_indices)),
                     "n_rois_rendered": int(len(raw_df)),
@@ -2417,7 +2417,7 @@ def build_hcr_activity_tables(
             plane_meta_rows.append(
                 {
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": plane_ref.get("best_z", np.nan),
                     "n_rois_requested": int(len(roi_indices)),
                     "n_rois_rendered": int(len(raw_df)),
@@ -2441,7 +2441,7 @@ def build_hcr_activity_tables(
             plane_meta_rows.append(
                 {
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": int(best_z),
                     "n_rois_requested": int(len(roi_indices)),
                     "n_rois_rendered": int(len(raw_df)),
@@ -2458,7 +2458,7 @@ def build_hcr_activity_tables(
         plane_meta_rows.append(
             {
                 "plane": plane_label,
-                "plane_idx": int(p_idx),
+                "plane_idx": int(plane_ref.get("index", p_idx)),
                 "best_z": int(best_z),
                 "n_rois_requested": int(len(roi_indices)),
                 "n_rois_rendered": int(len(fdf)),
@@ -2469,7 +2469,7 @@ def build_hcr_activity_tables(
         )
         if not adf.empty:
             for anat_label in adf["label"].astype(int).tolist():
-                plane_presence_rows.append({"plane": plane_label, "plane_idx": int(p_idx), "best_z": int(best_z), "anat_label": int(anat_label)})
+                plane_presence_rows.append({"plane": plane_label, "plane_idx": int(plane_ref.get("index", p_idx)), "best_z": int(best_z), "anat_label": int(anat_label)})
         if fdf.empty or adf.empty:
             continue
 
@@ -2494,7 +2494,7 @@ def build_hcr_activity_tables(
                 {
                     "fish_id": fish_id,
                     "plane": plane_label,
-                    "plane_idx": int(p_idx),
+                    "plane_idx": int(plane_ref.get("index", p_idx)),
                     "best_z": int(best_z),
                     "func_label": func_label,
                     "roi_idx": roi_idx,

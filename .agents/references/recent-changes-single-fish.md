@@ -4366,3 +4366,13 @@ pass; real detached audit results are saved fish-local.
 - Independent subagent review of `b3a0dc5` reproduced empty-queue shortcuts, orthogonal physical-aspect distortion, misleading checkpoint failures/lost undo, missing-column drops, stale identity gene lists, fractional label truncation, and incomplete portable provenance. Follow-up fixes add guards and regression checks for each finding; frozen input metadata and reviewed correspondence now travel with exports.
 
 - Final verification on implementation `e774e02`: 63 relevant checks passed (57 annotation/native-GUI/matching/lazy-import/docs + 6 existing canonical export regressions). Independent reviewer rechecked all fixes, including uncertain journal-write lockout/replay, and reported no remaining actionable issues. Native screenshots were visually inspected. Real-fish scientific validation remains pending a verified prepared bundle and reviewed correspondence.
+# 2026-10-07 subset-plane identity correction
+
+- Correct geometry/master, per-plane summaries, debug and HCR candidate plane
+  keys to retain reference acquisition indices while preserving local array
+  access. Exclude unselected Suite2p planes from explicitly selected loads.
+- Add score-stage source consistency guard and regression coverage for R2-only,
+  non-contiguous and ordinary plane selections and overlapping wrong-source keys.
+- Previous failed f05 state is preserved. New isolated geometry verification
+  precedes a separately pinned maintenance continuation; completed f02/f07 are
+  untouched. Seed remains 123; f05 remains R2-only.

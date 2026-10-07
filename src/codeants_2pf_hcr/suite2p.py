@@ -855,6 +855,8 @@ def load_suite2p_stage(
 
     for pd_idx, plane_dir in enumerate(plane_dirs):
         plane_num = _plane_num_from_name(plane_dir.name)
+        if plane_ref_map and plane_num not in plane_ref_map:
+            continue
         ref_idx = plane_ref_map.get(plane_num)
         if ref_idx is None and pd_idx < len(plane_refs):
             ref_idx = pd_idx
