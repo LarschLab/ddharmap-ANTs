@@ -36,7 +36,7 @@ def test_shared_recipe_pins_r2_and_has_no_frozen_or_midline_acceptance(tmp_path,
     monkeypatch.setattr(recipe.importlib.metadata, "version", lambda n: "fixture")
     notebook_dir = old.repo_root / "notebooks/qc"
     notebook_dir.mkdir(parents=True)
-    for i in range(6):
+    for i in range(7):
         (notebook_dir / f"{i:02}_qc.ipynb").write_text("{}")
     import subprocess
     subprocess.run(["git", "add", "notebooks"], cwd=old.repo_root, check=True)
@@ -69,6 +69,24 @@ def test_shared_recipe_pins_r2_and_has_no_frozen_or_midline_acceptance(tmp_path,
     ]
     assert all(command[command.index("--supersede-accepted-control-reason") + 1] == "corrected registration" for command in superseding)
     assert not any("--supersede-accepted-control-reason" in stage.command for stage in parsed.stages)
+    decision = tmp_path / "L765_f05.md"
+    decision.write_text("---\nfish_id: L765_f05\nmidline_gate: accepted\n---\n")
+    accepted = recipe.build_fresh_run_spec(fish_id="L765_f05", data_root=old.data_root, repo_root=old.repo_root,
+                                           run_id="midline", spec_path=tmp_path / "midline.json", plane_indices=tuple(range(5, 10)),
+                                           midline_decision_path=decision, midline_reviewer="Danin")
+    names = [stage["name"] for stage in accepted["stages"]]
+    assert names[10:15] == ["110-make-anatomy-midline-proposal", "120-make-qa-report", "130-materialize-anatomy-midline",
+                            "140-make-motion-auc-tables", "150-make-figures"]
+    assert names[-1] == "166-qc-notebook-06"
+    materialize = accepted["stages"][12]
+    assert materialize["command"][materialize["command"].index("--logbook-decision-path") + 1] == str(decision.resolve())
+    assert str(decision.resolve()) in materialize["inputs"]
+    assert accepted["accepted_choices"]["midline_gate"] == "accepted"
+    assert accepted["review_gate"]["status"] == "review_required"
+    with pytest.raises(ValueError, match="logbook decision and a reviewer"):
+        recipe.build_fresh_run_spec(fish_id="L765_f05", data_root=old.data_root, repo_root=old.repo_root,
+                                    run_id="nomid", spec_path=tmp_path / "nomid.json", plane_indices=tuple(range(5, 10)),
+                                    midline_decision_path=decision)
     with pytest.raises(ValueError, match="restricted to R2"):
         recipe.build_fresh_run_spec(fish_id="L765_f05", data_root=old.data_root, repo_root=old.repo_root,
                                     run_id="invalid", spec_path=tmp_path / "invalid.json", plane_indices=tuple(range(10)), ncc_cache_source=cache)

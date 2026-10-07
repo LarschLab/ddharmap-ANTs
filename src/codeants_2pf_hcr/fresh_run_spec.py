@@ -23,6 +23,8 @@ WRITERS = (
     "match-roi-to-anatomy", "score-activity-bpi", "assign-hcr-identity",
     "export-canonical-tables", "make-anatomy-midline-proposal", "make-qa-report",
 )
+# Run only after a fish-specific, proposal-hash-bound logbook midline decision.
+ACCEPTED_MIDLINE_WRITERS = ("materialize-anatomy-midline", "make-motion-auc-tables", "make-figures")
 
 # ANTs treats zero as default/system-time seeding, not a fixed seed.
 FRESH_ANTS_SEED = 123
@@ -31,14 +33,19 @@ FRESH_ANTS_SEED = 123
 def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                          run_id: str, spec_path: Path, plane_indices: tuple[int, ...],
                          ncc_cache_source: Path | None = None,
-                         geometry_control_supersede_reason: str | None = None) -> dict:
+                         geometry_control_supersede_reason: str | None = None,
+                         midline_decision_path: Path | None = None,
+                         midline_reviewer: str | None = None) -> dict:
     """Pin shared naming, selected planes and approximate aligned HCR inputs.
 
     Refuse missing inputs and existing specs/bundles. Best Z and scale are
     searched from the current references unless an NCC initializer cache is
     explicitly supplied; its bytes are then copied and pinned, and each entry
     must reproduce from the current reference. Every registration is rerun.
-    The result deliberately stops before accepting any proposed midline.
+    Without ``midline_decision_path`` the result stops before accepting any
+    proposed midline. With it, the accepted-midline writers and QC notebook 06
+    are appended; the materialize writer itself verifies the decision against
+    the regenerated proposal hashes. Laterality still awaits review.
     """
     import re
     if not re.fullmatch(r"[A-Z][0-9]{3}_f[0-9]{2}", fish_id):
@@ -105,16 +112,27 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
         # A deliberate upstream correction supersedes geometry and every control derived from it.
         for writer in WRITERS[6:10]:
             extra[writer] = extra.get(writer, []) + ["--supersede-accepted-control-reason", geometry_control_supersede_reason]
+    writers = WRITERS
+    if midline_decision_path is not None:
+        midline_decision_path = Path(midline_decision_path).resolve()
+        if not midline_decision_path.is_file() or not str(midline_reviewer or "").strip():
+            raise ValueError("An accepted-midline continuation needs an existing logbook decision and a reviewer")
+        accepted_midline = functional / "qa/anatomy_midline.json"
+        writers = WRITERS + ACCEPTED_MIDLINE_WRITERS
+        extra[ACCEPTED_MIDLINE_WRITERS[0]] = ["--reviewer", str(midline_reviewer), "--logbook-decision-path", str(midline_decision_path)]
+        for writer in ACCEPTED_MIDLINE_WRITERS[1:]:
+            extra[writer] = ["--accepted-midline-path", str(accepted_midline)]
     stages = []
     manifests = functional / "pipeline_manifests"
     # Exact promoted output inventory is added to each state by the runner.
-    for i, writer in enumerate(WRITERS):
+    for i, writer in enumerate(writers):
         name = f"{(i+1)*10:03}-{writer}"
         inputs = [anatomy, labels, matching, metadata, drift, spatial_manifest]
         if i == 1: inputs += motion + suite + raw_metadata
         if i in {3, 6, 7}: inputs += suite
         if i == 2: inputs += [bundle / p.name for p in caches]
         if i == 5: inputs += masks + sidecars
+        if writer == ACCEPTED_MIDLINE_WRITERS[0]: inputs += [midline_decision_path]
         if stages: inputs += [Path(stages[-1]["manifest"])]
         manifest = manifests / f"{writer}_manifest.json"
         pins = {}
@@ -126,7 +144,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                        "depends_on": [stages[-1]["name"]] if stages else [], "parameter_pins": pins})
     writer_manifests = [s["manifest"] for s in stages]
     notebook_dir = functional / "qc" / run_id
-    for index in range(6):
+    for index in range(7 if midline_decision_path is not None else 6):
         candidates = sorted((repo_root / "notebooks/qc").glob(f"{index:02}_*.ipynb"))
         if len(candidates) != 1:
             raise ValueError(f"Require one source QC notebook for index {index}")
@@ -142,8 +160,8 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                "interpreter": {"executable": python, "python_version": sys.version.split()[0], "packages": {n: importlib.metadata.version(n) for n in ("antspyx", "numpy", "pandas", "scipy", "matplotlib", "scikit-image", "nbclient")}},
                "environment": {"MPLBACKEND": "Agg", "PYTHONHASHSEED": "0", "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
                "native_production": {"mode": "fresh", "reuse_stages": []},
-               "accepted_choices": {"functional_polarity": polarity, "functional_polarity_source": source, "eligible_planes": list(plane_indices), "temporal_drift_basis": str(drift), "hcr_masks": "provisional approximate overview; manual identity merge pending", "midline_gate": "review_required"},
-               "scientific_parameters": params, "provenance_pins": [{"name": p.name, "path": str(p), "sha256": _file_hash(p)} for p in [metadata, matching, drift, spatial_manifest, *raw_metadata, *masks, *sidecars, *[bundle / p.name for p in caches]]],
-               "review_gate": {"status": "review_required", "reason": "Anatomy Z and registration QC plus proposed midlines require visual review; laterality is not accepted by this job."}, "stages": stages}
+               "accepted_choices": {"functional_polarity": polarity, "functional_polarity_source": source, "eligible_planes": list(plane_indices), "temporal_drift_basis": str(drift), "hcr_masks": "provisional approximate overview; manual identity merge pending", "midline_gate": "accepted" if midline_decision_path is not None else "review_required", **({"midline_decision_path": str(midline_decision_path)} if midline_decision_path is not None else {})},
+               "scientific_parameters": params, "provenance_pins": [{"name": p.name, "path": str(p), "sha256": _file_hash(p)} for p in [metadata, matching, drift, spatial_manifest, *raw_metadata, *masks, *sidecars, *[bundle / p.name for p in caches], *([midline_decision_path] if midline_decision_path is not None else [])]],
+               "review_gate": {"status": "review_required", "reason": ("Midline accepted from a hash-bound logbook decision; laterality, identity-functional results and final figures require review." if midline_decision_path is not None else "Anatomy Z and registration QC plus proposed midlines require visual review; laterality is not accepted by this job.")}, "stages": stages}
     _write_json_atomic(spec_path, payload)
     return payload

@@ -4431,3 +4431,7 @@ pass; real detached audit results are saved fish-local.
   The NCC-xy plane exposed last-bit differences. Stage 110 now reads with
   round_trip precision; on real f06 v4 inputs its output is byte-identical to
   stage 050. The shared-path ownership remains a known design debt.
+- Accepted-midline continuation: fresh recipes accept --midline-decision-path and
+  --midline-reviewer to append materialize-anatomy-midline, make-motion-auc-tables,
+  make-figures and QC notebook 06 after Danin accepted the f02/f07/f05/f06
+  anatomy-grid midlines (hash-bound sample-page decisions).
