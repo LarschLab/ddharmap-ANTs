@@ -30,7 +30,8 @@ FRESH_ANTS_SEED = 123
 
 def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                          run_id: str, spec_path: Path, plane_indices: tuple[int, ...],
-                         ncc_cache_source: Path | None = None) -> dict:
+                         ncc_cache_source: Path | None = None,
+                         geometry_control_supersede_reason: str | None = None) -> dict:
     """Pin shared naming, selected planes and approximate aligned HCR inputs.
 
     Refuse missing inputs and existing specs/bundles. Best Z and scale are
@@ -96,7 +97,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
         WRITERS[2]: ["--anatomy-stack-path", str(anatomy), *(["--reuse-ncc-cache-dir", str(bundle)] if caches else []), "--ants-deterministic-seed", str(FRESH_ANTS_SEED), "--no-ants-fixed-mask-required"] + [v for i in plane_indices for v in ("--reference-plane-index", str(i))],
         WRITERS[4]: ["--anatomy-label-z-mode", "auto"],
         WRITERS[5]: ["--source-root", str(aligned), "--hcr-warp-route", "exvivo_bridge"],
-        WRITERS[6]: ["--anatomy-label-z-mode", "auto"],
+        WRITERS[6]: ["--anatomy-label-z-mode", "auto"] + (["--supersede-accepted-control-reason", geometry_control_supersede_reason] if geometry_control_supersede_reason else []),
         WRITERS[7]: ["--geometry-input-path", str(functional / "registration/functional_roi_anatomy_matches.csv")],
         WRITERS[8]: ["--activity-input-path", str(functional / "derived/score-activity-bpi/registration/functional_roi_activity_identity.csv"), "--roi-anatomy-root", str(functional / "registration"), "--hcr-anatomy-root", str(aligned)],
     }

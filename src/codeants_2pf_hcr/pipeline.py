@@ -9571,7 +9571,18 @@ def run_match_roi_to_anatomy_stage(
     output_root: str | Path | None = None,
     suite2p_stat_xy_frame: str | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    """Write geometry-only ROI/anatomy matches.
+
+    An existing fish-local ROI master is an accepted control: label and unique-
+    match drift beyond the regenerated-ANTs tolerance fails. A deliberate
+    upstream correction may supersede that control only with an explicit reason;
+    drift is then reported as warnings, the control hash and reason are recorded,
+    and ROI key parity remains strict.
+    """
+    import hashlib
+
     import numpy as np
     import pandas as pd
 
@@ -9587,6 +9598,10 @@ def run_match_roi_to_anatomy_stage(
     from .spatial import imread_any
     from .suite2p import Suite2pStageConfig, load_suite2p_stage
 
+    supersede_reason = str(supersede_accepted_control_reason or "").strip() or None
+    if supersede_accepted_control_reason is not None and supersede_reason is None:
+        raise ValueError("Superseding the accepted ROI/anatomy control requires a non-empty reason")
+    superseded_control = None
     paths = resolve_pipeline_paths(config)
     stage_root = Path(output_root) if output_root not in (None, "", False) else roi_to_anatomy_match_root(paths)
     registration_dir = stage_root / "registration"
@@ -9783,6 +9798,12 @@ def run_match_roi_to_anatomy_stage(
             accepted_detail_path = paths.functional_registration_dir / "functional_roi_activity_identity.csv"
             if accepted_detail_path.exists():
                 accepted_df = pd.read_csv(accepted_detail_path)
+                if supersede_reason is not None:
+                    superseded_control = {
+                        "path": str(accepted_detail_path),
+                        "sha256": hashlib.sha256(accepted_detail_path.read_bytes()).hexdigest(),
+                        "reason": supersede_reason,
+                    }
                 parity_columns = ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")
                 if all(column in accepted_df.columns for column in parity_columns) and all(column in detail_df.columns for column in parity_columns):
                     merged = detail_df.loc[:, list(parity_columns)].merge(
@@ -9820,13 +9841,15 @@ def run_match_roi_to_anatomy_stage(
                             return "pass"
                         if max_warn_rows > 0 and int(mismatches) <= max_warn_rows:
                             return "warn"
-                        return "fail"
+                        return "warn" if supersede_reason is not None else "fail"
 
                     exact_or_warn_expected = (
                         f"{len(merged)}/{len(merged)} exact preferred; warn <= {max_warn_rows} regenerated-ANTs drift rows"
                         if max_warn_rows > 0
                         else f"{len(merged)}/{len(merged)}"
                     )
+                    if supersede_reason is not None:
+                        exact_or_warn_expected += f"; control superseded: {supersede_reason}"
                     accepted_parity_checks = (
                         StageCheckRecord(
                             label="accepted ROI/anatomy key parity",
@@ -9987,6 +10010,7 @@ def run_match_roi_to_anatomy_stage(
             "anatomy_label_z_mode_declared": declared_label_z_modes if "declared_label_z_modes" in locals() else (),
             "anatomy_label_z_mode_scores": label_z_scores if "label_z_scores" in locals() else {},
             "output_root": str(stage_root),
+            "superseded_accepted_control": superseded_control,
             "match_policy_version": FunctionalRoiIdentityConfig().match_policy_version,
             "geometry_only": True,
             "mode": mode if "mode" in locals() else None,

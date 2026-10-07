@@ -375,6 +375,10 @@ def build_parser() -> argparse.ArgumentParser:
     match_roi.add_argument("--anatomy-label-z-mode", choices=("auto", "direct", "reverse"), default="auto")
     match_roi.add_argument("--output-root", type=Path)
     match_roi.add_argument("--suite2p-stat-xy-frame")
+    match_roi.add_argument(
+        "--supersede-accepted-control-reason",
+        help="Record why a deliberate upstream correction supersedes the existing fish-local ROI/anatomy control; label drift then warns instead of failing.",
+    )
     match_roi.add_argument("--force-recompute", action="store_true")
 
     prepare_ex_vivo = subparsers.add_parser(
@@ -833,6 +837,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output_root,
             suite2p_stat_xy_frame=args.suite2p_stat_xy_frame,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

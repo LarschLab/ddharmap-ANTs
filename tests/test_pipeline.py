@@ -2304,7 +2304,7 @@ def test_match_roi_to_anatomy_stage_prefers_staged_ants_transformlist(tmp_path: 
     assert manifest.parameters["selected_ants_missing_transform_files"] == 0
 
 
-def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tmp_path: Path) -> None:
+def _run_match_against_accepted_control(tmp_path: Path, *, changed_rows: int, **stage_kwargs):
     from unittest.mock import patch
 
     import pandas as pd
@@ -2341,7 +2341,7 @@ def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tm
 
     detail_rows = []
     for idx in range(1000):
-        label = 10000 + idx if idx < 2 else 7 + idx
+        label = 10000 + idx if idx < changed_rows else 7 + idx
         detail_rows.append(
             {
                 "fish_id": fish_dir.name,
@@ -2370,12 +2370,44 @@ def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tm
             anatomy_labels_path=anatomy_labels,
             anatomy_label_z_mode="direct",
             force_recompute=True,
+            **stage_kwargs,
         )
+    return manifest, accepted_path
+
+
+def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tmp_path: Path) -> None:
+    manifest, _ = _run_match_against_accepted_control(tmp_path, changed_rows=2)
 
     assert manifest.status == "pass"
     assert manifest.parameters["staged_ants_transformlist_count"] == 1
     assert any(check.label == "accepted ROI/anatomy label parity" and check.status == "warn" for check in manifest.checks)
     assert manifest.warnings == ("accepted ROI/anatomy label parity: anat_label=998/1000,selected_anat_label=998/1000",)
+
+
+def test_match_roi_to_anatomy_stage_fails_large_control_drift_unless_superseded(tmp_path: Path) -> None:
+    import hashlib
+
+    failed, _ = _run_match_against_accepted_control(tmp_path / "strict", changed_rows=300)
+    assert failed.status == "fail"
+    assert failed.parameters["superseded_accepted_control"] is None
+
+    reason = "upstream registration corrected; prior geometry used a stale best-Z cache"
+    superseded, accepted_path = _run_match_against_accepted_control(
+        tmp_path / "superseded", changed_rows=300, supersede_accepted_control_reason=reason,
+    )
+    assert superseded.status == "pass"
+    assert superseded.parameters["superseded_accepted_control"] == {
+        "path": str(accepted_path),
+        "sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
+        "reason": reason,
+    }
+    parity = {check.label: check for check in superseded.checks}
+    assert parity["accepted ROI/anatomy label parity"].status == "warn"
+    assert reason in parity["accepted ROI/anatomy label parity"].expected
+    assert parity["accepted ROI/anatomy key parity"].status == "pass"
+
+    with pytest.raises(ValueError, match="non-empty reason"):
+        _run_match_against_accepted_control(tmp_path / "blank", changed_rows=0, supersede_accepted_control_reason="  ")
 
 
 def test_match_roi_to_anatomy_stage_stages_control_geometry_only(tmp_path: Path) -> None:

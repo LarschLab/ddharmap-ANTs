@@ -4404,3 +4404,11 @@ pass; real detached audit results are saved fish-local.
 - Remaining: rerun f07/f06 from fresh recipes; geometry, identity, canonical
   tables and anatomy-grid midlines for f07 planes 0-7 and f06 plane 0 are
   invalid until then. Midline and laterality remain review-gated.
+- First f06/f07 reruns (`20261007_bestz_selection_fix`) promoted corrected
+  registration/transform/QC/HCR-registration stages, then failed at
+  match-roi-to-anatomy: the fish-local control is the superseded geometry
+  (f06 changes confined to plane 0, 314/327 rows; f07 5119/5756 rows, matched
+  3275 -> 5532). Per user decision (Option A) the stage accepts an explicit
+  `--supersede-accepted-control-reason`; drift is then warned and recorded.
+  Fish folders remain mixed (new registration, old geometry onward) until the
+  superseding rerun completes.
