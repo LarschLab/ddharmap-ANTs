@@ -2427,14 +2427,16 @@ def test_superseded_control_comparisons_warn_on_content_but_keep_schema_strict(t
         StageCheckRecord(label="comparison CSV semantic columns: master", status="fail", detail="d", expected="all", observed="missing"),
         StageCheckRecord(label="comparison CSV unique keys: master", status="fail", detail="d", expected="0", observed="2"),
         StageCheckRecord(label="comparison inputs exist: master", status="fail", detail="d", expected="both", observed="control=False"),
+        StageCheckRecord(label="assign-hcr-identity ROI identity master parity", status="fail", detail="d", expected="same", observed="0|1"),
+        StageCheckRecord(label="assign-hcr-identity staged HCR/anatomy final-pair acceptance", status="fail", detail="d", expected="good", observed="bad"),
     )
 
     unchanged, none = pipeline._supersede_control_comparisons(None, "score-activity-bpi", checks, None)
-    assert none is None and [c.status for c in unchanged] == ["fail"] * 5
+    assert none is None and [c.status for c in unchanged] == ["fail"] * 7
 
     reason = "upstream registration corrected"
     superseded, record = pipeline._supersede_control_comparisons(None, "score-activity-bpi", checks, reason)
-    assert [c.status for c in superseded] == ["warn", "warn", "fail", "fail", "fail"]
+    assert [c.status for c in superseded] == ["warn", "warn", "fail", "fail", "fail", "warn", "fail"]
     assert superseded[0].expected.endswith(f"control superseded: {reason}")
     assert record == {"reason": reason, "controls": [{"path": str(control), "sha256": hashlib.sha256(control.read_bytes()).hexdigest()}]}
     with pytest.raises(ValueError, match="non-empty reason"):

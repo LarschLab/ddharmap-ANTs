@@ -4421,3 +4421,7 @@ pass; real detached audit results are saved fish-local.
   exact/numeric cells) warns with control hashes and reason recorded in
   `superseded_accepted_controls`; missing columns, duplicate keys and missing
   inputs stay hard failures.
+- v3: f06 passed score; assign-hcr-identity failed only on its stage-specific
+  anatomy-identity-lookup and ROI-identity-master parity checks against the same
+  superseded controls (pairs 313->333, candidates 203->226). These two labels are
+  now included in the recorded supersession; final-pair acceptance stays strict.

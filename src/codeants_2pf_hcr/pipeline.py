@@ -2509,6 +2509,10 @@ def _append_qa_report_summary_comparison_checks(checks: list[StageCheckRecord], 
 
 
 _STRICT_CONTROL_CHECK_MARKERS = ("semantic columns", "unique keys", "inputs exist")
+_SUPERSEDABLE_CONTROL_PARITY_LABELS = (
+    "assign-hcr-identity anatomy identity lookup parity",
+    "assign-hcr-identity ROI identity master parity",
+)
 
 
 def _supersede_reason(value: str | None) -> str | None:
@@ -2535,10 +2539,12 @@ def _supersede_control_comparisons(
 
     superseded: list[StageCheckRecord] = []
     for check in checks:
-        if (
-            check.status == "fail"
-            and check.label.startswith("comparison")
-            and not any(marker in check.label for marker in _STRICT_CONTROL_CHECK_MARKERS)
+        if check.status == "fail" and (
+            check.label in _SUPERSEDABLE_CONTROL_PARITY_LABELS
+            or (
+                check.label.startswith("comparison")
+                and not any(marker in check.label for marker in _STRICT_CONTROL_CHECK_MARKERS)
+            )
         ):
             check = replace(check, status="warn", expected=f"{check.expected}; control superseded: {reason}")
         superseded.append(check)
@@ -3975,10 +3981,11 @@ def run_single_fish_assign_hcr_identity_stage(
                 ),
             )
         )
-        comparisons, superseded_controls = _supersede_control_comparisons(
-            paths, "assign-hcr-identity", _build_staged_comparison_checks(paths, "assign-hcr-identity"), supersede_reason
+        checks.extend(_build_staged_comparison_checks(paths, "assign-hcr-identity"))
+        # Identity parity checks compare with the same superseded fish-local controls.
+        checks[:], superseded_controls = _supersede_control_comparisons(
+            paths, "assign-hcr-identity", tuple(checks), supersede_reason
         )
-        checks.extend(comparisons)
 
     outputs = _stage_output_records(paths, "assign-hcr-identity")
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
