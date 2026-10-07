@@ -10,6 +10,7 @@ def test_shared_recipe_pins_r2_and_has_no_frozen_or_midline_acceptance(tmp_path,
     old = load_run_spec(spec_path)
     fish = old.data_root / "L765_f05"
     relative = ["02_reg/00_preprocessing/2p_anatomy/L765_f05_anatomy_2P_GCaMP.nrrd",
+                "03_analysis/functional/ncc/z_drift/z_drift_manifest.json",
                 "03_analysis/structural/cp_masks/L765_f05_anatomy_00001_uint8_8bit_cp_masks.tif",
                 "02_reg/00_preprocessing/2p_functional/01_individualPlanes/L765_f05_preprocessing_metadata.json",
                 "01_raw/2p/metadata/session_metadata.csv",

@@ -17,7 +17,7 @@ def prepare_fresh_batch(*, data_root: Path, repo_root: Path, validation_root: Pa
     source = data_root / "L765_f04"
     fish = validation_root / source.name
     fish.mkdir(parents=True)
-    (validation_root / "matchingMetadata.csv").symlink_to(data_root / "matchingMetadata.csv")
+    shutil.copy2(data_root / "matchingMetadata.csv", validation_root / "matchingMetadata.csv")
     (fish / "01_raw").symlink_to(source / "01_raw")
     preproc = fish / "02_reg/00_preprocessing"
     preproc.mkdir(parents=True)
@@ -38,6 +38,7 @@ def prepare_fresh_batch(*, data_root: Path, repo_root: Path, validation_root: Pa
     (analysis / "functional").mkdir(parents=True)
     (analysis / "structural").symlink_to(source / "03_analysis/structural")
     (analysis / "functional/suite2P").symlink_to(source / "03_analysis/functional/suite2P")
+    shutil.copytree(source / "03_analysis/functional/ncc/z_drift", analysis / "functional/ncc/z_drift", ignore=shutil.ignore_patterns("._*"))
     if (source / "03_analysis/voxel_sizes.json").exists():
         shutil.copy2(source / "03_analysis/voxel_sizes.json", analysis / "voxel_sizes.json")
     (analysis / "confocal").mkdir()

@@ -50,6 +50,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     labels = fish / "03_analysis/structural/cp_masks" / f"{fish_id}_anatomy_00001_uint8_8bit_cp_masks.tif"
     metadata = fish / "02_reg/00_preprocessing/2p_functional/01_individualPlanes" / f"{fish_id}_preprocessing_metadata.json"
     matching = data_root / "matchingMetadata.csv"
+    drift = functional / "ncc/z_drift/z_drift_manifest.json"
     motion = [fish / "02_reg/00_preprocessing/2p_functional/02_motionCorrected" / f"{fish_id}_plane{i}_mcorrected.tif" for i in plane_indices]
     suite = [functional / "suite2P" / f"plane{i}" / f"{fish_id}_plane{i}_{suffix}.npy" for i in plane_indices for suffix in ("F", "Fneu", "stat", "ops", "iscell", "spks")]
     raw_metadata = sorted(p for p in (fish / "01_raw/2p/metadata").glob("*.csv") if not p.name.startswith("._"))
@@ -57,7 +58,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     masks = sorted(p for p in aligned.glob("*_cp_masks_in_2p_labels_uint16.tif") if not p.name.startswith("._"))
     sidecars = [Path(str(p).replace("_labels_uint16.tif", "_warp_meta.json")) for p in masks]
     caches = [ncc_cache_source / name for name in ("ncc_bestz_by_plane.json", "ncc_scale_by_fish.json")]
-    required = [anatomy, labels, metadata, matching, *motion, *suite, *raw_metadata, *masks, *sidecars, *caches]
+    required = [anatomy, labels, metadata, matching, drift, *motion, *suite, *raw_metadata, *masks, *sidecars, *caches]
     missing = [str(p) for p in required if not p.is_file()]
     if missing or not masks or not raw_metadata:
         raise ValueError(f"Missing fresh-run inputs: {missing}; masks={len(masks)}, metadata={len(raw_metadata)}")
@@ -93,7 +94,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     # Exact promoted output inventory is added to each state by the runner.
     for i, writer in enumerate(WRITERS):
         name = f"{(i+1)*10:03}-{writer}"
-        inputs = [anatomy, labels, matching, metadata]
+        inputs = [anatomy, labels, matching, metadata, drift]
         if i == 1: inputs += motion + suite + raw_metadata
         if i in {3, 6, 7}: inputs += suite
         if i == 2: inputs += [bundle / p.name for p in caches]
@@ -125,8 +126,8 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                "interpreter": {"executable": python, "python_version": sys.version.split()[0], "packages": {n: importlib.metadata.version(n) for n in ("antspyx", "numpy", "pandas", "scipy", "matplotlib", "scikit-image", "nbclient")}},
                "environment": {"MPLBACKEND": "Agg", "PYTHONHASHSEED": "0", "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
                "native_production": {"mode": "fresh", "reuse_stages": []},
-               "accepted_choices": {"functional_polarity": polarity, "functional_polarity_source": source, "eligible_planes": list(plane_indices), "hcr_masks": "provisional approximate overview; manual identity merge pending", "midline_gate": "review_required"},
-               "scientific_parameters": params, "provenance_pins": [{"name": p.name, "path": str(p), "sha256": _file_hash(p)} for p in [metadata, matching, *raw_metadata, *masks, *sidecars, *[bundle / p.name for p in caches]]],
+               "accepted_choices": {"functional_polarity": polarity, "functional_polarity_source": source, "eligible_planes": list(plane_indices), "temporal_drift_basis": str(drift), "hcr_masks": "provisional approximate overview; manual identity merge pending", "midline_gate": "review_required"},
+               "scientific_parameters": params, "provenance_pins": [{"name": p.name, "path": str(p), "sha256": _file_hash(p)} for p in [metadata, matching, drift, *raw_metadata, *masks, *sidecars, *[bundle / p.name for p in caches]]],
                "review_gate": {"status": "review_required", "reason": "Anatomy Z and registration QC plus proposed midlines require visual review; laterality is not accepted by this job."}, "stages": stages}
     _write_json_atomic(spec_path, payload)
     return payload
