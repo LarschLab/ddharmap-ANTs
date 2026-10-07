@@ -490,7 +490,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.single_fish_job`
 
-- `run_finishing_job`: Noninteractive fish-locked resume, pinned/hash verification, real-artifact audit, optional no-op proof, and complete QC gallery export; saves compact atomic terminal reports and full diagnostics without polling.
+- `run_finishing_job`: Noninteractive fish-locked resume, pinned/hash verification, real-artifact audit, optional no-op proof, and QC gallery export; explicit fresh review-gate recipes export preliminary notebooks 00–05 without accepting laterality, while full recipes require all seven. Saves atomic terminal reports without polling.
 - CLI: `tools/single_fish_job.py`; usage and failure/reuse policy: `docs/single-fish-unattended-job.md`.
 
 ## `codeants_2pf_hcr.freeze_run`
@@ -502,8 +502,19 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.qc_figure_export`
 
-- `export_qc_figure_gallery`: Extract all seven executed QC notebooks' PNGs and current writer PNGs into a deduplicated full-resolution gallery/contact sheets, preserving exact source/cell/output/manifest hashes and coverage records without writing notebook or scientific inputs.
+- `export_qc_figure_gallery`: Extract seven executed QC notebooks' PNGs (six only with explicit `review_gate`) and selected/current writer PNGs into a fish-named full-resolution gallery/contact sheets with exact provenance hashes. `manifest_paths` narrows coverage to the current fresh recipe rather than unrelated historical manifests.
 - CLI: `tools/export_qc_figures.py`; source coverage and output-directory rules: `docs/qc-figure-gallery.md`.
+
+## `codeants_2pf_hcr.fresh_run_spec`
+
+- `build_fresh_run_spec`: Build a clean-pinned common native writer recipe using shared fish paths, explicit eligible planes, immutable NCC initializer copies, provisional aligned HCR inputs and a deferred midline review gate; never imports another fish's frozen products or review decisions.
+- CLI: `tools/build_fresh_single_fish_spec.py`; policy: `docs/single-fish-unattended-job.md`.
+
+## `codeants_2pf_hcr.fresh_batch`
+
+- `prepare_fresh_batch`: Construct isolated writable L765_f04 control inputs with read-only source links, pin scientific CSV/matrix baselines, and create four shared native recipes.
+- `run_fresh_batch`: Run the isolated control first, then remaining recipes sequentially only after its finishing/hash/artifact/no-op checks pass. Stop at any failure; save compact terminal batch/job reports without polling or automatic repair.
+- CLI: `tools/fresh_single_fish_batch.py` (`prepare`, `run`).
 
 ## Manual ex-vivo HCR identity review
 

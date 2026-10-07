@@ -1,5 +1,22 @@
 # Recent Changes - Single-Fish Workflow
 
+## 2026-10-07 — Fresh native orchestration implementation
+
+Added a common recipe builder from established fish paths, immutable NCC
+initializer copies, explicit eligible planes and exact code/runtime pins.
+Fresh mode executes all declared writers, safely redirects explicit anatomy
+outputs, archives retry output graphs and hashes every promoted product for
+resume. Frozen replay behavior remains available and its parity gates remain
+mandatory. Fresh artifact audits omit only undeclared historical baselines;
+universal table keys/schemas, signed response, window and two-sided checks stay.
+The preliminary finishing branch explicitly ends at midline review and exports
+QC 00–05 with current recipe manifests and correct fish names; full recipes
+still require all seven notebooks. No accepted midline is synthesized.
+User approved provisional retained masks, deferral of missing native HCR masks,
+post-run Z QC and all-ten-plane L765_f02 registration; f05 remains R2-only.
+Focused unit tests precede real detached writer validation. No fresh writer run
+is claimed by this implementation entry; later job reports own execution facts.
+
 ## 2026-10-06 — Remaining-fish unattended readiness (not full analysis)
 
 Added package-owned read-only readiness jobs and CLI with explicit per-round

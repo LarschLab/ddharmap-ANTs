@@ -214,8 +214,15 @@ def execute_native_run(spec, *, resume: bool):
         raise RuntimeError("Production environment does not match the pinned specification")
     fish = spec.data_root / spec.fish_id
     policy = spec.raw["native_production"]
-    frozen = Path(policy["frozen_root"])
-    source_root = policy["original_root"]
+    mode = policy.get("mode", "frozen_replay")
+    if mode not in {"fresh", "frozen_replay"}:
+        raise ValueError(f"Unknown native production mode: {mode}")
+    if mode == "fresh" and policy.get("reuse_stages"):
+        raise ValueError("Fresh native runs cannot reuse frozen writer stages")
+    if mode == "fresh" and spec.pipeline_root != fish:
+        raise ValueError("Fresh native production pipeline_root must be the fish folder")
+    frozen = Path(policy["frozen_root"]) if mode == "frozen_replay" else None
+    source_root = policy.get("original_root") if frozen is not None else None
     graph = spec.state_root / "transaction_graph"
     graph.mkdir(parents=True, exist_ok=True)
     for journal in (spec.state_root / "history").glob("*"):
@@ -226,8 +233,8 @@ def execute_native_run(spec, *, resume: bool):
                 previous = json.loads(backup.read_text())
                 if previous["payload"] is not None: _write_json_atomic(Path(previous["path"]), previous["payload"])
     # Accepted proposal is an immutable input, outside the writer DAG.
-    proposal = frozen / "make-anatomy-midline-proposal"
-    if not (graph / proposal.name).exists():
+    proposal = frozen / "make-anatomy-midline-proposal" if frozen is not None else None
+    if proposal is not None and not (graph / proposal.name).exists():
         shutil.copytree(proposal, graph / proposal.name)
     layout_path = fish / "03_analysis/functional/pipeline_manifests/native_layout.json"
     layout = {"fish_id": spec.fish_id, "pipeline_root": str(fish), "layout": "existing-fish-tree-v1"}
@@ -249,7 +256,7 @@ def execute_native_run(spec, *, resume: bool):
         started = _utc_now()
         output_dir = graph / writer
         log = spec.state_root / "logs" / (stage.name + ".log")
-        imported = writer in policy["reuse_stages"]
+        imported = writer in policy.get("reuse_stages", ())
         _write_json_atomic(spec.state_root / "current_stage.json", {"stage": stage.name, "started_at": started, "state": "running"})
         actual_command = None
         if imported:
@@ -278,9 +285,16 @@ def execute_native_run(spec, *, resume: bool):
             manifest["reused_from"] = {"root": str(frozen), "writer_generated_at": manifest["generated_at"], "scientific_commit": policy["scientific_commit"]}
             log.parent.mkdir(parents=True, exist_ok=True); log.write_text("Reused verified frozen writer products; no scientific recomputation.\n")
         else:
+            if mode == "fresh" and output_dir.exists():
+                archived = spec.state_root / "history" / ("graph-" + stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
+                archived.parent.mkdir(parents=True, exist_ok=True)
+                output_dir.replace(archived)
             command = list(stage.command)
             command[command.index("--pipeline-root") + 1] = str(graph)
             command = [item for item in command if item != "--write-manifest"]
+            if writer == "prepare-in-vivo-anatomy-stack" and "--output-path" in command:
+                index = command.index("--output-path") + 1
+                command[index] = str(output_dir / Path(command[index]).name)
             actual_command = command
             if "--accepted-midline-path" in command:
                 # Read the previously committed native accepted artifact.
@@ -299,9 +313,9 @@ def execute_native_run(spec, *, resume: bool):
         if manifest.get("fish_id") != spec.fish_id or manifest.get("status") not in {"pass", "warn"} or manifest.get("errors") or manifest.get("dry_run") is not False or any(c.get("status") == "fail" for c in manifest.get("checks", ())):
             raise RuntimeError(f"Writer/reuse manifest validation failed: {writer}")
         # Bind paths by individual product prefixes, preserving explicit history.
-        roots = [str(graph), source_root, str(frozen)]
+        roots = [str(graph)] + ([source_root, str(frozen)] if frozen is not None else [])
         _relocate_tree(output_dir, roots, fish)
-        if writer == "materialize-anatomy-midline":
+        if writer == "materialize-anatomy-midline" and frozen is not None:
             _relocate_accepted_midline(output_dir / "anatomy_midline.json", frozen, roots, fish)
         if writer == "make-qa-report":
             from .pipeline import _write_qa_report_pdf
@@ -320,7 +334,7 @@ def execute_native_run(spec, *, resume: bool):
             elif observed != value:
                 raise RuntimeError(f"Scientific parameter mismatch {writer}: {key}: {observed} != {value}")
         products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in output_dir.rglob("*") if p.is_file() and not p.name.startswith("._")}
-        if writer == "materialize-anatomy-midline":
+        if writer == "materialize-anatomy-midline" and proposal is not None:
             products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in proposal.rglob("*") if p.is_file() and not p.name.startswith("._")})
         validate_native_inputs(stage.inputs, products.values())
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
@@ -341,7 +355,7 @@ def execute_native_run(spec, *, resume: bool):
                 if _run_command(validator, cwd=spec.repo_root, env=env, log_path=spec.state_root / "logs" / f"{stage.name}.validator-{index}.log"):
                     rollback_promotion(journal)
                     raise RuntimeError(f"Native stage validator failed: {stage.name}")
-            if writer == "materialize-anatomy-midline":
+            if writer == "materialize-anatomy-midline" and frozen is not None:
                 proposal_manifest = fish / "03_analysis/functional/pipeline_manifests/make-anatomy-midline-proposal_manifest.json"
                 _write_json_atomic(journal / "previous_proposal_manifest.json", {"path": str(proposal_manifest), "payload": json.loads(proposal_manifest.read_text()) if proposal_manifest.exists() else None})
                 proposal_record = _native_proposal_manifest(Path(policy["frozen_manifests"]) / proposal_manifest.name, frozen, roots, fish)
@@ -349,6 +363,7 @@ def execute_native_run(spec, *, resume: bool):
             _write_json_atomic(Path(stage.manifest), manifest)
             state = {"schema_version": 1, "fish_id": spec.fish_id, "stage": stage.name, "spec_path": str(spec.path), "spec_sha256": _spec_hash(spec), "command": list(stage.command), "git_commit": environment["git"]["actual_commit"], "scientific_code_commit": spec.git_commit, "interpreter": environment["interpreter"]["actual_executable"], "started_at": started, "finished_at": _utc_now(), "inputs": _describe_paths(stage.inputs + stage.optional_inputs), "outputs": _describe_paths(stage.outputs), "dependencies": _dependency_records(spec, stage), "exit_status": 0, "log": str(log), "action": "reuse_verified_frozen" if imported else "recompute_transaction", "validation": {"status": "pass", "checks": [{"kind": "writer_manifest_and_verified_promotion", "status": "pass"}]}}
             state["actual_command"] = actual_command;state["execution_root"] = str(graph)
+            state["promoted_products"] = _describe_paths(tuple(str(p) for p in products.values()))
             _write_json_atomic(_state_path(spec, stage), state)
             _write_json_atomic(journal / "stage_commit.json", {"stage": stage.name, "manifest": stage.manifest})
         except Exception:
@@ -359,5 +374,7 @@ def execute_native_run(spec, *, resume: bool):
         results.append({"stage": stage.name, "action": state["action"], "status": "pass"})
         _write_json_atomic(spec.state_root / "current_stage.json", {"stage": stage.name, "state": "committed"})
     summary = {"fish_id": spec.fish_id, "status": "pass" if len(results) == len(spec.stages) and all(r["status"] == "pass" for r in results) else "fail", "results": results, "spec_sha256": _spec_hash(spec)}
+    if spec.raw.get("review_gate"):
+        summary["scientific_release"] = spec.raw["review_gate"]
     _write_json_atomic(spec.state_root / "run_summary.json", summary)
     return summary

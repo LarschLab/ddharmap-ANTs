@@ -16,6 +16,8 @@ from .single_fish_run import (
 
 def _output_metadata(spec) -> dict:
     paths = {Path(output) for stage in spec.stages for output in stage.outputs}
+    for state_path in (spec.state_root / "stages").glob("*.json"):
+        paths.update(Path(record["path"]) for record in json.loads(state_path.read_text()).get("promoted_products", ()))
     paths.add(spec.data_root / spec.fish_id / "03_analysis/functional/pipeline_manifests/native_layout.json")
     files = set()
     for path in paths:
@@ -27,11 +29,12 @@ def _output_metadata(spec) -> dict:
 
 
 def _gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path,
-             fish_dir: Path) -> dict:
+             fish_dir: Path, review_gate: dict | None = None,
+             manifest_paths: tuple[Path, ...] | None = None) -> dict:
     from .qc_figure_export import export_qc_figure_gallery
     if not output_dir.exists():
         export_qc_figure_gallery(notebook_dir=notebook_dir, manifest_dir=manifest_dir,
-                                 output_dir=output_dir, fish_dir=fish_dir)
+                                 output_dir=output_dir, fish_dir=fish_dir, review_gate=review_gate, manifest_paths=manifest_paths)
         inventory = {str(path.relative_to(output_dir)): _file_hash(path)
                      for path in output_dir.rglob("*") if path.is_file()}
         _write_json_atomic(output_dir / "job_inventory.json", {"sha256": inventory})
@@ -48,7 +51,7 @@ def _gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path,
                 raise RuntimeError(f"Gallery source changed: {source['path']}; use a new output directory")
     if {entry["path"] for entry in report["notebook_coverage"]} != {str(p) for p in notebook_dir.glob("*.ipynb")}:
         raise RuntimeError("Gallery notebook coverage changed")
-    manifests = {str(p) for p in manifest_dir.glob("*_manifest.json")
+    manifests = {str(p) for p in (manifest_paths if manifest_paths is not None else manifest_dir.glob("*_manifest.json"))
                  if not p.name.startswith("._") and ".pre_" not in p.name}
     if {entry["path"] for entry in report["writer_manifest_coverage"]} != manifests:
         raise RuntimeError("Gallery manifest coverage changed")
@@ -82,6 +85,9 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
     try:
         with log_path.open("w") as log, redirect_stdout(log), redirect_stderr(log):
             spec = load_run_spec(spec_path)
+            review_gate = spec.raw.get("review_gate")
+            if review_gate and (spec.raw.get("native_production", {}).get("mode") != "fresh" or review_gate.get("status") != "review_required"):
+                raise ValueError("Review-gate gallery requires an explicit fresh run awaiting scientific review")
             fish_dir = spec.data_root / spec.fish_id
             functional = fish_dir / "03_analysis/functional"
             if notebook_dir is None:
@@ -138,8 +144,11 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
                     gallery_dir = functional / "review_gallery" / spec.state_root.name / fingerprint
                 report["steps"]["export-qc"] = _gallery(
                     notebook_dir=notebook_dir, manifest_dir=manifest_dir,
-                    output_dir=gallery_dir.resolve(), fish_dir=fish_dir)
+                    output_dir=gallery_dir.resolve(), fish_dir=fish_dir,
+                    **({"review_gate": review_gate, "manifest_paths": tuple(Path(s.manifest) for s in spec.stages if s.manifest)} if review_gate else {}))
                 report["status"] = "pass"
+                if review_gate:
+                    report["scientific_release"] = review_gate
     except Exception as exc:
         report.update(status="fail", error=f"{type(exc).__name__}: {exc}")
         with log_path.open("a") as log:

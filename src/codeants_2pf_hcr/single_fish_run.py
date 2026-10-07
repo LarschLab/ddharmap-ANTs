@@ -385,6 +385,10 @@ def _stage_current(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
         reasons.append("inputs changed")
     if state.get("outputs") != current_outputs:
         reasons.append("outputs changed")
+    if "promoted_products" in state:
+        owned = state["promoted_products"]
+        if owned != _describe_paths(tuple(record["path"] for record in owned)):
+            reasons.append("promoted writer products changed")
     if any(not record["exists"] for record in current_outputs):
         reasons.append("declared output missing")
     return not reasons, reasons
@@ -666,10 +670,12 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
         baseline = spec.raw.get("artifact_baseline", {})
         membership = sorted([[row[key] for key in ("plane_idx", "session_label", "block", "stim_idx", "stim_type")] for row in pool])
         pool_hash = _json_hash(membership)
-        check("BPI pool membership baseline", pool_hash == baseline.get("bpi_pool_sha256"), pool_hash)
+        if "bpi_pool_sha256" in baseline:
+            check("BPI pool membership baseline", pool_hash == baseline["bpi_pool_sha256"], pool_hash)
         geometry_hash = _json_hash(sorted([[row.get(key, "") for key in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")] for row in tables["geometry"]]))
-        check("geometry baseline", geometry_hash == baseline.get("geometry_assignment_sha256"), geometry_hash)
-        if spec.raw.get("native_production"):
+        if "geometry_assignment_sha256" in baseline:
+            check("geometry baseline", geometry_hash == baseline["geometry_assignment_sha256"], geometry_hash)
+        if spec.raw.get("native_production") and spec.raw["native_production"].get("mode", "frozen_replay") == "frozen_replay":
             from .native_run import _rebind
             from .native_paths import native_product_path
             policy = spec.raw["native_production"]; frozen = Path(policy["frozen_root"])
@@ -679,6 +685,16 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
             transforms = list((frozen / "register-functional-to-anatomy").rglob("*.mat"))
             check("frozen ANTs transform bytes", bool(transforms) and all(_file_hash(path) == _file_hash(native_product_path(root, "register-functional-to-anatomy", path.relative_to(frozen / "register-functional-to-anatomy").as_posix())) for path in transforms), len(transforms))
         counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "activated": sum(truth(row[signed[0]]) or truth(row[signed[2]]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
+        for pin in spec.raw.get("artifact_byte_baselines", ()):
+            path = root / pin["relative_path"]
+            if not path.resolve().is_relative_to(root.resolve()):
+                raise ValueError("Artifact baseline escapes the fish root")
+            data = path.read_bytes()
+            if pin.get("normalize_fish_root"):
+                data = data.replace(str(root).encode(), b"{fish_dir}")
+                if pin.get("source_fish_root"):
+                    data = data.replace(pin["source_fish_root"].encode(), b"{fish_dir}")
+            check("control artifact bytes: " + pin["relative_path"], hashlib.sha256(data).hexdigest() == pin["sha256"], str(path))
     except (OSError, KeyError, ValueError, ZeroDivisionError, IndexError) as exc:
         check("artifact readability/schema", False, str(exc)); counts = {}
     return {"fish_id": spec.fish_id, "pipeline_root": str(root), "checks": checks,

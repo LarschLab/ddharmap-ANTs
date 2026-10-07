@@ -1,5 +1,48 @@
 # Unattended single-fish finishing job
 
+## Fresh native recipes (2026-10-07)
+
+`tools/fresh_single_fish_batch.py prepare` creates an isolated L765_f04 control
+and native recipes for L765_f02, L758_f07, L765_f05, L765_f06. The control copies
+writable anatomy/aligned inputs and links read-only raw/Suite2p sources. Its
+scientific CSVs must match current outputs byte-for-byte after only fish-root
+path normalization; all ten ANTs matrices must match exactly. `run --batch`
+executes the control first and launches no production fish if it fails. It
+stops at the first subsequent failure, preserving diagnostics, with no polling,
+interactive recovery or automatic retry. Explicit review gates still apply.
+
+`tools/build_fresh_single_fish_spec.py` creates a common fish-local recipe from
+the established folder/naming conventions, a clean exact code pin, interpreter
+packages, selected functional plane indices, and retained aligned HCR masks.
+It takes `--fish-id`, `--data-root`, `--repo-root`, `--run-id`, `--spec`,
+`--ncc-cache-source`, and repeated `--plane-index`. It refuses existing specs.
+L765_f05 is explicitly constrained to global planes 5–9 (functional R2).
+The saved NCC scale/depth initializer files are copied and checksum-pinned;
+all selected XY/ANTs registrations and subsequent scientific writers run anew.
+Existing aligned masks are inputs; missing original HCR segmentation masks
+are not synthesized and direct HCR rewarping is not claimed.
+
+Native `mode=fresh` has no frozen-root dependency or writer reuse. Every stage
+writes to a transaction graph before verified promotion into existing consumer
+directories. Explicit anatomy output paths are redirected into that graph.
+All promoted products are hashed in state and checked on resume, not only
+the spec's principal outputs. Old graph products are archived before a fresh
+retry. Promotion retains the existing per-file atomicity/manifest commit limits.
+
+This recipe runs 12 scientific writers plus QC notebooks 00–05, ending at an
+explicit `review_required` midline gate. It does not manufacture accepted
+midlines, laterality tables, final figures, or notebook 06. The finishing job
+still verifies hashes, canonical schemas/keys, signed responses and [23c]
+tails, and proves a no-op resume. It exports a clearly labeled preliminary
+six-notebook gallery using only this recipe's writer manifests; a pass denotes
+successful execution, not scientific release. Full production specs retain
+the strict seven-notebook gallery requirement.
+
+BPI/geometry baseline comparisons run only when explicit baseline hashes are
+present. Frozen table/matrix byte comparisons remain mandatory for frozen
+replay specs, but do not apply to a new fish's fresh registration. Universal
+schema/key/window/two-sided checks are unchanged.
+
 `tools/single_fish_job.py --spec /absolute/fish/run_specs/FISH.json --validate-noop`
 executes the existing DAG with hash-aware resume, verifies all recorded stages,
 audits real canonical artifacts, proves a second resume performs no stage writes,

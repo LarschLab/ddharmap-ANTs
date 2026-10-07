@@ -255,6 +255,10 @@ def test_real_table_audit_rejects_upper_tail_only_payload(tmp_path: Path) -> Non
     raw["artifact_baseline"] = {"geometry_assignment_sha256": _json_hash([[base[k] for k in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")]]), "bpi_pool_sha256": _json_hash([[window[k] for k in ("plane_idx", "session_label", "block", "stim_idx", "stim_type")]])}
     spec_path.write_text(json.dumps(raw));spec = load_run_spec(spec_path)
     assert audit_run_artifacts(spec)["ok"]
+    from dataclasses import replace
+    fresh = replace(spec, raw={key: value for key, value in spec.raw.items() if key != "artifact_baseline"})
+    assert audit_run_artifacts(fresh)["ok"]
+    assert not any("baseline" in check["label"] for check in audit_run_artifacts(fresh)["checks"])
     early["response_pass"] = "False";write(ep, early)
     result = audit_run_artifacts(spec)
     assert not result["ok"]

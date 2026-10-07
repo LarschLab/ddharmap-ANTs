@@ -17,6 +17,16 @@
 
 ## Practical warnings
 
+- Fresh native recipes now use `native_production.mode=fresh`, without another
+  fish's frozen bundle. `build_fresh_single_fish_spec.py` generates the shared
+  writer DAG through canonical tables, QA and midline proposals, followed by
+  QC 00–05. L765_f05 is constrained to functional R2/planes 5–9. Existing aligned
+  HCR masks are provisional overview inputs; missing original HCR masks remain
+  deferred. This recipe does not accept midlines or release laterality/final
+  figures: successful execution and scientific review remain separate states.
+  L765_f02's current user decision is to rerun all ten registrations, superseding
+  the historical nine-plus-plane4-retry readiness plan. See unattended job docs.
+
 - On 2026-10-06 the complete L765_f04 working run and fish-local stage manifests were frozen together at `/Volumes/dataDrive/dataProcessing/2p_processing/_frozen_pipeline_runs/20261006_L765_f04_dfbc3b8`; the browsable payload is mounted read-only at `/Volumes/20261006_L765_f04_dfbc3b8`. Independent rehash verified 420 records / 760,053,426 bytes, including AppleDouble files. UDRO protection is required because the source volume is exFAT; the payload rejects writes with EROFS, while the image container remains replaceable/deletable by its owner. Source trees remained unchanged.
 - `tools/single_fish_run.py` drives the declarative 22-stage DAG; the production specification is `L765_f04/03_analysis/functional/run_specs/L765_f04.json` and saved run state is authoritative. Native production uses the existing consumer directories within the fish folder: eight verified frozen imports preserve upstream products and six downstream writers recompute scoring, identity, exports, QA, motion AUC, and figures. On exFAT, promotion uses recoverable per-file replacement with verified backups and manifest/state publication; a whole multi-file stage is not filesystem-atomic. Current canonical ROI tables contain 3,553 ROIs, 267 responsive ROIs including one suppressed responder, and 160 fixed-12.5-s BPI windows. Final QC execution and scientific review remain separate gates. The frozen HCR replay used historical August transforms from the old native comparison whereas frozen ROI geometry used September transforms; coherent native replay produces 18 responsive HCR pairs instead of 19. The causal replay exactly reproduces all seven frozen HCR tables using the historical comparison. Durable source/hash and table-difference evidence is in `L765_f04/03_analysis/functional/run_state/20261006_production/hcr_replay_transform_source_audit.json`, `frozen_native_table_comparison.json`, and `diagnostics/historical-august-hcr-replay/`. This explained HCR parity failure remains computed/unreviewed; the older 282-neuron accepted comparison remains preserved.
 
