@@ -1,117 +1,62 @@
-# Manual HCR identity annotation
+# cellMatcher: manual HCR identity on ex-vivo masks
 
-The program assigns one marker at a time to fixed, already eligible ex-vivo 2P GCaMP cells. It does not require segmented HCR masks. Multiple markers can be positive for one cell. Historical calls and functional information are not loaded into the reviewer.
+cellMatcher records one marker at a time on fixed ex-vivo Cellpose masks in ex-vivo space. Multiple markers can be positive for one cell. Historical identity and functional data are not shown while reviewing.
 
-Design: [specification](manual-hcr-identity-gui-spec.md).
+Design history: [specification](manual-hcr-identity-gui-spec.md). The correspondence-based ROI-only export described there was replaced by the pipeline-integrated flow below.
 
-## Launch on Linnaeus
+## Launch
 
-A dedicated `manualIdentity` environment was created from the existing `cellMatching` environment without modifying that environment. It contains napari 0.6.6, PyQt5, and pytest. Run the GUI in a native desktop terminal on Linnaeus; macOS Qt offscreen rendering has no usable OpenGL context for napari on this machine.
+On Linnaeus: Cmd+Space → **cellMatcher**. Run it in the native desktop session (Screen Sharing is fine); napari needs a real display.
 
-```bash
-cd /Users/ddharmap/gitRepo/codeANTs
-~/miniforge3/envs/manualIdentity/bin/python tools/manual_hcr_identity.py view \
-  --manifest /absolute/path/dataset_manifest.json \
-  --session /absolute/path/manual_identity/session \
-  --reviewer Danin
-```
-
-For another environment, install the package's optional dependency with `python -m pip install -e '.[manual-identity]'`.
-
-## Prepare a dataset
-
-The viewer consumes an explicit, hash-bound manifest. `prepare` validates registered input assets and records their hashes. It does not run registration, guess axis flips, or invent filtering thresholds.
+Install or reinstall the app (after moving the repository or environment):
 
 ```bash
-python tools/manual_hcr_identity.py prepare --config input_config.json --output dataset_manifest.json
+tools/install_cellmatcher_app.sh ~/miniforge3/envs/manualIdentity/bin/python
 ```
 
-Use schema version 1, axes `ZYX`, units `um`, a named coordinate frame, and a `grid` with `shape_zyx`, `spacing_xyz`, `origin_xyz`, and flattened `direction_xyz`. Supply `anatomy`, `labels`, and `eligibility` objects with `path`. `prepare` adds `sha256`; the viewer requires it. NRRD physical metadata are checked against the manifest. TIFF and NPY assets require an explicit `grid` in each volume object; label/array geometry is never inferred from equal shape.
+The app runs whatever is checked out in this repository. Logs: `~/Library/Logs/cellMatcher/`. Without the app: `python tools/manual_hcr_identity.py app`.
 
-`eligibility` points to JSON containing `policy_source` and `eligible_label_ids`. Materialize the existing upstream eligibility decision. Do not recompute a different filter for this program.
+## Workflow
 
-Each entry in `markers` requires:
+1. **Pick the fish** in the launcher (data root defaults to `/Volumes/dataDrive/dataProcessing/2p_processing`) and enter your reviewer name once.
+2. **Prepare dataset** (once per mask set). Discovers, by pipeline convention:
+   - ex-vivo anatomy `02_reg/00_preprocessing/2p_anatomy/ex_vivo/<fish>_exvivo_anatomy_2P_GCaMP_uint8_manual_oriented.nrrd`;
+   - the single mask TIFF in `03_analysis/structural/ex_vivo/cp_masks/`, bound to that grid by `structural/ex_vivo/manifests/segment-ex-vivo-anatomy-cellpose_manifest.json` (segmentation may run on another machine; bring the manifest along);
+   - every registered HCR stack `02_reg/03_rbest-exvivo/aligned/*_in_exvivo.nrrd` and `02_reg/05_rn-exvivo/aligned/*_in_exvivo.nrrd`, its source intensity in `00_preprocessing/{rbest,rn}`, and its transform chain (direct or via rbest).
 
-```json
-{
-  "stack_id": "pth2-r1-ch2",
-  "gene": "pth2",
-  "round_id": "r1",
-  "source_channel": "ch2",
-  "source_sha256": "SHA256_OF_ORIGINAL_INTENSITY",
-  "transform_provenance": ["exact round-to-exvivo transform paths or immutable IDs"],
-  "image": {"path": "/absolute/path/registered_marker.nrrd"},
-  "coverage": {"path": "/absolute/path/registered_valid_coverage.nrrd"}
-}
-```
+   For each stack it writes a coverage mask (source acquisition domain warped with the same chain) and refuses the stack unless re-warping the source reproduces the registered image (Pearson r ≥ 0.99). All masks enter the review queue. Output: `03_analysis/structural/ex_vivo/manual_identity/<fish>_exvivo_<mask-hash>/`.
+3. **Open review.** Pick a marker stack, then scroll through Z and **click every cell that contains HCR signal**; it turns orange (pending). Click again to unmark; Option/Alt-click only selects. The view never moves on its own (use *Go to selected cell* or *Follow selection*). The selected cell has a yellow outline and is named in the header; recorded positives are green. **Approve marked…** records all marks of the stack as positive in one journaled, undoable step and asks whether the remaining unreviewed, fully imaged cells should become negative (leave them unreviewed unless you checked the whole stack). Marks survive closing the app. The left *HCR contrast* panel shows the intensity histogram inside the imaged area: drag the red line to hide background, the blue line to saturate signal, and use the brightness slider. *Single-cell call* (collapsed) records uncertain/unassessable calls, issues, and notes (keys 1–5; N/P step through the list; M toggles the mark). Every control has a tooltip. Positive/negative require complete coverage of the mask. Work is saved continuously (every approval, call and undo is journaled; pending marks and view settings go to `session.json`), so just close the window and reopen the fish to resume; *Snapshot* is an optional extra frozen revision. The layout favours the image: napari's layer controls and layer list are tabs behind *HCR contrast* on the left, and the XZ/YZ side views (modelled on the brainAtlas orthogonal viewer) show the full stack depth over a fixed 200 µm around the cut, at physical aspect ratio, stacked one above the other. They do not rescale with zoom; panning redraws them only when the cut has to move back into the visible area. Red lines in the side views mark the current Z slice and where the other view cuts; in the image a faint crosshair with an open centre (about one cell diameter) marks the same point without covering the cell (toggle below the views). Clicking or dragging in a side view jumps to that Z slice and moves the cut; **right-clicking a cell** in the image cuts both views through its centre without marking it or moving the image (marking a cell does the same). The side views outline the selected cell (yellow), marked cells (orange) and recorded positives (green), so cells missed in the current slice stand out. If a panel disappears, use **cellMatcher → Restore all panels** (Ctrl+Shift+R).
+4. **Finish & export identity** (review window). Freezes a snapshot, shows what will be written or replaced, and asks before touching existing outputs. Then:
+   - warps every ex-vivo mask into in-vivo 2P space with `02_reg/04_exvivo-2p` (nearest neighbour, IDs kept) and matches all of them to the in-vivo anatomy masks with the HCR matching code (identity-independent geometry);
+   - writes a per-gene aligned bundle with the HCR file contract to `exports/<rev>/aligned/` (`conf_label` = ex-vivo mask ID);
+   - writes **only** `functional_roi_activity_identity.csv` and `anatomy_identity_lookup.csv` to the assign-hcr-identity location (`03_analysis/functional/derived/assign-hcr-identity/registration/` for native fish), built with the pipeline's own functions and gene order;
+   - moves the five HCR-centric assign tables aside (backed up) and writes `pipeline_manifests/assign-hcr-identity_manifest.json` with status `warn`, `identity_source=manual_exvivo`, `identity_gate=awaiting_continuation`.
 
-Coverage is a binary volume on the exact ex-vivo grid. Derive it from the valid source acquisition domain under the same registration chain; padded zeros are not marker-negative evidence. Positive/negative calls require complete coverage of the selected cell mask. Uncertain and unassessable calls remain possible for incomplete coverage.
+   **The pipeline stops here.** `manual_identity_audit.csv` in the export folder records every label × gene outcome (exported, negative, blocking_issue, replicate_conflict, positive_unmatched_geometry, …).
+5. **Continue pipeline** (launcher). Requires the gate tables to be unchanged, then runs, with the fish run-spec commands and interpreter: assign-hcr-identity (`--identity-source manual_exvivo`, must reproduce the gate tables byte for byte, also writes the HCR-centric tables) → export-canonical-tables → make-qa-report → make-motion-auc-tables → make-figures. For native fish each stage runs in `03_analysis/functional/run_state/<stamp>_manual_identity/transaction_graph` (seeded from the last committed graph, binaries hash-verified) and is promoted with the production journal/backup mechanism.
 
-For repeated marker acquisitions, set `primary_stack_by_gene`, for example `{"pth2": "pth2-r1-ch2"}`. Contradictory positive/negative reviewed replicates are withheld and recorded as conflicts, even if a primary stack was declared.
+Replacements are journaled under `03_analysis/functional/run_state/manual_identity/` (gate) and `run_state/<stamp>_manual_identity/history/` (continuation); `native_run.rollback_promotion` restores a journal.
 
-The inspected mount contains L765_f02 ex-vivo segmentation TIFFs, but no complete verified pilot bundle was established. The implementation was validated on synthetic volumes; preparing a real fish requires verified registered intensities, grid/coverage metadata, and authoritative eligibility. No accepted dataset was changed.
+## Scientific notes
 
-## Review
+- Geometry is matched once for all ex-vivo masks; identity only selects which matched pairs carry a gene.
+- HCR label-quality gates (small-speck floor of 200 native voxels, per-gene q95 large-mask flag) currently apply to ex-vivo masks; a correctly matched positive that fails them is reported as `positive_unmatched_geometry` in the audit.
+- Repeated stacks of one gene need `primary_stack_by_gene` in the dataset manifest; conflicting positive/negative replicates are withheld.
 
-Select one marker stack. Click an eligible anatomy mask or choose a cell from the queue. The selected cell is highlighted in the XY view; XZ/YZ context through its center appears beside the controls. Scroll Z in napari; use its image-layer controls for independent contrast, opacity, and visibility. Orthogonal panels are contextual image crops, not editable mask views.
-
-Calls: unreviewed, positive, negative, uncertain, unassessable. Shortcuts 1–5 correspond to those calls, N/P navigate the current queue. Issue and note fields are committed with the call button. A blocking issue prevents positive export without modifying anatomy eligibility. The unreviewed queue advances after a decision; an empty queue disables call buttons. Annotation history undo/redo is available within the current process; committed events survive restart.
-
-Every call is durably journaled before CSV/session checkpoints are updated. A failed checkpoint is reported as saved to the journal, retains undo/redo, and can be recovered on restart. The current marker, cell, filter, and display settings are saved. Freeze creates `annotations-rNNNNNN.json`, a versioned immutable snapshot. The complete annotation CSV preserves all states; missing canonical identity does not imply a reviewed negative.
-
-A session permits one writer. After a crash, inspect `writer.lock` and recover only the recorded dead process on the same host:
+## CLI
 
 ```bash
-python tools/manual_hcr_identity.py recover-lock --session /path/session --expected-pid 12345
+python tools/manual_hcr_identity.py prepare-fish --fish-id L765_f04 --local-root /Volumes/dataDrive/dataProcessing/2p_processing
+python tools/manual_hcr_identity.py gate --manifest <dataset_manifest.json> --snapshot <session/annotations-rNNNNNN.json> --local-root <root> [--confirm-replace]
+python tools/manual_hcr_identity.py continue --fish-id L765_f04 --local-root <root>
+python tools/manual_hcr_identity.py recover-lock --session <session> --expected-pid <pid>
 ```
-
-The command refuses a live process or another host. A failed journal append/flush/fsync locks out further decisions and freezing until the session is closed and reopened; the UI reports uncertain durability instead of treating the attempt as definitely saved or unsaved. A complete surviving event is replayed. A partial final journal event is backed up and discarded on resume; complete events remain authoritative.
-
-## Export identities
-
-Supply an independently reviewed ex-vivo-to-in-vivo correspondence JSON. It requires `schema_version: 1`, `fish_id`, `exvivo_labels_sha256`, `invivo_labels_sha256`, `invivo_labels` (`path`, `sha256`), `geometry_sha256`, `transform_provenance`, `reviewer`, `reviewed_at_utc`, and `rows`. Geometry is the frozen ROI/anatomy CSV; the in-vivo asset is the exact integer label image used for that geometry.
-
-Each correspondence row has `exvivo_label_id`, `anat_label`, `status`, and geometry-only `metrics`. Only `status: "accepted"` is exported. Other statuses retain unresolved cells without identity. Accepted mappings must be one-to-one and their target IDs must exist in the bound in-vivo label image. Numerical label IDs are not assumed identical across spaces. This program consumes reviewed correspondence; it does not create scientific geometry approvals.
-
-```bash
-python tools/manual_hcr_identity.py export \
-  --manifest dataset_manifest.json --snapshot session/annotations-r000123.json \
-  --correspondence reviewed_correspondence.json \
-  --geometry frozen_functional_roi_anatomy_matches.csv \
-  --roi-master scored_functional_roi_activity_identity.csv \
-  --gene-order sst1.2,cort,sst1.1,pth2 \
-  --output /path/new_manual_export
-```
-
-Use the current pipeline's configured gene order. The output directory must be new. Positive calls form an independent manual identity source, replacing old identity fields in the new table; historical identity is not silently unioned. `anatomy_identity_lookup.csv` and `functional_roi_activity_identity.csv` keep the existing schemas and coexpression strings. The full calls and mapping-loss/conflict audit are separate files. A source manifest binds all output hashes. Frozen dataset metadata, the annotation snapshot, and the reviewed correspondence are included, with original source paths and mapping target/status/metrics in the audit, so moving the bundle preserves its provenance. Large source image volumes remain external.
-
-## Canonical export and consumers
-
-```bash
-python tools/single_fish_pipeline.py export-canonical-tables \
-  --fish-id FISH --local-root /path/data \
-  --pipeline-root /path/new_pipeline_run \
-  --manual-identity-root /path/new_manual_export \
-  --score-input-root /path/score-activity-bpi/registration \
-  --write-manifest
-```
-
-Alternatively use `tools/manual_hcr_identity.py canonical --manual-root ... --score-root ... --output ...`.
-
-Manual mode writes an explicit **ROI-only** canonical bundle: ROI identity, anatomy lookup, BPI cells/summary, annotations, mapping audit, and provenance. It rejects missing geometry/response columns and verifies unchanged ROI keys and geometry/response fields against the score-stage master, validates source output hashes, and refuses existing output directories or an additional HCR input root. `--force-recompute` does not override the new-directory requirement in manual mode.
-
-ROI-centric consumers can read the unchanged ROI table from this isolated run. The first cohort geometry deduplication consumer is exercised by the integration test. Legacy cohort discovery still defaults to accepted fish-local paths; do not copy manual outputs into those paths until scientific review and promotion are explicitly approved.
-
-Manual-mode stage status is `warn` to make the limited bundle scope explicit. Existing HCR-centric trace/status tables and HCR-dependent compound figures require confocal-label IDs and are deliberately not generated. Those stages fail their existing missing-input gates. No fake confocal masks or legacy HCR tables are added to make the bundle look complete. The legacy full canonical exporter rejects a manual root supplied as `--hcr-input-root`.
 
 ## Verification
 
 ```bash
-PYTHONPATH=src ~/miniforge3/envs/manualIdentity/bin/python -m pytest \
-  tests/test_manual_identity.py tests/test_manual_identity_gui.py \
-  tests/test_matching.py tests/test_lazy_imports.py -q
+PYTHONPATH=src:tests ~/miniforge3/envs/manualIdentity/bin/python -m pytest \
+  tests/test_manual_identity.py tests/test_manual_identity_pipeline.py tests/test_manual_identity_gui.py -q
 ```
 
-GUI checks use the native macOS Qt platform. `MANUAL_IDENTITY_SCREENSHOT=/tmp/manual-identity-gui.png` captures a complete fixture window during the GUI test. No real scientific annotations or existing pipeline outputs are written by tests.
-
-Validation completed on implementation commit `e774e02`: 57 annotation/GUI/matching/lazy-import/documentation checks plus 6 existing canonical-export regressions passed. A requested independent subagent review reproduced seven initial findings and one journal-failure edge case; all were corrected and independently rechecked with no remaining actionable issues. Native GUI screenshots were inspected, including anisotropic orthogonal context and readable scrollable controls. This validates software behavior on synthetic fixtures, not scientific identity accuracy on a real fish.
+Staging validation (2026-10-06, copy of L765_f04 under `/Volumes/dataDrive/dataProcessing/_cellmatcher_staging`, stand-in ex-vivo masks = in-vivo masks inverse-warped to ex vivo, test calls replaying production identity): all six transform chains reproduced their registered stacks (r = 1.000); ROI master columns identical to production with 99.8 % identity agreement over 3553 ROIs; all five continuation stages passed; all eight canonical tables column-identical to production; `conf_label == anat_label` for every HCR-status row (exact round trip).

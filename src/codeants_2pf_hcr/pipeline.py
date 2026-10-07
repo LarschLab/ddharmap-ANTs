@@ -215,6 +215,14 @@ HCR_IDENTITY_ACTIVITY_CSVS: tuple[str, ...] = tuple(
     filename for filename in STAGED_REGISTRATION_CSVS if filename not in SCORE_ACTIVITY_BPI_CSVS
 )
 
+HCR_IDENTITY_SOURCE = "hcr"
+MANUAL_EXVIVO_IDENTITY_SOURCE = "manual_exvivo"
+IDENTITY_SOURCES: tuple[str, ...] = (HCR_IDENTITY_SOURCE, MANUAL_EXVIVO_IDENTITY_SOURCE)
+# Stages whose accepted controls carry identity from the HCR route.
+IDENTITY_DEPENDENT_COMPARISON_STAGES: frozenset[str] = frozenset(
+    {"assign-hcr-identity", "export-canonical-tables", "make-qa-report", "make-figures"}
+)
+
 ASSIGN_HCR_IDENTITY_CSVS: tuple[str, ...] = (
     "functional_roi_activity_identity.csv",
     "anatomy_identity_lookup.csv",
@@ -2508,7 +2516,77 @@ def _append_qa_report_summary_comparison_checks(checks: list[StageCheckRecord], 
     )
 
 
+def current_identity_source(paths: PipelinePaths) -> str:
+    """Identity source recorded by the persisted assign-hcr-identity manifest."""
+    try:
+        manifest = json.loads(stage_manifest_path(paths, "assign-hcr-identity").read_text())
+    except (OSError, ValueError):
+        return HCR_IDENTITY_SOURCE
+    return str((manifest.get("parameters") or {}).get("identity_source") or HCR_IDENTITY_SOURCE)
+
+
+def _manual_identity_control_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
+    checks: list[StageCheckRecord] = []
+    for spec in _stage_output_specs_for_inventory(paths, stage_name):
+        if not spec.required:
+            continue
+        staged_path = Path(spec.path)
+        if spec.parity == "nonempty_file":
+            ok, observed = _nonempty_artifact_matching(staged_path, spec.artifact_pattern)
+        elif spec.parity in {"csv_shape", "csv_shape_warn", "csv_semantic", "nonempty_csv"}:
+            rows = _csv_row_count(staged_path)
+            ok, observed = rows is not None and (rows > 0 or spec.parity != "nonempty_csv"), "missing" if rows is None else f"rows={rows}"
+        else:
+            ok, observed = staged_path.exists(), "exists" if staged_path.exists() else "missing"
+        checks.append(
+            StageCheckRecord(
+                label=f"manual identity output present: {spec.label}",
+                status="pass" if ok else "fail",
+                detail="Accepted controls carry HCR-route identity; parity is not applicable to the manual_exvivo identity source.",
+                expected="staged output present",
+                observed=observed,
+            )
+        )
+    return tuple(checks)
+
+
+def _append_manual_identity_gate_parity_checks(
+    checks: list[StageCheckRecord], paths: PipelinePaths, recomputed: dict[str, Path]
+) -> None:
+    """Continuation must reproduce the reviewed gate tables byte for byte."""
+    try:
+        manifest = json.loads(stage_manifest_path(paths, "assign-hcr-identity").read_text())
+    except (OSError, ValueError):
+        manifest = {}
+    parameters = manifest.get("parameters") or {}
+    gate_outputs = {Path(record["path"]).name: Path(record["path"]) for record in manifest.get("outputs", ())}
+    gate_ok = parameters.get("identity_source") == MANUAL_EXVIVO_IDENTITY_SOURCE and parameters.get("identity_gate") == "awaiting_continuation"
+    checks.append(
+        StageCheckRecord(
+            label="manual identity gate awaiting continuation",
+            status="pass" if gate_ok else "fail",
+            detail="Manual identity continuation requires the reviewed gate manifest.",
+            expected="identity_source=manual_exvivo; identity_gate=awaiting_continuation",
+            observed=f"identity_source={parameters.get('identity_source')}; identity_gate={parameters.get('identity_gate')}",
+        )
+    )
+    for name, path in recomputed.items():
+        gate_path = gate_outputs.get(name)
+        same = gate_ok and gate_path is not None and gate_path.is_file() and gate_path.read_bytes() == path.read_bytes()
+        checks.append(
+            StageCheckRecord(
+                label=f"manual identity gate parity: {name}",
+                status="pass" if same else "fail",
+                detail="Recomputed ROI-centric table must equal the table written at the identity gate.",
+                expected="byte-identical",
+                observed="match" if same else f"different or missing ({gate_path})",
+            )
+        )
+
+
 def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
+    if stage_name in IDENTITY_DEPENDENT_COMPARISON_STAGES and current_identity_source(paths) == MANUAL_EXVIVO_IDENTITY_SOURCE:
+        return _manual_identity_control_checks(paths, stage_name)
     checks: list[StageCheckRecord] = []
     for spec in _stage_output_specs_for_inventory(paths, stage_name):
         if not spec.required:
@@ -3691,8 +3769,12 @@ def run_single_fish_assign_hcr_identity_stage(
     activity_input_path: str | Path | None = None,
     roi_anatomy_root: str | Path | None = None,
     hcr_anatomy_root: str | Path | None = None,
+    identity_source: str = "hcr",
     force_recompute: bool = False,
 ) -> StageManifest:
+    if identity_source not in IDENTITY_SOURCES:
+        raise ValueError(f"Unknown identity source: {identity_source!r}")
+    manual_identity = identity_source == MANUAL_EXVIVO_IDENTITY_SOURCE
     paths = resolve_pipeline_paths(config)
     input_root = _assign_hcr_identity_source_root(paths, source_root)
     roi_anatomy_root_path = _assign_hcr_identity_roi_anatomy_root(paths, roi_anatomy_root)
@@ -3793,11 +3875,12 @@ def run_single_fish_assign_hcr_identity_stage(
         lookup_path = output_by_name["anatomy_identity_lookup.csv"]
         lookup_path.parent.mkdir(parents=True, exist_ok=True)
         lookup_df.to_csv(lookup_path, index=False)
-        _append_anatomy_identity_lookup_checks(
-            checks,
-            recomputed_path=lookup_path,
-            control_path=source_paths["anatomy_identity_lookup.csv"],
-        )
+        if not manual_identity:
+            _append_anatomy_identity_lookup_checks(
+                checks,
+                recomputed_path=lookup_path,
+                control_path=source_paths["anatomy_identity_lookup.csv"],
+            )
         roi_identity_df = attach_identity_to_functional_roi_geometry_df(
             pd.read_csv(roi_anatomy_root_path / "functional_roi_anatomy_matches.csv"),
             lookup_df,
@@ -3807,11 +3890,17 @@ def run_single_fish_assign_hcr_identity_stage(
         roi_identity_path = output_by_name["functional_roi_activity_identity.csv"]
         roi_identity_path.parent.mkdir(parents=True, exist_ok=True)
         roi_identity_df.to_csv(roi_identity_path, index=False)
-        _append_roi_identity_master_checks(
-            checks,
-            recomputed_path=roi_identity_path,
-            control_path=source_paths["functional_roi_activity_identity.csv"],
-        )
+        if manual_identity:
+            # HCR-route controls do not apply; the reviewed gate tables do.
+            _append_manual_identity_gate_parity_checks(
+                checks, paths, {"anatomy_identity_lookup.csv": lookup_path, "functional_roi_activity_identity.csv": roi_identity_path}
+            )
+        else:
+            _append_roi_identity_master_checks(
+                checks,
+                recomputed_path=roi_identity_path,
+                control_path=source_paths["functional_roi_activity_identity.csv"],
+            )
         base_plane_refs = load_plane_refs_summary(plane_summary_path)
         anatomy_xy_spacing = _anatomy_xy_spacing_from_voxel_cache(paths)
         replay_plane_refs, transform_report = _overlay_selected_ants_transformlists(
@@ -3953,6 +4042,8 @@ def run_single_fish_assign_hcr_identity_stage(
             "plane_refs_summary_path": str(plane_summary_path),
             "anatomy_labels_path": str(anat_labels_path),
             "force_recompute": bool(force_recompute),
+            "identity_source": identity_source,
+            **({"identity_gate": "continued", "conf_label_semantics": "ex-vivo Cellpose mask ID"} if manual_identity else {}),
             "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; response fields come from the explicit or same-root score-activity-bpi ROI table; HCR activity/status/candidate exports are recomputed by label-first HCR replay; source registration CSVs are optional comparison controls",
         },
         warnings=warnings,
@@ -4673,7 +4764,6 @@ def run_single_fish_export_canonical_tables_stage(
     *,
     score_input_root: str | Path | None = None,
     hcr_input_root: str | Path | None = None,
-    manual_identity_root: str | Path | None = None,
     force_recompute: bool = False,
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
@@ -4682,41 +4772,6 @@ def run_single_fish_export_canonical_tables_stage(
         score_input_root=score_input_root,
         hcr_input_root=hcr_input_root,
     )
-    if manual_identity_root is not None:
-        from .manual_identity import export_manual_canonical_tables
-        manual_root = Path(manual_identity_root)
-        output_root = _stage_root(paths, "export-canonical-tables") / "registration"
-        errors: tuple[str, ...] = ()
-        try:
-            if hcr_input_root is not None:
-                raise ValueError("Manual identity cannot be combined with an HCR input root")
-            source_manifest = json.loads((manual_root / "manual_identity_export_manifest.json").read_text())
-            if source_manifest.get("fish_id") != config.fish_id:
-                raise ValueError("Manual identity fish does not match pipeline fish")
-            export_manual_canonical_tables(manual_root, score_root, output_root)
-        except (OSError, ValueError, AssertionError, KeyError) as exc:
-            errors = (str(exc),)
-        files = (
-            "functional_roi_activity_identity.csv", "anatomy_identity_lookup.csv",
-            "functional_roi_activity_bpi_cells.csv", "functional_roi_activity_bpi_summary.csv",
-            "manual_annotations.csv", "manual_identity_mapping_audit.csv", "manual_identity_export_manifest.json",
-            "dataset_manifest.json", "annotations_snapshot.json", "reviewed_correspondence.json",
-        )
-        return StageManifest(
-            manifest_version=PIPELINE_MANIFEST_VERSION, stage_name="export-canonical-tables",
-            fish_id=config.fish_id, status="fail" if errors else "warn", dry_run=False,
-            generated_at=datetime.now(timezone.utc).isoformat(),
-            inputs=(describe_manifest_path(manual_root / "manual_identity_export_manifest.json"),
-                    describe_manifest_path(score_root / "functional_roi_activity_identity.csv")),
-            outputs=tuple(describe_manifest_path(output_root / name) for name in files),
-            parameters={"identity_source": "manual_exvivo", "canonical_scope": "roi_only",
-                        "manual_identity_root": str(manual_root), "score_input_root": str(score_root),
-                        "pipeline_root": str(paths.pipeline_root), "hcr_centric_supported": False},
-            warnings=("ROI-only canonical export: HCR-centric tables and HCR-dependent figures are unsupported; no confocal mask IDs are fabricated.",),
-            errors=errors,
-        )
-    if (hcr_root / "manual_identity_export_manifest.json").exists():
-        raise ValueError("Use manual_identity_root for manual exports; legacy bundle assembly would mix identity sources")
     source_paths = _canonical_export_source_paths(
         paths,
         score_input_root=score_input_root,

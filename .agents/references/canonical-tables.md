@@ -114,8 +114,6 @@ Representative column groups:
 - Output ownership -> this file.
 - If code conflicts with docs, follow policy docs unless they are clearly outdated.
 
-## Manual ex-vivo identity source (2026-10-05)
+## Manual ex-vivo identity source (2026-10-06)
 
-`tools/manual_hcr_identity.py` writes independent per-marker calls keyed by dataset, stack, and ex-vivo label. Reviewed geometry maps positives to in-vivo `anat_label`; old HCR-mask identity is not unioned. Canonical ROI schemas and keys remain unchanged. Complete calls (including negatives and unreviewed/unassessable states) and source hashes remain in sidecars. Legacy no-identity fields do not establish marker negativity.
-
-`export-canonical-tables --manual-identity-root` creates an isolated ROI-only bundle with BPI cells/summary from the validated score root. It refuses HCR root mixing and existing output directories, and returns `warn` for its declared scope. HCR-centric tables/figures are unsupported until an anatomy-centric route is explicitly implemented; consumers retain their missing-input gates. Manual roots supplied as legacy HCR roots are rejected. See `docs/manual-hcr-identity-gui.md`.
+`assign-hcr-identity --identity-source manual_exvivo` consumes a manual aligned bundle (`structural/ex_vivo/manual_identity/<dataset>/exports/<rev>/aligned`) with the HCR file contract: per-gene `*_cp_masks_in_2p_{labels_uint16.tif,matches,final_pairs,review}.csv`, `*_warp_meta.json`, and `hcr_label_metrics.csv`. All seven assign outputs keep their names and schemas; in HCR-centric tables `conf_label` is the ex-vivo Cellpose mask ID and `conf_mask` points at the manual aligned labels. The manual identity gate first writes only the two ROI-centric tables plus a `warn` manifest (`identity_gate=awaiting_continuation`); continuation must reproduce them byte for byte. The persisted assign manifest's `identity_source` disables HCR-route control parity in assign, export-canonical-tables, make-qa-report, and make-figures. Complete calls (negatives, uncertain, unassessable, issues) and the per-label audit stay in the export folder. See `docs/manual-hcr-identity-gui.md`.

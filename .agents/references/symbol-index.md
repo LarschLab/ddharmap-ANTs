@@ -494,8 +494,11 @@ Generated manually for the current extracted package surface.
 
 ## Manual ex-vivo HCR identity review
 
-- `manual_identity.Dataset`, `AnnotationSession`, `prepare_dataset`: Validate hash-bound, physically aligned registered inputs and authoritative eligible masks; persist independent per-marker calls with a recoverable journal and frozen snapshots.
-- `manual_identity.export_manual_identity`, `export_manual_canonical_tables`: Map approved ex-vivo positives through frozen reviewed geometry to existing in-vivo identity/ROI schemas; preserve ROI inventory and response fields; emit explicit ROI-only canonical bundles without fabricated HCR labels.
+- `manual_identity.Dataset`, `AnnotationSession`, `prepare_dataset`: Validate hash-bound, physically aligned registered inputs and eligible masks; persist independent per-marker calls with a recoverable journal and frozen snapshots.
+- `manual_identity_pipeline.prepare_fish_dataset`: Discover the manual-oriented ex-vivo anatomy, the single ex-vivo Cellpose mask TIFF (grid bound via its segmentation manifest), and every `*_in_exvivo.nrrd` HCR stack with its exact source and transform chain; write coverage NRRDs and require the chain to reproduce the registered stack (Pearson r >= 0.99).
+- `manual_identity_pipeline.plan_identity_gate`, `run_identity_gate`: Warp all ex-vivo masks to 2P with the accepted ex-vivo->2P pair, match them once with `build_hcr_anatomy_match_tables`, write a per-gene HCR-shaped aligned bundle (conf_label = ex-vivo mask ID), and promote only the two ROI-centric tables to the assign-hcr-identity location with a `warn` gate manifest (`identity_source=manual_exvivo`, `identity_gate=awaiting_continuation`). Existing outputs are replaced/retired only when confirmed, with journaled backups.
+- `manual_identity_pipeline.continue_after_gate`: Rerun assign-hcr-identity (`--identity-source manual_exvivo`), export-canonical-tables, make-qa-report, make-motion-auc-tables, make-figures from the fish run-spec commands into a seeded transaction graph and promote each like a native run.
+- `pipeline.current_identity_source`: Identity source recorded by the persisted assign manifest; identity-dependent stages replace HCR-control parity with presence checks under `manual_exvivo`, and assign verifies byte parity with the gate tables.
 - `apps.manual_identity.create_viewer`: Optional napari/Qt fixed-mask reviewer with independent marker selection and orthogonal context.
-- `run_single_fish_export_canonical_tables_stage`: Optional `manual_identity_root` selects ROI-only manual-source export; incompatible HCR source mixing is blocked.
-- CLI: `tools/manual_hcr_identity.py` (`prepare`, `view`, `export`, `canonical`, `recover-lock`); setup/contracts: `docs/manual-hcr-identity-gui.md`.
+- `apps.cellmatcher`: Launcher (fish list, prepare, review, Finish & export, Continue pipeline); `tools/install_cellmatcher_app.sh` builds `~/Applications/cellMatcher.app`.
+- CLI: `tools/manual_hcr_identity.py` (`app`, `prepare-fish`, `prepare`, `view`, `gate`, `continue`, `recover-lock`); setup/contracts: `docs/manual-hcr-identity-gui.md`.

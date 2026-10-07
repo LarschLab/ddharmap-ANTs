@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1d2547"/>
+      <stop offset="1" stop-color="#070a17"/>
+    </linearGradient>
+    <radialGradient id="haze" cx="0.4" cy="0.6" r="0.55">
+      <stop offset="0" stop-color="#2bd47a" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#2bd47a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="soma" cx="0.42" cy="0.38" r="0.7">
+      <stop offset="0" stop-color="#eafff2"/>
+      <stop offset="0.35" stop-color="#7dffb4"/>
+      <stop offset="1" stop-color="#18b862"/>
+    </radialGradient>
+    <linearGradient id="tag" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dfe4f2"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="14" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+    <clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+
+  <!-- squircle tile -->
+  <g filter="url(#shadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  </g>
+  <g clip-path="url(#sq)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#haze)"/>
+    <!-- faint background cells -->
+    <g fill="#2bd47a" opacity="0.13">
+      <circle cx="230" cy="250" r="26"/><circle cx="800" cy="790" r="34"/>
+      <circle cx="250" cy="820" r="20"/><circle cx="640" cy="860" r="16"/>
+      <circle cx="170" cy="520" r="14"/>
+    </g>
+
+    <!-- neuron -->
+    <g filter="url(#glow)" stroke="#3ef08e" stroke-linecap="round" fill="none">
+      <path d="M410 590 C 340 560, 280 520, 215 430" stroke-width="22"/>
+      <path d="M300 528 C 270 470, 260 420, 270 360" stroke-width="12"/>
+      <path d="M250 476 C 205 470, 175 455, 150 430" stroke-width="9"/>
+      <path d="M395 640 C 320 660, 250 700, 200 760" stroke-width="20"/>
+      <path d="M275 710 C 240 690, 205 690, 160 700" stroke-width="10"/>
+      <path d="M450 670 C 455 740, 440 800, 400 880" stroke-width="18"/>
+      <path d="M445 780 C 480 810, 500 850, 505 900" stroke-width="9"/>
+      <path d="M465 530 C 480 450, 470 380, 430 300" stroke-width="18"/>
+      <path d="M470 430 C 520 400, 545 360, 555 300" stroke-width="9"/>
+      <path d="M520 615 C 600 640, 660 690, 730 712 S 820 725, 860 760" stroke-width="13"/>
+      <circle cx="450" cy="600" r="78" fill="url(#soma)" stroke="none"/>
+    </g>
+    <circle cx="430" cy="580" r="24" fill="#ffffff" opacity="0.55"/>
+
+    <!-- string from soma to tag -->
+    <path d="M500 548 C 530 480, 545 440, 585 405" stroke="#e8ecf8" stroke-width="7"
+          fill="none" stroke-linecap="round" opacity="0.9"/>
+
+    <!-- identity tag -->
+    <g transform="translate(585 405) rotate(-24) scale(0.9)" filter="url(#shadow)">
+      <path d="M0 0 L 58 -82 H 290 a 26 26 0 0 1 26 26 V 56 a 26 26 0 0 1 -26 26 H 58 Z"
+            fill="url(#tag)"/>
+      <circle cx="46" cy="0" r="15" fill="#1d2547"/>
+      <circle cx="46" cy="0" r="15" fill="none" stroke="#e8ecf8" stroke-width="5"/>
+      <!-- marker calls: two positive, one negative -->
+      <circle cx="128" cy="0" r="30" fill="#ff3fa4"/>
+      <circle cx="200" cy="0" r="30" fill="#ffc531"/>
+      <circle cx="272" cy="0" r="25" fill="none" stroke="#3aa8ff" stroke-width="10"/>
+    </g>
+  </g>
+</svg>

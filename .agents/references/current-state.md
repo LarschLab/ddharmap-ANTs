@@ -108,6 +108,6 @@
   `score-activity-bpi/scored_stimulus_windows.csv`. Notebook 02 remains
   registration-only; neither notebook reruns scoring in memory.
 
-## Manual identity app (2026-10-05)
+## Manual identity app (2026-10-06)
 
-`codex/manual-hcr-identity-gui` adds an optional napari fixed-mask reviewer and explicit ROI-only manual export, based on `codex/qc-notebooks` at `c2a0716`. Existing 2P eligibility is consumed unchanged; HCR intensity is reviewed independently per stack without HCR-mask segmentation. Prepared manifests and reviewed ex-vivo/in-vivo correspondence are prerequisites for real-fish use. No accepted scientific artifacts have been replaced. Run instructions and supported/unsupported consumers are in `docs/manual-hcr-identity-gui.md`.
+`cellMatcher` (napari) records independent per-marker calls on all ex-vivo Cellpose masks in ex-vivo space. Finish & export warps the ex-vivo masks to 2P with the accepted ex-vivo->2P transforms, matches them with the HCR matching code, writes only `functional_roi_activity_identity.csv` and `anatomy_identity_lookup.csv` to the assign-hcr-identity location, and stops at an explicit identity gate. Continue pipeline recomputes the HCR-centric tables (conf_label = ex-vivo mask ID) and the canonical/QA/motion-AUC/figure stages. The earlier correspondence-based ROI-only export was removed. HCR label-quality gates (200-native-voxel speck floor, q95 large-mask flag) currently apply to ex-vivo masks and drop flagged positives at matching. Validated end to end on a staging copy of L765_f04 with stand-in masks; production L765_f04 is unchanged until a reviewer exports from the app. Run instructions: `docs/manual-hcr-identity-gui.md`.

@@ -1,4 +1,4 @@
-"""Independent per-stack manual identity review and geometry-only ROI export."""
+"""Independent per-stack manual identity review on fixed ex-vivo masks."""
 from __future__ import annotations
 
 import hashlib
@@ -216,30 +216,54 @@ class AnnotationSession:
             raise OSError('Journal durability is uncertain. Close and reopen this session before editing or exporting.')
 
     def set_call(self, stack, label, call, *, issue='', blocking=False, note=''):
+        self.set_calls(stack, [label], call, issue=issue, blocking=blocking, note=note)
+
+    def set_calls(self, stack, labels, call, *, issue='', blocking=False, note=''):
+        """Record one call for many cells as a single journal write and undo step."""
         self.require_writable_journal()
         if call not in CALLS:
             raise ValueError('Unknown annotation call')
+        labels = [positive_label_id(label) for label in labels]
         if call in ('positive', 'negative'):
-            _, coverage = self.dataset.marker_data(stack)
-            if not np.all(coverage[self.dataset.labels == label]):
-                raise ValueError('Incomplete cell coverage: use uncertain or unassessable')
-        key = (stack, positive_label_id(label))
-        old = self.rows[key].copy()
-        new = dict(old, call=call, issue_code=issue, issue_blocks_export=bool(blocking), note=note)
-        self._record(key, new, 'decision')
-        self.undo_stack.append((key, old, new))
+            uncovered = self.uncovered_labels(stack, labels)
+            if uncovered:
+                raise ValueError(f'Incomplete cell coverage for {len(uncovered)} cell(s): use uncertain or unassessable')
+        changes = []
+        for label in labels:
+            key = (stack, label)
+            old = self.rows[key].copy()
+            changes.append((key, old, dict(old, call=call, issue_code=issue, issue_blocks_export=bool(blocking), note=note)))
+        if not changes:
+            return
+        self._record_many([(key, new) for key, _, new in changes], 'decision')
+        self.undo_stack.append(changes)
         self.redo_stack.clear()
         self.checkpoint()
 
+    def uncovered_labels(self, stack, labels):
+        """Cells whose mask leaves the stack's valid acquisition domain."""
+        cache = self.__dict__.setdefault('_uncovered', {})
+        if stack not in cache:
+            _, coverage = self.dataset.marker_data(stack)
+            cache[stack] = {int(n) for n in np.unique(self.dataset.labels[coverage == 0])} - {0}
+        return sorted(set(labels) & cache[stack])
+
     def _record(self, key, row, action):
+        self._record_many([(key, row)], action)
+
+    def _record_many(self, items, action):
         self.require_writable_journal()
-        row = dict(row, reviewer=self.reviewer, updated_at_utc=datetime.now(timezone.utc).isoformat(), revision=self.revision + 1)
-        self.validate_row(row)
-        event = dict(event_id=uuid.uuid4().hex, revision=row['revision'], action=action,
-                     stack=key[0], label=key[1], old=self.rows[key], new=row)
+        stamp = datetime.now(timezone.utc).isoformat()
+        rows, events = [], []
+        for offset, (key, row) in enumerate(items, start=1):
+            row = dict(row, reviewer=self.reviewer, updated_at_utc=stamp, revision=self.revision + offset)
+            self.validate_row(row)
+            rows.append((key, row))
+            events.append(json.dumps(dict(event_id=uuid.uuid4().hex, revision=row['revision'], action=action,
+                                          stack=key[0], label=key[1], old=self.rows[key], new=row)) + '\n')
         try:
             with (self.directory / 'annotation_events.jsonl').open('a') as f:
-                f.write(json.dumps(event) + '\n')
+                f.write(''.join(events))
                 f.flush()
                 os.fsync(f.fileno())
         except OSError as exc:
@@ -247,26 +271,35 @@ class AnnotationSession:
             # event with the same revision or freeze divergent in-memory state.
             self.journal_failed = True
             raise OSError('Journal durability is uncertain. Close and reopen this session before editing or exporting.') from exc
-        self.rows[key] = row
-        self.revision += 1
+        for key, row in rows:
+            self.rows[key] = row
+        self.revision += len(rows)
 
     def undo(self):
         self.require_writable_journal()
         if self.undo_stack:
-            key, old, new = self.undo_stack[-1]
-            self._record(key, old, 'undo')
+            changes = self.undo_stack[-1]
+            self._record_many([(key, old) for key, old, _ in changes], 'undo')
             self.undo_stack.pop()
-            self.redo_stack.append((key, old, new))
+            self.redo_stack.append(changes)
             self.checkpoint()
 
     def redo(self):
         self.require_writable_journal()
         if self.redo_stack:
-            key, old, new = self.redo_stack[-1]
-            self._record(key, new, 'redo')
+            changes = self.redo_stack[-1]
+            self._record_many([(key, new) for key, _, new in changes], 'redo')
             self.redo_stack.pop()
-            self.undo_stack.append((key, old, new))
+            self.undo_stack.append(changes)
             self.checkpoint()
+
+    def save_view(self):
+        """Persist view state and pending marks without rewriting the call table."""
+        try:
+            atomic_write(self.directory / 'session.json', json.dumps(dict(schema_version=1, revision=self.revision,
+                         dataset_fingerprint=self.dataset.fingerprint, reviewer=self.reviewer, view=self.view), indent=2))
+        except OSError as exc:
+            self.last_snapshot_error = str(exc)
 
     def checkpoint(self):
         try:
@@ -298,143 +331,6 @@ class AnnotationSession:
             self.lock.unlink()
 
 
-def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_path, roi_master_path, output_dir, gene_order):
-    """Produce isolated ROI-compatible tables; never fabricate HCR-centric labels."""
-    from .matching import attach_identity_to_functional_roi_geometry_df
-    frozen_bytes = Path(frozen_path).read_bytes()
-    frozen = json.loads(frozen_bytes)
-    if frozen['dataset_fingerprint'] != dataset.fingerprint or frozen['manifest'] != dataset.manifest:
-        raise ValueError('Frozen annotation dataset mismatch')
-    for row in frozen['annotations']:
-        row['exvivo_label_id'] = positive_label_id(row['exvivo_label_id'])
-    rows = pd.DataFrame(frozen['annotations'])
-    expected = {(s, n) for s in dataset.markers for n in dataset.eligible}
-    keys = list(zip(rows.marker_stack_id, rows.exvivo_label_id))
-    if len(keys) != len(set(keys)) or set(keys) != expected or not rows.call.isin(CALLS).all():
-        raise ValueError('Invalid snapshot annotation inventory')
-    for row in frozen['annotations']:
-        marker = dataset.markers[row['marker_stack_id']]
-        if row['dataset_id'] != dataset.manifest['dataset_id'] or row['gene'] != marker['gene'] or row['fish_id'] != dataset.manifest['fish_id'] or not isinstance(row['issue_blocks_export'], bool):
-            raise ValueError('Invalid annotation provenance')
-    correspondence_bytes = Path(correspondence_path).read_bytes()
-    mapping = json.loads(correspondence_bytes)
-    for row in mapping['rows']:
-        row['exvivo_label_id'] = positive_label_id(row['exvivo_label_id'])
-        if row['status'] == 'accepted':
-            row['anat_label'] = positive_label_id(row['anat_label'])
-    for key, expected_value in [('schema_version', 1), ('fish_id', dataset.manifest['fish_id']),
-                                ('exvivo_labels_sha256', dataset.manifest['labels']['sha256']),
-                                ('geometry_sha256', sha256(geometry_path))]:
-        if mapping.get(key) != expected_value:
-            raise ValueError(f'Correspondence binding mismatch: {key}')
-    for key in ('invivo_labels_sha256', 'transform_provenance', 'reviewer', 'reviewed_at_utc'):
-        if not mapping.get(key):
-            raise ValueError(f'Missing correspondence provenance: {key}')
-    target_spec = mapping.get('invivo_labels')
-    if not target_spec or target_spec.get('sha256') != mapping['invivo_labels_sha256']:
-        raise ValueError('Correspondence requires the exact in-vivo label asset')
-    target_path = Path(target_spec['path'])
-    if not target_path.is_absolute():
-        target_path = Path(correspondence_path).resolve().parent / target_path
-    if sha256(target_path) != target_spec['sha256']:
-        raise ValueError('In-vivo label asset hash mismatch')
-    target_labels, _ = read_volume(target_path)
-    if target_labels.ndim != 3 or not np.issubdtype(target_labels.dtype, np.integer):
-        raise ValueError('Invalid in-vivo label image')
-    target_ids = set(np.unique(target_labels)) - {0}
-    accepted = [r for r in mapping['rows'] if r['status'] == 'accepted']
-    if any(r['anat_label'] not in target_ids for r in accepted):
-        raise ValueError('Correspondence target absent from in-vivo labels')
-    if any(not r.get('metrics') for r in accepted):
-        raise ValueError('Accepted correspondence requires geometry metrics')
-    if len({r['exvivo_label_id'] for r in mapping['rows']}) != len(mapping['rows']):
-        raise ValueError('Duplicate correspondence source')
-    if len({r['anat_label'] for r in accepted}) != len(accepted):
-        raise ValueError('Competing ex-vivo cells require geometry resolution')
-    links = {int(r['exvivo_label_id']): int(r['anat_label']) for r in accepted}
-    if any(n not in dataset.eligible or target <= 0 for n, target in links.items()):
-        raise ValueError('Invalid correspondence label')
-    geometry = pd.read_csv(geometry_path)
-    master = pd.read_csv(roi_master_path)
-    if not set(pd.to_numeric(geometry['anat_label'], errors='raise').dropna().astype(int)).issubset(target_ids):
-        raise ValueError('ROI geometry refers to labels absent from in-vivo label image')
-    roi_keys = ['plane_idx', 'func_label']
-    if geometry.duplicated(roi_keys).any() or master.duplicated(roi_keys).any():
-        raise ValueError('Duplicate ROI keys')
-    if set(map(tuple, geometry[roi_keys].to_numpy())) != set(map(tuple, master[roi_keys].to_numpy())):
-        raise ValueError('ROI inventory differs')
-    missing_geometry = set(geometry.columns) - set(master.columns)
-    if missing_geometry:
-        raise ValueError(f'ROI master lacks geometry columns: {sorted(missing_geometry)}')
-    # Protect every common geometry column against a mismatched master.
-    common = [c for c in geometry if c in master and c not in roi_keys]
-    left = geometry.set_index(roi_keys).sort_index()[common]
-    right = master.set_index(roi_keys).sort_index()[common]
-    pd.testing.assert_frame_equal(left, right, check_dtype=False)
-    mapping_rows = {r['exvivo_label_id']: r for r in mapping['rows']}
-    for stack, group in rows.groupby('marker_stack_id'):
-        assessed_ids = set(group.loc[group.call.isin(['positive', 'negative']), 'exvivo_label_id'])
-        if assessed_ids:
-            _, coverage = dataset.marker_data(stack)
-            uncovered_ids = set(np.unique(dataset.labels[coverage == 0])) - {0}
-            if assessed_ids & uncovered_ids:
-                raise ValueError('Frozen positive/negative calls have incomplete cell coverage')
-    primary = dataset.manifest.get('primary_stack_by_gene', {})
-    memberships, audit = {}, []
-    for (label, gene), group in rows.groupby(['exvivo_label_id', 'gene']):
-        chosen = primary.get(gene)
-        if len(group) == 1 and chosen is None:
-            chosen = group.iloc[0].marker_stack_id
-        if chosen not in set(group.marker_stack_id):
-            raise ValueError(f'Declare primary_stack_by_gene for {gene}')
-        decision = group.loc[group.marker_stack_id == chosen].iloc[0]
-        assessed = set(group.loc[group.call.isin(['positive', 'negative']), 'call'])
-        reason = 'not_positive'
-        if len(assessed) > 1:
-            reason = 'replicate_conflict'
-        elif decision.issue_blocks_export:
-            reason = 'blocking_issue'
-        elif decision.call == 'positive':
-            if label not in links:
-                reason = 'unmapped_or_ambiguous'
-            else:
-                reason = 'exported'
-                memberships.setdefault(links[label], set()).add(gene)
-        correspondence = mapping_rows.get(label, {})
-        audit.append(dict(exvivo_label_id=int(label), gene=gene, primary_stack_id=chosen, outcome=reason,
-            anat_label=correspondence.get('anat_label'), mapping_status=correspondence.get('status', 'missing'),
-            mapping_reason=correspondence.get('reason', ''), mapping_metrics=json.dumps(correspondence.get('metrics', {}))))
-    order = {gene: i for i, gene in enumerate(gene_order)}
-    lookup_rows = []
-    for label, genes in sorted(memberships.items()):
-        genes = sorted(genes, key=lambda g: (order.get(g, 10**6), g))
-        lookup_rows.append(dict(anat_label=label, identity_label='/'.join(genes), identity_gene_count=len(genes), identity_genes=genes))
-    lookup = pd.DataFrame(lookup_rows, columns=['anat_label', 'identity_label', 'identity_gene_count', 'identity_genes'])
-    result = attach_identity_to_functional_roi_geometry_df(geometry, lookup, passthrough_df=master)
-    if 'identity_genes' in master.columns:
-        by_label = {r['anat_label']: r['identity_genes'] for r in lookup_rows}
-        result['identity_genes'] = result['anat_label'].map(lambda label: by_label.get(label, []))
-    output = Path(output_dir)
-    # New directory is mandatory: no canonical overwrite or accidental source mixing.
-    output.mkdir(parents=True, exist_ok=False)
-    lookup.to_csv(output / 'anatomy_identity_lookup.csv', index=False)
-    result.to_csv(output / 'functional_roi_activity_identity.csv', index=False)
-    pd.DataFrame(audit).to_csv(output / 'manual_identity_mapping_audit.csv', index=False)
-    rows.to_csv(output / 'manual_annotations.csv', index=False)
-    atomic_write(output / 'dataset_manifest.json', json.dumps(dataset.manifest, indent=2))
-    (output / 'reviewed_correspondence.json').write_bytes(correspondence_bytes)
-    (output / 'annotations_snapshot.json').write_bytes(frozen_bytes)
-    provenance = dict(schema_version=1, fish_id=dataset.manifest['fish_id'], identity_source='manual_exvivo', dataset_fingerprint=dataset.fingerprint,
-        annotations_sha256=hashlib.sha256(frozen_bytes).hexdigest(), correspondence_sha256=hashlib.sha256(correspondence_bytes).hexdigest(),
-        geometry_sha256=sha256(geometry_path), roi_master_sha256=sha256(roi_master_path), gene_order=gene_order,
-        source_dataset_manifest=str(dataset.path), source_annotations_snapshot=str(Path(frozen_path).resolve()),
-        source_correspondence=str(Path(correspondence_path).resolve()),
-        hcr_centric_supported=False, hcr_centric_reason='Manual assignments do not identify confocal segmented labels')
-    provenance['output_sha256'] = {p.name: sha256(p) for p in output.iterdir() if p.is_file()}
-    atomic_write(output / 'manual_identity_export_manifest.json', json.dumps(provenance, indent=2))
-    return result
-
-
 def prepare_dataset(config_path, output_path):
     """Bind explicitly registered assets to content hashes; never infer alignment."""
     config_path, output_path = Path(config_path).resolve(), Path(output_path).resolve()
@@ -464,46 +360,6 @@ def prepare_dataset(config_path, output_path):
     finally:
         temporary.unlink(missing_ok=True)
     return output_path
-
-
-def export_manual_canonical_tables(manual_root, score_root, output):
-    """Assemble ROI-only canonical exports; HCR-dependent consumers fail closed."""
-    import shutil
-    manual_root, score_root, output = Path(manual_root), Path(score_root), Path(output)
-    manifest = json.loads((manual_root / 'manual_identity_export_manifest.json').read_text())
-    if manifest.get('identity_source') != 'manual_exvivo' or manifest.get('hcr_centric_supported') is not False:
-        raise ValueError('Expected an isolated manual identity export')
-    for name, digest in manifest['output_sha256'].items():
-        if sha256(manual_root / name) != digest:
-            raise ValueError(f'Manual export changed: {name}')
-    identity = pd.read_csv(manual_root / 'functional_roi_activity_identity.csv')
-    scored = pd.read_csv(score_root / 'functional_roi_activity_identity.csv')
-    keys = ['plane_idx', 'func_label']
-    identity_columns = {'identity_label', 'identity_gene_count', 'identity_genes', 'has_identity_assigned', 'identity_display_label'}
-    if identity.duplicated(keys).any() or scored.duplicated(keys).any():
-        raise ValueError('Duplicate canonical ROI keys')
-    missing_scored = set(scored.columns) - identity_columns - set(identity.columns)
-    if missing_scored:
-        raise ValueError(f'Manual ROI master lacks scored columns: {sorted(missing_scored)}')
-    common = [c for c in scored if c in identity and c not in identity_columns and c not in keys]
-    pd.testing.assert_frame_equal(identity.set_index(keys).sort_index()[common],
-                                  scored.set_index(keys).sort_index()[common], check_dtype=False)
-    score_names = ['functional_roi_activity_bpi_cells.csv', 'functional_roi_activity_bpi_summary.csv']
-    for name in score_names:
-        if not (score_root / name).is_file():
-            raise FileNotFoundError(score_root / name)
-    if any((manual_root / name).exists() for name in ['hcr_activity_status.csv', 'conf_to_func_pairs.csv', 'hcr_func_candidates.csv']):
-        raise ValueError('Mixed HCR-centric and manual identity sources')
-    output.mkdir(parents=True, exist_ok=False)
-    for name in ['functional_roi_activity_identity.csv', 'anatomy_identity_lookup.csv', 'manual_annotations.csv', 'manual_identity_mapping_audit.csv', 'dataset_manifest.json', 'annotations_snapshot.json', 'reviewed_correspondence.json']:
-        shutil.copyfile(manual_root / name, output / name)
-    for name in score_names:
-        shutil.copyfile(score_root / name, output / name)
-    manifest = dict(manifest, source_manual_root=str(manual_root.resolve()), source_score_root=str(score_root.resolve()),
-                    canonical_scope='roi_only', unsupported_consumers=['HCR-centric trace/status exports', 'HCR-dependent compound figures'])
-    manifest['output_sha256'] = {p.name: sha256(p) for p in output.iterdir() if p.is_file()}
-    atomic_write(output / 'manual_identity_export_manifest.json', json.dumps(manifest, indent=2))
-    return output
 
 
 def recover_session_lock(directory, expected_pid):

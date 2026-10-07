@@ -154,6 +154,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Response-aware ROI table used as passthrough/lookup input. Defaults to the same-root score-activity-bpi output when present.",
     )
     assign_writer.add_argument(
+        "--identity-source",
+        choices=("hcr", "manual_exvivo"),
+        default="hcr",
+        help="hcr: HCR Cellpose masks matched to anatomy. manual_exvivo: manual calls on ex-vivo masks (--hcr-anatomy-root is the manual aligned bundle; conf_label is the ex-vivo mask ID).",
+    )
+    assign_writer.add_argument(
         "--roi-anatomy-root",
         type=Path,
         help="Explicit staged ROI/anatomy geometry root. Defaults to pipeline_root/match-roi-to-anatomy/registration.",
@@ -192,7 +198,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit HCR/identity registration CSV root. Defaults to staged assign-hcr-identity output root.",
     )
-    export_canonical.add_argument("--manual-identity-root", type=Path, help="Explicit manual export root; produces ROI-only canonical tables and blocks HCR source mixing.")
     export_canonical.add_argument("--force-recompute", action="store_true")
 
     make_qa_report = subparsers.add_parser(
@@ -568,6 +573,7 @@ def main(argv: list[str] | None = None) -> int:
             activity_input_path=args.activity_input_path,
             roi_anatomy_root=args.roi_anatomy_root,
             hcr_anatomy_root=args.hcr_anatomy_root,
+            identity_source=args.identity_source,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:
@@ -607,7 +613,6 @@ def main(argv: list[str] | None = None) -> int:
             config,
             score_input_root=args.score_input_root,
             hcr_input_root=args.hcr_input_root,
-            manual_identity_root=args.manual_identity_root,
             force_recompute=args.force_recompute,
         )
         if args.write_manifest:
