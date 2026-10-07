@@ -26,7 +26,8 @@ def sha256(path: Path) -> str:
 
 
 def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path, fish_dir: Path,
-                            review_gate: dict | None = None, manifest_paths: tuple[Path, ...] | None = None) -> dict:
+                            review_gate: dict | None = None, manifest_paths: tuple[Path, ...] | None = None,
+                            notebook_count: int | None = None) -> dict:
     """Export all rendered PNGs with exact source associations, leaving inputs untouched."""
     if output_dir.exists():
         raise FileExistsError(f"Refusing existing gallery: {output_dir}")
@@ -34,7 +35,12 @@ def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
         raise ValueError("Preliminary gallery must retain a review_required scientific gate")
     notebooks = sorted(notebook_dir.glob("*.ipynb"))
     numbers = [re.match(r"^(\d\d)_", p.name).group(1) for p in notebooks if re.match(r"^(\d\d)_", p.name)]
-    expected = [f"{i:02}" for i in range(6 if review_gate else 7)]
+    # A review-gated run stops before notebook 06 unless its recipe declares the
+    # accepted-midline continuation (seven notebooks).
+    notebook_count = int(notebook_count) if notebook_count is not None else (6 if review_gate else 7)
+    if notebook_count not in {6, 7}:
+        raise ValueError(f"Unsupported QC notebook count: {notebook_count}")
+    expected = [f"{i:02}" for i in range(notebook_count)]
     if numbers != expected:
         raise ValueError(f"Require exactly executed QC notebooks {expected}; found {numbers}")
     output_dir.mkdir(parents=True)
@@ -196,12 +202,13 @@ def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
         cards.append(f"<article><h2>{record['id']} {html.escape(record['title'])}</h2><a href='{record['file']}'><img loading='lazy' src='{record['file']}'></a><details><summary>Source provenance and SHA-256</summary>{sources}<p>{record['sha256']}</p></details></article>")
     (output_dir / "index.html").write_text("<!doctype html><meta charset='utf-8'><title>L765_f04 production QC figures</title><style>body{font:16px system-ui;max-width:1800px;margin:30px auto;padding:20px}article{margin:50px 0;border-top:1px solid #ccc}img{max-width:100%;height:auto}details{overflow-wrap:anywhere}</style><h1>L765_f04: complete production QC figure gallery</h1><p>Full-resolution images extracted from all seven executed QC notebooks and current writer manifests. Notebook 00 is table-only. Exact duplicate PNGs share an entry; all source associations are retained.</p>" + "".join(cards))
     page = output_dir / "index.html"
-    page.write_text(page.read_text().replace("L765_f04", html.escape(fish_dir.name)).replace("complete production QC figure gallery", "midline-review QC figure gallery" if review_gate else "complete production QC figure gallery").replace("all seven executed QC notebooks", "six executed pre-midline QC notebooks" if review_gate else "all seven executed QC notebooks"))
+    page.write_text(page.read_text().replace("L765_f04", html.escape(fish_dir.name)).replace("complete production QC figure gallery", ("midline-review QC figure gallery" if notebook_count == 6 else "accepted-midline review QC figure gallery") if review_gate else "complete production QC figure gallery").replace("all seven executed QC notebooks", "six executed pre-midline QC notebooks" if notebook_count == 6 else "all seven executed QC notebooks"))
     return {"output_dir": str(output_dir), "figure_count": len(figures), "notebook_png_outputs": report["notebook_png_output_count"], "writer_png_references": report["writer_png_reference_count"], "contact_sheets": len(pages), "blocked_messages": sum(len(r["blocked_or_unavailable_outputs"]) for r in notebook_reports)}
 
 
 def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path, fish_dir: Path,
-                            review_gate: dict | None = None, manifest_paths: tuple[Path, ...] | None = None) -> dict:
+                            review_gate: dict | None = None, manifest_paths: tuple[Path, ...] | None = None,
+                            notebook_count: int | None = None) -> dict:
     """Publish a complete gallery only after coverage and image checks pass."""
     output_dir = output_dir.expanduser().resolve()
     if output_dir.exists():
@@ -209,7 +216,8 @@ def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
     staged = output_dir.parent / f".{output_dir.name}.partial-{uuid.uuid4().hex}"
     try:
         report = _build_qc_figure_gallery(notebook_dir=notebook_dir, manifest_dir=manifest_dir,
-                                         output_dir=staged, fish_dir=fish_dir, review_gate=review_gate, manifest_paths=manifest_paths)
+                                         output_dir=staged, fish_dir=fish_dir, review_gate=review_gate, manifest_paths=manifest_paths,
+                                         notebook_count=notebook_count)
         staged.rename(output_dir)
         return {**report, "output_dir": str(output_dir)}
     except Exception:

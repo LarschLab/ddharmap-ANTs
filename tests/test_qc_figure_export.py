@@ -31,6 +31,19 @@ def test_explicit_preliminary_gallery_names_other_fish_and_preserves_gate(tmp_pa
     assert "midline-review QC figure gallery" in page
 
 
+def test_review_gated_gallery_accepts_declared_accepted_midline_notebook_06(tmp_path):
+    notebooks, manifests, output, fish = _fixture(tmp_path)
+    gate = {"status": "review_required", "reason": "Midline accepted; laterality requires review"}
+    with pytest.raises(ValueError, match="Require exactly executed QC notebooks"):
+        export_qc_figure_gallery(notebook_dir=notebooks, manifest_dir=manifests, output_dir=output,
+                                fish_dir=fish, review_gate=gate, manifest_paths=tuple(manifests.glob("*_manifest.json")))
+    export_qc_figure_gallery(notebook_dir=notebooks, manifest_dir=manifests, output_dir=output, fish_dir=fish,
+                            review_gate=gate, manifest_paths=tuple(manifests.glob("*_manifest.json")), notebook_count=7)
+    report = json.loads((output / "gallery_manifest.json").read_text())
+    assert len(report["notebook_coverage"]) == 7 and report["scientific_release"] == gate
+    assert "accepted-midline review QC figure gallery" in (output / "index.html").read_text()
+
+
 def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     notebooks = tmp_path / "executed"
     notebooks.mkdir()

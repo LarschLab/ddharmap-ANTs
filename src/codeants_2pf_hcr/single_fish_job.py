@@ -30,11 +30,12 @@ def _output_metadata(spec) -> dict:
 
 def _gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path,
              fish_dir: Path, review_gate: dict | None = None,
-             manifest_paths: tuple[Path, ...] | None = None) -> dict:
+             manifest_paths: tuple[Path, ...] | None = None, notebook_count: int | None = None) -> dict:
     from .qc_figure_export import export_qc_figure_gallery
     if not output_dir.exists():
         export_qc_figure_gallery(notebook_dir=notebook_dir, manifest_dir=manifest_dir,
-                                 output_dir=output_dir, fish_dir=fish_dir, review_gate=review_gate, manifest_paths=manifest_paths)
+                                 output_dir=output_dir, fish_dir=fish_dir, review_gate=review_gate, manifest_paths=manifest_paths,
+                                 notebook_count=notebook_count)
         inventory = {str(path.relative_to(output_dir)): _file_hash(path)
                      for path in output_dir.rglob("*") if path.is_file()}
         _write_json_atomic(output_dir / "job_inventory.json", {"sha256": inventory})
@@ -145,7 +146,8 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
                 report["steps"]["export-qc"] = _gallery(
                     notebook_dir=notebook_dir, manifest_dir=manifest_dir,
                     output_dir=gallery_dir.resolve(), fish_dir=fish_dir,
-                    **({"review_gate": review_gate, "manifest_paths": tuple(Path(s.manifest) for s in spec.stages if s.manifest)} if review_gate else {}))
+                    **({"review_gate": review_gate, "manifest_paths": tuple(Path(s.manifest) for s in spec.stages if s.manifest),
+                        "notebook_count": sum("tools/notebook_run.py" in s.command for s in spec.stages)} if review_gate else {}))
                 report["status"] = "pass"
                 if review_gate:
                     report["scientific_release"] = review_gate

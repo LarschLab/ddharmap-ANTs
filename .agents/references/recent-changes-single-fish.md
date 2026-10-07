@@ -4435,3 +4435,6 @@ pass; real detached audit results are saved fish-local.
   --midline-reviewer to append materialize-anatomy-midline, make-motion-auc-tables,
   make-figures and QC notebook 06 after Danin accepted the f02/f07/f05/f06
   anatomy-grid midlines (hash-bound sample-page decisions).
+- Accepted-midline continuation runs passed all stages but the review-gated
+  gallery exporter required exactly notebooks 00-05. The job now passes the
+  recipe notebook count; seven notebooks produce an accepted-midline review gallery.
