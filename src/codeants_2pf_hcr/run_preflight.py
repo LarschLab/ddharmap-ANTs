@@ -93,6 +93,19 @@ def preflight_native_run(spec):
                 else:
                     errors.extend(check_geometry_trace_identity(path, fish_dir=spec.data_root / spec.fish_id,
                         eligible_planes=set(spec.raw["accepted_choices"]["eligible_planes"])))
+    if eligible is not None and "prepare-functional-reference-stacks" not in writers:
+        import pandas as pd
+        functional = spec.data_root / spec.fish_id / "03_analysis/functional"
+        response = functional / "qa/suite2p_presented_stimulus_response_23c.csv"
+        windows = functional / "derived/score-activity-bpi/registration/scored_stimulus_windows.csv"
+        if response.is_file() and windows.is_file():
+            early = pd.read_csv(response)
+            scored = pd.read_csv(windows)
+            keys = ["session_label", "stim_type"]
+            if set(map(tuple, early[keys].drop_duplicates().values)) != set(map(tuple, scored[keys].drop_duplicates().values)):
+                errors.append("early diagnostics and scored windows have inconsistent session/stimulus coverage")
+            if "plane_idx" in early and not set(early.plane_idx.astype(int)).issubset(set(eligible)):
+                errors.append("early diagnostics contain excluded or renumbered acquisition planes")
     return {"ok": not errors, "errors": errors, "graph_root": str(spec.state_root / "transaction_graph"),
             "retained_graph_stages": sorted(retained), "writers": writers}
 
