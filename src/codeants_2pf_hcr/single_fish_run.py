@@ -440,6 +440,10 @@ def build_run_plan(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
     """Build a compact, read-only execution plan."""
     environment = validate_spec_environment(spec)
     stages: list[dict[str, Any]] = []
+    if spec.raw.get("native_production", {}).get("mode") == "fresh":
+        from .run_preflight import preflight_native_run
+        environment["execution_preflight"] = preflight_native_run(spec)
+        environment["ok"] = environment["ok"] and environment["execution_preflight"]["ok"]
     for stage in spec.stages:
         current, reasons = _stage_current(spec, stage, environment)
         stages.append({

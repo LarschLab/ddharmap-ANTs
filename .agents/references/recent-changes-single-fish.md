@@ -4376,3 +4376,12 @@ pass; real detached audit results are saved fish-local.
 - Previous failed f05 state is preserved. New isolated geometry verification
   precedes a separately pinned maintenance continuation; completed f02/f07 are
   untouched. Seed remains 123; f05 remains R2-only.
+# 2026-10-07 execution-layout preflight and monitored f05 continuation
+
+- f05 continuation previously failed before geometry: staged registration
+  references were absent despite canonical copies being present. Add read-only
+  graph dependency and selected input checks to plan and execution, plus
+  hash-verified retained graph materialization. Score-only recipes additionally
+  check acquisition-plane/source/ROI relationships before writers.
+- Preserve failed attempts; f05 reuses registration, f06 remains a full fresh
+  ten-plane run. Monitor f05 as requested; f06 unattended only after preflight.

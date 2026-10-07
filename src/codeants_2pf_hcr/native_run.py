@@ -230,6 +230,12 @@ def execute_native_run(spec, *, resume: bool):
     frozen = Path(policy["frozen_root"]) if mode == "frozen_replay" else None
     source_root = policy.get("original_root") if frozen is not None else None
     graph = spec.state_root / "transaction_graph"
+    if mode == "fresh":
+        from .run_preflight import preflight_native_run, materialize_retained_graph
+        preflight = preflight_native_run(spec)
+        if not preflight["ok"]:
+            raise RuntimeError("Execution preflight failed: " + "; ".join(preflight["errors"]))
+        materialize_retained_graph(spec)
     graph.mkdir(parents=True, exist_ok=True)
     for journal in (spec.state_root / "history").glob("*"):
         if journal.is_dir() and list(journal.glob("intent-*.json")) and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():

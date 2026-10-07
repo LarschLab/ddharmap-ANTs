@@ -529,3 +529,8 @@ Generated manually for the current extracted package surface.
 - `apps.manual_identity.create_viewer`: Optional napari/Qt fixed-mask reviewer with independent marker selection and orthogonal context.
 - `run_single_fish_export_canonical_tables_stage`: Optional `manual_identity_root` selects ROI-only manual-source export; incompatible HCR source mixing is blocked.
 - CLI: `tools/manual_hcr_identity.py` (`prepare`, `view`, `export`, `canonical`, `recover-lock`); setup/contracts: `docs/manual-hcr-identity-gui.md`.
+# Native execution preflight
+
+- `run_preflight.preflight_native_run`: read-only staged dependency and selected input checks.
+- `run_preflight.check_geometry_trace_identity`: source-aware geometry/trace key validation.
+- `run_preflight.materialize_retained_graph`: verified graph copies for declared continuations.

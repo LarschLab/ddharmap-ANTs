@@ -6,6 +6,13 @@
 
 ## Current mixed state (intentional)
 
+- Native `plan` and execution now run read-only execution-graph preflight:
+  implicit producer dependencies, hash-bound retained registration bundles,
+  selected Suite2p provenance, and source-aware score-only geometry joins.
+  Maintenance continuations declare `native_production.retained_graph`;
+  verified copies populate the new transaction graph before any writer.
+  Canonical input presence alone does not satisfy a staged-root dependency.
+
 - Subset-plane geometry exports preserve acquisition indices; selected-list
   offsets must never become canonical ROI keys. Suite2p loading with explicit
   references skips unselected planes. Scoring fails on source-plane mismatch
