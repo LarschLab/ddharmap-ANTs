@@ -97,10 +97,14 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
         WRITERS[2]: ["--anatomy-stack-path", str(anatomy), *(["--reuse-ncc-cache-dir", str(bundle)] if caches else []), "--ants-deterministic-seed", str(FRESH_ANTS_SEED), "--no-ants-fixed-mask-required"] + [v for i in plane_indices for v in ("--reference-plane-index", str(i))],
         WRITERS[4]: ["--anatomy-label-z-mode", "auto"],
         WRITERS[5]: ["--source-root", str(aligned), "--hcr-warp-route", "exvivo_bridge"],
-        WRITERS[6]: ["--anatomy-label-z-mode", "auto"] + (["--supersede-accepted-control-reason", geometry_control_supersede_reason] if geometry_control_supersede_reason else []),
+        WRITERS[6]: ["--anatomy-label-z-mode", "auto"],
         WRITERS[7]: ["--geometry-input-path", str(functional / "registration/functional_roi_anatomy_matches.csv")],
         WRITERS[8]: ["--activity-input-path", str(functional / "derived/score-activity-bpi/registration/functional_roi_activity_identity.csv"), "--roi-anatomy-root", str(functional / "registration"), "--hcr-anatomy-root", str(aligned)],
     }
+    if geometry_control_supersede_reason:
+        # A deliberate upstream correction supersedes geometry and every control derived from it.
+        for writer in WRITERS[6:10]:
+            extra[writer] = extra.get(writer, []) + ["--supersede-accepted-control-reason", geometry_control_supersede_reason]
     stages = []
     manifests = functional / "pipeline_manifests"
     # Exact promoted output inventory is added to each state by the runner.

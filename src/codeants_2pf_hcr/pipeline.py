@@ -2508,6 +2508,48 @@ def _append_qa_report_summary_comparison_checks(checks: list[StageCheckRecord], 
     )
 
 
+_STRICT_CONTROL_CHECK_MARKERS = ("semantic columns", "unique keys", "inputs exist")
+
+
+def _supersede_reason(value: str | None) -> str | None:
+    reason = str(value or "").strip() or None
+    if value is not None and reason is None:
+        raise ValueError("Superseding accepted controls requires a non-empty reason")
+    return reason
+
+
+def _supersede_control_comparisons(
+    paths: PipelinePaths,
+    stage_name: str,
+    checks: tuple[StageCheckRecord, ...],
+    reason: str | None,
+) -> tuple[list[StageCheckRecord], dict[str, Any] | None]:
+    """Report content drift against superseded fish-local controls as warnings.
+
+    Used only after a deliberate upstream correction. Schema checks (columns,
+    unique keys, present inputs) stay strict; each control is hash-recorded.
+    """
+    if reason is None:
+        return list(checks), None
+    import hashlib
+
+    superseded: list[StageCheckRecord] = []
+    for check in checks:
+        if (
+            check.status == "fail"
+            and check.label.startswith("comparison")
+            and not any(marker in check.label for marker in _STRICT_CONTROL_CHECK_MARKERS)
+        ):
+            check = replace(check, status="warn", expected=f"{check.expected}; control superseded: {reason}")
+        superseded.append(check)
+    controls = [
+        {"path": str(spec.control_path), "sha256": hashlib.sha256(Path(spec.control_path).read_bytes()).hexdigest()}
+        for spec in _stage_output_specs_for_inventory(paths, stage_name)
+        if spec.control_path is not None and Path(spec.control_path).is_file()
+    ]
+    return superseded, {"reason": reason, "controls": controls}
+
+
 def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
     checks: list[StageCheckRecord] = []
     for spec in _stage_output_specs_for_inventory(paths, stage_name):
@@ -3705,7 +3747,10 @@ def run_single_fish_assign_hcr_identity_stage(
     roi_anatomy_root: str | Path | None = None,
     hcr_anatomy_root: str | Path | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    supersede_reason = _supersede_reason(supersede_accepted_control_reason)
+    superseded_controls = None
     paths = resolve_pipeline_paths(config)
     input_root = _assign_hcr_identity_source_root(paths, source_root)
     roi_anatomy_root_path = _assign_hcr_identity_roi_anatomy_root(paths, roi_anatomy_root)
@@ -3930,7 +3975,10 @@ def run_single_fish_assign_hcr_identity_stage(
                 ),
             )
         )
-        checks.extend(_build_staged_comparison_checks(paths, "assign-hcr-identity"))
+        comparisons, superseded_controls = _supersede_control_comparisons(
+            paths, "assign-hcr-identity", _build_staged_comparison_checks(paths, "assign-hcr-identity"), supersede_reason
+        )
+        checks.extend(comparisons)
 
     outputs = _stage_output_records(paths, "assign-hcr-identity")
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
@@ -3966,6 +4014,7 @@ def run_single_fish_assign_hcr_identity_stage(
             "plane_refs_summary_path": str(plane_summary_path),
             "anatomy_labels_path": str(anat_labels_path),
             "force_recompute": bool(force_recompute),
+            "superseded_accepted_controls": superseded_controls,
             "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; response fields come from the explicit or same-root score-activity-bpi ROI table; HCR activity/status/candidate exports are recomputed by label-first HCR replay; source registration CSVs are optional comparison controls",
         },
         warnings=warnings,
@@ -4445,7 +4494,10 @@ def run_single_fish_score_activity_bpi_stage(
     *,
     geometry_input_path: str | Path | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    supersede_reason = _supersede_reason(supersede_accepted_control_reason)
+    superseded_controls = None
     paths = resolve_pipeline_paths(config)
     geometry_path = _score_activity_bpi_geometry_input_path(paths, geometry_input_path=geometry_input_path)
     output_specs = _stage_output_specs(paths, "score-activity-bpi")
@@ -4596,7 +4648,10 @@ def run_single_fish_score_activity_bpi_stage(
                     fps_by_plane=result.get("fps_by_plane"),
                 )
                 timing_df.to_csv(output_paths[3], index=False)
-                for comparison in _build_staged_comparison_checks(paths, "score-activity-bpi"):
+                comparisons, superseded_controls = _supersede_control_comparisons(
+                    paths, "score-activity-bpi", _build_staged_comparison_checks(paths, "score-activity-bpi"), supersede_reason
+                )
+                for comparison in comparisons:
                     if comparison.label.startswith("comparison inputs exist:") and "control=False" in comparison.observed:
                         comparison = replace(
                             comparison,
@@ -4631,6 +4686,7 @@ def run_single_fish_score_activity_bpi_stage(
             "geometry_input_path": str(geometry_path),
             "geometry_input_is_explicit": geometry_input_path not in (None, "", False),
             "force_recompute": bool(force_recompute),
+            "superseded_accepted_controls": superseded_controls,
             "uses_precomputed_scored_bpi_df": False,
             "control_outputs_are_comparison_only": True,
             "activity_config": asdict(activity_config) if activity_config is not None else None,
@@ -4688,7 +4744,10 @@ def run_single_fish_export_canonical_tables_stage(
     hcr_input_root: str | Path | None = None,
     manual_identity_root: str | Path | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    supersede_reason = _supersede_reason(supersede_accepted_control_reason)
+    superseded_controls = None
     paths = resolve_pipeline_paths(config)
     score_root, hcr_root = _canonical_export_source_roots(
         paths,
@@ -4760,7 +4819,10 @@ def run_single_fish_export_canonical_tables_stage(
             output_path = output_by_name[filename]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(source_path.read_bytes())
-        checks.extend(_build_staged_comparison_checks(paths, "export-canonical-tables"))
+        comparisons, superseded_controls = _supersede_control_comparisons(
+            paths, "export-canonical-tables", _build_staged_comparison_checks(paths, "export-canonical-tables"), supersede_reason
+        )
+        checks.extend(comparisons)
 
     outputs = _stage_output_records(paths, "export-canonical-tables")
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
@@ -4790,6 +4852,7 @@ def run_single_fish_export_canonical_tables_stage(
             "score_input_root_is_explicit": score_input_root not in (None, "", False),
             "hcr_input_root_is_explicit": hcr_input_root not in (None, "", False),
             "force_recompute": bool(force_recompute),
+            "superseded_accepted_controls": superseded_controls,
             "source_policy": "ROI identity master and HCR-centric CSVs from staged assign root; BPI cells/summary from staged score root unless explicit roots are supplied",
         },
         warnings=warnings,

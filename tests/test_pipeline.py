@@ -2410,6 +2410,37 @@ def test_match_roi_to_anatomy_stage_fails_large_control_drift_unless_superseded(
         _run_match_against_accepted_control(tmp_path / "blank", changed_rows=0, supersede_accepted_control_reason="  ")
 
 
+def test_superseded_control_comparisons_warn_on_content_but_keep_schema_strict(tmp_path: Path, monkeypatch) -> None:
+    import hashlib
+    from types import SimpleNamespace
+
+    from codeants_2pf_hcr import pipeline
+    from codeants_2pf_hcr.pipeline import StageCheckRecord
+
+    control = tmp_path / "control.csv"
+    control.write_text("plane_idx,func_label\n0,1\n")
+    monkeypatch.setattr(pipeline, "_stage_output_specs_for_inventory",
+                        lambda paths, stage: (SimpleNamespace(control_path=str(control)), SimpleNamespace(control_path=None)))
+    checks = (
+        StageCheckRecord(label="comparison CSV exact cells: master", status="fail", detail="d", expected="0", observed="826"),
+        StageCheckRecord(label="comparison CSV shape: pairs", status="fail", detail="d", expected="rows=40", observed="rows=55"),
+        StageCheckRecord(label="comparison CSV semantic columns: master", status="fail", detail="d", expected="all", observed="missing"),
+        StageCheckRecord(label="comparison CSV unique keys: master", status="fail", detail="d", expected="0", observed="2"),
+        StageCheckRecord(label="comparison inputs exist: master", status="fail", detail="d", expected="both", observed="control=False"),
+    )
+
+    unchanged, none = pipeline._supersede_control_comparisons(None, "score-activity-bpi", checks, None)
+    assert none is None and [c.status for c in unchanged] == ["fail"] * 5
+
+    reason = "upstream registration corrected"
+    superseded, record = pipeline._supersede_control_comparisons(None, "score-activity-bpi", checks, reason)
+    assert [c.status for c in superseded] == ["warn", "warn", "fail", "fail", "fail"]
+    assert superseded[0].expected.endswith(f"control superseded: {reason}")
+    assert record == {"reason": reason, "controls": [{"path": str(control), "sha256": hashlib.sha256(control.read_bytes()).hexdigest()}]}
+    with pytest.raises(ValueError, match="non-empty reason"):
+        pipeline._supersede_reason("   ")
+
+
 def test_match_roi_to_anatomy_stage_stages_control_geometry_only(tmp_path: Path) -> None:
     fish_dir = _make_minimal_fish(tmp_path)
     source_root = tmp_path / "control-registration"

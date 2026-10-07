@@ -163,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit staged HCR/anatomy aligned artifact root. Defaults to pipeline_root/register-hcr-to-anatomy/confocal/aligned.",
     )
+    assign_writer.add_argument("--supersede-accepted-control-reason", help="Record why a deliberate upstream correction supersedes the existing fish-local controls; content drift then warns instead of failing.")
     assign_writer.add_argument("--force-recompute", action="store_true")
 
     score_writer = subparsers.add_parser(
@@ -175,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit frozen ROI/anatomy geometry CSV. Defaults to staged match-roi-to-anatomy output.",
     )
+    score_writer.add_argument("--supersede-accepted-control-reason", help="Record why a deliberate upstream correction supersedes the existing fish-local controls; content drift then warns instead of failing.")
     score_writer.add_argument("--force-recompute", action="store_true")
 
     export_canonical = subparsers.add_parser(
@@ -193,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicit HCR/identity registration CSV root. Defaults to staged assign-hcr-identity output root.",
     )
     export_canonical.add_argument("--manual-identity-root", type=Path, help="Explicit manual export root; produces ROI-only canonical tables and blocks HCR source mixing.")
+    export_canonical.add_argument("--supersede-accepted-control-reason", help="Record why a deliberate upstream correction supersedes the existing fish-local controls; content drift then warns instead of failing.")
     export_canonical.add_argument("--force-recompute", action="store_true")
 
     make_qa_report = subparsers.add_parser(
@@ -573,6 +576,7 @@ def main(argv: list[str] | None = None) -> int:
             roi_anatomy_root=args.roi_anatomy_root,
             hcr_anatomy_root=args.hcr_anatomy_root,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -592,6 +596,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             geometry_input_path=args.geometry_input_path,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -613,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
             hcr_input_root=args.hcr_input_root,
             manual_identity_root=args.manual_identity_root,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

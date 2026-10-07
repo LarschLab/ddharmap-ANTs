@@ -513,7 +513,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.fresh_run_spec`
 
-- `build_fresh_run_spec`: Build a clean-pinned common native writer recipe using shared fish paths, explicit eligible planes, fresh best-Z/scale search by default (optional pinned NCC initializer copies), an optional recorded geometry-control supersession reason, provisional aligned HCR inputs and a deferred midline review gate; never imports another fish's frozen products or review decisions.
+- `build_fresh_run_spec`: Build a clean-pinned common native writer recipe using shared fish paths, explicit eligible planes, fresh best-Z/scale search by default (optional pinned NCC initializer copies), an optional recorded control-supersession reason passed to match-roi-to-anatomy, score-activity-bpi, assign-hcr-identity and export-canonical-tables, provisional aligned HCR inputs and a deferred midline review gate; never imports another fish's frozen products or review decisions.
 - CLI: `tools/build_fresh_single_fish_spec.py`; policy: `docs/single-fish-unattended-job.md`.
 
 ## `codeants_2pf_hcr.fresh_batch`

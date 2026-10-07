@@ -4412,3 +4412,12 @@ pass; real detached audit results are saved fish-local.
   `--supersede-accepted-control-reason`; drift is then warned and recorded.
   Fish folders remain mixed (new registration, old geometry onward) until the
   superseding rerun completes.
+- v2 reruns passed geometry, then failed at score-activity-bpi against the
+  score-owned control: only carried geometry columns differed (f06 plane 0:
+  anat/selected 314, unique 198; f07 all planes 5119/5119/2419); every
+  response/BPI/identity column and the BPI cell/summary tables were identical.
+  Per user decision the same recorded supersession now covers the score,
+  identity and export control comparisons: content drift (shape, keyed rows,
+  exact/numeric cells) warns with control hashes and reason recorded in
+  `superseded_accepted_controls`; missing columns, duplicate keys and missing
+  inputs stay hard failures.

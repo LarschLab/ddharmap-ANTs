@@ -63,10 +63,12 @@ def test_shared_recipe_pins_r2_and_has_no_frozen_or_midline_acceptance(tmp_path,
     assert "--reuse-ncc-cache-dir" not in fresh_register
     assert not any("input_bundles" in value for value in fresh_register + fresh["stages"][2]["inputs"])
     assert not (target.parent / "input_bundles" / "search").exists()
-    match = fresh["stages"][6]["command"]
-    assert match[2] == "match-roi-to-anatomy"
-    assert match[match.index("--supersede-accepted-control-reason") + 1] == "corrected registration"
-    assert "--supersede-accepted-control-reason" not in parsed.stages[6].command
+    superseding = [stage["command"] for stage in fresh["stages"] if "--supersede-accepted-control-reason" in stage["command"]]
+    assert [command[2] for command in superseding] == [
+        "match-roi-to-anatomy", "score-activity-bpi", "assign-hcr-identity", "export-canonical-tables",
+    ]
+    assert all(command[command.index("--supersede-accepted-control-reason") + 1] == "corrected registration" for command in superseding)
+    assert not any("--supersede-accepted-control-reason" in stage.command for stage in parsed.stages)
     with pytest.raises(ValueError, match="restricted to R2"):
         recipe.build_fresh_run_spec(fish_id="L765_f05", data_root=old.data_root, repo_root=old.repo_root,
                                     run_id="invalid", spec_path=tmp_path / "invalid.json", plane_indices=tuple(range(10)), ncc_cache_source=cache)
