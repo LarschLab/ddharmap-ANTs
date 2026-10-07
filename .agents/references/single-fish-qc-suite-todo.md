@@ -15,7 +15,35 @@ sync any local assistant workspace changes to it only after inspecting diffs
 and preserving pre-existing remote work. Read data from
 `/Volumes/dataDrive/dataProcessing/2p_processing` there.
 
-## Active working root
+## Current unattended queue — 2026-10-07
+
+- [x] Fresh isolated L765_f04 control with fixed ANTs seed 123: all 12
+  writers and QC 00–05 passed without intervention; artifact audit and no-op
+  resume passed. Job `20261007T074626Z-fixed-seed123-fresh-control-cbfb`.
+- [x] Danin reviewed all 36 exported figures as good and authorized remaining
+  fish production. This is visual control approval, not evidence of two
+  byte-identical fresh whole-run seeded repeats. Historical seed-zero failure
+  and canonical f04 geometry remain preserved; no f04 promotion is authorized.
+- [ ] Submit sequential detached native jobs: L765_f02 (all ten planes),
+  L758_f07 (all ten), L765_f05 (functional R2/global planes 5–9 only),
+  L765_f06 (all ten). Fresh recipes pin seed 123, interpreter, clean checkout,
+  source/drift/NCC hashes and consumer-specific fish-local outputs.
+- [ ] On user-requested inspection, read terminal per-fish reports and retrieve
+  exported QC galleries. No AI polling, automatic repair or retry; stop queue
+  on the first failed job. Retain backups before per-file native promotion.
+- [ ] Review each new fish's registration, resolved anatomy-label Z and
+  proposed anatomy-grid midline before laterality/final figures/QC 06 release.
+  Existing 19 retained HCR masks are provisional approximate inputs; quality
+  gates remain active. Missing 17 native HCR masks and manual identity merge
+  remain deferred. Do not infer a new biological exclusion from a job failure.
+
+Execution checkout: `/Users/ddharmap/gitRepo/codeANTs-remaining-fish-20261006`.
+Original dirty manual-identity checkout must remain untouched. Client evidence:
+`wikiLogbook/daily/2026/2026-10-07.md` and dataset
+`20-fresh-unattended-native-batch.md` (user decision supersedes the proposed
+two-fresh-control launch hold; full-chain repeatability is still unproven).
+
+## Historical working root — superseded by native production
 
 - The sole active L765_f04 pipeline/QC root is
   `/Volumes/dataDrive/dataProcessing/2p_processing/_staged_pipeline_runs/20260915T093051Z_WORKING_PIPELINE_AND_QC/L765_f04`.
