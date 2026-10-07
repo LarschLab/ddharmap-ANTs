@@ -69,6 +69,11 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     if polarity not in {"north", "south"}:
         raise ValueError("Functional orientation is unresolved")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
+    from .suite2p_provenance import check_suite2p_input_provenance
+    from .spatial_contract import spatial_manifest_path
+    spatial_manifest = spatial_manifest_path(fish)
+    check_suite2p_input_provenance(fish_dir=fish, plane_indices=plane_indices)
+    required.append(spatial_manifest)
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=repo_root, text=True).strip():
         raise ValueError("Recipe requires a clean pinned checkout")
     bundle = spec_path.parent / "input_bundles" / run_id
@@ -97,7 +102,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     # Exact promoted output inventory is added to each state by the runner.
     for i, writer in enumerate(WRITERS):
         name = f"{(i+1)*10:03}-{writer}"
-        inputs = [anatomy, labels, matching, metadata, drift]
+        inputs = [anatomy, labels, matching, metadata, drift, spatial_manifest]
         if i == 1: inputs += motion + suite + raw_metadata
         if i in {3, 6, 7}: inputs += suite
         if i == 2: inputs += [bundle / p.name for p in caches]
@@ -130,7 +135,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                "environment": {"MPLBACKEND": "Agg", "PYTHONHASHSEED": "0", "ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS": "1", "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1"},
                "native_production": {"mode": "fresh", "reuse_stages": []},
                "accepted_choices": {"functional_polarity": polarity, "functional_polarity_source": source, "eligible_planes": list(plane_indices), "temporal_drift_basis": str(drift), "hcr_masks": "provisional approximate overview; manual identity merge pending", "midline_gate": "review_required"},
-               "scientific_parameters": params, "provenance_pins": [{"name": p.name, "path": str(p), "sha256": _file_hash(p)} for p in [metadata, matching, drift, *raw_metadata, *masks, *sidecars, *[bundle / p.name for p in caches]]],
+               "scientific_parameters": params, "provenance_pins": [{"name": p.name, "path": str(p), "sha256": _file_hash(p)} for p in [metadata, matching, drift, spatial_manifest, *raw_metadata, *masks, *sidecars, *[bundle / p.name for p in caches]]],
                "review_gate": {"status": "review_required", "reason": "Anatomy Z and registration QC plus proposed midlines require visual review; laterality is not accepted by this job."}, "stages": stages}
     _write_json_atomic(spec_path, payload)
     return payload

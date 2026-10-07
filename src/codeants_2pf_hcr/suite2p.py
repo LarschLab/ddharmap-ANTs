@@ -902,7 +902,9 @@ def load_suite2p_stage(
                             data_paths = [data_paths]
                         if data_paths:
                             candidate = Path(str(data_paths[0])) / candidate
-                    ops_inputs.add(candidate.resolve())
+                    from .suite2p_provenance import resolve_reconciled_suite2p_input
+                    ops_inputs.add(resolve_reconciled_suite2p_input(
+                        candidate, ops_path=paths["ops"], manifest=manifest))
             if not ops_inputs or not ops_inputs.issubset(declared_plane_paths):
                 raise ValueError(
                     "Suite2P outputs are stale or lack declared input provenance: "

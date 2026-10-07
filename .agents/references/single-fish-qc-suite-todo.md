@@ -17,6 +17,13 @@ and preserving pre-existing remote work. Read data from
 
 ## Current unattended queue — 2026-10-07
 
+Current correction: queue `20261007T085018Z-seeded-native-remaining-fish-33fb`
+stopped on f02 reference preparation (obsolete Suite2p absolute root). Other
+three fish did not start. User requests repair/validation only, no resubmission.
+Audit legacy acquisition frames and moved inputs with the package-owned
+`suite2p_provenance` writer; preserve the failed recipes and original JSON.
+New pinned recipes are required after repair; do not reuse failed spec/state.
+
 - [x] Fresh isolated L765_f04 control with fixed ANTs seed 123: all 12
   writers and QC 00–05 passed without intervention; artifact audit and no-op
   resume passed. Job `20261007T074626Z-fixed-seed123-fresh-control-cbfb`.

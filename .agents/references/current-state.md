@@ -6,6 +6,12 @@
 
 ## Current mixed state (intentional)
 
+- Fresh recipes now preflight Suite2p input identity, trace frame counts and
+  frame declarations and pin the spatial manifest. Moved legacy inputs require
+  explicit hash/fingerprint-bound reconciliation, never basename-only bypass.
+  `suite2p_provenance.py` can audit the recorded resonant raw averaging and
+  archive/correct stale acquisition-frame declarations without editing data.
+
 - ROI-centric path (`[50i]`, `[50ia]`, `[50j]`, `[50k]`) is used for authoritative whole-population outputs.
 - HCR-centric identified-cell path (`[50]`, `[50e]`, `[51]`, `[56]`, `[56h]`, `[57]`) remains active for identified-cell activity workflows.
 - Cohort notebook path (`notebooks/multi_fish_56h_56g.ipynb`) is a downstream multi-fish consumer of single-fish outputs.

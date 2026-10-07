@@ -253,6 +253,12 @@ Generated manually for the current extracted package surface.
 - `apply_square_region_mask`: Preserve values inside an anatomy-space square and set outside pixels to zero for masked registration.
 - `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy bindings/cache names, validates declared XY frames, skips orientation for upstream canonical inputs, and applies direct orientation only for explicit legacy/acquisition inputs.
 
+## `codeants_2pf_hcr.suite2p_provenance`
+
+- `check_suite2p_input_provenance`: Read-only per-plane source/frame/trace-count preflight; rejects stale or wrong-plane inputs before recipe creation.
+- `resolve_reconciled_suite2p_input`: Resolve explicit recorded aliases only when ops hashes, metadata hash and audited input fingerprints still match; used by the authoritative Suite2p loader.
+- `reconcile_legacy_functional_provenance`: Evidence-backed one-time JSON repair for recorded resonant legacy averaging; sample raw blocks, check motion orientation, archive/checksum original spatial manifest, preserve TIFFs and all Suite2p arrays.
+
 ## `codeants_2pf_hcr.spatial_contract`
 
 - `load_spatial_manifest`: Validate the upstream canonical functional/anatomy XY and registration-Z contract; unknown or contradictory frames fail closed.

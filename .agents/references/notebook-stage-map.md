@@ -6,6 +6,13 @@
 
 ## End-to-end stages
 
+Legacy Suite2p provenance repair is package-owned in `suite2p_provenance.py`.
+It samples first/middle/last raw volumes in every recorded block, checks the
+unchanged motion/Suite2p mean-image orientation, archives the original spatial
+manifest and corrects only its acquisition-frame/explicit input-alias records.
+It never changes TIFF/NPY data. Fresh recipe creation now checks Suite2p
+provenance and pins that spatial manifest before any writer can start.
+
 1. **Setup and fish-scoped paths** (`[1]-[5]`)
    - Imports, fish context, run configuration.
    - Key vars: `FISH_ID`, `RUN_CONFIG`, `NAS_ROOT`, `FISH_DIR`, `OUTDIR`, `OUT_REG`, `OUT_QA`, `OUT_DERIVED`.

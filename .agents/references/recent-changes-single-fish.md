@@ -1,5 +1,20 @@
 # Recent Changes - Single-Fish Workflow
 
+## 2026-10-07 — Legacy Suite2p relocation and frame repair (jobs held)
+
+User approved the fixed-seed control gallery and the subsequent native queue,
+which stopped after f02 anatomy preparation at obsolete Suite2p path provenance;
+the other three fish did not start. Inspection exposed an independent stale
+canonical-frame declaration across four legacy fish. Package-owned
+`suite2p_provenance.py` audits recorded raw averaging, motion/Suite2p mean
+orientation and dimensions, archives original JSON, records unchanged ops
+hashes/input fingerprints and applies only explicit aliases/acquisition frames.
+Suite2p loader checks this bound evidence; fresh recipes preflight it and pin
+the spatial manifest. No TIFF/NPY rewrite, thresholds/schema/eligibility change,
+Suite2p recomputation or production resubmission is authorized by this repair.
+Focused tests and per-fish audit results own validation; later fresh pinned
+specs must be prepared rather than altering failed recipes/state.
+
 ## 2026-10-07 — Real fresh-control failure and seed diagnosis
 
 Detached batch `20261007T072652Z-fresh-single-fish-control-and-native-batch-b9dd`

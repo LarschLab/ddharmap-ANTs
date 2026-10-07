@@ -23,6 +23,11 @@ def test_shared_recipe_pins_r2_and_has_no_frozen_or_midline_acceptance(tmp_path,
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"fixture")
     (old.data_root / "matchingMetadata.csv").write_text("fixture")
+    from codeants_2pf_hcr import suite2p_provenance
+    monkeypatch.setattr(suite2p_provenance, "check_suite2p_input_provenance", lambda **kwargs: {"status": "pass"})
+    manifest = fish / "02_reg/00_preprocessing/spatial_preprocessing_manifest.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("{}")
     cache = tmp_path / "ncc"
     cache.mkdir()
     for name in ("ncc_bestz_by_plane.json", "ncc_scale_by_fish.json"):
