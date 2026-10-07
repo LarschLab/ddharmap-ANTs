@@ -7,6 +7,14 @@ import pytest
 
 from codeants_2pf_hcr.matching import build_functional_roi_master_df
 from codeants_2pf_hcr.pipeline import _build_activity_detail_from_geometry
+from codeants_2pf_hcr.suite2p import _acquisition_indexed_planes
+
+
+def test_early_diagnostic_planes_use_acquisition_keys():
+    planes = {local: {"plane_num": acquisition} for local, acquisition in enumerate(range(5, 10))}
+    assert set(_acquisition_indexed_planes(planes)) == set(range(5, 10))
+    with pytest.raises(ValueError, match="Duplicate"):
+        _acquisition_indexed_planes({0: {"plane_num": 5}, 1: {"plane_num": 5}})
 
 
 @pytest.mark.parametrize("indices", [(0, 1), (5, 6, 7, 8, 9), (1, 4, 9)])

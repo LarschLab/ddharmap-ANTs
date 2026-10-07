@@ -188,6 +188,7 @@ def build_suite2p_stimulus_locked_diagnostic(
     cfg = config or Suite2pStimulusLockedDiagnosticConfig()
     if not suite2p_by_ref_idx:
         raise RuntimeError("[23c] Suite2p data not loaded; run [23a] first.")
+    suite2p_by_ref_idx = _acquisition_indexed_planes(suite2p_by_ref_idx)
     plane_indices = sorted(int(plane) for plane in suite2p_by_ref_idx.keys())
     stim_cfg = StimulusConfig(
         stim_time_scale=float(cfg.stim_time_scale),
@@ -510,6 +511,17 @@ def _scored_windows_to_heatmap_spans(
     return spans.drop(columns=["row_last"], errors="ignore")
 
 
+def _acquisition_indexed_planes(planes):
+    result = {}
+    for local_idx, plane in planes.items():
+        index = plane.get("plane_num")
+        index = int(index if index is not None else local_idx)
+        if index in result:
+            raise ValueError(f"Duplicate acquisition-plane identity: {index}")
+        result[index] = plane
+    return result
+
+
 def run_suite2p_stimulus_locked_diagnostic_stage(
     *,
     fish_dir: str | Path,
@@ -523,6 +535,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
     activity_config: Any | None = None,
 ) -> dict[str, Any]:
     cfg = config or Suite2pStimulusLockedDiagnosticConfig()
+    suite2p_by_ref_idx = _acquisition_indexed_planes(suite2p_by_ref_idx)
     result = build_suite2p_stimulus_locked_diagnostic(
         fish_dir=fish_dir,
         fish_id=fish_id,
