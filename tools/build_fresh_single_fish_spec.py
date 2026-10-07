@@ -10,8 +10,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("fish-id", "run-id"):
         parser.add_argument("--" + name, required=True)
-    for name in ("data-root", "repo-root", "spec", "ncc-cache-source"):
+    for name in ("data-root", "repo-root", "spec"):
         parser.add_argument("--" + name, required=True, type=Path)
+    parser.add_argument("--ncc-cache-source", type=Path, default=None,
+                        help="Optional legacy best-Z/scale cache; omitted means search from current references")
     parser.add_argument("--plane-index", type=int, action="append", required=True)
     args = parser.parse_args()
     payload = build_fresh_run_spec(fish_id=args.fish_id, data_root=args.data_root, repo_root=args.repo_root,

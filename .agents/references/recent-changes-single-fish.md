@@ -4385,3 +4385,22 @@ pass; real detached audit results are saved fish-local.
   check acquisition-plane/source/ROI relationships before writers.
 - Preserve failed attempts; f05 reuses registration, f06 remains a full fresh
   ten-plane run. Monitor f05 as requested; f06 unattended only after preflight.
+# 2026-10-07 native QC review: stale best-Z cache and diverged ANTs selection
+
+- L758_f07 F008: the reused May best-Z/scale cache predated the functional
+  orientation fix (plane 0 cached Z=8, current-reference recompute Z=64; plane 4
+  24 vs 48; cached profile matches a Y-flipped current reference). f02/f05/f06
+  caches reproduce exactly. Fresh recipes now search; any reused cache entry
+  must reproduce or is searched afresh; manifests record `ncc_cache_reused`.
+- L765_f06 F008 plane 0: ANTs post-NCC -0.117 vs NCC-xy 0.648 was still
+  selected. Per user decision each plane now selects the higher post-NCC method.
+- NCC-xy selections were never exercised in staged runs and were wrong: ROI
+  labels lacked native-to-scaled resampling and midlines added the NCC offset
+  twice. `resolve_plane_transform` now owns the composed transform.
+- Midline audit: native consensus lines (dark corridor, fish-level angle,
+  per-session robust depth offset) are projected through each plane's selected
+  transform; `make-functional-registration-qc` and `make-anatomy-midline-proposal`
+  write byte-identical anatomy proposals to the same path for all four fish.
+- Remaining: rerun f07/f06 from fresh recipes; geometry, identity, canonical
+  tables and anatomy-grid midlines for f07 planes 0-7 and f06 plane 0 are
+  invalid until then. Midline and laterality remain review-gated.

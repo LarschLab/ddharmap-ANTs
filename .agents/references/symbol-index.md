@@ -50,7 +50,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.midline_review`
 
-- `project_native_midline_to_anatomy`, `build_anatomy_midline_proposal_table`: Project persisted native-functional fixed-consensus lines through selected scale/NCC/ANTs registration and require exact registered-plane coverage.
+- `project_native_midline_to_anatomy`, `build_anatomy_midline_proposal_table`: Project persisted native-functional fixed-consensus lines through selected scale/NCC/ANTs registration and require exact registered-plane coverage. NCC-xy planes apply the composed native-to-anatomy transform once.
 - `validate_logbook_midline_gate`, `load_accepted_anatomy_midline_context`: Require fish-specific logbook acceptance bound to proposal CSV/PNG hashes and verify the materialized anatomy-grid input and its source artifacts.
 
 ## `codeants_2pf_hcr.spatial`
@@ -279,8 +279,8 @@ Generated manually for the current extracted package surface.
 - `load_functional_frame_selection`: Read and validate the matching accepted preparation manifest's per-plane first-block-exclusion boundary, source-frame count, and retained-frame count; fail closed if exclusion provenance is absent or inconsistent.
 - `run_functional_z_drift_diagnostic`: Build time-windowed, top-correlated functional references from the manifest-selected post-block-0 motion-corrected frames using manifest-resolved polarity, reuse persisted per-plane NCC scales, score the canonical anatomy Z stack, and write interval/profile/session-summary CSVs plus review plots whose X axis names each retained block and within-block window; it does not rerun ANTs or change canonical registration outputs.
 - `run_ncc_placement_stage`: Notebook-facing NCC XY placement stage for `[20]` that updates `plane_refs` with placement metadata and warped reference aliases.
-- `run_in_plane_registration_comparison_stage`: Notebook-facing `[20]` comparison stage that evaluates current NCC XY placement against optional ANTs rigid+affine placement while keeping the configured active backend explicit.
-- `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, and rebinds legacy globals.
+- `run_in_plane_registration_comparison_stage`: Notebook-facing `[20]` comparison stage that evaluates current NCC XY placement against optional ANTs rigid+affine placement while keeping the configured active backend explicit; per plane it selects the successful method with the higher post-transform NCC and records the reason.
+- `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, rejects cached entries whose profile does not reproduce from the current reference, and rebinds legacy globals.
 
 ## `codeants_2pf_hcr.matching`
 
@@ -290,7 +290,7 @@ Generated manually for the current extracted package surface.
 - `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
 - `hcr_response_lookup_from_roi_master_df`: Normalize response-aware ROI master columns into the plane/function-label lookup used by HCR-centric identified-cell activity exports.
 - `finalize_hcr_activity_export_tables`: Package-owned finalizer for notebook `[50]` HCR activity exports. It decorates HCR candidate geometry with ROI response calls and produces finalized status, raw candidate, responsive analysis, and candidate tables; it does not build `hcr_activity_status_summary.csv`.
-- `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
+- `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record; `tform_src == "ncc_xy"` with reference shapes returns the native-to-anatomy scale-plus-placement transform.
 - `resolve_anatomy_label_z`: Map an anatomy-intensity `best_z` to the corresponding anatomy-label stack page, including reversed label stacks.
 - `infer_anatomy_label_z_mode`: Compare anatomy-label boundaries with intensity edges across registered best-Z planes and return the direct or reversed page convention plus both aggregate scores.
 - `validate_anatomy_label_z_provenance`: Fail-closed validator for explicit mode/page consistency, page range, geometry-plane coverage, and selected-label membership.
@@ -513,7 +513,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.fresh_run_spec`
 
-- `build_fresh_run_spec`: Build a clean-pinned common native writer recipe using shared fish paths, explicit eligible planes, immutable NCC initializer copies, provisional aligned HCR inputs and a deferred midline review gate; never imports another fish's frozen products or review decisions.
+- `build_fresh_run_spec`: Build a clean-pinned common native writer recipe using shared fish paths, explicit eligible planes, fresh best-Z/scale search by default (optional pinned NCC initializer copies), provisional aligned HCR inputs and a deferred midline review gate; never imports another fish's frozen products or review decisions.
 - CLI: `tools/build_fresh_single_fish_spec.py`; policy: `docs/single-fish-unattended-job.md`.
 
 ## `codeants_2pf_hcr.fresh_batch`

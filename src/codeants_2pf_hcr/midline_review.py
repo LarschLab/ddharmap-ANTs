@@ -132,7 +132,10 @@ def project_native_midline_to_anatomy(
         raise ValueError("Midline projection needs the selected NCC placement and transform")
     x_canvas = native_x * scaled_shape[1] / native_shape[1] + float(ncc["x0"])
     y_canvas = native_y * scaled_shape[0] / native_shape[0] + float(ncc["y0"])
-    if isinstance(transform, dict) and transform.get("type") == "ants_transformlist":
+    if plane_ref.get("tform_src") == "ncc_xy":
+        # The resolved NCC transform already includes native->scaled resampling and placement.
+        fixed_x, fixed_y = transform_points_between_spaces(native_x, native_y, transform)
+    elif isinstance(transform, dict) and transform.get("type") == "ants_transformlist":
         paths = [Path(path) for path in transform.get("transformlist", [])]
         if not paths or not all(path.is_file() for path in paths):
             raise FileNotFoundError("Selected ANTs midline transform files are missing")

@@ -8161,6 +8161,7 @@ def run_register_functional_to_anatomy_stage(
                 else None
             ),
             "ncc_search_reused": bool(using_preprocessing_ncc_handoff),
+            "ncc_cache_reused": cache_source_dir is not None,
             "registration_backend": str(active_inplane_method),
             "run_inplane_comparison": bool(run_inplane_comparison),
             "inplane_methods": tuple(inplane_methods),

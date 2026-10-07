@@ -30,11 +30,13 @@ FRESH_ANTS_SEED = 123
 
 def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                          run_id: str, spec_path: Path, plane_indices: tuple[int, ...],
-                         ncc_cache_source: Path) -> dict:
+                         ncc_cache_source: Path | None = None) -> dict:
     """Pin shared naming, selected planes and approximate aligned HCR inputs.
 
-    Refuse missing inputs and existing specs/bundles. NCC initializer bytes are
-    copied and pinned; every selected ANTs registration is nevertheless rerun.
+    Refuse missing inputs and existing specs/bundles. Best Z and scale are
+    searched from the current references unless an NCC initializer cache is
+    explicitly supplied; its bytes are then copied and pinned, and each entry
+    must reproduce from the current reference. Every registration is rerun.
     The result deliberately stops before accepting any proposed midline.
     """
     import re
@@ -60,7 +62,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     aligned = fish / "03_analysis/confocal/aligned"
     masks = sorted(p for p in aligned.glob("*_cp_masks_in_2p_labels_uint16.tif") if not p.name.startswith("._"))
     sidecars = [Path(str(p).replace("_labels_uint16.tif", "_warp_meta.json")) for p in masks]
-    caches = [ncc_cache_source / name for name in ("ncc_bestz_by_plane.json", "ncc_scale_by_fish.json")]
+    caches = [] if ncc_cache_source is None else [ncc_cache_source / name for name in ("ncc_bestz_by_plane.json", "ncc_scale_by_fish.json")]
     required = [anatomy, labels, metadata, matching, drift, *motion, *suite, *raw_metadata, *masks, *sidecars, *caches]
     missing = [str(p) for p in required if not p.is_file()]
     if missing or not masks or not raw_metadata:
@@ -79,7 +81,8 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     bundle = spec_path.parent / "input_bundles" / run_id
     if spec_path.exists() or bundle.exists():
         raise FileExistsError("Refusing to overwrite an existing run recipe/input bundle")
-    bundle.mkdir(parents=True)
+    if caches:
+        bundle.mkdir(parents=True)
     for p in caches:
         shutil.copy2(p, bundle / p.name)
         if _file_hash(p) != _file_hash(bundle / p.name):
@@ -90,7 +93,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     extra = {
         WRITERS[0]: ["--anatomy-stack-path", str(anatomy), "--output-path", str(anatomy)],
         WRITERS[1]: ["--run-23c"] + [v for p in motion for v in ("--functional-stack-path", str(p))],
-        WRITERS[2]: ["--anatomy-stack-path", str(anatomy), "--reuse-ncc-cache-dir", str(bundle), "--ants-deterministic-seed", str(FRESH_ANTS_SEED), "--no-ants-fixed-mask-required"] + [v for i in plane_indices for v in ("--reference-plane-index", str(i))],
+        WRITERS[2]: ["--anatomy-stack-path", str(anatomy), *(["--reuse-ncc-cache-dir", str(bundle)] if caches else []), "--ants-deterministic-seed", str(FRESH_ANTS_SEED), "--no-ants-fixed-mask-required"] + [v for i in plane_indices for v in ("--reference-plane-index", str(i))],
         WRITERS[4]: ["--anatomy-label-z-mode", "auto"],
         WRITERS[5]: ["--source-root", str(aligned), "--hcr-warp-route", "exvivo_bridge"],
         WRITERS[6]: ["--anatomy-label-z-mode", "auto"],

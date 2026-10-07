@@ -210,6 +210,85 @@ class SpatialTests(unittest.TestCase):
             self.assertTrue((out_ncc / "ncc_scale_by_fish.json").exists())
             self.assertTrue((out_ncc / "ncc_bestz_by_plane.json").exists())
 
+    def _search_with_cache(self, root: Path, cached_best_z: int) -> tuple[dict, list[dict]]:
+        anat_path = root / "anat.tif"
+        out_ncc = root / "ncc"
+        template = np.zeros((5, 5), dtype=np.float32)
+        template[2, 2] = 1.0
+        anat = np.zeros((3, 5, 5), dtype=np.float32)
+        anat[1] = template
+        tifffile.imwrite(anat_path, anat)
+        _, current_scores = best_z_by_ncc(template, anat, use_cv2=False)
+        cached_scores = list(map(float, current_scores)) if cached_best_z == 1 else [0.9, 0.1, 0.0]
+        out_ncc.mkdir()
+        (out_ncc / "ncc_bestz_by_plane.json").write_text(json.dumps(
+            {"version": 2, "per_fish": {"L395_f11": {"plane0": {"scale": 1.0, "best_z": cached_best_z, "scores": cached_scores}}}}
+        ))
+        plane_refs = [{"label": "plane0", "ref2d_raw": template.copy()}]
+        result = run_registration_search_stage(
+            anat_stack_path=anat_path,
+            plane_refs=plane_refs,
+            fish_id="L395_f11",
+            out_ncc=out_ncc,
+            config=RegistrationSearchConfig(
+                manual_scale=1.0,
+                scale_coarse=(1.0, 1.0, 0.1),
+                scale_fine=(0.0, 0.0),
+                scale_xfine=(0.0, 0.0),
+                scale_ufine=(0.0, 0.0),
+                scale_per_plane=False,
+                use_cv2=False,
+            ),
+        )
+        return result, plane_refs
+
+    def test_registration_search_rejects_cached_bestz_that_does_not_reproduce(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            result, plane_refs = self._search_with_cache(Path(tmpdir), cached_best_z=0)
+            self.assertEqual(plane_refs[0]["best_z"], 1)
+            self.assertTrue(any("Rejected cached scale+bz" in line for line in result["log_lines"]))
+
+    def test_registration_search_reuses_cached_bestz_that_reproduces(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            result, plane_refs = self._search_with_cache(Path(tmpdir), cached_best_z=1)
+            self.assertEqual(plane_refs[0]["best_z"], 1)
+            self.assertTrue(any("Using cached scale+bz" in line for line in result["log_lines"]))
+
+    def test_in_plane_selection_uses_higher_post_ncc_than_requested_method(self) -> None:
+        template = np.zeros((4, 4), dtype=np.float32)
+        template[1:3, 1:3] = 1.0
+        anat = np.zeros((1, 8, 8), dtype=np.float32)
+        anat[0, 2:6, 3:7] = template
+        plane_refs = [{"label": "plane0", "ref_match": template, "best_z": 0}]
+        diverged = {
+            "status": "ok",
+            "method": "ants_rigid_affine",
+            "warped": np.zeros((8, 8), dtype=np.float32),
+            "display_warped": np.zeros((8, 8), dtype=np.float32),
+            "transform": {"type": "ants_transformlist", "transformlist": []},
+            "transformlist": [],
+            "post_ncc": -0.1,
+            "valid_fraction": 1.0,
+        }
+        with patch("codeants_2pf_hcr.spatial._ants_rigid_affine_in_plane_result", return_value=diverged):
+            result = run_in_plane_registration_comparison_stage(
+                plane_refs=plane_refs,
+                anat_f=anat,
+                fish_id="TEST_FISH",
+                config=InPlaneRegistrationComparisonConfig(
+                    methods=("ncc_xy", "ants_rigid_affine"),
+                    active_method="ants_rigid_affine",
+                    use_cv2=False,
+                    ants_require_fixed_mask=False,
+                ),
+            )
+
+        self.assertEqual(plane_refs[0]["tform_src"], "ncc_xy")
+        self.assertEqual(plane_refs[0]["inplane_requested_active_method"], "ants_rigid_affine")
+        self.assertIn("exceeds ants_rigid_affine post_ncc=-0.1000", plane_refs[0]["inplane_fallback_reason"])
+        selected = result["comparison_df"].loc[result["comparison_df"]["selected"]]
+        self.assertEqual(list(selected["method"]), ["ncc_xy"])
+
     def test_in_plane_comparison_ncc_only_keeps_current_transform(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

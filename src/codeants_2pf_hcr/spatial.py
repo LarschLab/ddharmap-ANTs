@@ -351,6 +351,10 @@ class InPlaneRegistrationComparisonConfig:
     fail_on_active_method_error: bool = True
 
 
+# A reused best-Z profile must reproduce from the current reference at its cached scale.
+BESTZ_CACHE_MIN_PROFILE_CORR = 0.999
+
+
 @dataclass(frozen=True)
 class RegistrationSearchConfig:
     rescale_func_to_anat: bool = True
@@ -1123,6 +1127,14 @@ def _ants_rigid_affine_in_plane_result(
     }
 
 
+def _finite_or_neg_inf(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float("-inf")
+    return number if np.isfinite(number) else float("-inf")
+
+
 def _summarize_in_plane_recommendations(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=["fish_id", "plane_idx", "plane", "recommended_method", "recommended_post_ncc"])
@@ -1330,6 +1342,19 @@ def run_in_plane_registration_comparison_stage(
                 raise RuntimeError(f"{label} active method {active_method} failed: {plane_errors[active_method]}")
             else:
                 continue
+        else:
+            best_method = max(
+                plane_results,
+                key=lambda name: (_finite_or_neg_inf(plane_results[name].get("post_ncc")), name == active_method),
+            )
+            if best_method != active_method:
+                fallback_reason = (
+                    f"{best_method} post_ncc={_finite_or_neg_inf(plane_results[best_method].get('post_ncc')):.4f} exceeds "
+                    f"{active_method} post_ncc={_finite_or_neg_inf(active_result.get('post_ncc')):.4f}"
+                )
+                active_result = plane_results[best_method]
+                selected_method = best_method
+                log_lines.append(f"[20] WARNING: {label} selected {best_method}: {fallback_reason}")
 
         for row in rows:
             if int(row.get("plane_idx", -1)) == resolved_plane_idx and str(row.get("plane")) == label:
@@ -1720,7 +1745,16 @@ def run_registration_search_stage(
                     best_z = int(cached_best.get("best_z", 0))
                     scores = np.asarray(cached_best.get("scores", []), dtype=np.float32)
                     if best_scale is not None and scores.size == z_max and 0 <= best_z < scores.size:
-                        metrics = registration_metric_from_scores(scores)
+                        current = score_scale_for_plane(ref_src, best_scale)
+                        current_scores = None if current is None else np.asarray(current["scores"], dtype=np.float64)
+                        reproduced = (
+                            current_scores is not None
+                            and int(np.argmax(current_scores)) == int(np.argmax(scores))
+                            and float(np.corrcoef(current_scores, scores.astype(np.float64))[0, 1]) >= BESTZ_CACHE_MIN_PROFILE_CORR
+                        )
+                        metrics = registration_metric_from_scores(scores) if reproduced else None
+                        if not reproduced:
+                            logs.append(f"[16:{label}] Rejected cached scale+bz: profile does not reproduce from the current reference; searching")
                         if metrics is not None:
                             metrics.update({"scale": best_scale, "scores": scores})
                             logs.append(f"[16:{label}] Using cached scale+bz: {best_scale:.5f}")

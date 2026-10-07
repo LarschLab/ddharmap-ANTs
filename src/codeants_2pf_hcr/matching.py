@@ -94,9 +94,31 @@ def gene_from_mask(path_str: str | Path | None) -> str:
     return gene.replace("sst1_", "sst1.")
 
 
+def _ncc_xy_native_to_anatomy(plane_ref: dict[str, Any]) -> AffineTransform | None:
+    """Compose native->scaled resampling with the NCC placement on the anatomy grid.
+
+    Pixel centres follow ``skimage.transform.resize``, which built the scaled
+    reference that NCC placed: ``scaled = scale * native + (scale - 1) / 2``.
+    """
+    ncc_xy = plane_ref.get("ncc_xy")
+    native_shape = tuple(int(v) for v in plane_ref.get("ref_shape", ()) or ())
+    scaled_shape = tuple(int(v) for v in plane_ref.get("ref_scaled_shape", ()) or ())
+    if not (isinstance(ncc_xy, dict) and "x0" in ncc_xy and "y0" in ncc_xy and len(native_shape) == 2 and len(scaled_shape) == 2):
+        return None
+    sx, sy = scaled_shape[1] / native_shape[1], scaled_shape[0] / native_shape[0]
+    return AffineTransform(
+        scale=(sx, sy),
+        translation=(int(ncc_xy["x0"]) + (sx - 1.0) / 2.0, int(ncc_xy["y0"]) + (sy - 1.0) / 2.0),
+    )
+
+
 def resolve_plane_transform(plane_ref: dict[str, Any] | None) -> Any:
     if not isinstance(plane_ref, dict):
         return None
+    if plane_ref.get("tform_src") == "ncc_xy":
+        native_to_anatomy = _ncc_xy_native_to_anatomy(plane_ref)
+        if native_to_anatomy is not None:
+            return native_to_anatomy
     if plane_ref.get("tform_src") == "ants_rigid_affine":
         ants_transform = plane_ref.get("ants_transform")
         if isinstance(ants_transform, dict) and ants_transform.get("type") == "ants_transformlist":

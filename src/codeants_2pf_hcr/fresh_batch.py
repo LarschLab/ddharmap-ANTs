@@ -78,8 +78,7 @@ def prepare_fresh_batch(*, data_root: Path, repo_root: Path, validation_root: Pa
     for fish_id in ("L765_f02", "L758_f07", "L765_f05", "L765_f06"):
         target = data_root / fish_id / "03_analysis/functional/run_specs" / f"{run_id}.json"
         build_fresh_run_spec(fish_id=fish_id, data_root=data_root, repo_root=repo_root,
-                            run_id=run_id, spec_path=target, plane_indices=tuple(range(5, 10)) if fish_id == "L765_f05" else tuple(range(10)),
-                            ncc_cache_source=data_root / fish_id / "03_analysis/functional/ncc")
+                            run_id=run_id, spec_path=target, plane_indices=tuple(range(5, 10)) if fish_id == "L765_f05" else tuple(range(10)))
         specs.append(target)
     payload = {"schema_version": 1, "created_at": _utc_now(), "policy": "Stop at first failure; no automatic repair/retry. Remaining fish run only after fresh isolated control byte parity and no-op verification pass.",
                "specs": [{"path": str(p), "sha256": _file_hash(p)} for p in specs], "control_baseline_count": len(baseline_paths)}
