@@ -16,6 +16,15 @@ def test_missing_implicit_graph_dependency_is_caught_without_writes(tmp_path):
     assert not spec.state_root.exists()
 
 
+def test_midline_requires_registration_qc_and_transformed_roi_producers(tmp_path):
+    spec = SimpleNamespace(raw={"native_production": {}}, state_root=tmp_path / "state",
+        stages=[SimpleNamespace(manifest="m", command=("py", "cli", owner)) for owner in
+                ("register-functional-to-anatomy", "make-anatomy-midline-proposal")])
+    errors = preflight_native_run(spec)["errors"]
+    assert any("make-functional-registration-qc" in error for error in errors)
+    assert any("transform-functional-rois-to-anatomy" in error for error in errors)
+
+
 def test_retained_graph_is_hash_bound_and_copied(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

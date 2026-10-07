@@ -10,7 +10,7 @@ GRAPH_INPUTS = {
     "make-functional-registration-qc": ("register-functional-to-anatomy", "transform-functional-rois-to-anatomy"),
     "match-roi-to-anatomy": ("register-functional-to-anatomy",),
     "export-canonical-tables": ("score-activity-bpi", "assign-hcr-identity"),
-    "make-anatomy-midline-proposal": ("register-functional-to-anatomy",),
+    "make-anatomy-midline-proposal": ("register-functional-to-anatomy", "transform-functional-rois-to-anatomy", "make-functional-registration-qc"),
 }
 
 
