@@ -1,5 +1,23 @@
 # Recent Changes - Single-Fish Workflow
 
+## 2026-10-07 — Real fresh-control failure and seed diagnosis
+
+Detached batch `20261007T072652Z-fresh-single-fish-control-and-native-batch-b9dd`
+ran all 12 control writers plus six QC notebooks without intervention, then
+stopped at artifact audit (52 pass, 29 fail of 81), before any production fish.
+All 20 reference TIFFs/anatomy matched; all ten ANTs matrices differed and
+16/3553 anatomy-label assignments changed. Response counts remained 267/266/1.
+Two isolated plane-4 registrations at seed 0 differed; two at seed 123 matched
+byte-for-byte. ANTs zero is default random seeding, not a fixed seed. Fresh
+recipe and fresh-native guard now use/require positive seed 123; no frozen
+replay/default scientific writer behavior or preserved f04 checkout was changed.
+The failed v2 specs/state remain pinned to `42ea751`; do not mutate/adopt them.
+The unchanged control-vs-historical byte gate correctly blocks production.
+Next decision: authorize two new seeded fresh control runs matching each other
+with explicit historical geometry-delta review, rather than silently accepting
+a new baseline. Evidence: isolated v2 `run_specs/job_reports/0cf8d5893f394cb198fc15150a6070de.audit-artifacts.json`
+and `run_state/20261007_fresh_unattended_v2/diagnostics/seed_probe.json`.
+
 ## 2026-10-07 — Fresh native orchestration implementation
 
 Added a common recipe builder from established fish paths, immutable NCC

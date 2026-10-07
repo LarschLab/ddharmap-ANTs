@@ -221,6 +221,12 @@ def execute_native_run(spec, *, resume: bool):
         raise ValueError("Fresh native runs cannot reuse frozen writer stages")
     if mode == "fresh" and spec.pipeline_root != fish:
         raise ValueError("Fresh native production pipeline_root must be the fish folder")
+    if mode == "fresh":
+        for declared in spec.stages:
+            if len(declared.command) > 2 and declared.command[2] == "register-functional-to-anatomy":
+                flag = "--ants-deterministic-seed"
+                if flag not in declared.command or int(declared.command[declared.command.index(flag) + 1]) <= 0:
+                    raise ValueError("Fresh ANTs registration requires an explicit positive fixed seed; zero uses default random seeding")
     frozen = Path(policy["frozen_root"]) if mode == "frozen_replay" else None
     source_root = policy.get("original_root") if frozen is not None else None
     graph = spec.state_root / "transaction_graph"

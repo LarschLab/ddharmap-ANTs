@@ -24,6 +24,9 @@ WRITERS = (
     "export-canonical-tables", "make-anatomy-midline-proposal", "make-qa-report",
 )
 
+# ANTs treats zero as default/system-time seeding, not a fixed seed.
+FRESH_ANTS_SEED = 123
+
 
 def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
                          run_id: str, spec_path: Path, plane_indices: tuple[int, ...],
@@ -82,7 +85,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     extra = {
         WRITERS[0]: ["--anatomy-stack-path", str(anatomy), "--output-path", str(anatomy)],
         WRITERS[1]: ["--run-23c"] + [v for p in motion for v in ("--functional-stack-path", str(p))],
-        WRITERS[2]: ["--anatomy-stack-path", str(anatomy), "--reuse-ncc-cache-dir", str(bundle), "--ants-deterministic-seed", "0", "--no-ants-fixed-mask-required"] + [v for i in plane_indices for v in ("--reference-plane-index", str(i))],
+        WRITERS[2]: ["--anatomy-stack-path", str(anatomy), "--reuse-ncc-cache-dir", str(bundle), "--ants-deterministic-seed", str(FRESH_ANTS_SEED), "--no-ants-fixed-mask-required"] + [v for i in plane_indices for v in ("--reference-plane-index", str(i))],
         WRITERS[4]: ["--anatomy-label-z-mode", "auto"],
         WRITERS[5]: ["--source-root", str(aligned), "--hcr-warp-route", "exvivo_bridge"],
         WRITERS[6]: ["--anatomy-label-z-mode", "auto"],
@@ -103,7 +106,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
         manifest = manifests / f"{writer}_manifest.json"
         pins = {}
         if i == 1: pins = {"polarity": polarity, "run_23c": True, "exclude_first_block": True}
-        if i == 2: pins = {"ants_deterministic_seed": 0}
+        if i == 2: pins = {"ants_deterministic_seed": FRESH_ANTS_SEED}
         if i == 7: pins = {"activity_config": activity}
         stages.append({"name": name, "command": [python, "tools/single_fish_pipeline.py", writer, *common, *extra.get(writer, [])],
                        "inputs": list(map(str, inputs)), "outputs": [str(manifest)], "manifest": str(manifest),
@@ -119,7 +122,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
         stages.append({"name": f"{160+index:03}-qc-notebook-{index:02}",
                        "command": [python, "tools/notebook_run.py", str(notebook), "--kernel", "cellmatching", "--fish-id", fish_id, "--local-root", str(data_root), "--pipeline-root", str(fish), "--output", str(output), "--capture-figures"],
                        "inputs": [str(notebook), *writer_manifests], "outputs": [str(output)], "depends_on": [stages[-1]["name"]]})
-    params = {"activity_config": activity, "response_null_q_total_two_sided": activity["response_null_q"], "response_window_sec": activity["response_window_sec"]}
+    params = {"activity_config": activity, "ants_deterministic_seed": FRESH_ANTS_SEED, "response_null_q_total_two_sided": activity["response_null_q"], "response_window_sec": activity["response_window_sec"]}
     payload = {"schema_version": 1, "fish_id": fish_id,
                "paths": {"repo_root": str(repo_root), "data_root": str(data_root), "pipeline_root": str(fish), "state_root": str(functional / "run_state" / run_id)},
                "git": {"commit": commit, "policy": "exact"},

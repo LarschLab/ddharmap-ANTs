@@ -49,6 +49,8 @@ def test_shared_recipe_pins_r2_and_has_no_frozen_or_midline_acceptance(tmp_path,
     register = parsed.stages[2].command
     assert [register[i+1] for i, value in enumerate(register) if value == "--reference-plane-index"] == list(map(str, range(5, 10)))
     assert "--reuse-ncc-cache-dir" in register
+    assert register[register.index("--ants-deterministic-seed") + 1] == "123"
+    assert parsed.stages[2].parameter_pins["ants_deterministic_seed"] == 123
     with pytest.raises(ValueError, match="restricted to R2"):
         recipe.build_fresh_run_spec(fish_id="L765_f05", data_root=old.data_root, repo_root=old.repo_root,
                                     run_id="invalid", spec_path=tmp_path / "invalid.json", plane_indices=tuple(range(10)), ncc_cache_source=cache)

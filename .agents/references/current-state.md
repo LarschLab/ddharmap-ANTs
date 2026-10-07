@@ -17,6 +17,15 @@
 
 ## Practical warnings
 
+- The 2026-10-07 fresh control stopped at artifact audit: 52/81 checks passed,
+  29 byte comparisons failed, including all ten ANTs matrices. References and
+  anatomy were byte-identical; 16/3553 anatomy assignments changed while 267
+  response calls remained. The real seed-0 repeat probe was nondeterministic;
+  seed-123 repeat matrices matched exactly. Fresh recipes now use 123 and
+  reject zero before writes. Historical zero-seed frozen products remain
+  preserved; full production is stopped pending a reviewed reproducibility
+  gate that does not demand recovery of an unrecorded historical random seed.
+
 - Fresh native recipes now use `native_production.mode=fresh`, without another
   fish's frozen bundle. `build_fresh_single_fish_spec.py` generates the shared
   writer DAG through canonical tables, QA and midline proposals, followed by

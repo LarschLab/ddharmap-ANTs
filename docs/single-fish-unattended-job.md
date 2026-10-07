@@ -2,6 +2,20 @@
 
 ## Fresh native recipes (2026-10-07)
 
+**Current deployment gate:** the first real fresh control completed all 12
+writers and QC 00–05 unattended, but historical byte parity failed and the
+batch stopped before production. All 20 reference TIFFs and anatomy bytes
+matched; ten ANTs matrices differed and 16/3553 anatomy-label assignments
+changed. Response counts stayed 267 (266 activated, one suppressed).
+The legacy seed 0 is ANTs default/system-time seeding. A bounded plane-4 probe
+produced different matrices twice with seed 0, but identical matrices twice
+with seed 123. Fresh recipes now pin 123 and native fresh mode rejects zero
+before any writes. Historical frozen replay is unchanged. The current batch
+gate still requires historical byte parity and therefore must not be bypassed
+or silently rebased. Approval is needed to replace it with two fresh seeded
+runs matching each other, plus explicit historical geometry-delta review.
+No new production batch has been submitted under that revised gate.
+
 `tools/fresh_single_fish_batch.py prepare` creates an isolated L765_f04 control
 and native recipes for L765_f02, L758_f07, L765_f05, L765_f06. The control copies
 writable anatomy/aligned inputs and links read-only raw/Suite2p sources. Its

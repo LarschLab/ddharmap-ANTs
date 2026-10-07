@@ -40,6 +40,18 @@ def test_unknown_native_mode_fails_before_writes(tmp_path, monkeypatch):
     assert not spec.state_root.exists()
 
 
+def test_fresh_zero_seed_is_rejected_before_any_write(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr import single_fish_run
+    from codeants_2pf_hcr.native_run import execute_native_run
+    monkeypatch.setattr(single_fish_run, "validate_spec_environment", lambda spec: {"ok": True})
+    spec = SimpleNamespace(data_root=tmp_path, fish_id="L000_f00", pipeline_root=tmp_path / "L000_f00", state_root=tmp_path / "state",
+                           raw={"native_production": {"mode": "fresh"}}, stages=[SimpleNamespace(command=("python", "writer", "register-functional-to-anatomy", "--ants-deterministic-seed", "0"))])
+    with pytest.raises(ValueError, match="positive fixed seed"):
+        execute_native_run(spec, resume=False)
+    assert not spec.state_root.exists()
+
+
 def test_fresh_writer_stages_explicit_output_and_tracks_every_product(tmp_path, monkeypatch):
     from dataclasses import replace
     from test_single_fish_run import _build_spec
