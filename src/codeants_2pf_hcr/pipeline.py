@@ -9211,6 +9211,17 @@ def _hcr_direct_ants_recompute_provenance(
     return provenance, tuple(checks)
 
 
+def _read_native_midline_proposals(path: Path) -> "pd.DataFrame":
+    """Read native proposals exactly as make-functional-registration-qc held them in memory.
+
+    Both writers project these lines to the same anatomy proposal path, so the
+    float parse must round-trip or the outputs differ in the last bit.
+    """
+    import pandas as pd
+
+    return pd.read_csv(path, float_precision="round_trip")
+
+
 def run_make_anatomy_midline_proposal_stage(
     config: SingleFishPipelineConfig, *, force_recompute: bool = False,
 ) -> StageManifest:
@@ -9238,7 +9249,7 @@ def run_make_anatomy_midline_proposal_stage(
         refs = load_plane_refs_summary(refs_path)
         anatomy = imread_any(anatomy_path)
         proposals = build_anatomy_midline_proposal_table(
-            refs, pd.read_csv(native_csv), anatomy_shape=tuple(anatomy.shape[-2:]),
+            refs, _read_native_midline_proposals(native_csv), anatomy_shape=tuple(anatomy.shape[-2:]),
         )
         labels = {
             int(re.search(r"plane(\d+)", path.name).group(1)): path

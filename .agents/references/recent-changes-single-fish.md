@@ -4425,3 +4425,9 @@ pass; real detached audit results are saved fish-local.
   anatomy-identity-lookup and ROI-identity-master parity checks against the same
   superseded controls (pairs 313->333, candidates 203->226). These two labels are
   now included in the recorded supersession; final-pair acceptance stays strict.
+- v4 f06 completed all writers but verify failed: make-anatomy-midline-proposal
+  (110) re-reads the native midline CSV with pandas default float parsing and
+  overwrites the shared anatomy proposal path written by registration QC (050).
+  The NCC-xy plane exposed last-bit differences. Stage 110 now reads with
+  round_trip precision; on real f06 v4 inputs its output is byte-identical to
+  stage 050. The shared-path ownership remains a known design debt.

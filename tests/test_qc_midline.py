@@ -155,6 +155,16 @@ def test_ncc_xy_plane_maps_native_rois_and_midline_with_scale_once() -> None:
     assert (xs.mean(), ys.mean()) == pytest.approx((2 * 4.5 + 0.5 + 3, 2 * 4.5 + 0.5 + 4), abs=0.5)
 
 
+def test_native_midline_proposals_round_trip_exactly_through_csv(tmp_path: Path) -> None:
+    from codeants_2pf_hcr.pipeline import _read_native_midline_proposals
+
+    values = np.random.default_rng(0).uniform(-500, 500, size=(200, 3))
+    frame = pd.DataFrame(values, columns=["fixed_x0", "fixed_y0", "fixed_theta_deg"])
+    path = tmp_path / "functional_automatic_midline_proposals.csv"
+    frame.to_csv(path, index=False)
+    assert _read_native_midline_proposals(path).to_numpy().tobytes() == frame.to_numpy().tobytes()
+
+
 def test_midline_qc_retains_scored_rois_without_anatomy_centroids_as_unknown(tmp_path: Path) -> None:
     fish_root = tmp_path / FISH
     fish_root.mkdir()
