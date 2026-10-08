@@ -339,7 +339,9 @@ def execute_native_run(spec, *, resume: bool):
         # Bind paths by individual product prefixes, preserving explicit history.
         roots = [str(graph)] + ([source_root, str(frozen)] if frozen is not None else [])
         _relocate_tree(output_dir, roots, fish)
-        if writer == "materialize-anatomy-midline" and frozen is not None:
+        # Reviewed-midline relocation applies only when the accepted midline itself is reused; a
+        # recomputed materialization verifies its logbook decision against the regenerated proposal.
+        if writer == "materialize-anatomy-midline" and frozen is not None and imported:
             _relocate_accepted_midline(output_dir / "anatomy_midline.json", frozen, roots, fish)
         if writer == "make-qa-report":
             from .pipeline import _write_qa_report_pdf
@@ -358,7 +360,7 @@ def execute_native_run(spec, *, resume: bool):
             elif observed != value:
                 raise RuntimeError(f"Scientific parameter mismatch {writer}: {key}: {observed} != {value}")
         products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in output_dir.rglob("*") if p.is_file() and not p.name.startswith("._")}
-        if writer == "materialize-anatomy-midline" and proposal is not None:
+        if writer == "materialize-anatomy-midline" and proposal is not None and imported:
             products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in proposal.rglob("*") if p.is_file() and not p.name.startswith("._")})
         validate_native_inputs(stage.inputs, products.values())
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
@@ -379,7 +381,7 @@ def execute_native_run(spec, *, resume: bool):
                 if _run_command(validator, cwd=spec.repo_root, env=env, log_path=spec.state_root / "logs" / f"{stage.name}.validator-{index}.log"):
                     rollback_promotion(journal)
                     raise RuntimeError(f"Native stage validator failed: {stage.name}")
-            if writer == "materialize-anatomy-midline" and frozen is not None:
+            if writer == "materialize-anatomy-midline" and frozen is not None and imported:
                 proposal_manifest = fish / "03_analysis/functional/pipeline_manifests/make-anatomy-midline-proposal_manifest.json"
                 _write_json_atomic(journal / "previous_proposal_manifest.json", {"path": str(proposal_manifest), "payload": json.loads(proposal_manifest.read_text()) if proposal_manifest.exists() else None})
                 proposal_record = _native_proposal_manifest(Path(policy["frozen_manifests"]) / proposal_manifest.name, frozen, roots, fish)
