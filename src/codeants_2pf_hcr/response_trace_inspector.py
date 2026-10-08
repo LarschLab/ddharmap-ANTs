@@ -219,7 +219,7 @@ def _document(
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{fish_id} response trace inspector</title>
 <style>
-:root{{--label:200px;--col:minmax(28px,1fr);--rowh:96px;--bout:#e5f1f7;--cont:#fff0e3}}
+.fit{{--label:clamp(96px,16vw,200px)}} :root{{--label:200px;--col:minmax(0,1fr);--rowh:96px;--bout:#e5f1f7;--cont:#fff0e3}}
 *{{box-sizing:border-box}} html,body{{height:100%}}
 body{{margin:0;display:flex;flex-direction:column;overflow:hidden;font:13px/1.3 system-ui,-apple-system,sans-serif;color:#202124;background:#fff}}
 header{{flex:none;background:#fff;border-bottom:1px solid #ccc;padding:6px 10px}} h1{{font-size:15px;margin:0 6px 0 0;display:inline}}
@@ -233,6 +233,7 @@ main{{flex:1;min-height:0;display:flex}}
 .view{{display:none;flex:1;min-height:0;min-width:0}} .view.active{{display:flex}}
 .scroll{{flex:1;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain}}
 .column-header,.trace-row{{display:grid;min-width:100%;width:max-content}}
+.fit .column-header,.fit .trace-row{{width:100%;min-width:0}} .fit .scroll{{overflow-x:hidden}}
 .view-nonavg .column-header,.view-nonavg .trace-row{{grid-template-columns:var(--label) repeat({n_cols},var(--col))}}
 .view-mean .column-header,.view-mean .trace-row{{grid-template-columns:var(--label) repeat({len(mean_labels)},var(--col))}}
 .column-header{{position:sticky;top:0;z-index:3;background:#fff;border-bottom:2px solid #666}}
@@ -288,7 +289,7 @@ function applyFilter(){{const q=document.getElementById('search').value.trim().t
 ['search','group-filter','tuning-filter','test-filter','bpi-filter'].forEach(id=>{{const e=document.getElementById(id);e.oninput=e.onchange=applyFilter;}});
 const root=document.documentElement.style,wSel=document.getElementById('width'),rSl=document.getElementById('rowh');
 function store(k,v){{try{{localStorage.setItem('ti-'+k,v)}}catch(e){{}}}} function load(k){{try{{return localStorage.getItem('ti-'+k)}}catch(e){{return null}}}}
-function setWidth(v){{wSel.value=v;root.setProperty('--col',v==='fit'?'minmax(28px,1fr)':v+'px');store('width',v);}}
+function setWidth(v){{wSel.value=v;root.setProperty('--col',v==='fit'?'minmax(0,1fr)':v+'px');document.body.classList.toggle('fit',v==='fit');store('width',v);}}
 function setRow(v){{rSl.value=v;root.setProperty('--rowh',v+'px');store('rowh',v);}}
 wSel.onchange=()=>setWidth(wSel.value);rSl.oninput=()=>setRow(rSl.value);
 setWidth(['fit','120','190'].includes(load('width'))?load('width'):'fit');setRow(+load('rowh')>=40?load('rowh'):96);applyFilter();
