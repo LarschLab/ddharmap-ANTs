@@ -4467,3 +4467,8 @@ pass; real detached audit results are saved fish-local.
   test, review group and the exact ±1 BPI boundary. Stored data unchanged; the
   f04 original had the same presentation. Re-rendered for the four fish
   (bout-tuned 25/186/5/95, continuous-tuned 37/36/17/25 for f02/f07/f05/f06).
+- Layout fix after Danin's review (laptop use): one scroll area for the traces
+  (page itself no longer scrolls), sticky column header and label column,
+  "fit window" column width by default (120/190 px options), a row-height
+  slider, compact four-line labels whose rows grow instead of overlapping when
+  zoomed out, and BPI shown greyed as "unused" for non-responders.

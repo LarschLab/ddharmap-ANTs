@@ -93,7 +93,7 @@ def test_render_reproduces_auc_and_writes_self_contained_html(tmp_path):
     meta_json = json.loads((out / "inspector_metadata.json").read_text())
     assert meta_json["review_group_counts"]["response-positive"] == 2
     assert meta_json["tuning_counts"]["bout-tuned"] == 2
-    assert 'data-tuning="bout-tuned"' in html_text and "tests passed: bout only" in html_text
+    assert 'data-tuning="bout-tuned"' in html_text and "tests: bout only" in html_text and "(unused)" not in html_text.split("data-tuning=\"bout-tuned\"")[1].split("</div>")[0]
 
 
 def test_render_refuses_when_table_auc_does_not_reproduce(tmp_path):
