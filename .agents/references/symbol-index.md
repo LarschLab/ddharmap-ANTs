@@ -539,3 +539,12 @@ Generated manually for the current extracted package surface.
 - `run_preflight.preflight_native_run`: read-only staged dependency and selected input checks.
 - `run_preflight.check_geometry_trace_identity`: source-aware geometry/trace key validation.
 - `run_preflight.materialize_retained_graph`: verified graph copies for declared continuations.
+
+## Per-stimulus response scoring (2026-10-08)
+
+- `activity.ActivityConfig`: promotes bootstrap count to ≥20 expected draws per stimulus tail (16,000 at 0.99).
+- `activity.build_response_bpi_tables`: per-stimulus two-sided calls, any-side condition classes, activation-only side BPI, suppression confidence; signed pooled comparisons retained.
+- `activity._compute_bootstrap_null_quantiles`: pooled and LB/RB/LC/RC event sets; optional config supplies valid-trial extraction policy; 128-ROI chunks share float32 cumsum/AUC caches.
+- `plots.analysis.render_single_fish_50l_bpi_panel`: counts suppression-only exclusions and permits an all-suppressed population without invented BPI coordinates.
+- `activity.NEW_RESPONSE_COLUMNS`: exact annotation/export column set; `POOLED_COMPARISON_COLUMNS` lists comparison-only sources.
+- `response_trace_inspector.render_response_trace_inspector`: per-stimulus reproduction guard, suppression/mixed labels, equal-height views and top-neuron scroll sync.

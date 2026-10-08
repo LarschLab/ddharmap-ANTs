@@ -31,17 +31,150 @@
       ],
       "thresholds": {
         "authority": ".agents/references/activity-semantics.md",
-        "rule": "The activity writer persists mirrored two-sided AUC/null response gates and response valence separately. response_null_quantile is the total two-sided confidence level; at 0.99 the classifier splits alpha equally, using the 0.995 upper and 0.005 lower null quantiles for a combined two-tail alpha of 0.01. Applied upper/lower quantiles and thresholds are explicit, while legacy q99 AUC fields remain comparison-only. response_class and bpi_category report condition passes in either direction; valence fields distinguish activated from suppressed. Legacy rectified BPI and signed condition contrast coexist during validation."
+        "rule": "Four independent LB/RB/LC/RC signed mean-AUC tests (at least min_trials_per_class valid trials). Family alpha=1-response_null_quantile is divided across four stimuli and two tails; at 0.99 lower/upper quantiles are 0.00125/0.99875. Activation requires AUC >= max(0.05, upper); suppression requires AUC <= min(-0.05, lower). Any-side condition passes own response_class and bpi_category. Activation takes condition-valence precedence; mixed-side flags preserve opposite-valence evidence. Only significant activation selects tuning: strongest activated stimulus chooses left/right BPI from rectified side AUCs, stable LB/RB/LC/RC ties. Suppression-only emits suppressed-only with bpi NaN. Signed condition contrast is unchanged. Quiet is median dF/F in the union of all presented prestimulus pauses, spread=1.4826 MAD. Suppression confidence high means every suppressed stimulus has at least three negative-AUC trials with response mean below quiet; low otherwise, NaN without suppression. Confidence never gates calls. At least 20 expected bootstrap draws per tail (default 16000); float32 ROI chunks share a cumsum cache. All pooled_ columns are comparison-only legacy condition-pool results. Only exact LB_trajectory/RB_trajectory/LC_trajectory/RC_trajectory event names enter per-stimulus pools; legacy aliases and other presented types never enter them. response_null_lower_quantile/response_null_upper_quantile describe only the per-stimulus family-wise thresholds (0.00125/0.99875 at 0.99 confidence). bout_null_lower_auc/cont_null_lower_auc and bout_null_upper_auc/cont_null_upper_auc remain pooled comparison thresholds at 0.005/0.995, and must be interpreted with pooled_response_null_lower_quantile/pooled_response_null_upper_quantile. Never pair pooled condition thresholds with unprefixed per-stimulus quantile metadata. bout_null_q99_auc/cont_null_q99_auc remain older pooled 0.99 upper-tail comparison quantiles.",
+        "new_columns": [
+          "lb_mean_auc_dff",
+          "lb_null_upper_auc",
+          "lb_null_lower_auc",
+          "lb_n_trials",
+          "lb_response_valence",
+          "lb_n_consistent_suppressed_trials",
+          "lb_n_prestim_elevated_trials",
+          "rb_mean_auc_dff",
+          "rb_null_upper_auc",
+          "rb_null_lower_auc",
+          "rb_n_trials",
+          "rb_response_valence",
+          "rb_n_consistent_suppressed_trials",
+          "rb_n_prestim_elevated_trials",
+          "lc_mean_auc_dff",
+          "lc_null_upper_auc",
+          "lc_null_lower_auc",
+          "lc_n_trials",
+          "lc_response_valence",
+          "lc_n_consistent_suppressed_trials",
+          "lc_n_prestim_elevated_trials",
+          "rc_mean_auc_dff",
+          "rc_null_upper_auc",
+          "rc_null_lower_auc",
+          "rc_n_trials",
+          "rc_response_valence",
+          "rc_n_consistent_suppressed_trials",
+          "rc_n_prestim_elevated_trials",
+          "response_valence_class",
+          "bout_mixed_side_valence",
+          "cont_mixed_side_valence",
+          "bpi_left",
+          "bpi_right",
+          "bpi_side",
+          "suppression_confidence",
+          "quiet_level_dff",
+          "quiet_spread_dff",
+          "pooled_mean_bout_auc_dff",
+          "pooled_mean_cont_auc_dff",
+          "pooled_bout_null_q99_auc",
+          "pooled_cont_null_q99_auc",
+          "pooled_bout_null_upper_auc",
+          "pooled_cont_null_upper_auc",
+          "pooled_bout_null_lower_auc",
+          "pooled_cont_null_lower_auc",
+          "pooled_bout_positive_response_pass",
+          "pooled_bout_negative_response_pass",
+          "pooled_cont_positive_response_pass",
+          "pooled_cont_negative_response_pass",
+          "pooled_bout_response_pass",
+          "pooled_cont_response_pass",
+          "pooled_bout_response_valence",
+          "pooled_cont_response_valence",
+          "pooled_response_valence_pattern",
+          "pooled_response_has_suppression",
+          "pooled_response_valence_complete",
+          "pooled_response_is_active",
+          "pooled_response_class",
+          "pooled_response_summary_class",
+          "pooled_bpi",
+          "pooled_bpi_preference",
+          "pooled_bpi_data_available",
+          "pooled_bpi_category",
+          "pooled_denom",
+          "pooled_response_null_lower_quantile",
+          "pooled_response_null_upper_quantile"
+        ],
+        "values": {
+          "response_valence_class": [
+            "bout-activated",
+            "continuous-activated",
+            "both-activated",
+            "bout-suppressed",
+            "continuous-suppressed",
+            "both-suppressed",
+            "bout-activated/continuous-suppressed",
+            "continuous-activated/bout-suppressed",
+            "low activity",
+            "response unavailable"
+          ],
+          "per_stimulus_response_valence": [
+            "activated",
+            "suppressed",
+            "not-significant",
+            "unavailable"
+          ],
+          "bpi_preference": [
+            "bout-preferential",
+            "continuous-preferential",
+            "non-preferential",
+            "suppressed-only",
+            "not-responsive",
+            "unavailable"
+          ],
+          "bpi_side": [
+            "left",
+            "right",
+            null
+          ],
+          "suppression_confidence": [
+            "high",
+            "low",
+            null
+          ]
+        },
+        "quantile_metadata": {
+          "per_stimulus": {
+            "lower": "response_null_lower_quantile",
+            "upper": "response_null_upper_quantile",
+            "thresholds": "{lb,rb,lc,rc}_null_{lower,upper}_auc",
+            "default_quantiles": [
+              0.00125,
+              0.99875
+            ]
+          },
+          "pooled_comparison": {
+            "lower": "pooled_response_null_lower_quantile",
+            "upper": "pooled_response_null_upper_quantile",
+            "thresholds": "{bout,cont}_null_{lower,upper}_auc and pooled_{bout,cont}_null_{lower,upper}_auc",
+            "default_quantiles": [
+              0.005,
+              0.995
+            ]
+          },
+          "rule": "Never pair pooled condition thresholds with unprefixed per-stimulus quantile metadata."
+        }
       },
       "forbidden_reinterpretations": [
         "Do not drop suite2p_is_cell false rows from the ROI inventory.",
         "Do not use identity, response, or BPI to change geometry.",
         "Do not replace this whole-population authority with HCR-centric exports.",
-        "Do not infer suppression valence from legacy rectified BPI or discard the signed condition AUC columns."
+        "Do not infer suppression valence from legacy rectified BPI or discard the signed condition AUC columns.",
+        "Do not infer tuning from suppression, or use suppression confidence as a response gate.",
+        "Do not use pooled_ comparison fields to redefine per-stimulus authoritative calls."
       ],
       "validation_tests": [
         "tests/test_pipeline.py::test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_source_identity",
-        "tests/test_activity.py::ActivityTests::test_response_scoring_preserves_suppression_valence_and_signed_contrast"
+        "tests/test_activity.py::ActivityTests::test_response_scoring_preserves_suppression_valence_and_signed_contrast",
+        "tests/test_activity.py::test_per_stimulus_authoritative_calls_and_activation_only_tuning",
+        "tests/test_activity.py::test_per_stimulus_null_uses_four_stimulus_two_tail_family",
+        "tests/test_response_trace_inspector.py::test_per_stimulus_guard_labels_and_view_geometry",
+        "tests/test_scientific_artifact_contracts.py::test_per_stimulus_runtime_contract_preserves_signed_comparisons"
       ]
     },
     {

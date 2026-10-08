@@ -1028,17 +1028,18 @@ def render_single_fish_50l_bpi_panel(
     if "bpi_category" not in work.columns:
         work["bpi_category"] = "low activity"
     work["bpi_category"] = work["bpi_category"].fillna("low activity").astype(str).str.strip().str.lower()
+    n_suppressed_only = int((work.get("bpi_preference", pd.Series("", index=work.index)).eq("suppressed-only") & work["response_is_active"]).sum())
     work = work[
         np.isfinite(work["bpi"].to_numpy(dtype=float))
         & np.isfinite(work["mean_auc_dff"].to_numpy(dtype=float))
         & work["bpi_category"].ne("response unavailable")
     ].copy()
 
-    if work.empty:
+    if work.empty and not n_suppressed_only:
         raise RuntimeError("[single-fish-50l-bpi-panel] No plottable rows remain after filtering.")
 
     _ = int(jitter_seed)
-    band = float(zero_band) if zero_band is not None else _resolve_reference_threshold(work, "bpi_zero_band", 0.10)
+    band = float(zero_band) if zero_band is not None else _resolve_reference_threshold(bpi_cells_df, "bpi_zero_band", 0.10)
     category_counts = {
         category: int((work["bpi_category"] == category).sum())
         for category in SINGLE_FISH_50L_BPI_ORDER
@@ -1074,6 +1075,9 @@ def render_single_fish_50l_bpi_panel(
                 zorder=4,
             )
 
+    if n_suppressed_only:
+        ax.text(.98, .02, f"suppressed-only: {n_suppressed_only} (BPI unavailable)",
+                transform=ax.transAxes, ha="right", va="bottom", color="#756bb1", fontsize=8)
     ax.axhline(0.0, color="gray", linestyle="-", linewidth=0.5, alpha=0.3, zorder=0)
     ax.axhline(float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
     ax.axhline(-float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
@@ -1108,6 +1112,7 @@ def render_single_fish_50l_bpi_panel(
 
     return {
         "n_plotted": int(len(work)),
+        "n_suppressed_only": n_suppressed_only,
         "x_limits": tuple(float(v) for v in ax.get_xlim()),
         "y_limits": tuple(float(v) for v in ax.get_ylim()),
         "category_counts": category_counts,
@@ -4811,7 +4816,7 @@ def render_cohort_50l_responsive_identity_donut_row(
     )
     legend._legend_box.align = "left"
     fig.suptitle(
-        "Stimulus-responsive tuning classes split into exact HCR-derived identities by fish",
+        "Response conditions (activation or suppression) split into exact HCR-derived identities by fish",
         y=0.98,
         fontsize=12.0,
         fontweight="bold",

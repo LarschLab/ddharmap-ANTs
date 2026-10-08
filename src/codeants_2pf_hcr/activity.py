@@ -49,7 +49,7 @@ class ActivityConfig:
     response_window_sec: float = 12.5
     response_min_auc: float = 0.05
     response_null_q: float = 0.99
-    response_null_bootstrap_n: int = 2000
+    response_null_bootstrap_n: int = 16000
     response_null_min_windows: int = 20
     response_null_step_sec: float = 0.5
     response_rng_seed: int = 50
@@ -61,6 +61,13 @@ class ActivityConfig:
     dfof_eps: float = 1e-6
     zscore_min_points: int = 200
     zscore_sigma_eps: float = 1e-6
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.response_null_q < 1.0:
+            raise ValueError("response_null_q must be between zero and one")
+        # Promote old run configs too: at least 20 expected samples in each tail.
+        minimum = int(np.ceil(160.0 / (1.0 - self.response_null_q) - 1e-9))
+        object.__setattr__(self, "response_null_bootstrap_n", max(self.response_null_bootstrap_n, minimum))
 
 
 @dataclass(frozen=True)
@@ -225,6 +232,7 @@ def _merge_scored_response_table(
         "bpi_zero_band",
         "bpi_activity_threshold",
     ]
+    merge_cols += list(NEW_RESPONSE_COLUMNS)
     available_cols = [col for col in merge_cols if col in scored_bpi_df.columns]
     scored = scored_bpi_df[available_cols].copy()
     scored["plane_idx"] = pd.to_numeric(scored["plane_idx"], errors="coerce").astype("Int64")
@@ -292,7 +300,7 @@ def _merge_scored_response_table(
     if "response_null_quantile" not in detail.columns:
         detail["response_null_quantile"] = float(cfg.response_null_q)
     detail["response_null_quantile"] = detail["response_null_quantile"].fillna(float(cfg.response_null_q))
-    two_sided_tail = (1.0 - float(cfg.response_null_q)) / 2.0
+    two_sided_tail = (1.0 - float(cfg.response_null_q)) / 8.0
     if "response_null_upper_quantile" not in detail.columns:
         detail["response_null_upper_quantile"] = 1.0 - two_sided_tail
     detail["response_null_upper_quantile"] = detail["response_null_upper_quantile"].fillna(1.0 - two_sided_tail)
@@ -322,6 +330,110 @@ def _merge_scored_response_table(
     return detail, summary_df
 
 
+
+BPI_STIMULI = ("lb", "rb", "lc", "rc")
+
+
+def _bpi_stimulus_key(event: dict[str, Any]) -> str:
+    """Admit only exact BPI trajectories, never legacy aliases or other stimuli."""
+    if not event.get("used_for_bpi", True):
+        return ""
+    return {f"{stim.upper()}_trajectory": stim for stim in BPI_STIMULI}.get(
+        str(event.get("stim_type", "")), "",
+    )
+
+
+# Signed condition summaries stay available; these copies are comparison-only.
+POOLED_COMPARISON_COLUMNS = (
+    "mean_bout_auc_dff", "mean_cont_auc_dff", "bout_null_q99_auc", "cont_null_q99_auc",
+    "bout_null_upper_auc", "cont_null_upper_auc", "bout_null_lower_auc", "cont_null_lower_auc",
+    "bout_positive_response_pass", "bout_negative_response_pass", "cont_positive_response_pass",
+    "cont_negative_response_pass", "bout_response_pass", "cont_response_pass", "bout_response_valence",
+    "cont_response_valence", "response_valence_pattern", "response_has_suppression",
+    "response_valence_complete", "response_is_active", "response_class", "response_summary_class",
+    "bpi", "bpi_preference", "bpi_data_available", "bpi_category", "denom",
+    "response_null_lower_quantile", "response_null_upper_quantile",
+)
+PER_STIMULUS_COLUMNS = tuple(
+    f"{stim}_{suffix}" for stim in BPI_STIMULI for suffix in (
+        "mean_auc_dff", "null_upper_auc", "null_lower_auc", "n_trials", "response_valence",
+        "n_consistent_suppressed_trials", "n_prestim_elevated_trials",
+    )
+) + ("response_valence_class", "bout_mixed_side_valence", "cont_mixed_side_valence",
+     "bpi_left", "bpi_right", "bpi_side", "suppression_confidence", "quiet_level_dff", "quiet_spread_dff")
+NEW_RESPONSE_COLUMNS = PER_STIMULUS_COLUMNS + tuple(f"pooled_{col}" for col in POOLED_COMPARISON_COLUMNS)
+
+
+def _annotate_per_stimulus_response(row: dict[str, Any], trials: dict[str, list],
+                                    null: dict[str, np.ndarray], roi_idx: int,
+                                    quiet: float, spread: float, cfg: ActivityConfig) -> None:
+    """Apply any-side calls and activation-only tuning; confidence is never a gate.
+
+    Trials contain (signed AUC, response-window mean, prestimulus mean).
+    Equal strongest activations select left (LB, RB, LC, RC stable order).
+    """
+    row.update({f"pooled_{col}": row[col] for col in POOLED_COMPARISON_COLUMNS})
+    tail = (1.0 - cfg.response_null_q) / 8.0
+    row.update(response_null_lower_quantile=tail, response_null_upper_quantile=1-tail,
+               quiet_level_dff=quiet, quiet_spread_dff=spread)
+    for stim in BPI_STIMULI:
+        data = trials.get(stim, [])
+        mean = float(np.mean([t[0] for t in data])) if data else np.nan
+        upper = float(null.get(f"{stim}_upper", [np.nan])[roi_idx]) if f"{stim}_upper" in null else np.nan
+        lower = float(null.get(f"{stim}_lower", [np.nan])[roi_idx]) if f"{stim}_lower" in null else np.nan
+        available = len(data) >= cfg.min_trials_per_class and np.isfinite([mean, upper, lower]).all()
+        valence = ("activated" if mean >= max(cfg.response_min_auc, upper) else
+                   "suppressed" if mean <= min(-cfg.response_min_auc, lower) else "not-significant") if available else "unavailable"
+        row.update({f"{stim}_mean_auc_dff": mean, f"{stim}_null_upper_auc": upper,
+                    f"{stim}_null_lower_auc": lower, f"{stim}_n_trials": len(data),
+                    f"{stim}_response_valence": valence,
+                    f"{stim}_n_consistent_suppressed_trials": sum(t[0] < 0 and t[1] < quiet for t in data),
+                    f"{stim}_n_prestim_elevated_trials": sum(t[2] > quiet + 2*spread for t in data)})
+    for cond, stimuli in (("bout", ("lb", "rb")), ("cont", ("lc", "rc"))):
+        vals = [row[f"{stim}_response_valence"] for stim in stimuli]
+        pos, neg = "activated" in vals, "suppressed" in vals
+        row[f"{cond}_positive_response_pass"] = pos
+        row[f"{cond}_negative_response_pass"] = neg
+        row[f"{cond}_response_pass"] = pos or neg
+        row[f"{cond}_mixed_side_valence"] = pos and neg
+        row[f"{cond}_response_valence"] = "activated" if pos else "suppressed" if neg else "not-significant" if all(v != "unavailable" for v in vals) else "unavailable"
+    bp, cp = row["bout_response_pass"], row["cont_response_pass"]
+    complete = all(row[f"{stim}_response_valence"] != "unavailable" for stim in BPI_STIMULI)
+    row["response_is_active"] = bp or cp
+    row["response_valence_complete"] = complete
+    row["response_class"] = cfg.response_both if bp and cp else cfg.response_bout if bp else cfg.response_cont if cp else cfg.response_low if complete else cfg.response_unavailable
+    row["bpi_category"] = row["response_class"]
+    row["response_summary_class"] = "Responsive neurons" if bp or cp else "Low activity" if complete else "Response unavailable"
+    bv, cv = row["bout_response_valence"], row["cont_response_valence"]
+    row["response_valence_pattern"] = f"{bv}|{cv}"
+    row["response_valence_class"] = (
+        f"both-{bv}" if bp and cp and bv == cv else
+        f"bout-{bv}/continuous-{cv}" if bp and cp and bv == "activated" else
+        f"continuous-{cv}/bout-{bv}" if bp and cp else
+        f"bout-{bv}" if bp else f"continuous-{cv}" if cp else row["response_class"]
+    )
+    suppressed = [stim for stim in BPI_STIMULI if row[f"{stim}_response_valence"] == "suppressed"]
+    row["response_has_suppression"] = bool(suppressed)
+    row["suppression_confidence"] = ("high" if all(row[f"{stim}_n_consistent_suppressed_trials"] >= 3 for stim in suppressed) else "low") if suppressed else np.nan
+    row.update(bpi=np.nan, bpi_side=np.nan, bpi_data_available=False, denom=np.nan)
+    for side, bout, cont in (("left", "lb", "lc"), ("right", "rb", "rc")):
+        b, c = row[f"{bout}_mean_auc_dff"], row[f"{cont}_mean_auc_dff"]
+        denom = max(0., b) + max(0., c) if np.isfinite([b, c]).all() else np.nan
+        row[f"bpi_{side}"] = (max(0., b)-max(0., c))/denom if denom > cfg.denom_eps else np.nan
+    activated = [stim for stim in BPI_STIMULI if row[f"{stim}_response_valence"] == "activated"]
+    row["bpi_preference"] = "suppressed-only" if suppressed else "not-responsive" if complete else "unavailable"
+    if activated:
+        strongest = max(activated, key=lambda stim: row[f"{stim}_mean_auc_dff"])
+        side = "left" if strongest.startswith("l") else "right"
+        row["bpi_side"] = side
+        row["bpi"] = row[f"bpi_{side}"]
+        b, c = ("lb", "lc") if side == "left" else ("rb", "rc")
+        row["denom"] = max(0., row[f"{b}_mean_auc_dff"]) + max(0., row[f"{c}_mean_auc_dff"]) if np.isfinite(row["bpi"]) else np.nan
+        row["bpi_data_available"] = bool(np.isfinite(row["bpi"]))
+        row["bpi_preference"] = ("bout-preferential" if row["bpi"] > cfg.zero_band else "continuous-preferential" if row["bpi"] < -cfg.zero_band else "non-preferential") if row["bpi_data_available"] else "unavailable"
+    row["bpi_status"] = "ok" if row["bpi_data_available"] else "suppressed_only" if suppressed and not activated else row["bpi_status"]
+
+
 def _compute_bootstrap_null_quantiles(
     dff: np.ndarray,
     stim_events: list[dict[str, Any]],
@@ -331,8 +443,9 @@ def _compute_bootstrap_null_quantiles(
     n_boot: int,
     q: float,
     seed: int,
+    config: ActivityConfig | None = None,
 ) -> dict[str, np.ndarray]:
-    n_roi = int(dff.shape[0])
+    n_roi = int(dff.shape[0]) if dff is not None else 0
     out = {
         "bout": np.full(n_roi, np.nan, dtype=np.float32),
         "continuous": np.full(n_roi, np.nan, dtype=np.float32),
@@ -341,42 +454,59 @@ def _compute_bootstrap_null_quantiles(
         "bout_lower": np.full(n_roi, np.nan, dtype=np.float32),
         "continuous_lower": np.full(n_roi, np.nan, dtype=np.float32),
     }
+    for stim in BPI_STIMULI:
+        for suffix in ("", "_upper", "_lower"):
+            out[stim + suffix] = np.full(n_roi, np.nan, dtype=np.float32)
     if dff is None or getattr(dff, "ndim", 0) != 2 or not stim_events:
         return out
 
     csum = np.concatenate(
-        [np.zeros((n_roi, 1), dtype=np.float32), np.cumsum(np.asarray(dff, dtype=np.float32), axis=1, dtype=np.float32)],
+        [np.zeros((n_roi, 1), dtype=np.float32), np.cumsum(np.nan_to_num(np.asarray(dff, dtype=np.float32)), axis=1, dtype=np.float32)],
         axis=1,
     )
     auc_cache: dict[int, np.ndarray] = {}
-    for class_idx, stim_class in enumerate(["bout", "continuous"]):
-        class_events = [event for event in stim_events if str(event.get("stim_class", "")) == stim_class]
+    for class_idx, stim_class in enumerate(["bout", "continuous", *BPI_STIMULI]):
+        class_events = [event for event in stim_events if (
+            str(event.get("stim_class", "")) == stim_class if class_idx < 2 else _bpi_stimulus_key(event) == stim_class
+        )]
         if not class_events:
             continue
-        boot = np.zeros((n_roi, int(n_boot)), dtype=np.float32)
-        usable = True
-        rng = np.random.default_rng(int(seed) + int(class_idx))
-        for event in class_events:
-            duration = int(event["duration_frames"])
-            starts = null_starts_by_duration.get(duration)
-            if starts is None or len(starts) < 2:
-                usable = False
-                break
-            if duration not in auc_cache:
-                sums = csum[:, starts + duration] - csum[:, starts]
-                auc_cache[duration] = sums / float(fps)
-            auc_mat = auc_cache[duration]
-            baseline_choices = rng.integers(0, auc_mat.shape[1], size=int(n_boot))
-            response_choices = rng.integers(0, auc_mat.shape[1] - 1, size=int(n_boot))
-            response_choices += response_choices >= baseline_choices
-            boot += auc_mat[:, response_choices] - auc_mat[:, baseline_choices]
-        if not usable:
-            continue
-        boot /= float(len(class_events))
-        two_sided_tail = (1.0 - float(q)) / 2.0
-        out[stim_class] = np.quantile(boot, float(q), axis=1).astype(np.float32)
-        out[f"{stim_class}_upper"] = np.quantile(boot, 1.0 - two_sided_tail, axis=1).astype(np.float32)
-        out[f"{stim_class}_lower"] = np.quantile(boot, two_sided_tail, axis=1).astype(np.float32)
+        valid_events = np.ones((n_roi, len(class_events)), dtype=bool)
+        if config is not None and class_idx >= 2:
+            for i, trace in enumerate(dff):
+                for j, event in enumerate(class_events):
+                    seg, _, _ = _extract_window(trace, event["idx0"], event["idx1"], mode=config.edge_policy, min_valid_frac=config.min_valid_frac)
+                    baseline, _, _ = _extract_window(trace, event["baseline_idx0"], event["baseline_idx1"], mode="strict", min_valid_frac=config.min_valid_frac)
+                    valid_events[i, j] = (seg is not None and baseline is not None
+                                          and np.isfinite(np.nanmean(baseline)) and np.isfinite(np.nanmean(seg))
+                                          and np.isfinite(np.nansum(seg - np.nanmean(baseline))))
+        counts = valid_events.sum(axis=1)
+        for lo in range(0, n_roi, 128):
+            hi = min(lo + 128, n_roi)
+            boot = np.zeros((hi - lo, int(n_boot)), dtype=np.float32)
+            usable = True
+            rng = np.random.default_rng(int(seed) + int(class_idx))
+            for event_idx, event in enumerate(class_events):
+                duration = int(event["duration_frames"])
+                starts = null_starts_by_duration.get(duration)
+                if starts is None or len(starts) < 2:
+                    usable = False
+                    break
+                if duration not in auc_cache:
+                    sums = csum[:, starts + duration] - csum[:, starts]
+                    auc_cache[duration] = sums / float(fps)
+                auc_mat = auc_cache[duration]
+                baseline_choices = rng.integers(0, auc_mat.shape[1], size=int(n_boot))
+                response_choices = rng.integers(0, auc_mat.shape[1] - 1, size=int(n_boot))
+                response_choices += response_choices >= baseline_choices
+                boot += (auc_mat[lo:hi, response_choices] - auc_mat[lo:hi, baseline_choices]) * valid_events[lo:hi, event_idx, None]
+            if not usable:
+                continue
+            boot /= np.maximum(counts[lo:hi, None], 1)
+            two_sided_tail = (1.0 - float(q)) / (2.0 if class_idx < 2 else 8.0)
+            out[stim_class][lo:hi] = np.quantile(boot, float(q), axis=1).astype(np.float32)
+            out[f"{stim_class}_upper"][lo:hi] = np.quantile(boot, 1.0 - two_sided_tail, axis=1).astype(np.float32)
+            out[f"{stim_class}_lower"][lo:hi] = np.quantile(boot, two_sided_tail, axis=1).astype(np.float32)
     return out
 
 
@@ -634,6 +764,7 @@ def build_response_bpi_tables(
         "bpi_zero_band",
         "bpi_activity_threshold",
     ]
+    drop_cols += list(NEW_RESPONSE_COLUMNS)
     detail = detail.drop(columns=[col for col in drop_cols if col in detail.columns], errors="ignore")
     detail["activity_class"] = detail["activity_class"].astype(str).replace({"Inactive neurons": cfg.inactive_class})
     detail["suite2p_activity_class"] = detail["activity_class"].astype(str)
@@ -771,6 +902,7 @@ def build_response_bpi_tables(
             n_boot=int(cfg.response_null_bootstrap_n),
             q=float(cfg.response_null_q),
             seed=int(cfg.response_rng_seed) + int(plane_idx) * 100,
+            config=cfg,
         )
 
     unique_contexts = list(prepared_by_key.values())
@@ -898,6 +1030,15 @@ def build_response_bpi_tables(
         if zstats is not None and roi_idx < len(zstats["valid"]) and bool(zstats["valid"][roi_idx]):
             trace_z = (trace - float(zstats["mu"][roi_idx])) / float(zstats["sigma"][roi_idx])
 
+        per_stim_trials = {stim: [] for stim in BPI_STIMULI}
+        base_row["_per_stim_trials"] = per_stim_trials
+        quiet_mask = np.zeros(len(trace), dtype=bool)
+        for start, end in stim_context["baseline_windows"]:
+            quiet_mask[max(0, start):min(len(trace), end)] = True
+        quiet_frames = trace[quiet_mask]
+        quiet = float(np.nanmedian(quiet_frames)) if np.isfinite(quiet_frames).any() else np.nan
+        base_row["_quiet"] = quiet
+        base_row["_spread"] = float(1.4826 * np.nanmedian(np.abs(quiet_frames - quiet))) if np.isfinite(quiet) else np.nan
         bout_resp: list[float] = []
         cont_resp: list[float] = []
         bout_auc: list[float] = []
@@ -928,6 +1069,9 @@ def build_response_bpi_tables(
             resp_auc = float(np.nansum(seg - baseline_mean) / plane_fps)
             if not np.isfinite(resp_mean) or not np.isfinite(resp_auc):
                 continue
+            stim_key = _bpi_stimulus_key(event)
+            if stim_key in per_stim_trials:
+                per_stim_trials[stim_key].append((resp_auc, float(np.nanmean(seg)), baseline_mean))
             if event["stim_class"] == "bout":
                 bout_resp.append(resp_mean)
                 bout_auc.append(resp_auc)
@@ -1125,6 +1269,11 @@ def build_response_bpi_tables(
             base_row["bpi_preference"] = "non-preferential"
         cell_rows.append(base_row)
 
+    for cell in cell_rows:
+        _annotate_per_stimulus_response(
+            cell, cell.pop("_per_stim_trials", {}), null_q_by_plane.get(cell["plane_idx"], {}) if "_quiet" in cell else {},
+            cell["roi_idx"], cell.pop("_quiet", np.nan), cell.pop("_spread", np.nan), cfg,
+        )
     scored_bpi_df = pd.DataFrame(cell_rows)
     if scored_bpi_df.empty:
         detail["bpi_category"] = bpi_unavailable
@@ -1189,6 +1338,7 @@ def build_response_bpi_tables(
             "bpi_zero_band",
             "bpi_activity_threshold",
         ]
+        merge_cols += list(NEW_RESPONSE_COLUMNS)
         detail = detail.merge(scored_bpi_df[merge_cols], on=["plane_idx", "func_label"], how="left")
         detail["response_is_active"] = _as_bool_series(detail.get("response_is_active", False)).astype(bool)
         for col in [
@@ -1215,7 +1365,7 @@ def build_response_bpi_tables(
         detail["bpi_activity_threshold"] = detail["bpi_activity_threshold"].fillna(float(cfg.response_min_auc))
         detail["response_auc_threshold"] = detail["response_auc_threshold"].fillna(float(cfg.response_min_auc))
         detail["response_null_quantile"] = detail["response_null_quantile"].fillna(float(cfg.response_null_q))
-        two_sided_tail = (1.0 - float(cfg.response_null_q)) / 2.0
+        two_sided_tail = (1.0 - float(cfg.response_null_q)) / 8.0
         detail["response_null_upper_quantile"] = detail["response_null_upper_quantile"].fillna(1.0 - two_sided_tail)
         detail["response_null_lower_quantile"] = detail["response_null_lower_quantile"].fillna(two_sided_tail)
         detail["response_null_bootstrap_n"] = detail["response_null_bootstrap_n"].fillna(int(cfg.response_null_bootstrap_n))

@@ -688,3 +688,20 @@ def test_activity_sessions_block_malformed_reference_without_crashing(tmp_path: 
         reference_manifest_path=reference)
     assert report["status"] == "blocked"
     assert report["issues"].query("area == 'reference session provenance' and status == 'blocked'").shape[0] == 1
+
+
+def test_activity_bpi_gate_includes_suppression_only_without_finite_bpi(tmp_path: Path) -> None:
+    table = _csv(tmp_path / "suppressed.csv", [
+        {"mean_bout_auc_dff": -.2, "mean_cont_auc_dff": 0., "response_magnitude_auc": 0.,
+         "activity_mag": .2, "bpi": np.nan, "response_is_active": True,
+         "response_class": "bout-responsive", "response_valence_class": "bout-suppressed",
+         "bpi_category": "bout-responsive", "bpi_preference": "suppressed-only",
+         "bpi_zero_band": .5, "bpi_activity_threshold": .05},
+    ])
+    fig, rows = plot_activity_bpi_gate(table, fish_id=FISH_ID)
+    assert len(rows) == 1 and rows.iloc[0].bpi_preference == "suppressed-only"
+    assert sum(len(c.get_offsets()) for c in fig.axes[0].collections) == 1
+    assert "1 suppressed-only" in fig.axes[1].get_title()
+    assert any("suppressed-only (n=1)" in text.get_text() for text in fig.axes[2].get_legend().get_texts())
+    assert sum(p.theta2-p.theta1 for p in fig.axes[5].patches) == pytest.approx(360)
+    plt.close(fig)

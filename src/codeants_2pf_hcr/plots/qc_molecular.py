@@ -1264,6 +1264,7 @@ _BPI_PREFERENCE_COLORS = {
     "bout-preferential": "#2c7fb8",
     "continuous-preferential": "#d95f0e",
     "non-preferential": "#d946ef",
+    "suppressed-only": "#756bb1",
 }
 _RESPONSE_CLASS_MARKERS = {
     "bout-responsive": "o",
@@ -1334,11 +1335,9 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
         & np.isfinite(work["activity_mag"])
     ].copy()
     responsive = assessable.loc[
-        assessable["response_is_active"] & np.isfinite(assessable["bpi"])
+        assessable["response_is_active"]
     ].copy()
     nonresponsive = assessable.loc[~assessable["response_is_active"]].copy()
-    if responsive.empty:
-        raise ValueError(f"No response-positive finite-BPI rows available for review: {bpi_cells_path}")
 
     fig, axes = plt.subplots(2, 3, figsize=(15.0, 8.8), constrained_layout=True)
     ax_plane, ax_bpi, ax_bins, ax_dist, ax_strength, ax_donut = axes.flat
@@ -1374,7 +1373,7 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
     ax_plane.set(
         xlim=(-limit, limit), ylim=(-limit, limit),
         xlabel="Continuous response AUC (dF/F·s)", ylabel="Bout response AUC (dF/F·s)",
-        title=f"Condition AUCs (n={len(assessable)} assessable)\ncolor=BPI effect class; marker=response test",
+        title=f"Pooled signed condition AUCs (n={len(assessable)} assessable)\ncalls: any side; color=BPI preference / suppression; marker=response test",
     )
 
     preference_handles = [
@@ -1408,7 +1407,7 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
         axis.axhline(-zero_band, color="#444444", linestyle=":", linewidth=1.0)
         axis.set(xlabel=x_label, ylabel="BPI", ylim=(-1.02, 1.02))
     effect_note = (
-        f"n={len(responsive)} response-positive; color=BPI effect class; marker=response test\n"
+        f"n={int(responsive['bpi'].notna().sum())} finite tuning BPIs; {int(responsive['bpi_preference'].eq('suppressed-only').sum())} suppressed-only (BPI unavailable)\n"
         f"|BPI| > {zero_band:g} is an effect-size rule, not a contrast test"
     )
     ax_bpi.set_title("BPI versus response magnitude\n" + effect_note, fontsize=9.5)

@@ -813,6 +813,12 @@ def test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_sour
         ]
     )
 
+    # Activity annotations pass through frozen geometry/identity attachment.
+    passthrough_df["bpi_preference"] = ["suppressed-only", "unavailable"]
+    passthrough_df["response_valence_class"] = ["bout-suppressed", "response unavailable"]
+    passthrough_df["lb_mean_auc_dff"] = [-0.2, float("nan")]
+    passthrough_df["suppression_confidence"] = ["high", float("nan")]
+
     out = attach_identity_to_functional_roi_geometry_df(
         geometry_df,
         lookup_df,
@@ -826,6 +832,10 @@ def test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_sour
     assert first["identity_label"] == "sst1.1"
     assert bool(first["has_identity_assigned"]) is True
     assert first["activity_class"] == "Active neurons"
+    assert first["bpi_preference"] == "suppressed-only"
+    assert first["response_valence_class"] == "bout-suppressed"
+    assert first["lb_mean_auc_dff"] == -0.2
+    assert first["suppression_confidence"] == "high"
     second = out[out["func_label"].astype(str).eq("2")].iloc[0]
     assert str(second["identity_label"]) in {"", "<NA>", "nan", "NaN"}
     assert bool(second["has_identity_assigned"]) is False

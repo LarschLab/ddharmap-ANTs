@@ -1604,3 +1604,18 @@ class PlotsAnalysisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_bpi_panel_counts_suppression_only_without_inventing_coordinates():
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import numpy as np
+    table = pd.DataFrame(dict(bpi=[np.nan], mean_bout_auc_dff=[-.2], mean_cont_auc_dff=[0.],
+                              response_is_active=[True], bpi_category=["bout-responsive"],
+                              bpi_preference=["suppressed-only"], bpi_zero_band=[.5]))
+    fig, ax = plt.subplots()
+    out = render_single_fish_50l_bpi_panel(ax, table, axis_label="BPI", title="Tuning")
+    assert out["n_plotted"] == 0 and out["n_suppressed_only"] == 1
+    assert out["zero_band"] == .5
+    assert any("suppressed-only: 1" in text.get_text() for text in ax.texts)
+    plt.close(fig)

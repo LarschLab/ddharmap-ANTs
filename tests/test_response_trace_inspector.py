@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import numpy as np
 import pandas as pd
@@ -115,3 +116,65 @@ def test_tuning_uses_bpi_preference_not_response_test(tmp_path):
     index = pd.read_csv(tmp_path / "o" / "row_index.csv")
     row = index[(index.plane_idx == 5) & (index.func_label == 1)].iloc[0]
     assert (row.tuning, row.response_class) == ("non-preferential responder", "bout-responsive")
+
+
+def test_per_stimulus_guard_labels_and_view_geometry(tmp_path):
+    cells, score = _fixture(tmp_path)
+    windows = pd.read_csv(score / "scored_stimulus_windows.csv")
+    for stim in STIM_TYPES:
+        key = stim[:2].lower()
+        cells[f"{key}_mean_auc_dff"] = np.nan
+        cells[f"{key}_null_upper_auc"] = .01
+        cells[f"{key}_null_lower_auc"] = -.01
+        cells[f"{key}_response_valence"] = "not-significant"
+    for idx, row in cells.iterrows():
+        f = np.load(tmp_path / "suite2P" / f"plane{row.plane_idx}" / f"FISH_plane{row.plane_idx}_F.npy")[int(row.func_label)-1]
+        dff = (f-np.percentile(f,10))/(np.percentile(f,10)+1e-6)
+        for stim in STIM_TYPES:
+            trial = windows[(windows.plane_idx == row.plane_idx) & windows.stim_type.eq(stim)]
+            aucs = [(np.sum(dff[t.scored_onset_frame:t.scored_offset_frame]-np.mean(dff[t.prestim_baseline_start_frame:t.prestim_baseline_end_frame]))/FPS) for t in trial.itertuples()]
+            cells.loc[idx, stim[:2].lower()+"_mean_auc_dff"] = np.mean(aucs)
+    # Labels consume calls, without rebuilding them from the display traces.
+    cells.loc[0, ["bpi_preference", "bpi", "response_valence_class"]] = ["suppressed-only", np.nan, "bout-suppressed"]
+    cells.loc[0, "lb_response_valence"] = "suppressed"
+    cells.loc[0, "suppression_confidence"] = "high"
+    cells.loc[3, "response_valence_class"] = "bout-activated/continuous-suppressed"
+    cells.loc[3, "bpi_side"] = "left"
+    cells.to_csv(score / "functional_roi_activity_bpi_cells.csv", index=False)
+    output = tmp_path / "out"
+    render_response_trace_inspector(fish_id="FISH", fish_dir=tmp_path, score_dir=score, output_dir=output, suite2p_dir=tmp_path / "suite2P")
+    html = (output / "FISH_response_trace_inspector.html").read_text()
+    assert 'data-tuning="bout-suppressed"' in html
+    assert 'data-tuning="mixed activation/suppression"' in html
+    assert "highly probable suppression" in html and "LB sup · RB n.s." in html
+    assert "first.dataset.index" in html and ".trace-row:not(.hidden)" in html
+    assert 'sc.scrollTop+=' in html and 'data-index="${index}"' in html
+    row_rule = re.search(r"(?m)^\.trace-row\{([^}]+)\}", html).group(1)
+    assert "min-height:var(--rowh)" in row_rule
+    assert "overflow:hidden" not in row_rule and "max-height" not in row_rule
+    assert not re.search(r"(?:^|;)height:", row_rule)
+    assert 'contain:size;align-self:stretch;height:auto;min-height:var(--rowh)' in html
+    # Identical label content and label widths yield identical intrinsic row heights,
+    # even when wrapping at 96px or with large text; SVG aspect ratios cannot set size.
+    trial_view = html.split('<section id="view-nonavg"')[1].split('</section>')[0]
+    mean_view = html.split('<section id="view-mean"')[1].split('</section>')[0]
+    label_pattern = r'<div class="row-label"[^>]*>(.*?)</div>'
+    assert re.findall(label_pattern, trial_view) == re.findall(label_pattern, mean_view)
+    assert "±trial" in trial_view and "±mean" in trial_view
+    assert "H=126" in html and "H=view===" not in html
+    # Opposite per-stimulus errors cancel in pooled means but must fail this guard.
+    cells.loc[0, "lb_mean_auc_dff"] += .1
+    cells.loc[0, "rb_mean_auc_dff"] -= .1
+    cells.to_csv(score / "functional_roi_activity_bpi_cells.csv", index=False)
+    with pytest.raises(RuntimeError, match="AUC reproduction"):
+        render_response_trace_inspector(fish_id="FISH", fish_dir=tmp_path, score_dir=score, output_dir=output, suite2p_dir=tmp_path / "suite2P")
+
+
+def test_floor_excluded_uses_each_stimulus_not_pooled_mean():
+    cells = pd.DataFrame(dict(response_auc_threshold=[.05], response_is_active=[False], response_class=["low activity"]))
+    for stim in ("lb", "rb", "lc", "rc"):
+        cells[f"{stim}_mean_auc_dff"] = .03 if stim == "lb" else 0
+        cells[f"{stim}_null_upper_auc"] = .02
+        cells[f"{stim}_null_lower_auc"] = -.02
+        cells[f"{stim}_response_valence"] = "not-significant"
+    assert floor_excluded_mask(cells).tolist() == [True]
