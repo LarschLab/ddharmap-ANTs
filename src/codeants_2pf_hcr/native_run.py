@@ -196,9 +196,13 @@ def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_ov
             current = aligned / source.name
             if current.exists() and _file_hash(current) != _file_hash(source):
                 raise RuntimeError(f"Accepted native HCR label differs from frozen source: {current}")
+    # A reused stage that rewrites a file in place (input and output) gets it back from the
+    # hash-verified frozen copy on promotion, so its current timestamp is irrelevant.
+    owned = {str(record.get("path")) for record in manifest.get("outputs", []) if isinstance(record, dict)}
     for old in manifest.get("inputs", []):
         path = Path(old["path"])
         if aligned_override is not None and path == aligned: continue
+        if str(path) in owned: continue
         if not path.is_relative_to(fish) or str(path).startswith(original_root): continue
         if str(path) in run_promoted: continue
         if old.get("kind") not in {"file", "glob"}: continue

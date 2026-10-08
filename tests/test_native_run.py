@@ -274,3 +274,12 @@ def test_reuse_check_skips_paths_promoted_earlier_in_same_run(tmp_path):
     _verify_reuse_inputs(manifest, fish, "unused", run_promoted=frozenset({str(upstream)}))
     with pytest.raises(RuntimeError, match="inventory changed"):  # raw inputs stay strictly checked
         _verify_reuse_inputs({"inputs": [record(raw)]}, fish, "unused", run_promoted=frozenset({str(upstream)}))
+
+
+def test_reuse_check_skips_inputs_the_stage_itself_rewrites(tmp_path):
+    from codeants_2pf_hcr.native_run import _verify_reuse_inputs
+    fish = tmp_path / "fish"; label = fish / "03_analysis/confocal/aligned/x_labels.tif"; label.parent.mkdir(parents=True); label.write_bytes(b"x")
+    record = {"path": str(label), "kind": "file", "required": True, "exists": True, "size_bytes": 1, "count": None, "mtime": 1.0}
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        _verify_reuse_inputs({"inputs": [record]}, fish, "unused")
+    _verify_reuse_inputs({"inputs": [record], "outputs": [dict(record)]}, fish, "unused")
