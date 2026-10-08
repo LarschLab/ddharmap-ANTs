@@ -175,8 +175,14 @@ def _native_proposal_manifest(frozen_manifest: Path, frozen: Path, roots: list[s
     return native
 
 
-def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_override: str | None = None) -> None:
-    """Check current immutable raw inputs against the archived writer inventory."""
+def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_override: str | None = None,
+                         run_promoted: frozenset[str] = frozenset()) -> None:
+    """Check current immutable raw inputs against the archived writer inventory.
+
+    Paths promoted by earlier stages of this same run (products and stage
+    manifests) are skipped: the runner already tracks those dependencies, and
+    re-promotion legitimately refreshes their timestamps.
+    """
     aligned = fish / "03_analysis/confocal/aligned"
     if aligned_override is not None:
         # This one accepted-source override imports the frozen aligned bundle,
@@ -194,6 +200,7 @@ def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_ov
         path = Path(old["path"])
         if aligned_override is not None and path == aligned: continue
         if not path.is_relative_to(fish) or str(path).startswith(original_root): continue
+        if str(path) in run_promoted: continue
         if old.get("kind") not in {"file", "glob"}: continue
         current = _refresh_records([old])[0]
         if old.get("required") and not current["exists"]: raise RuntimeError(f"Frozen input no longer exists: {path}")
@@ -255,6 +262,7 @@ def execute_native_run(spec, *, resume: bool):
     elif json.loads(layout_path.read_text()) != layout:
         raise RuntimeError("Existing native layout disagrees with the run specification")
     results = []
+    run_promoted: set[str] = set()
     for stage in spec.stages:
         current, _ = _stage_current(spec, stage, environment)
         if resume and current:
@@ -292,7 +300,7 @@ def execute_native_run(spec, *, resume: bool):
                 if writer != "register-hcr-to-anatomy" or Path(override) != expected or override not in stage.inputs:
                     raise RuntimeError("Undeclared accepted aligned-source override")
                 manifest["accepted_source_override"] = {"path": override, "reason": "frozen accepted labels and generated matching tables; archived source matching glob was absent", "original_source_inputs": manifest.get("inputs", [])}
-            _verify_reuse_inputs(manifest, fish, source_root, aligned_override=override)
+            _verify_reuse_inputs(manifest, fish, source_root, aligned_override=override, run_promoted=frozenset(run_promoted))
             # Reuse is a separate recorded action, never presented as recompute.
             manifest["reused_from"] = {"root": str(frozen), "writer_generated_at": manifest["generated_at"], "scientific_commit": policy["scientific_commit"]}
             log.parent.mkdir(parents=True, exist_ok=True); log.write_text("Reused verified frozen writer products; no scientific recomputation.\n")
@@ -378,6 +386,7 @@ def execute_native_run(spec, *, resume: bool):
             state["promoted_products"] = _describe_paths(tuple(str(p) for p in products.values()))
             _write_json_atomic(_state_path(spec, stage), state)
             _write_json_atomic(journal / "stage_commit.json", {"stage": stage.name, "manifest": stage.manifest})
+            run_promoted.update(str(path) for path in products.values()); run_promoted.add(str(stage.manifest))
         except Exception:
             rollback_promotion(journal)
             backup = journal / "previous_manifest.json"

@@ -260,3 +260,17 @@ def test_crash_after_publication_restores_manifest_and_products(tmp_path, prior_
     assert target.read_text() == "old"
     if prior_manifest: assert json.loads(manifest.read_text()) == {"old": True}
     else: assert not manifest.exists()
+
+
+def test_reuse_check_skips_paths_promoted_earlier_in_same_run(tmp_path):
+    from codeants_2pf_hcr.native_run import _verify_reuse_inputs
+    fish = tmp_path / "fish"; manifests = fish / "03_analysis/functional/pipeline_manifests"; manifests.mkdir(parents=True)
+    upstream = manifests / "prepare-in-vivo-anatomy-stack_manifest.json"; upstream.write_text("{}")
+    raw = fish / "01_raw/x.tif"; raw.parent.mkdir(parents=True); raw.write_bytes(b"raw")
+    record = lambda p: {"path": str(p), "kind": "file", "required": True, "exists": True, "size_bytes": 999, "count": None, "mtime": 1.0}
+    manifest = {"inputs": [record(upstream)]}
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        _verify_reuse_inputs(manifest, fish, "unused")
+    _verify_reuse_inputs(manifest, fish, "unused", run_promoted=frozenset({str(upstream)}))
+    with pytest.raises(RuntimeError, match="inventory changed"):  # raw inputs stay strictly checked
+        _verify_reuse_inputs({"inputs": [record(raw)]}, fish, "unused", run_promoted=frozenset({str(upstream)}))
