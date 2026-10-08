@@ -87,8 +87,9 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
         with log_path.open("w") as log, redirect_stdout(log), redirect_stderr(log):
             spec = load_run_spec(spec_path)
             review_gate = spec.raw.get("review_gate")
-            if review_gate and (spec.raw.get("native_production", {}).get("mode") != "fresh" or review_gate.get("status") != "review_required"):
-                raise ValueError("Review-gate gallery requires an explicit fresh run awaiting scientific review")
+            # Frozen replay recomputes downstream stages from verified frozen upstream products, so it may await review too.
+            if review_gate and (spec.raw.get("native_production", {}).get("mode") not in {"fresh", "frozen_replay"} or review_gate.get("status") != "review_required"):
+                raise ValueError("Review-gate gallery requires a native fresh or frozen-replay run awaiting scientific review")
             fish_dir = spec.data_root / spec.fish_id
             functional = fish_dir / "03_analysis/functional"
             if notebook_dir is None:
