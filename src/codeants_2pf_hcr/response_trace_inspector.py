@@ -48,6 +48,8 @@ _PREF_TO_TUNING = {
 TEST_LABELS = {"bout-responsive": "bout only", "continuous-responsive": "continuous only", "both-responsive": "bout and continuous"}
 BPI_GROUPS = ("exact +1", "exact -1", "finite interior", "unavailable")
 REVIEW_GROUPS = ("response-positive", "floor-excluded", "other")
+# Change against the comparison-only pooled_ calls, when the table carries them.
+CHANGE_GROUPS = ("gained responder", "lost responder", "tuning changed", "unchanged")
 AUC_REPRODUCTION_TOLERANCE = 1e-5
 _SCALE_EPS = 1e-6
 
@@ -122,6 +124,13 @@ def build_trace_cube(
     )
     rows["bpi_preference"] = rows["bpi_preference"].fillna("unavailable")
     active = rows["response_is_active"].astype("boolean").fillna(False).astype(bool)
+    if "pooled_response_is_active" in rows:
+        was = rows["pooled_response_is_active"].astype("boolean").fillna(False).astype(bool)
+        retuned = was & active & rows["pooled_bpi_preference"].fillna("unavailable").ne(rows["bpi_preference"])
+        rows["change"] = np.select([active & ~was, was & ~active, retuned], list(CHANGE_GROUPS[:3]), default="unchanged")
+        rows["was"] = np.where(was, rows["pooled_bpi_preference"].fillna("unavailable").map(_PREF_TO_TUNING).fillna("responder, BPI unavailable"), "not responsive")
+    else:
+        rows["change"], rows["was"] = "unchanged", ""
     rows["tuning"] = np.where(
         active,
         rows["bpi_preference"].map(_PREF_TO_TUNING).fillna("responder, BPI unavailable"),
@@ -213,6 +222,8 @@ def _row_html(rows: pd.DataFrame, scales: np.ndarray, mean_scales: np.ndarray, v
         confidence = " · highly probable suppression" if getattr(row, "suppression_confidence", None) == "high" else ""
         search = f"{tuning} {cls} {row.bpi_group} {group} {valence} {row.session_label} plane {int(row.plane_idx)} roi {int(row.func_label)}".lower()
         flag = " · <em>floor-excluded</em>" if group == "floor-excluded" else ""
+        if row.change != "unchanged":
+            flag += f' · <em class="chg">{html.escape(str(row.change))} (pooled: {html.escape(str(row.was))})</em>'
         label = (
             f"<strong>{html.escape(label_tuning)}</strong>{confidence} · BPI {bpi_text}<br>"
             f"tests: {html.escape(tests)} · {html.escape(val_short)}<br>"
@@ -221,7 +232,7 @@ def _row_html(rows: pd.DataFrame, scales: np.ndarray, mean_scales: np.ndarray, v
         )
         parts.append(
             f'<div class="trace-row" data-view="{view}" data-search="{html.escape(search)}" data-tuning="{html.escape(tuning)}" '
-            f'data-index="{idx}" data-test="{html.escape(cls)}" data-bpi-group="{html.escape(str(row.bpi_group))}" data-group="{group}">'
+            f'data-index="{idx}" data-test="{html.escape(cls)}" data-bpi-group="{html.escape(str(row.bpi_group))}" data-group="{group}" data-change="{html.escape(str(row.change))}">'
             f'<div class="row-label" style="border-left-color:{TUNING_COLORS.get(tuning, "#ccc")}" title="{html.escape(valence)}">{label}</div>'
             f'<svg class="trace-svg" data-index="{idx}" preserveAspectRatio="none" role="img" aria-label="{html.escape(search)}"></svg></div>'
         )
@@ -239,6 +250,7 @@ def _document(
     tun_counts = rows["tuning"].value_counts().reindex(list(TUNING_ORDER), fill_value=0).astype(int)
     bpi_counts = rows["bpi_group"].value_counts().reindex(list(BPI_GROUPS), fill_value=0).astype(int)
     grp_counts = rows["review_group"].value_counts().reindex(list(REVIEW_GROUPS), fill_value=0).astype(int)
+    chg_counts = rows["change"].value_counts().reindex(list(CHANGE_GROUPS), fill_value=0).astype(int)
     opt = lambda items, counts: "".join(f'<option value="{html.escape(k)}">{html.escape(k)} ({counts[k]})</option>' for k in items)
     legend = "".join(f'<span><i class="swatch" style="background:{TUNING_COLORS[c]}"></i>{c} <b>{tun_counts[c]}</b></span>' for c in TUNING_ORDER)
     head = lambda labels, half: "".join(f'<span class="{"bout-head" if i < half else "cont-head"}">{l}</span>' for i, l in enumerate(labels))
@@ -271,7 +283,7 @@ main{{flex:1;min-height:0;display:flex}}
 .bout-head{{background:var(--bout)}} .cont-head{{background:var(--cont)}}
 .trace-row{{min-height:var(--rowh);border-bottom:1px solid #ddd}}
 .row-label{{position:sticky;left:0;z-index:2;background:#fff;padding:4px 6px;border-right:1px solid #aaa;border-left:10px solid #ccc;font-size:11px;line-height:1.25;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}}
-.trace-row[data-group="floor-excluded"] .row-label{{background:#fff8d6}}
+.trace-row[data-group="floor-excluded"] .row-label{{background:#fff8d6}} .chg{{color:#b2182b}}
 .dim{{color:#888}}
 .trace-svg{{grid-column:2/-1;width:100%;contain:size;align-self:stretch;height:auto;min-height:var(--rowh);display:block}} .hidden{{display:none!important}}
 </style></head><body>
@@ -291,6 +303,7 @@ main{{flex:1;min-height:0;display:flex}}
 <p>BPI is computed from rectified AUCs, so a suppressed responder can have an extreme BPI; read tuning together with valence.</p></details>
 <div class="controls"><button id="tab-nonavg" class="active">{n_cols} trials</button><button id="tab-mean">{len(mean_labels)} means</button>
 <label>Group <select id="group-filter"><option value="all">all</option>{opt(REVIEW_GROUPS, grp_counts)}</select></label>
+<label>Change <select id="change-filter"><option value="all">all</option><option value="changed">any change ({int(chg_counts[list(CHANGE_GROUPS[:3])].sum())})</option>{opt(CHANGE_GROUPS, chg_counts)}</select></label>
 <label>Tuning <select id="tuning-filter"><option value="all">all</option>{opt(TUNING_ORDER, tun_counts)}</select></label>
 <label>Test <select id="test-filter"><option value="all">all</option>{opt(CLASS_ORDER, cls_counts)}</select></label>
 <label>BPI <select id="bpi-filter"><option value="all">all</option>{opt(BPI_GROUPS, bpi_counts)}</select></label>
@@ -321,8 +334,8 @@ active=v;document.querySelectorAll('.view').forEach(x=>x.classList.remove('activ
 if(index!==null){{const sc=document.querySelector('#view-'+v+' .scroll');const row=sc.querySelector(`.trace-row[data-index="${{index}}"]`);if(row)sc.scrollTop+=row.getBoundingClientRect().top-sc.getBoundingClientRect().top-sc.querySelector('.column-header').getBoundingClientRect().height;}}
 }}
 document.getElementById('tab-nonavg').onclick=()=>setTab('nonavg');document.getElementById('tab-mean').onclick=()=>setTab('mean');
-function applyFilter(){{const q=document.getElementById('search').value.trim().toLowerCase();const g=document.getElementById('group-filter').value,u=document.getElementById('tuning-filter').value,c=document.getElementById('test-filter').value,b=document.getElementById('bpi-filter').value;let n=0;document.querySelectorAll(`.trace-row[data-view="${{active}}"]`).forEach(r=>{{const s=(!q||r.dataset.search.includes(q))&&(g==='all'||r.dataset.group===g)&&(u==='all'||r.dataset.tuning===u)&&(c==='all'||r.dataset.test===c)&&(b==='all'||r.dataset.bpiGroup===b);r.classList.toggle('hidden',!s);if(s)n++;}});document.getElementById('visible-count').textContent=`${{n.toLocaleString()}} visible`;}}
-['search','group-filter','tuning-filter','test-filter','bpi-filter'].forEach(id=>{{const e=document.getElementById(id);e.oninput=e.onchange=applyFilter;}});
+function applyFilter(){{const q=document.getElementById('search').value.trim().toLowerCase();const h=document.getElementById('change-filter').value,g=document.getElementById('group-filter').value,u=document.getElementById('tuning-filter').value,c=document.getElementById('test-filter').value,b=document.getElementById('bpi-filter').value;let n=0;document.querySelectorAll(`.trace-row[data-view="${{active}}"]`).forEach(r=>{{const s=(!q||r.dataset.search.includes(q))&&(h==='all'||(h==='changed'?r.dataset.change!=='unchanged':r.dataset.change===h))&&(g==='all'||r.dataset.group===g)&&(u==='all'||r.dataset.tuning===u)&&(c==='all'||r.dataset.test===c)&&(b==='all'||r.dataset.bpiGroup===b);r.classList.toggle('hidden',!s);if(s)n++;}});document.getElementById('visible-count').textContent=`${{n.toLocaleString()}} visible`;}}
+['search','change-filter','group-filter','tuning-filter','test-filter','bpi-filter'].forEach(id=>{{const e=document.getElementById(id);e.oninput=e.onchange=applyFilter;}});
 const root=document.documentElement.style,wSel=document.getElementById('width'),rSl=document.getElementById('rowh');
 function store(k,v){{try{{localStorage.setItem('ti-'+k,v)}}catch(e){{}}}} function load(k){{try{{return localStorage.getItem('ti-'+k)}}catch(e){{return null}}}}
 function setWidth(v){{wSel.value=v;root.setProperty('--col',v==='fit'?'minmax(0,1fr)':v+'px');document.body.classList.toggle('fit',v==='fit');store('width',v);}}

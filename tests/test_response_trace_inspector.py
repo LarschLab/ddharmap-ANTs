@@ -178,3 +178,13 @@ def test_floor_excluded_uses_each_stimulus_not_pooled_mean():
         cells[f"{stim}_null_lower_auc"] = -.02
         cells[f"{stim}_response_valence"] = "not-significant"
     assert floor_excluded_mask(cells).tolist() == [True]
+
+
+def test_change_filter_marks_rows_against_pooled_calls(tmp_path):
+    cells, score = _fixture(tmp_path)
+    cells["pooled_response_is_active"] = False
+    cells["pooled_bpi_preference"] = "not-responsive"
+    cells.to_csv(score / "functional_roi_activity_bpi_cells.csv", index=False)
+    render_response_trace_inspector(fish_id="FISH", fish_dir=tmp_path, score_dir=score, output_dir=tmp_path / "o", suite2p_dir=tmp_path / "suite2P")
+    html_text = (tmp_path / "o" / "FISH_response_trace_inspector.html").read_text()
+    assert 'id="change-filter"' in html_text and 'data-change="gained responder"' in html_text and "pooled: not responsive" in html_text
