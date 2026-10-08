@@ -88,7 +88,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.response_trace_inspector`
 
-- `render_response_trace_inspector`: Render a self-contained, read-only HTML of baseline-shifted dF/F traces for every ROI over the persisted LB/RB/LC/RC BPI windows (16 trials and 4 means), with response class, BPI, valence and a review-only floor-excluded group; refuses unless trial AUCs reproduce the score table. Thin CLI `tools/render_response_trace_inspector.py`.
+- `render_response_trace_inspector`: Render a self-contained, read-only HTML of baseline-shifted dF/F traces for every ROI over the persisted LB/RB/LC/RC BPI windows (16 trials and 4 means), labelled and coloured by tuning (stored `bpi_preference` among responders, |BPI| > `bpi_zero_band`), with the response test passed, valence and a review-only floor-excluded group; refuses unless trial AUCs reproduce the score table. Thin CLI `tools/render_response_trace_inspector.py`.
 - `floor_excluded_mask`: ROIs that pass a persisted null threshold but are not response-positive only because |mean AUC| is below `response_auc_threshold`.
 
 ## `codeants_2pf_hcr.pipeline`

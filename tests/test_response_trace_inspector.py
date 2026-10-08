@@ -58,7 +58,7 @@ def _fixture(tmp_path, n_rois=3):
                 response_auc_threshold=0.05,
                 response_is_active=active, response_class="bout-responsive" if active else "low activity",
                 response_valence_pattern="bout:activation" if active else "none",
-                bpi=1.0 if active else np.nan, bpi_preference="bout-preferential" if active else "not-responsive",
+                bpi=1.0 if active else np.nan, bpi_zero_band=0.5, bpi_preference="bout-preferential" if active else "not-responsive",
             ))
     cells = pd.DataFrame(cell_rows)
     score = tmp_path / "score"
@@ -90,7 +90,10 @@ def test_render_reproduces_auc_and_writes_self_contained_html(tmp_path):
     assert "<script src" not in html_text and "floor-excluded" in html_text
     index = pd.read_csv(out / "row_index.csv")
     assert set(index.plane_idx) == {5, 6}
-    assert json.loads((out / "inspector_metadata.json").read_text())["review_group_counts"]["response-positive"] == 2
+    meta_json = json.loads((out / "inspector_metadata.json").read_text())
+    assert meta_json["review_group_counts"]["response-positive"] == 2
+    assert meta_json["tuning_counts"]["bout-tuned"] == 2
+    assert 'data-tuning="bout-tuned"' in html_text and "tests passed: bout only" in html_text
 
 
 def test_render_refuses_when_table_auc_does_not_reproduce(tmp_path):
@@ -100,3 +103,15 @@ def test_render_refuses_when_table_auc_does_not_reproduce(tmp_path):
     with pytest.raises(RuntimeError, match="AUC reproduction"):
         render_response_trace_inspector(fish_id="FISH", fish_dir=tmp_path, score_dir=score, output_dir=tmp_path / "o",
                                         suite2p_dir=tmp_path / "suite2P")
+
+
+def test_tuning_uses_bpi_preference_not_response_test(tmp_path):
+    cells, score = _fixture(tmp_path)
+    cells.loc[0, ["bpi", "bpi_preference"]] = [0.27, "non-preferential"]
+    cells.to_csv(score / "functional_roi_activity_bpi_cells.csv", index=False)
+    meta = render_response_trace_inspector(fish_id="FISH", fish_dir=tmp_path, score_dir=score, output_dir=tmp_path / "o",
+                                           suite2p_dir=tmp_path / "suite2P")
+    assert meta["tuning_counts"] == {"bout-tuned": 1, "non-preferential responder": 1, "low activity": 4}
+    index = pd.read_csv(tmp_path / "o" / "row_index.csv")
+    row = index[(index.plane_idx == 5) & (index.func_label == 1)].iloc[0]
+    assert (row.tuning, row.response_class) == ("non-preferential responder", "bout-responsive")

@@ -4457,3 +4457,13 @@ pass; real detached audit results are saved fish-local.
   floor-excluded 199/380/87/221, AUC reproduction error ~1e-16.
 - Danin kept the 0.05 floor (2026-10-08); these inspectors test whether the
   f04-validated categories generalise. No scoring, schema or contract change.
+- Same day, after Danin flagged it (confirmed by a read-only Codex check): the
+  inspector's bold label and colour showed `response_class` (which response
+  test passed), which reads as tuning but is not. Rows are now labelled and
+  coloured by tuning = stored `bpi_preference` among response-positive ROIs
+  (bout-tuned BPI > `bpi_zero_band` 0.5, continuous-tuned < -0.5,
+  non-preferential responder), with "tests passed: bout only/continuous
+  only/both" and valence as the second line; filters for tuning, response
+  test, review group and the exact ±1 BPI boundary. Stored data unchanged; the
+  f04 original had the same presentation. Re-rendered for the four fish
+  (bout-tuned 25/186/5/95, continuous-tuned 37/36/17/25 for f02/f07/f05/f06).

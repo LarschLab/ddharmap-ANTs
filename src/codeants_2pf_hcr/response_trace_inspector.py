@@ -21,14 +21,27 @@ import pandas as pd
 STIM_TYPES = ("LB_trajectory", "RB_trajectory", "LC_trajectory", "RC_trajectory")
 TRIALS_PER_STIM = 4
 CLASS_ORDER = ("bout-responsive", "continuous-responsive", "both-responsive", "low activity", "response unavailable")
-CLASS_COLORS = {
-    "bout-responsive": "#2c7fb8",
-    "continuous-responsive": "#d95f0e",
-    "both-responsive": "#d946ef",
+# Tuning is the accepted BPI preference among response-positive ROIs (|BPI| > bpi_zero_band,
+# 0.5); response_class only says which condition's response test passed.
+TUNING_ORDER = (
+    "bout-tuned", "continuous-tuned", "non-preferential responder", "responder, BPI unavailable",
+    "low activity", "response unavailable",
+)
+TUNING_COLORS = {
+    "bout-tuned": "#2c7fb8",
+    "continuous-tuned": "#d95f0e",
+    "non-preferential responder": "#d946ef",
+    "responder, BPI unavailable": "#555555",
     "low activity": "#9e9e9e",
     "response unavailable": "#ececec",
 }
-PREF_ORDER = ("bout-preferential", "continuous-preferential", "non-preferential", "not-responsive", "unavailable")
+_PREF_TO_TUNING = {
+    "bout-preferential": "bout-tuned",
+    "continuous-preferential": "continuous-tuned",
+    "non-preferential": "non-preferential responder",
+}
+TEST_LABELS = {"bout-responsive": "bout only", "continuous-responsive": "continuous only", "both-responsive": "bout and continuous"}
+BPI_GROUPS = ("exact +1", "exact -1", "finite interior", "unavailable")
 REVIEW_GROUPS = ("response-positive", "floor-excluded", "other")
 AUC_REPRODUCTION_TOLERANCE = 1e-5
 _SCALE_EPS = 1e-6
@@ -99,14 +112,20 @@ def build_trace_cube(
         "response-positive",
         np.where(floor_excluded_mask(rows), "floor-excluded", "other"),
     )
-    rows["_class_order"] = rows["response_class"].map({c: i for i, c in enumerate(CLASS_ORDER)}).fillna(len(CLASS_ORDER))
     rows["bpi_preference"] = rows["bpi_preference"].fillna("unavailable")
+    active = rows["response_is_active"].astype("boolean").fillna(False).astype(bool)
+    rows["tuning"] = np.where(
+        active,
+        rows["bpi_preference"].map(_PREF_TO_TUNING).fillna("responder, BPI unavailable"),
+        rows["response_class"],
+    )
+    rows["_order"] = rows["tuning"].map({c: i for i, c in enumerate(TUNING_ORDER)}).fillna(len(TUNING_ORDER))
     rows["bpi_group"] = np.select(
         [rows["bpi"].eq(1.0), rows["bpi"].eq(-1.0), rows["bpi"].notna()],
         ["exact +1", "exact -1", "finite interior"],
         default="unavailable",
     )
-    rows = rows.sort_values(["_class_order", "session_label", "plane_idx", "func_label"]).reset_index(drop=True)
+    rows = rows.sort_values(["_order", "session_label", "plane_idx", "func_label"]).reset_index(drop=True)
 
     cube = np.full((len(rows), len(STIM_TYPES) * TRIALS_PER_STIM, n_pts), np.nan, dtype=np.float32)
     diffs: list[float] = []
@@ -150,37 +169,41 @@ def _row_html(rows: pd.DataFrame, scales: np.ndarray, view: str) -> str:
     parts = []
     for idx, row in enumerate(rows.itertuples(index=False)):
         cls = str(row.response_class)
-        pref = str(row.bpi_preference)
+        tuning = str(row.tuning)
+        tests = TEST_LABELS.get(cls, "none")
         bpi_text = "n/a" if pd.isna(row.bpi) else f"{float(row.bpi):+.3f}"
         valence = str(row.response_valence_pattern) if pd.notna(getattr(row, "response_valence_pattern", np.nan)) else "n/a"
         group = str(row.review_group)
-        search = f"{cls} {pref} {row.bpi_group} {group} {valence} {row.session_label} plane {int(row.plane_idx)} roi {int(row.func_label)}".lower()
+        search = f"{tuning} {cls} {row.bpi_group} {group} {valence} {row.session_label} plane {int(row.plane_idx)} roi {int(row.func_label)}".lower()
         flag = " · <em>floor-excluded</em>" if group == "floor-excluded" else ""
         label = (
-            f"<strong>{html.escape(cls)}</strong>{flag}<br>{html.escape(pref)} · BPI {bpi_text}<br>"
-            f"valence {html.escape(valence)}<br>"
+            f"<strong>{html.escape(tuning)}</strong> · BPI {bpi_text}{flag}<br>"
+            f"tests passed: {html.escape(tests)} · {html.escape(valence)}<br>"
             f"{html.escape(str(row.session_label))} · plane {int(row.plane_idx)} · ROI {int(row.func_label)}<br>"
             f"AUC b {float(row.mean_bout_auc_dff):+.4f} / c {float(row.mean_cont_auc_dff):+.4f} · scale ±{float(scales[idx]):.4f}"
         )
         parts.append(
-            f'<div class="trace-row" data-view="{view}" data-search="{html.escape(search)}" data-class="{html.escape(cls)}" '
-            f'data-pref="{html.escape(pref)}" data-bpi-group="{html.escape(str(row.bpi_group))}" data-group="{group}">'
-            f'<div class="row-label class-{cls.replace(" ", "-")}">{label}</div>'
+            f'<div class="trace-row" data-view="{view}" data-search="{html.escape(search)}" data-tuning="{html.escape(tuning)}" '
+            f'data-test="{html.escape(cls)}" data-bpi-group="{html.escape(str(row.bpi_group))}" data-group="{group}">'
+            f'<div class="row-label" style="border-left-color:{TUNING_COLORS.get(tuning, "#ccc")}">{label}</div>'
             f'<svg class="trace-svg" data-index="{idx}" preserveAspectRatio="none" role="img" aria-label="{html.escape(search)}"></svg></div>'
         )
     return "\n".join(parts)
 
 
-def _document(fish_id: str, rows: pd.DataFrame, cube: np.ndarray, mean_cube: np.ndarray, prov: dict[str, Any], floor: float) -> str:
+def _document(
+    fish_id: str, rows: pd.DataFrame, cube: np.ndarray, mean_cube: np.ndarray, prov: dict[str, Any], floor: float, zero_band: float
+) -> str:
     scales, mean_scales = _scales(cube), _scales(mean_cube)
     n_cols, n_pts = cube.shape[1], cube.shape[2]
     trial_labels = [f"{s.replace('_trajectory', '')}{k}" for s in STIM_TYPES for k in range(1, TRIALS_PER_STIM + 1)]
     mean_labels = [s.replace("_trajectory", "") for s in STIM_TYPES]
     cls_counts = rows["response_class"].value_counts().reindex(list(CLASS_ORDER), fill_value=0).astype(int)
-    pref_counts = rows["bpi_preference"].value_counts().reindex(list(PREF_ORDER), fill_value=0).astype(int)
+    tun_counts = rows["tuning"].value_counts().reindex(list(TUNING_ORDER), fill_value=0).astype(int)
+    bpi_counts = rows["bpi_group"].value_counts().reindex(list(BPI_GROUPS), fill_value=0).astype(int)
     grp_counts = rows["review_group"].value_counts().reindex(list(REVIEW_GROUPS), fill_value=0).astype(int)
     opt = lambda items, counts: "".join(f'<option value="{html.escape(k)}">{html.escape(k)} ({counts[k]})</option>' for k in items)
-    legend = "".join(f'<span><i class="swatch" style="background:{CLASS_COLORS[c]}"></i>{c} <b>{cls_counts[c]}</b></span>' for c in CLASS_ORDER)
+    legend = "".join(f'<span><i class="swatch" style="background:{TUNING_COLORS[c]}"></i>{c} <b>{tun_counts[c]}</b></span>' for c in TUNING_ORDER)
     head = lambda labels, half: "".join(f'<span class="{"bout-head" if i < half else "cont-head"}">{l}</span>' for i, l in enumerate(labels))
     w0, w1 = prov["window_sec"]
     app, mov = prov["appearance_frac"], prov["movement_frac"]
@@ -201,7 +224,6 @@ button.active{{background:#1f5f86;color:#fff;border-color:#1f5f86}} .summary{{di
 .bout-head{{background:var(--bout)}} .cont-head{{background:var(--cont)}} .trace-row{{display:grid;min-width:max-content;border-bottom:1px solid #ddd}}
 .trace-row[data-view="nonavg"]{{height:126px}} .trace-row[data-view="mean"]{{height:150px}}
 .row-label{{padding:7px 10px;border-right:1px solid #aaa;border-left:12px solid #ccc;font-size:12px;font-variant-numeric:tabular-nums}}
-.class-bout-responsive{{border-left-color:#2c7fb8}} .class-continuous-responsive{{border-left-color:#d95f0e}} .class-both-responsive{{border-left-color:#d946ef}} .class-low-activity{{border-left-color:#9e9e9e}} .class-response-unavailable{{border-left-color:#ececec}}
 .trace-row[data-group="floor-excluded"] .row-label{{background:#fff8d6}}
 .trace-svg{{grid-column:2/-1;width:100%;height:100%;display:block}} .hidden{{display:none!important}}
 .legend{{display:flex;gap:14px;flex-wrap:wrap;margin:5px 0 10px}} .swatch{{display:inline-block;width:13px;height:13px;vertical-align:-2px;margin-right:4px}}
@@ -211,19 +233,23 @@ code{{background:#f3f3f3;padding:1px 4px}} details{{margin:7px 0}} details table
 <div class="note">All {len(rows):,} ROI rows of the score-activity-bpi table. Unsmoothed dF/F = (F − P10)/P10 per ROI, each trial shifted by its own prestimulus mean; trials are the persisted BPI windows. Window {w0:+.1f} to {w1:+.1f} s from appearance; gray dotted = appearance, red dashed = movement onset (+{prov["movement_onset_sec"]:.1f} s). One symmetric scale per neuron and view, printed beside the row. Read-only review surface: it records no decisions.</div>
 <div class="summary"><span>All ROIs <b>{len(rows):,}</b></span><span>Response-positive <b>{grp_counts["response-positive"]:,}</b></span><span>Floor-excluded <b>{grp_counts["floor-excluded"]:,}</b></span><span>Assessable <b>{int(rows["response_class"].ne("response unavailable").sum()):,}</b></span><span>AUC reproduction error <b>{prov["max_recomputed_mean_auc_difference"]:.2e}</b></span></div>
 <details><summary><b>Definitions</b></summary><table><tr><th>Term</th><th>n</th><th>Meaning</th></tr>
-<tr><td>bout-/continuous-/both-responsive</td><td>{cls_counts["bout-responsive"]}/{cls_counts["continuous-responsive"]}/{cls_counts["both-responsive"]}</td><td>Condition mean AUC passes its two-sided per-cell null threshold (activation ≥ upper, suppression ≤ lower) <i>and</i> |AUC| ≥ the {floor:g} dF/F·s floor.</td></tr>
+<tr><td>bout-tuned / continuous-tuned</td><td>{tun_counts["bout-tuned"]} / {tun_counts["continuous-tuned"]}</td><td>Response-positive and BPI &gt; +{zero_band:g} / BPI &lt; −{zero_band:g} (stored <code>bpi_preference</code>). Colour and bold label.</td></tr>
+<tr><td>non-preferential responder</td><td>{tun_counts["non-preferential responder"]}</td><td>Response-positive with −{zero_band:g} ≤ BPI ≤ +{zero_band:g}.</td></tr>
+<tr><td>responder, BPI unavailable</td><td>{tun_counts["responder, BPI unavailable"]}</td><td>Response-positive but BPI not computable.</td></tr>
+<tr><td>tests passed: bout only / continuous only / both</td><td>{cls_counts["bout-responsive"]} / {cls_counts["continuous-responsive"]} / {cls_counts["both-responsive"]}</td><td>Stored <code>response_class</code>: which condition's mean AUC passes its two-sided per-cell null threshold (activation ≥ upper, suppression ≤ lower) <i>and</i> |AUC| ≥ the {floor:g} dF/F·s floor. Not tuning: a cell passing only the bout test can be non-preferential.</td></tr>
 <tr><td>low activity</td><td>{cls_counts["low activity"]}</td><td>Assessable; neither condition passes.</td></tr>
 <tr><td>response unavailable</td><td>{cls_counts["response unavailable"]}</td><td>Not assessable under the trace-quality/trial gate; not biological non-response.</td></tr>
 <tr><td>floor-excluded (review group)</td><td>{grp_counts["floor-excluded"]}</td><td>Passes a null threshold in some condition but fails only the {floor:g} floor. Highlighted yellow. Review aid only; canonical classes unchanged.</td></tr></table>
-<p>BPI preference is a separate effect-size label. Valence shows activation/suppression per condition.</p></details>
+<p>Valence shows activation/suppression per condition. BPI is computed from rectified AUCs, so a suppressed responder can have an extreme BPI; read tuning together with valence.</p></details>
 <div class="controls"><button id="tab-nonavg" class="active">{n_cols} individual trials</button><button id="tab-mean">{len(mean_labels)} stimulus means</button>
 <label>Review group <select id="group-filter"><option value="all">all</option>{opt(REVIEW_GROUPS, grp_counts)}</select></label>
-<label>Response class <select id="class-filter"><option value="all">all</option>{opt(CLASS_ORDER, cls_counts)}</select></label>
-<label>BPI preference <select id="pref-filter"><option value="all">all</option>{opt(PREF_ORDER, pref_counts)}</select></label>
+<label>Tuning <select id="tuning-filter"><option value="all">all</option>{opt(TUNING_ORDER, tun_counts)}</select></label>
+<label>Response test <select id="test-filter"><option value="all">all</option>{opt(CLASS_ORDER, cls_counts)}</select></label>
+<label>BPI boundary <select id="bpi-filter"><option value="all">all</option>{opt(BPI_GROUPS, bpi_counts)}</select></label>
 <label>Find <input id="search" placeholder="r1, plane 2, roi 140, suppress…"></label><span id="visible-count"></span></div></header>
 <main>
-<section id="view-nonavg" class="view active"><div class="legend">{legend}</div><div class="scroll"><div class="column-header nonavg"><span class="label-head">class · BPI · valence · plane · ROI · AUC · scale</span>{head(trial_labels, n_cols // 2)}</div>{_row_html(rows, scales, "nonavg")}</div></section>
-<section id="view-mean" class="view"><div class="legend">{legend}<span>Mean of four baseline-shifted repetitions.</span></div><div class="scroll"><div class="column-header mean"><span class="label-head">class · BPI · valence · plane · ROI · AUC · scale</span>{head(mean_labels, len(mean_labels) // 2)}</div>{_row_html(rows, mean_scales, "mean")}</div></section>
+<section id="view-nonavg" class="view active"><div class="legend">{legend}</div><div class="scroll"><div class="column-header nonavg"><span class="label-head">tuning · BPI · tests passed · valence · plane · ROI · AUC · scale</span>{head(trial_labels, n_cols // 2)}</div>{_row_html(rows, scales, "nonavg")}</div></section>
+<section id="view-mean" class="view"><div class="legend">{legend}<span>Mean of four baseline-shifted repetitions.</span></div><div class="scroll"><div class="column-header mean"><span class="label-head">tuning · BPI · tests passed · valence · plane · ROI · AUC · scale</span>{head(mean_labels, len(mean_labels) // 2)}</div>{_row_html(rows, mean_scales, "mean")}</div></section>
 </main>
 <script>
 const encoded={{nonavg:"{_encode(cube, scales)}",mean:"{_encode(mean_cube, mean_scales)}"}};
@@ -236,8 +262,8 @@ for(let c=0;c<nC;c++){{add(svg,'rect',{{x:c*100,y:0,width:100,height:H,fill:c<nC
 const obs=new IntersectionObserver(es=>es.forEach(e=>{{if(e.isIntersecting)draw(e.target)}}),{{rootMargin:'500px'}});document.querySelectorAll('.trace-svg').forEach(s=>obs.observe(s));
 let active='nonavg';function setTab(v){{active=v;document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));document.getElementById('view-'+v).classList.add('active');document.getElementById('tab-nonavg').classList.toggle('active',v==='nonavg');document.getElementById('tab-mean').classList.toggle('active',v==='mean');applyFilter();}}
 document.getElementById('tab-nonavg').onclick=()=>setTab('nonavg');document.getElementById('tab-mean').onclick=()=>setTab('mean');
-function applyFilter(){{const q=document.getElementById('search').value.trim().toLowerCase();const g=document.getElementById('group-filter').value,c=document.getElementById('class-filter').value,p=document.getElementById('pref-filter').value;let n=0;document.querySelectorAll(`.trace-row[data-view="${{active}}"]`).forEach(r=>{{const s=(!q||r.dataset.search.includes(q))&&(g==='all'||r.dataset.group===g)&&(c==='all'||r.dataset.class===c)&&(p==='all'||r.dataset.pref===p);r.classList.toggle('hidden',!s);if(s)n++;}});document.getElementById('visible-count').textContent=`${{n.toLocaleString()}} visible`;}}
-['search','group-filter','class-filter','pref-filter'].forEach(id=>{{const e=document.getElementById(id);e.oninput=e.onchange=applyFilter;}});applyFilter();
+function applyFilter(){{const q=document.getElementById('search').value.trim().toLowerCase();const g=document.getElementById('group-filter').value,u=document.getElementById('tuning-filter').value,c=document.getElementById('test-filter').value,b=document.getElementById('bpi-filter').value;let n=0;document.querySelectorAll(`.trace-row[data-view="${{active}}"]`).forEach(r=>{{const s=(!q||r.dataset.search.includes(q))&&(g==='all'||r.dataset.group===g)&&(u==='all'||r.dataset.tuning===u)&&(c==='all'||r.dataset.test===c)&&(b==='all'||r.dataset.bpiGroup===b);r.classList.toggle('hidden',!s);if(s)n++;}});document.getElementById('visible-count').textContent=`${{n.toLocaleString()}} visible`;}}
+['search','group-filter','tuning-filter','test-filter','bpi-filter'].forEach(id=>{{const e=document.getElementById(id);e.oninput=e.onchange=applyFilter;}});applyFilter();
 </script></body></html>'''
 
 
@@ -258,12 +284,15 @@ def render_response_trace_inspector(
     floors = pd.to_numeric(cells["response_auc_threshold"], errors="coerce").dropna().unique()
     if len(floors) != 1:
         raise RuntimeError(f"expected one response_auc_threshold, found {floors}")
+    bands = pd.to_numeric(cells.get("bpi_zero_band"), errors="coerce").dropna().unique() if "bpi_zero_band" in cells else []
+    if len(bands) != 1:
+        raise RuntimeError(f"expected one bpi_zero_band, found {bands}")
     rows, cube, prov = build_trace_cube(cells, windows, suite2p_dir)
     mean_cube = cube.reshape(len(rows), len(STIM_TYPES), TRIALS_PER_STIM, cube.shape[2]).mean(axis=2)
     output_dir.mkdir(parents=True, exist_ok=True)
     html_path = output_dir / f"{fish_id}_response_trace_inspector.html"
-    html_path.write_text(_document(fish_id, rows, cube, mean_cube, prov, float(floors[0])))
-    rows.loc[:, ["session_label", "plane_idx", "func_label", "response_class", "review_group", "bpi_preference", "bpi", "bpi_group"]].to_csv(
+    html_path.write_text(_document(fish_id, rows, cube, mean_cube, prov, float(floors[0]), float(bands[0])))
+    rows.loc[:, ["session_label", "plane_idx", "func_label", "tuning", "response_class", "review_group", "bpi_preference", "bpi", "bpi_group"]].to_csv(
         output_dir / "row_index.csv", index_label="display_row_zero_based"
     )
     from hashlib import sha256
@@ -271,7 +300,9 @@ def render_response_trace_inspector(
     meta = {
         "fish_id": fish_id,
         "n_all_rois": int(len(rows)),
+        "tuning_counts": rows["tuning"].value_counts().astype(int).to_dict(),
         "response_class_counts": rows["response_class"].value_counts().astype(int).to_dict(),
+        "bpi_zero_band": float(bands[0]),
         "review_group_counts": rows["review_group"].value_counts().astype(int).to_dict(),
         "bpi_preference_counts": rows["bpi_preference"].value_counts().astype(int).to_dict(),
         "response_auc_floor": float(floors[0]),
