@@ -4438,3 +4438,22 @@ pass; real detached audit results are saved fish-local.
 - Accepted-midline continuation runs passed all stages but the review-gated
   gallery exporter required exactly notebooks 00-05. The job now passes the
   recipe notebook count; seven notebooks produce an accepted-midline review gallery.
+
+## 2026-10-08 — All-neuron response trace inspector (read-only review tool)
+
+- Generalised the one-off L765_f04 inspector Danin used to accept the 282
+  responders on 2026-09-17 (`L765_f04/03_analysis/functional/qc/all_neuron_trace_inspector_2026-09-17/`,
+  hardcoded to f04 counts) into `response_trace_inspector.render_response_trace_inspector`
+  with thin CLI `tools/render_response_trace_inspector.py`.
+- Differences from the f04 original: trials come from the persisted per-plane
+  `scored_stimulus_windows.csv` (not re-derived stimulus contexts); labels show
+  two-sided valence and both condition AUCs; a review-only `floor-excluded`
+  group marks ROIs that pass a persisted null threshold but fail only the
+  `response_auc_threshold` floor; display scale has no 0.01 minimum; no PDF/PNG.
+  Rendering refuses unless every trial AUC reproduces the table (tol 1e-5).
+- Rendered for f02/f07/f05/f06 into fish-local
+  `03_analysis/functional/qc/response_trace_inspector_2026-10-08/` from the
+  `20261007_accepted_midline` score outputs: responders 260/452/224/250,
+  floor-excluded 199/380/87/221, AUC reproduction error ~1e-16.
+- Danin kept the 0.05 floor (2026-10-08); these inspectors test whether the
+  f04-validated categories generalise. No scoring, schema or contract change.

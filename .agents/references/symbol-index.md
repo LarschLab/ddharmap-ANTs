@@ -86,6 +86,11 @@ Generated manually for the current extracted package surface.
 
 - `render_hcr_match_inspector`: Render a self-contained, read-only HTML inventory of every transformed HCR label from saved metrics, candidate/final-pair tables, the geometry Z sidecar, anatomy/functional masks, and the identity-writer ROI table. It does not recompute matches or record gate decisions. The thin CLI is `tools/render_hcr_match_inspector.py`.
 
+## `codeants_2pf_hcr.response_trace_inspector`
+
+- `render_response_trace_inspector`: Render a self-contained, read-only HTML of baseline-shifted dF/F traces for every ROI over the persisted LB/RB/LC/RC BPI windows (16 trials and 4 means), with response class, BPI, valence and a review-only floor-excluded group; refuses unless trial AUCs reproduce the score table. Thin CLI `tools/render_response_trace_inspector.py`.
+- `floor_excluded_mask`: ROIs that pass a persisted null threshold but are not response-positive only because |mean AUC| is below `response_auc_threshold`.
+
 ## `codeants_2pf_hcr.pipeline`
 
 - `PIPELINE_STAGE_ORDER`: Roadmap-order stage names for the single-fish staged pipeline.
