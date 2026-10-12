@@ -293,3 +293,82 @@ def test_mapped_region_overlay_toggle_sideviews_and_z_cache(tmp_path):
     finally:
         viewer.close()
         session.close()
+
+
+def test_native_wheel_scrolls_z_command_wheel_zooms_and_buttons_still_step(tmp_path):
+    from qtpy.QtCore import Qt, QPoint, QPointF
+    from qtpy.QtGui import QWheelEvent
+    from qtpy.QtWidgets import QApplication, QAbstractSlider
+    dataset = make_dataset(tmp_path / 'data')
+    session = AnnotationSession(dataset, tmp_path / 'session', 'GUI reviewer')
+    controls = {}
+    viewer = create_viewer(dataset, session, show=True, controls=controls)
+    try:
+        app = QApplication.instance()
+        from qtpy.QtTest import QTest
+        QTest.qWait(150)
+        app.processEvents()
+        canvas = viewer.window._qt_viewer.canvas.native
+        viewer.dims.set_current_step(0, 4)
+        changes = []
+        viewer.dims.events.current_step.connect(lambda event: changes.append(viewer.dims.current_step[0]))
+        def wheel(angle=0, pixels=0, modifiers=Qt.NoModifier, inverted=False, phase=Qt.NoScrollPhase, pos=None):
+            pos = pos or QPointF(canvas.width() / 2, canvas.height() / 2)
+            event = QWheelEvent(pos, pos, QPoint(0, pixels), QPoint(0, angle),
+                                Qt.NoButton, modifiers, phase, inverted)
+            app.sendEvent(canvas, event)
+            if modifiers:
+                QTest.qWait(80)  # Native camera syncs the model on canvas draw.
+                app.processEvents()
+            return event
+        zoom = viewer.camera.zoom
+        assert wheel(120).isAccepted()
+        assert viewer.dims.current_step[0] == 3 and viewer.camera.zoom == zoom
+        assert changes == [3]  # no default zoom or duplicate Z callback
+        wheel(-360)
+        assert viewer.dims.current_step[0] == 6 and changes == [3, 6]
+        wheel(-1200)
+        assert viewer.dims.current_step[0] == 7
+        wheel(1200)
+        assert viewer.dims.current_step[0] == 0
+        viewer.dims.set_current_step(0, 4)
+        wheel(120, inverted=True)
+        assert viewer.dims.current_step[0] == 5  # preserve natural-scroll convention
+        wheel(120, modifiers=Qt.ControlModifier)
+        assert viewer.dims.current_step[0] == 5 and viewer.camera.zoom != zoom
+        zoom_after = viewer.camera.zoom
+        wheel(pixels=20, modifiers=Qt.ControlModifier)
+        assert viewer.dims.current_step[0] == 5 and viewer.camera.zoom != zoom_after
+        import numpy as np
+        off_center = QPointF(round(canvas.width() * .25), round(canvas.height() * .35))
+        camera = viewer.window._qt_viewer.canvas.view.camera
+        world_before = camera._scene_transform.imap((off_center.x(), off_center.y()))
+        wheel(120, modifiers=Qt.ControlModifier, pos=off_center)
+        world_after = camera._scene_transform.imap((off_center.x(), off_center.y()))
+        assert np.allclose(world_before, world_after, atol=1e-6)
+        assert viewer.dims.current_step[0] == 5
+        # Slider arrow actions remain the same Dims path.
+        slider = viewer.window._qt_viewer.dims.slider_widgets[0].slider
+        slider.triggerAction(QAbstractSlider.SliderSingleStepAdd)
+        assert viewer.dims.current_step[0] == 6
+        slider.triggerAction(QAbstractSlider.SliderSingleStepSub)
+        assert viewer.dims.current_step[0] == 5
+        # Pixel trackpad events accumulate independently of angle deltas, with
+        # one model update for a multi-slice event and no residual after gesture end.
+        wheel(pixels=-10, phase=Qt.ScrollBegin)
+        assert viewer.dims.current_step[0] == 5
+        wheel(pixels=-10, phase=Qt.ScrollUpdate)
+        assert viewer.dims.current_step[0] == 6
+        wheel(pixels=0, phase=Qt.ScrollEnd)
+        wheel(angle=60)
+        assert viewer.dims.current_step[0] == 6
+        wheel(angle=60)
+        assert viewer.dims.current_step[0] == 5
+        revision = session.revision
+        wheel(120, modifiers=Qt.ControlModifier)
+        assert session.revision == revision
+        # Wheel handling is confined to the canvas; side-panel scrolling remains native.
+        assert 'Cmd+scroll' in canvas.toolTip()
+    finally:
+        viewer.close()
+        session.close()

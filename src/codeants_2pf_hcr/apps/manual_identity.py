@@ -193,8 +193,8 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     import napari
     import numpy as np
     from scipy import ndimage
-    from qtpy.QtCore import Qt, QObject, QEvent, QTimer
-    from qtpy.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+    from qtpy.QtCore import Qt, QObject, QEvent, QTimer, QPoint
+    from qtpy.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QWheelEvent
     from qtpy.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QDockWidget, QGroupBox,
         QPushButton, QLineEdit, QCheckBox, QMessageBox, QScrollArea, QSlider, QFormLayout, QGridLayout)
 
@@ -275,7 +275,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     mark_layout = QVBoxLayout(mark_box)
     mark_layout.setContentsMargins(6, 4, 6, 4)
     mark_layout.setSpacing(4)
-    howto = QLabel('Click = mark/unmark · ⌥-click = select only')
+    howto = QLabel('Click = mark/unmark · ⌥-click = select only\nScroll = Z · ⌘+scroll = zoom')
     howto.setToolTip(mark_box.toolTip())
     mark_layout.addWidget(howto)
     counts = QLabel()
@@ -923,6 +923,50 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     show_crosshair.toggled.connect(lambda on: setattr(crosshair, 'visible', on))
     viewer.camera.events.center.connect(keep_cursor_in_view)
     viewer.camera.events.zoom.connect(keep_cursor_in_view)
+    # Handle wheel navigation before VisPy can zoom or napari can scroll a second time.
+    # On macOS Qt's ControlModifier represents the physical Command key.
+    canvas = viewer.window._qt_viewer.canvas.native
+
+    class _WheelNavigation(QObject):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.progress = 0.0
+
+        def eventFilter(self, obj, event):
+            if event.type() != QEvent.Wheel:
+                return False
+            if event.modifiers() & Qt.ControlModifier:
+                self.progress = 0.0
+                # Delegate cursor-centered zoom to the existing canvas camera. Remove
+                # modifiers from the copy so napari's default Cmd+wheel Z binding skips it.
+                pos = event.position() if hasattr(event, 'position') else event.posF()
+                global_pos = event.globalPosition() if hasattr(event, 'globalPosition') else event.globalPosF()
+                angle = event.angleDelta()
+                if angle.isNull() and event.pixelDelta().y():
+                    angle = QPoint(0, event.pixelDelta().y() * 6)
+                zoom_event = QWheelEvent(pos, global_pos, event.pixelDelta(), angle,
+                    event.buttons(), Qt.NoModifier, event.phase(), event.inverted())
+                obj.wheelEvent(zoom_event)
+            else:
+                if event.phase() == Qt.ScrollBegin:
+                    self.progress = 0.0
+                # Trackpads report pixels; mouse wheels report 120 angle units per notch.
+                pixels = event.pixelDelta().y()
+                delta = pixels / 20.0 if pixels else event.angleDelta().y() / 120.0
+                self.progress += delta if event.inverted() else -delta
+                steps = int(round(self.progress, 10))
+                self.progress -= steps
+                if steps:
+                    z = min(max(current_z() + steps, 0), dataset.labels.shape[0] - 1)
+                    viewer.dims.set_current_step(0, z)
+                if event.phase() == Qt.ScrollEnd:
+                    self.progress = 0.0
+            event.accept()
+            return True
+
+    wheel_navigation = _WheelNavigation(canvas)
+    canvas.installEventFilter(wheel_navigation)
+    canvas.setToolTip('Scroll: move through ex-vivo Z. Cmd+scroll: zoom around the pointer.')
     viewer.dims.events.current_step.connect(schedule_orthos)
     undo.clicked.connect(lambda: history_action('undo'))
     redo.clicked.connect(lambda: history_action('redo'))
