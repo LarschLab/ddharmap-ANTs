@@ -60,3 +60,5 @@ PYTHONPATH=src:tests ~/miniforge3/envs/manualIdentity/bin/python -m pytest \
 ```
 
 Staging validation (2026-10-06, copy of L765_f04 under `/Volumes/dataDrive/dataProcessing/_cellmatcher_staging`, stand-in ex-vivo masks = in-vivo masks inverse-warped to ex vivo, test calls replaying production identity): all six transform chains reproduced their registered stacks (r = 1.000); ROI master columns identical to production with 99.8 % identity agreement over 3553 ROIs; all five continuation stages passed; all eight canonical tables column-identical to production; `conf_label == anat_label` for every HCR-status row (exact round trip).
+
+Z scrolling reuses the XZ/YZ image sections and cell outlines, moving their position indicators. Changes to the XY cut, display settings or annotations rebuild those sections; the image crosshair is rebuilt only when the XY cut changes. See `docs/cellmatcher-scroll-performance.md` for the measured comparison and reproducible benchmark.

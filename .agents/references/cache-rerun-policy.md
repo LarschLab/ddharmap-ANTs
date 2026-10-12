@@ -64,3 +64,9 @@ Bugfix loop:
 - Validate the first downstream consumer of the edited writer stage.
 - If a canonical table changed, verify required columns and filename stability explicitly.
 - Do not declare success from static reasoning alone.
+
+## Manual identity viewer display cache
+
+`cellMatcher` caches the scaled XZ/YZ image sections and cell outlines for the current XY cut. Z scrolling paints fresh position lines onto copies of those images; the image crosshair is rebuilt only when the XY cut changes. Changing marker stack, selected/pending/recorded cells, positive visibility, image contrast/gamma/opacity/visibility/data, or side-panel width invalidates the relevant image cache. No scientific outputs or on-disk caches change.
+
+Use `tools/benchmark_cellmatcher_scroll.py --manifest <dataset_manifest.json> --baseline <pre-change-commit>` in the manualIdentity GUI environment with `PYTHONPATH=src` to compare the isolated side-view callback and real Qt Z-scroll path. It uses temporary annotation sessions, alternates trial order, includes the existing 30 ms debounce in full-scroll timing, and keeps dataset loading/window initialization outside timing. Optional `--screenshots /tmp/cellmatcher-scroll-visuals` saves untimed rendered evidence. Keep performance work isolated until measured end-to-end timing demonstrates an improvement.
