@@ -4480,3 +4480,11 @@ Danin approved separate LB/RB/LC/RC tests, Bonferroni four-stimulus/two-tail alp
 ### Review round 1
 
 Per-stimulus keys now admit only exact LB/RB/LC/RC trajectory names; non-BPI and legacy alias events cannot enter those pools. Inspector rows grow to fit identical labels in both views, with minimum row height and SVG size containment; no clipping or maximum row height. Quantile metadata explicitly distinguishes the 0.00125/0.99875 per-stimulus family from pooled comparison thresholds at 0.005/0.995. Tests and acceptance results are recorded in `.agent-notes.md`.
+
+## 2026-10-12 — F049 restore individual stimulus-locked traces
+
+- Danin explicitly approved restoring the trace-first question for `per_gene_stimulus_trace_with_hcr_status_56h.png`; AUC mean bars were replaced at `plots.analysis`, keeping HCR-status donuts and the filename.
+- Writer now passes `motion_auc_roi_panels.csv`, `functional_roi_activity_bpi_cells.csv`, persisted `scored_stimulus_windows.csv`, and the Suite2p root alongside existing points/status/counts. Uses the scoring dF/F loader, exact trial prestimulus subtraction, individual trial means plus equal-cell gene means in contra/ipsi × bout/continuous grids.
+- Gene-colored dashed suppressed-only cells remain visible without a BPI gate; low activity is graded grey; identified ROIs are deduped per gene/condition. No identity reconstruction or scientific response changes.
+- Added synthetic renderer and writer checks, approved figure contract, and visual preview `f049_preview.png`. Validation results are recorded in `.agent-notes.md`.
+- `.agents/` is read-only in this work session: this entry and the reference/contract changes are supplied in `f049_agent_docs.patch` for application by the reviewing orchestrator.

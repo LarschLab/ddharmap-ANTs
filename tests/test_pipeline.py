@@ -5361,6 +5361,7 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
     _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
+    _add_make_figures_trace_inputs(fish_dir, output_root, canonical_root)
     scored_windows = output_root / "score-activity-bpi" / "registration" / "scored_stimulus_windows.csv"
     scored_windows.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"fish_id": [fish_dir.name], "used_for_bpi": [True], "response_window_policy": ["old"], "scored_duration_sec": [7.0]}).to_csv(scored_windows, index=False)
@@ -5369,7 +5370,7 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert blocked.status == "fail"
     assert any(check.label == "make-figures scorer window provenance" and check.status == "fail" for check in blocked.checks)
     assert not (output_root / "make-figures" / "04_plots").exists()
-    pd.DataFrame({"fish_id": [fish_dir.name], "used_for_bpi": [True], "response_window_policy": ["fixed_from_movement_onset_matched_prestim"], "scored_duration_sec": [12.5]}).to_csv(scored_windows, index=False)
+    _add_make_figures_trace_inputs(fish_dir, output_root, canonical_root)
 
     manifest = run_single_fish_make_figures_stage(
         SingleFishPipelineConfig(
@@ -5458,6 +5459,7 @@ def test_single_fish_pipeline_cli_make_figures_outputs_manifest(tmp_path: Path) 
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
     _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
+    _add_make_figures_trace_inputs(fish_dir, output_root, canonical_root)
     result = subprocess.run(
         [
             sys.executable,
@@ -5733,3 +5735,22 @@ def test_single_fish_pipeline_cli_audit_score_activity_bpi_outputs_manifest_json
     assert payload["dry_run"] is True
     assert payload["parameters"]["control_outputs_are_comparison_only"] is True
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_manifests").exists()
+
+
+def _add_make_figures_trace_inputs(fish_dir: Path, output_root: Path, canonical_root: Path) -> None:
+    import numpy as np
+    registration = fish_dir / "03_analysis" / "functional" / "registration"
+    pd.DataFrame([dict(plane_idx=0, func_label=1, roi_side="left", suite2p_is_cell=True)]).to_csv(registration / "motion_auc_roi_panels.csv", index=False)
+    response_path = canonical_root / "functional_roi_activity_bpi_cells.csv"
+    response = pd.read_csv(response_path)
+    response["bpi_preference"] = "bout-preferential"
+    response.to_csv(response_path, index=False)
+    plane = fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0"
+    np.save(plane / f"{fish_dir.name}_plane0_F.npy", np.full((1, 300), 100, dtype=np.float32))
+    windows = output_root / "score-activity-bpi" / "registration" / "scored_stimulus_windows.csv"
+    windows.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([dict(fish_id=fish_dir.name, plane_idx=0, fps=4, stim_type=stim,
+                       used_for_bpi=True, response_window_policy="fixed_from_movement_onset_matched_prestim",
+                       scored_duration_sec=12.5, prestim_baseline_start_frame=0,
+                       prestim_baseline_end_frame=50, scored_onset_frame=90, scored_offset_frame=140)
+                  for stim in ("LB_trajectory", "RB_trajectory", "LC_trajectory", "RC_trajectory")]).to_csv(windows, index=False)

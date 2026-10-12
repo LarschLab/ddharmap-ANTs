@@ -50,10 +50,15 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
   - whole-population response/BPI panels source ROI-centric `[50ia]` outputs
   - gene-specific AUC panels source HCR-centric identified-cell rows from package-owned `[56i]` motion-AUC plot tables
   - plotting code lives in `plots.analysis.render_single_fish_50l_composite`; the notebook cell should only provide knobs, paths, display, and legacy bindings
-- `[56h]` staged `make-figures` trace/status artifact is package-rendered as a table-driven per-gene stimulus/HCR status summary:
-  - source per-gene response magnitudes from package-owned `[56i]` `motion_auc_plot_points.csv`
-  - source HCR functional-status counts from `hcr_activity_status.csv`
-  - do not depend on notebook-local `results`, `results_per_cell`, or unpersisted trace payloads
+- `[56h]` staged `make-figures` trace/status artifact (F049 restoration approved by Danin, 2026-10-12):
+  - primary content is individual identified-cell trial-averaged dF/F plus an equal-cell gene mean, in contra/ipsi rows × bout-like/continuous columns per gene; bilateral conditions are excluded
+  - cell sets and gene membership come from `[56i]` `motion_auc_plot_points.csv`, with `(gene, plane_idx, func_label)` deduplication; persisted `motion_auc_roi_panels.csv` supplies `roi_side` (the stage's midline-side annotation) and Suite2p quality
+  - current `functional_roi_activity_bpi_cells.csv` supplies response state and `bpi_preference`; low activity is graded grey, suppressed-only is gene-colored and dashed, with no BPI availability gate
+  - load fluorescence via the same `suite2p.load_suite2p_dff_map` as response scoring (10th-percentile F0, epsilon 1e-6), subtract each persisted trial's true prestimulus mean, then average trials per cell; no z-score or new normalization
+  - `score-activity-bpi/registration/scored_stimulus_windows.csv` is required: time zero is stimulus appearance (`prestim_baseline_end_frame`), and the shaded movement interval uses persisted scored frame boundaries; display includes 12.5 s before appearance and 7.5 s after the 12.5 s movement interval
+  - HCR-status donuts retain the HCR-label denominator from `hcr_activity_status.csv`, separately from trace ROI counts
+  - keep `per_gene_stimulus_trace_with_hcr_status_56h.png/.pdf`; the summary CSV records plotted cell/trial counts, not AUC bars
+  - no notebook-local `results` or `results_per_cell` payloads; no identity reconstruction in plotting
 - `[57a-responsive-identity-donut]` is explicitly hybrid-scoped:
   - denominator is ROI-centric and responsive-only from `functional_roi_activity_identity.csv` (`response_is_active == True` and responsive `bpi_category` classes)
   - identity assignment for the identified fraction comes from selected `conf_to_func_pairs.csv` rows collapsed to exact per-ROI gene combinations

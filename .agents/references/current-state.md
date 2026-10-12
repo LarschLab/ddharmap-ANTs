@@ -172,3 +172,7 @@ Keep this section short and current. Dated detail belongs in `recent-changes-sin
 ## Manual identity app (2026-10-05)
 
 `codex/manual-hcr-identity-gui` adds an optional napari fixed-mask reviewer and explicit ROI-only manual export, based on `codex/qc-notebooks` at `c2a0716`. Existing 2P eligibility is consumed unchanged; HCR intensity is reviewed independently per stack without HCR-mask segmentation. Prepared manifests and reviewed ex-vivo/in-vivo correspondence are prerequisites for real-fish use. No accepted scientific artifacts have been replaced. Run instructions and supported/unsupported consumers are in `docs/manual-hcr-identity-gui.md`.
+
+## F049 staged trace restoration (2026-10-12)
+
+The package-owned `make-figures` [56h] output now shows per-gene individual stimulus-locked dF/F traces and an equal-cell mean in contra/ipsi × bout/continuous grids, alongside HCR status donuts. It requires `[56i]` points and `motion_auc_roi_panels.csv`, canonical response/BPI cells and HCR status, the persisted scorer-window table, and Suite2p fluorescence. Plotting remains owned by `plots.analysis`; notebook [56h] legacy payloads are not inputs. The filename is unchanged; regenerate make-figures to replace historical AUC-bar PNGs. See `figure-rules.md` for the approved population, baseline, and suppressed-only display semantics.

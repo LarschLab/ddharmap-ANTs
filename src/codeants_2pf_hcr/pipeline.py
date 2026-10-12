@@ -5915,6 +5915,8 @@ def _render_package_owned_single_fish_figures(
     composite_input_root: Path,
     accepted_midline_sidecar: Path | None,
     output_dir: Path,
+    scored_windows_csv: Path,
+    suite2p_root: Path,
 ) -> None:
     from codeants_2pf_hcr.plots.analysis import render_single_fish_bpi_all_pairs_diagnostics
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite
@@ -5933,7 +5935,7 @@ def _render_package_owned_single_fish_figures(
         temp_reg.mkdir(parents=True, exist_ok=True)
         for source in (master_csv, bpi_cells_csv, conf_func_csv, status_csv):
             (temp_reg / source.name).write_bytes(source.read_bytes())
-        for filename in COMPOSITE_50L_RENDER_INPUT_FILES:
+        for filename in (*COMPOSITE_50L_RENDER_INPUT_FILES, "motion_auc_roi_panels.csv"):
             source = composite_input_root / filename
             (temp_reg / source.name).write_bytes(source.read_bytes())
         render_single_fish_50l_composite(
@@ -5958,6 +5960,10 @@ def _render_package_owned_single_fish_figures(
             fish_id=fish_id,
             points_csv=temp_reg / "motion_auc_plot_points.csv",
             counts_csv=temp_reg / "motion_auc_plot_counts.csv",
+            roi_panels_csv=temp_reg / "motion_auc_roi_panels.csv",
+            response_csv=temp_reg / bpi_cells_csv.name,
+            scored_windows_csv=scored_windows_csv,
+            suite2p_root=suite2p_root,
             hcr_status_csv=temp_reg / status_csv.name,
             outdir=output_dir,
         )
@@ -6003,7 +6009,9 @@ def run_single_fish_make_figures_stage(
     figure_sources = {filename: figure_root / filename for filename in LEGACY_COPIED_FIGURE_FILES}
     inputs = (
         describe_glob(canonical_root, "*.csv", label="make-figures staged canonical CSV inputs"),
-        describe_manifest_path(scored_windows_path, required=False, label="make-figures scorer window provenance"),
+        describe_manifest_path(scored_windows_path, label="make-figures scorer window provenance"),
+        describe_manifest_path(composite_input_root / "motion_auc_roi_panels.csv", label="56h persisted ROI sides and trace quality"),
+        describe_glob(paths.functional_suite2p_dir, "plane*/*F.npy", label="56h Suite2p raw fluorescence"),
         *(
             describe_manifest_path(canonical_root / filename, label=f"make-figures canonical render input: {filename}")
             for filename in (
@@ -6062,7 +6070,7 @@ def run_single_fish_make_figures_stage(
             ))
     auc_inputs_current = True
     if staged_auc_root.is_dir():
-        auc_tables = tuple(staged_auc_root / filename for filename in COMPOSITE_50L_RENDER_INPUT_FILES)
+        auc_tables = tuple(staged_auc_root / filename for filename in (*COMPOSITE_50L_RENDER_INPUT_FILES, "motion_auc_roi_panels.csv"))
         upstream = tuple(path for path in (
             canonical_root / "functional_roi_activity_identity.csv",
             canonical_root / "hcr_activity_status.csv",
@@ -6091,6 +6099,8 @@ def run_single_fish_make_figures_stage(
             canonical_root=canonical_root,
             composite_input_root=composite_input_root,
             accepted_midline_sidecar=accepted_midline,
+            scored_windows_csv=scored_windows_path,
+            suite2p_root=paths.functional_suite2p_dir,
             output_dir=output_by_name[RENDERED_FIGURE_FILES[0]].parent,
         )
         checks.extend(_build_staged_comparison_checks(paths, "make-figures"))
@@ -6126,7 +6136,7 @@ def run_single_fish_make_figures_stage(
             "force_recompute": bool(force_recompute),
             "rendered_figures": RENDERED_FIGURE_FILES,
             "legacy_copied_figures": LEGACY_COPIED_FIGURE_FILES,
-            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, per-gene 56h stimulus/HCR status summary, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs",
+            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, per-gene 56h individual stimulus-locked dF/F traces and HCR status, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus stage-declared 56i AUC/ROI-side inputs, scorer windows, and Suite2p fluorescence",
         },
         warnings=warnings,
         errors=errors,

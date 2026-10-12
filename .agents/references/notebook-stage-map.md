@@ -144,3 +144,7 @@ stages materialize accepted computational inputs and downstream tables.
 ### Optional manual ex-vivo identity export
 
 The standalone `tools/manual_hcr_identity.py` app owns manual call persistence and reviewed-geometry adapter outputs, outside notebook orchestration. `export-canonical-tables --manual-identity-root` can consume those outputs to write the existing ROI master and score tables as an explicit ROI-only bundle; HCR-centric outputs are absent and HCR-dependent consumers remain gated. Legacy full export behavior is unchanged. See `docs/manual-hcr-identity-gui.md`.
+
+## F049 staged trace restoration (2026-10-12)
+
+The package-owned `make-figures` [56h] output now shows per-gene individual stimulus-locked dF/F traces and an equal-cell mean in contra/ipsi × bout/continuous grids, alongside HCR status donuts. It requires `[56i]` points and `motion_auc_roi_panels.csv`, canonical response/BPI cells and HCR status, the persisted scorer-window table, and Suite2p fluorescence. Plotting remains owned by `plots.analysis`; notebook [56h] legacy payloads are not inputs. The filename is unchanged; regenerate make-figures to replace historical AUC-bar PNGs. See `figure-rules.md` for the approved population, baseline, and suppressed-only display semantics.
