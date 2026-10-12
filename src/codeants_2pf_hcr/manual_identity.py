@@ -100,6 +100,7 @@ class Dataset:
             raise ValueError('Eligible labels absent from label image')
         self.review_eligible = list(self.eligible)
         self.review_scope = None
+        self.review_region = None
         self.markers = {}
         self._marker_cache = None
         for marker in m['markers']:

@@ -67,6 +67,14 @@ Bugfix loop:
 
 ## Manual identity viewer display cache
 
-`cellMatcher` caches the scaled XZ/YZ image sections and cell outlines for the current XY cut. Z scrolling paints fresh position lines onto copies of those images; the image crosshair is rebuilt only when the XY cut changes. Changing marker stack, selected/pending/recorded cells, positive visibility, image contrast/gamma/opacity/visibility/data, or side-panel width invalidates the relevant image cache. No scientific outputs or on-disk caches change.
+`cellMatcher` caches the scaled XZ/YZ image sections and cell outlines for the current XY cut. Z scrolling paints fresh position lines onto copies of those images; the image crosshair is rebuilt only when the XY cut changes. Changing marker stack, selected/pending/recorded cells, positive visibility, image contrast/gamma/opacity/visibility/data, mapped-region visibility, or side-panel width invalidates the relevant image cache. No scientific outputs or on-disk caches change.
 
 Use `tools/benchmark_cellmatcher_scroll.py --manifest <dataset_manifest.json> --baseline <pre-change-commit>` in the manualIdentity GUI environment with `PYTHONPATH=src` to compare the isolated side-view callback and real Qt Z-scroll path. It uses temporary annotation sessions, alternates trial order, includes the existing 30 ms debounce in full-scroll timing, and keeps dataset loading/window initialization outside timing. Optional `--screenshots /tmp/cellmatcher-scroll-visuals` saves untimed rendered evidence. Keep performance work isolated until measured end-to-end timing demonstrates an improvement.
+
+
+Manual identity functional-region volumes are cached separately under the fish’s
+`manual_identity/functional_review_scopes/` directory. The metadata binds region
+schema, anatomy/label/reference and forward/inverse-transform hashes, plus the
+volume hash, ZYX axes and ex-vivo grid. Old metadata or missing/corrupted volume
+files triggers recomputation on prepare/open; no canonical tables need rerunning
+for a display-only region overlay.

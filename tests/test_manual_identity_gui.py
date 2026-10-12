@@ -250,3 +250,46 @@ def test_z_scroll_reuses_images_and_invalidates_changed_content(tmp_path):
     finally:
         viewer.close()
         session.close()
+
+
+def test_mapped_region_overlay_toggle_sideviews_and_z_cache(tmp_path):
+    import numpy as np
+    from qtpy.QtWidgets import QApplication
+    from qtpy.QtTest import QTest
+    dataset = make_dataset(tmp_path / 'data')
+    dataset.review_region = np.zeros(dataset.labels.shape, dtype=bool)
+    dataset.review_region[:, :, :12] = True
+    dataset.review_scope = {'invivo_z_intervals': [[0, 10], [30, 40]]}
+    session = AnnotationSession(dataset, tmp_path / 'session', 'GUI reviewer')
+    controls = {}
+    viewer = create_viewer(dataset, session, show=False, controls=controls)
+    try:
+        scope = controls['layers']['scope']
+        state = controls['ortho_state']
+        update = controls['update_orthos']
+        update()
+        assert scope.visible and not scope.editable
+        assert scope.data[3, 10, 3] == 0  # unshaded inside
+        assert scope.data[3, 10, 11] == 2  # blue boundary
+        assert scope.data[3, 10, 18] == 1  # shaded outside
+        assert viewer.dims.axis_labels[0] == 'Ex-vivo Z'
+        assert 'in-vivo Z 0–10, 30–40' in controls['scope_info'].text()
+        bases = state['ortho_bases']
+        viewer.dims.set_current_step(0, 7)
+        QTest.qWait(80)
+        QApplication.instance().processEvents()
+        assert state['ortho_bases'] is bases
+        controls['scope_toggle'].setChecked(False)
+        assert not scope.visible and state['ortho_bases'] is not bases
+        hidden = [w.pixmap().toImage() for w in controls['orthogonal_labels']]
+        controls['scope_toggle'].setChecked(True)
+        assert scope.visible
+        assert any(w.pixmap().toImage() != old for w, old in zip(controls['orthogonal_labels'], hidden))
+        scope.visible = False  # napari layer-list action stays in sync
+        assert not controls['scope_toggle'].isChecked()
+        controls['save_view']()
+        assert session.view['show_functional_region'] is False
+        assert session.revision == 0 and controls['cells'].count() == 2
+    finally:
+        viewer.close()
+        session.close()

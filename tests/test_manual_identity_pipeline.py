@@ -34,6 +34,7 @@ def _identity_transforms(directory, stem, like):
     field = ants.from_numpy(np.zeros((*like.shape, 3), dtype='float32'), origin=like.origin, spacing=like.spacing,
                             direction=like.direction, has_components=True)
     ants.image_write(field, str(directory / f'{stem}_1Warp.nii.gz'))
+    ants.image_write(field, str(directory / f'{stem}_1InverseWarp.nii.gz'))
 
 
 def make_fish(root):
@@ -199,10 +200,13 @@ def test_functional_review_scope_union_edges_cache_and_complete_fish(tmp_path, m
         calls.append(kwargs)
         return warped, None
     monkeypatch.setattr('codeants_2pf_hcr.hcr_warp._warp_zyx_labels_with_ants', warp)
+    monkeypatch.setattr(mip, '_functional_region_in_exvivo', lambda *args: np.ones(dataset.labels.shape, dtype=bool))
     scope = mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
     assert dataset.review_eligible == [11, 33]
     assert dataset.eligible == [11, 22, 33]  # immutable annotation inventory
     assert scope['provenance']['fish_id'] == FISH
+    assert scope['invivo_z_intervals'] == [[0, 15], [40, 60]]
+    assert dataset.review_region.shape == dataset.labels.shape
     mip.apply_functional_review_scope(dataset, tmp_path)
     assert len(calls) == 1  # hashed cache is reusable
     refs.write_text(json.dumps([dict(index=0, best_z=5), dict(index=1, best_z=25)]))
@@ -240,3 +244,54 @@ def test_scope_preserves_existing_calls_and_blocks_new_outside_calls(tmp_path):
         assert len(frozen['annotations']) == 6
     finally:
         session.close()
+
+
+def test_functional_region_inverse_affine_preserves_physical_z_and_disjoint_bands(tmp_path):
+    from types import SimpleNamespace
+    like = ants.from_numpy(np.zeros((8, 9, 24), dtype='float32'),
+                           spacing=(.7, .9, 2.), origin=(13., -7., 21.),
+                           direction=np.diag([-1., 1., 1.]))
+    anatomy = tmp_path / 'native.nrrd'
+    ants.image_write(like, str(anatomy))
+    directory = tmp_path / 'transforms'
+    _identity_transforms(directory, 'bridge', like)
+    affine = directory / 'bridge_0GenericAffine.mat'
+    ants.write_transform(ants.create_ants_transform(transform_type='AffineTransform', dimension=3,
+                                                    translation=(0., 0., 6.)), str(affine))
+    dataset = SimpleNamespace(manifest={'anatomy': {'path': str(anatomy)}},
+                              labels=np.zeros((24, 9, 8), dtype=np.uint16))
+    allowed = np.zeros(24, dtype=bool)
+    allowed[0:3] = True
+    allowed[10:12] = True
+    region = mip._functional_region_in_exvivo(dataset, like, allowed,
+        (directory / 'bridge_1Warp.nii.gz', affine), directory / 'bridge_1InverseWarp.nii.gz')
+    expected = np.zeros_like(dataset.labels, dtype=bool)
+    expected[3:6] = True  # 6 physical units / 2 units per Z slice
+    expected[13:15] = True
+    assert np.array_equal(region, expected)
+
+
+def test_functional_region_missing_corrupted_cache_and_inverse_input_refresh(tmp_path):
+    fish = make_fish(tmp_path)
+    dataset = Dataset(mip.prepare_fish_dataset(FISH, tmp_path, log=lambda *_: None))
+    first = mip.apply_functional_review_scope(dataset, tmp_path)
+    cache = Path(first['region_in_exvivo']['path'])
+    assert np.all(dataset.review_region)
+    cache.write_bytes(b'corrupt')
+    repaired = mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert np.all(dataset.review_region)
+    assert np.load(cache, allow_pickle=False).shape == dataset.labels.shape
+    cache.unlink()
+    mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert cache.is_file()
+    inverse = fish / '02_reg/04_exvivo-2p/transMatrices' / f'{FISH}_exvivo_GCaMP_to_2p_1InverseWarp.nii.gz'
+    field = ants.image_read(str(inverse))
+    values = field.numpy()
+    values[..., 2] = 2.0
+    ants.image_write(field.new_image_like(values), str(inverse))
+    updated = mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert updated['provenance'] != repaired['provenance']
+    assert updated['region_in_exvivo']['sha256'] != repaired['region_in_exvivo']['sha256']
+    inverse.unlink()
+    with pytest.raises(FileNotFoundError, match='saved inverse warp'):
+        mip.apply_functional_review_scope(dataset, tmp_path)

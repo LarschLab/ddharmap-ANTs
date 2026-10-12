@@ -185,6 +185,22 @@ def _bind_exvivo_label_grid(paths, labels_path, anatomy_path):
     return manifest_path, shape
 
 
+def _functional_region_in_exvivo(dataset, fixed_img, allowed_z, transforms, inverse_warp):
+    """Pull the in-vivo slab union back onto the original ex-vivo image grid."""
+    ants = _ants()
+    # ANTs image arrays are XYZ, while the app and allowed_z use ZYX.
+    slabs = np.broadcast_to(allowed_z[None, None, :], fixed_img.shape).astype('float32')
+    moving = fixed_img.new_image_like(slabs)
+    fixed = ants.image_read(dataset.manifest['anatomy']['path'])
+    mapped = ants.apply_transforms(fixed=fixed, moving=moving,
+        transformlist=[str(transforms[1]), str(inverse_warp)],
+        whichtoinvert=[True, False], interpolator='nearestNeighbor')
+    region = np.transpose(mapped.numpy(), (2, 1, 0)) > 0.5
+    if region.shape != dataset.labels.shape:
+        raise ValueError('Mapped functional region differs from the ex-vivo image grid')
+    return region
+
+
 def apply_functional_review_scope(dataset, local_root, *, pipeline_root=None, log=print):
     """Restrict new review calls to this fish's functional best-Z slabs (±10).
 
@@ -228,18 +244,25 @@ def apply_functional_review_scope(dataset, local_root, *, pipeline_root=None, lo
                                         source_tokens=('exvivo', 'ex_vivo', 'ex-vivo'), target_tag='to_2p')
     if not transforms:
         raise FileNotFoundError('Functional review scope requires the ex vivo->2P transform pair')
+    inverse_warp = transforms[0].with_name(transforms[0].name.replace('1Warp.nii.gz', '1InverseWarp.nii.gz'))
+    if not inverse_warp.is_file():
+        raise FileNotFoundError(f'Mapped functional region requires the saved inverse warp: {inverse_warp}')
     fixed = invivo_anatomy_intensity_path(paths)
     inputs = list(dict.fromkeys([raw_refs_path, refs_path])) + [fixed, Path(dataset.manifest['anatomy']['path']),
-              Path(dataset.manifest['labels']['path']), *map(Path, transforms)]
-    provenance = dict(fish_id=paths.fish_dir.name, dataset_fingerprint=dataset.fingerprint,
+              Path(dataset.manifest['labels']['path']), *map(Path, transforms), inverse_warp]
+    provenance = dict(region_schema_version=1, fish_id=paths.fish_dir.name, dataset_fingerprint=dataset.fingerprint,
                       half_width_planes=10, planes=sorted(planes, key=lambda p: p['plane_idx']),
                       expected_plane_indices=sorted(expected),
                       inputs=[dict(path=str(p), sha256=sha256(p)) for p in inputs])
     cache_path = manual_identity_root(paths) / 'functional_review_scopes' / f'{dataset.manifest["dataset_id"]}.json'
     cached = _read_json(cache_path)
-    if cached is None or cached.get('provenance') != provenance:
+    region_spec = (cached or {}).get('region_in_exvivo', {})
+    region_path = Path(region_spec.get('path', ''))
+    region_valid = (region_path.is_file() and sha256(region_path) == region_spec.get('sha256')
+                    and region_spec.get('axes') == 'ZYX' and region_spec.get('grid') == dataset.manifest['grid'])
+    if cached is None or cached.get('provenance') != provenance or not region_valid:
         log(f'Computing functional review scope for {paths.fish_dir.name} (best Z ±10)')
-        warped, _ = _warp_zyx_labels_with_ants(labels_zyx=dataset.labels,
+        warped, fixed_img = _warp_zyx_labels_with_ants(labels_zyx=dataset.labels,
             moving_intensity_path=Path(dataset.manifest['anatomy']['path']),
             fixed_intensity_path=fixed, transformlist=transforms)
         z_size = warped.shape[0]
@@ -251,13 +274,36 @@ def apply_functional_review_scope(dataset, local_root, *, pipeline_root=None, lo
             allowed[max(0, z - 10):min(z_size, z + 11)] = True
         # Use the fixed intensity grid: anatomy-label TIFF Z reversal is irrelevant here.
         ids = sorted(set(map(int, np.unique(warped[allowed]))) & set(dataset.eligible))
+        region = _functional_region_in_exvivo(dataset, fixed_img, allowed, transforms, inverse_warp)
+        # Content-address the volume so concurrent cache refreshes cannot mix regions.
+        import tempfile
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=cache_path.parent, suffix='.npy', delete=False) as handle:
+            temporary = Path(handle.name)
+            try:
+                np.save(handle, region.astype('uint8'), allow_pickle=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+                digest = sha256(temporary)
+                region_path = cache_path.parent / f'{dataset.manifest["dataset_id"]}-region-{digest[:12]}.npy'
+                temporary.replace(region_path)
+            finally:
+                temporary.unlink(missing_ok=True)
+        edges = np.diff(np.r_[False, allowed, False].astype(int))
+        intervals = [[int(lo), int(hi - 1)] for lo, hi in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1))]
         cached = dict(provenance=provenance, eligible_label_ids=ids,
+                      invivo_z_intervals=intervals,
+                      region_in_exvivo=dict(path=str(region_path), sha256=digest, axes='ZYX', grid=dataset.manifest['grid']),
                       policy='any warped cell voxel intersects the union of inclusive in-vivo best_z ±10 slabs')
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(cache_path, json.dumps(cached, indent=2))
     ids = cached['eligible_label_ids']
     if not ids or not set(ids).issubset(dataset.eligible):
         raise ValueError(f'No valid cells in functional review scope for {paths.fish_dir.name}')
+    region = np.load(region_path, allow_pickle=False)
+    if region.shape != dataset.labels.shape or not np.all(np.isin(region, (0, 1))):
+        raise ValueError('Invalid cached functional region volume')
+    dataset.review_region = region.astype(bool)
     dataset.review_eligible = list(ids)
     dataset.review_scope = cached
     return cached

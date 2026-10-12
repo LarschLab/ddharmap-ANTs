@@ -14,7 +14,7 @@ Install or reinstall the app (after moving the repository or environment):
 tools/install_cellmatcher_app.sh ~/miniforge3/envs/manualIdentity/bin/python
 ```
 
-The app runs whatever is checked out in this repository. Logs: `~/Library/Logs/cellMatcher/`. Without the app: `python tools/manual_hcr_identity.py app`.
+The app runs whatever is checked out in this repository. After a code update, quit and relaunch cellMatcher to reload the Python modules; reopening a fish in an already running app does not reload them. Logs: `~/Library/Logs/cellMatcher/`. Without the app: `python tools/manual_hcr_identity.py app`.
 
 ## Workflow
 
@@ -24,7 +24,7 @@ The app runs whatever is checked out in this repository. Logs: `~/Library/Logs/c
    - the single mask TIFF in `03_analysis/structural/ex_vivo/cp_masks/`, bound to that grid by `structural/ex_vivo/manifests/segment-ex-vivo-anatomy-cellpose_manifest.json` (segmentation may run on another machine; bring the manifest along);
    - every registered HCR stack `02_reg/03_rbest-exvivo/aligned/*_in_exvivo.nrrd` and `02_reg/05_rn-exvivo/aligned/*_in_exvivo.nrrd`, its source intensity in `00_preprocessing/{rbest,rn}`, and its transform chain (direct or via rbest).
 
-   For each stack it writes a coverage mask (source acquisition domain warped with the same chain) and refuses the stack unless re-warping the source reproduces the registered image (Pearson r ≥ 0.99). The review queue is restricted per fish to cells whose ex-vivo masks, warped into in-vivo anatomy, intersect at least one inclusive `best_z ±10` slab from that fish’s accepted geometry plane references (`plane_refs_summary_geometry.json`, falling back to registration references before geometry is available). All global planes, including later sessions, contribute to the union; gaps between slabs remain outside scope. Scope provenance and IDs are cached under `manual_identity/functional_review_scopes/`, bound to the mask dataset, reference summary, anatomy inputs, and transform hashes. Preparation and reopening review refresh stale scope caches and refuse missing/incomplete plane references. The complete annotation inventory remains unchanged. Output: `03_analysis/structural/ex_vivo/manual_identity/<fish>_exvivo_<mask-hash>/`.
+   For each stack it writes a coverage mask (source acquisition domain warped with the same chain) and refuses the stack unless re-warping the source reproduces the registered image (Pearson r ≥ 0.99). The review queue is restricted per fish to cells whose ex-vivo masks, warped into in-vivo anatomy, intersect at least one inclusive `best_z ±10` slab from that fish’s accepted geometry plane references (`plane_refs_summary_geometry.json`, falling back to registration references before geometry is available). All global planes, including later sessions, contribute to the union; gaps between slabs remain outside scope. Scope provenance, IDs and a hash-bound ZYX region volume with ex-vivo grid metadata are cached under `manual_identity/functional_review_scopes/`, bound to the mask dataset, reference summary, anatomy inputs, and transform hashes. Preparation and reopening review refresh stale scope caches and refuse missing/incomplete plane references. The complete annotation inventory remains unchanged. Output: `03_analysis/structural/ex_vivo/manual_identity/<fish>_exvivo_<mask-hash>/`.
 3. **Open review.** Pick a marker stack, then scroll through Z and **click every cell that contains HCR signal**; it turns orange (pending). Click again to unmark; Option/Alt-click only selects. The view never moves on its own (use *Go to selected cell* or *Follow selection*). The selected cell has a yellow outline and is named in the header; recorded positives are green. **Approve marked…** records all marks of the stack as positive in one journaled, undoable step and asks whether the remaining unreviewed, fully imaged cells within this fish’s functional review scope should become negative (leave them unreviewed unless you checked every cell in the current functional review scope). Marks survive closing the app. The left *HCR contrast* panel shows the intensity histogram inside the imaged area: drag the red line to hide background, the blue line to saturate signal, and use the brightness slider. *Single-cell call* (collapsed) records uncertain/unassessable calls, issues, and notes (keys 1–5; N/P step through the list; M toggles the mark). Every control has a tooltip. Positive/negative require complete coverage of the mask. Work is saved continuously (every approval, call and undo is journaled; pending marks and view settings go to `session.json`), so just close the window and reopen the fish to resume; *Snapshot* is an optional extra frozen revision. The layout favours the image: napari's layer controls and layer list are tabs behind *HCR contrast* on the left, and the XZ/YZ side views (modelled on the brainAtlas orthogonal viewer) show the full stack depth over a fixed 200 µm around the cut, at physical aspect ratio, stacked one above the other. They do not rescale with zoom; panning redraws them only when the cut has to move back into the visible area. Red lines in the side views mark the current Z slice and where the other view cuts; in the image a faint crosshair with an open centre (about one cell diameter) marks the same point without covering the cell (toggle below the views). Clicking or dragging in a side view jumps to that Z slice and moves the cut; **right-clicking a cell** in the image cuts both views through its centre without marking it or moving the image (marking a cell does the same). The side views outline the selected cell (yellow), marked cells (orange) and recorded positives (green), so cells missed in the current slice stand out. If a panel disappears, use **cellMatcher → Restore all panels** (Ctrl+Shift+R).
 4. **Finish & export identity** (review window). Freezes a snapshot, shows what will be written or replaced, and asks before touching existing outputs. Then:
    - warps every ex-vivo mask into in-vivo 2P space with `02_reg/04_exvivo-2p` (nearest neighbour, IDs kept) and matches all of them to the in-vivo anatomy masks with the HCR matching code (identity-independent geometry);
@@ -39,7 +39,7 @@ Replacements are journaled under `03_analysis/functional/run_state/manual_identi
 
 ## Scientific notes
 
-- The ±10 margin is measured in in-vivo anatomy slices, not functional plane indices or ex-vivo slices. Eligibility uses any warped cell voxel inside the union, not its centroid. This is spatial review scope, not a guarantee of a usable calcium trace. Whole-cell context and unrestricted Z navigation remain available.
+- The ±10 margin is measured in in-vivo anatomy slices, not functional plane indices or ex-vivo slices. Eligibility uses any warped cell voxel inside the union, not its centroid. This is spatial review scope, not a guarantee of a usable calcium trace. The slider and side-view captions explicitly show **ex-vivo Z**. **Show functional region** draws a blue boundary and faint blue shading outside the slab union, mapped back onto the original ex-vivo grid with the saved inverse registration. The same overlay appears in XZ/YZ; toggling it preserves annotation eligibility. The panel separately lists the **in-vivo Z** bands. Whole-cell context and unrestricted ex-vivo Z navigation remain available: mapped regions can occur on every native slice.
 - Existing annotations and pending marks outside the scope are preserved when reopening. New calls, selection, marking, and bulk negatives are limited to scoped cells; excluded cells are never automatically negative. Previously recorded identities remain in exports. Geometry and mask-quality statistics still use all masks.
 
 - Geometry is matched once for all ex-vivo masks; identity only selects which matched pairs carry a gene.
@@ -71,3 +71,20 @@ Functional-scope validation (2026-10-12, real L765_f04): accepted references
 cover all ten global planes; the union retains 11,196 of 20,858 ex-vivo masks.
 A repeat application reused the hash-bound cache. This check used a temporary
 cache location; production annotations and pipeline outputs were untouched.
+
+
+Mapped-region display requires the saved `1InverseWarp.nii.gz` paired with the
+forward ex-vivo→2P transform. Existing scope caches are refreshed automatically
+to add the display volume; missing or corrupted region volumes are regenerated.
+The display uses `[affine, inverse warp]` with affine inversion and nearest-neighbour
+sampling. It does not change forward-warped cell eligibility or geometry exports.
+
+
+Overlay verification (2026-10-12): 24 manual-identity, pipeline and native Qt GUI
+tests passed. Physical-grid regression uses non-unit spacing, non-zero origin,
+flipped X direction, a translated affine and disjoint Z bands. Real L765_f04
+renders were inspected at ex-vivo Z 0, 35 and 71, plus overlay-hidden Z 71;
+11,196 review cells and the complete session inventory were retained. Rendered
+evidence is under `/tmp/cellmatcher-region-z{0,35,71}.png` and
+`/tmp/cellmatcher-region-z71-hidden.png`; validation used temporary caches and
+sessions, leaving production annotations and pipeline outputs untouched.

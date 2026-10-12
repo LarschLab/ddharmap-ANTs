@@ -48,6 +48,9 @@ TIPS = {
     'gcamp_opacity': 'Brightness of the GCaMP anatomy underneath the HCR signal.',
 }
 CURSOR_COLOR = '#ff314f'
+SCOPE_COLOR = (0.3, 0.7, 1.0, 1.0)
+SCOPE_SHADE = (0.12, 0.3, 0.55, 0.25)
+
 ORTHO_SPAN_UM = 200  # Fixed width of the side views; independent of zoom so they stay stable and cheap.
 SELECTED_COLOR = (1.0, 0.95, 0.0, 1.0)
 PENDING_COLOR = (1.0, 0.55, 0.0, 0.55)
@@ -215,6 +218,20 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     selected.contour = 3
     for layer in (labels, positive_layer, pending_layer, selected):
         layer.editable = False
+    scope_layer = None
+    if dataset.review_region is not None:
+        from napari.utils.colormaps import DirectLabelColormap
+        region = dataset.review_region
+        border = region & ~ndimage.binary_erosion(region, structure=np.ones((1, 3, 3)), border_value=1)
+        overlay = np.where(region, 0, 1).astype('uint8')
+        overlay[border] = 2
+        scope_layer = viewer.add_labels(overlay, name='Functional region (blue edge; shaded outside)',
+                                        scale=spacing, opacity=1)
+        scope_layer.colormap = DirectLabelColormap(color_dict={None: (0, 0, 0, 0),
+                                                               1: SCOPE_SHADE, 2: SCOPE_COLOR})
+        scope_layer.editable = False
+        scope_layer.visible = session.view.get('show_functional_region', True)
+    viewer.dims.set_axis_label(0, 'Ex-vivo Z')
     centers = ndimage.center_of_mass(np.ones(dataset.labels.shape, dtype=np.uint8), dataset.labels, dataset.review_eligible)
     centers = {label: tuple(int(round(v)) for v in center) for label, center in zip(dataset.review_eligible, centers)}
     pending = {stack: set(map(int, labels_)) & set(dataset.eligible) for stack, labels_ in session.view.get('pending', {}).items()}
@@ -279,6 +296,20 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     mark_layout.addLayout(approve_row)
     mark_layout.addWidget(show_positive)
     layout.addWidget(mark_box)
+    show_scope = QCheckBox('Functional region: blue edge, shaded outside')
+    show_scope.setToolTip('Mapped union of this fish’s in-vivo best-Z ±10 bands. '
+                         'The slider shows ex-vivo slices; some in-scope regions can occur on every slice. '
+                         'Whole cells remain eligible if any warped voxel intersects a band.')
+    show_scope.setChecked(scope_layer.visible if scope_layer is not None else False)
+    show_scope.setVisible(scope_layer is not None)
+    layout.addWidget(show_scope)
+    scope_info = QLabel()
+    scope_info.setWordWrap(True)
+    if dataset.review_region is not None:
+        bands = ', '.join(f'{lo}–{hi}' for lo, hi in dataset.review_scope['invivo_z_intervals'])
+        scope_info.setText(f'Functional bands: in-vivo Z {bands}\nViewing ex-vivo Z slices')
+        scope_info.setToolTip(show_scope.toolTip())
+    layout.addWidget(scope_info)
 
     detail = QGroupBox('Single-cell call (optional)')
     detail.setCheckable(True)
@@ -470,7 +501,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         boundary[:, [0, -1]] = True
         return boundary & np.isin(lab, list(wanted)) if wanted else np.zeros(lab.shape, dtype=bool)
 
-    def orthogonal_pixmap(a, h, lab, scale_y, scale_x):
+    def orthogonal_pixmap(a, h, lab, scale_y, scale_x, region=None):
         def norm(array, limits, gamma=1.0):
             lo, hi = limits
             return np.clip((array.astype(float) - lo) / max(hi - lo, 1e-9), 0, 1) ** gamma
@@ -481,6 +512,9 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         if not anatomy.visible:
             a = a * 0
         rgb = np.stack([np.clip(a + h, 0, 1), a, np.clip(a + h, 0, 1)], axis=-1)
+        if region is not None and show_scope.isChecked():
+            rgb[~region] = rgb[~region] * (1 - SCOPE_SHADE[3]) + np.array(SCOPE_SHADE[:3]) * SCOPE_SHADE[3]
+            rgb[outline(region.astype('uint8'), {1})] = SCOPE_COLOR[:3]
         positives = ({r['exvivo_label_id'] for r in stack_rows() if r['call'] == 'positive'}
                      if show_positive.isChecked() else set())
         marked = active_pending()
@@ -581,18 +615,20 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         appearance = tuple((id(layer.data), tuple(layer.contrast_limits), layer.gamma,
                             layer.opacity, layer.visible) for layer in (anatomy, marker_layer))
         key = (y, x, state.get('ortho_width'), state['stack'], state['label'], session.revision,
-               frozenset(pending.get(state['stack'], ())), show_positive.isChecked(), appearance)
+               frozenset(pending.get(state['stack'], ())), show_positive.isChecked(), show_scope.isChecked(), appearance)
         if state.get('ortho_cache_key') != key:
             state['ortho_bases'] = (
                 orthogonal_pixmap(dataset.anatomy[:, y, x0:x1], marker_layer.data[:, y, x0:x1],
-                                  dataset.labels[:, y, x0:x1], spacing[0], spacing[2]),
+                                  dataset.labels[:, y, x0:x1], spacing[0], spacing[2],
+                                  dataset.review_region[:, y, x0:x1] if dataset.review_region is not None else None),
                 orthogonal_pixmap(dataset.anatomy[:, y0:y1, x], marker_layer.data[:, y0:y1, x],
-                                  dataset.labels[:, y0:y1, x], spacing[0], spacing[1]))
+                                  dataset.labels[:, y0:y1, x], spacing[0], spacing[1],
+                                  dataset.review_region[:, y0:y1, x] if dataset.review_region is not None else None))
             state['ortho_cache_key'] = key
         xz.setPixmap(position_pixmap(state['ortho_bases'][0], dataset.labels.shape[0], x1 - x0, z, x - x0))
         yz.setPixmap(position_pixmap(state['ortho_bases'][1], dataset.labels.shape[0], y1 - y0, z, y - y0))
-        captions['xz'].setText(f'XZ at y {y}  ·  z {z}')
-        captions['yz'].setText(f'YZ at x {x}  ·  z {z}')
+        captions['xz'].setText(f'XZ at y {y}  ·  ex-vivo Z {z}')
+        captions['yz'].setText(f'YZ at x {x}  ·  ex-vivo Z {z}')
         if state.get('crosshair_cursor') != (y, x):
             ny, nx = dataset.labels.shape[1:]
             g = CROSSHAIR_GAP
@@ -700,6 +736,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     def save_view():
         if dataset.review_scope:
             session.view['functional_review_scope'] = dataset.review_scope
+            session.view['show_functional_region'] = show_scope.isChecked()
         session.view.update(stack=state['stack'], label=state['label'], filter=filter_select.currentText(),
             anatomy_contrast=list(anatomy.contrast_limits), zoom=float(viewer.camera.zoom),
             pending={stack: sorted(labels_) for stack, labels_ in pending.items() if labels_})
@@ -875,6 +912,14 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     approve.clicked.connect(lambda: approve_marked())
     clear.clicked.connect(clear_marks)
     show_positive.toggled.connect(lambda *_: (refresh_overlays(), update_orthos()))
+    def toggle_scope(on):
+        if scope_layer is not None:
+            scope_layer.visible = on
+        update_orthos()
+
+    show_scope.toggled.connect(toggle_scope)
+    if scope_layer is not None:
+        scope_layer.events.visible.connect(lambda *_: show_scope.setChecked(scope_layer.visible))
     show_crosshair.toggled.connect(lambda on: setattr(crosshair, 'visible', on))
     viewer.camera.events.center.connect(keep_cursor_in_view)
     viewer.camera.events.zoom.connect(keep_cursor_in_view)
@@ -928,7 +973,8 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         undo=undo, redo=redo, freeze=freeze, status=counts, header=header, save_view=save_view,
         orthogonal_labels=(xz, yz), pick_ortho=pick_ortho, cut_through=cut_through, ortho_state=state, update_orthos=update_orthos, toggle_mark=toggle_mark, select_cell=select_cell, approve=approve_marked,
         approve_button=approve, clear=clear, pending=pending, histogram=hist, restore_panels=restore_panels,
-        detail=detail, goto=goto, layers=dict(selected=selected, pending=pending_layer, positive=positive_layer)))
+        detail=detail, goto=goto, scope_toggle=show_scope, scope_info=scope_info,
+        layers=dict(selected=selected, pending=pending_layer, positive=positive_layer, scope=scope_layer)))
     return viewer
 
 
