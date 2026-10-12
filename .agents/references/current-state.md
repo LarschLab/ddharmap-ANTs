@@ -2,7 +2,30 @@
 
 **Purpose:** short status of the intentional mixed migration state.
 
-**Use this file when:** editing downstream cells that may combine ROI-centric and HCR-centric paths.
+**Use this file when:** you need where the work stands now, or you are editing downstream cells that may combine ROI-centric and HCR-centric paths.
+
+## Where we are (single-fish, updated 2026-10-12)
+
+Keep this section short and current. Dated detail belongs in `recent-changes-single-fish.md`. How to run things is in `pipeline-operations.md`.
+
+- **Scoring.** Per-stimulus response scoring (`ce9128b`) is approved:
+  - LB/RB/LC/RC tests;
+  - suppressed and mixed classes;
+  - activation-only side tuning;
+  - a `suppression_confidence` label (not a gate);
+  - pooled results kept as comparison-only `pooled_*` columns.
+- **Native fish.** L765_f02, L758_f07, L765_f05 and L765_f06 were re-scored by frozen replay (`20261008_per_stimulus_replay5`; writers up to `match-roi-to-anatomy` reused). All passed.
+- **Early-screen leak.** The replays reused `prepare-functional-reference-stacks`, so their early-screen `[23b]/[23c]` tables predate the shared 16,000-bootstrap `ActivityConfig`. The isolated L765_f04 re-score failed its audit for the same reason: 42/47 baselines identical, including all registration and geometry; 5 early-screen tables differ.
+  - Danin accepted the early-screen change (2026-10-12).
+  - Next: replay the four fish again with that writer recomputed, and rerun the f04 check expecting those five tables to change.
+- **Open review items:**
+  - f04 canonical choice (per-stimulus 375 responders versus the accepted 282);
+  - HCR 18-vs-19 review;
+  - laterality/identity release;
+  - gallery curation (Codex proposal 58 → 26 figures; F046 and F049 kept; F049 must show traces again);
+  - F004/F005 fixes;
+  - shared midline-proposal path debt.
+- **Branches.** Merge `codex/remaining-fish-readiness` → `codex/unattended-single-fish` → `codex/qc-notebooks`. `codex/manual-hcr-identity-gui` merges later; it is the cellMatcher checkout.
 
 ## Current mixed state (intentional)
 

@@ -17,11 +17,11 @@ Read normative policy before operational state, and operational state before roa
 | `notebook-stage-map.md` | current ownership map | single-fish stage tasks | Current single-fish stages and outputs. |
 | `cohort-stage-map.md` | current ownership map | cohort tasks | Current cohort stages and outputs. |
 | `symbol-index.md` | current lookup map | only when symbol lookup is needed | Package ownership and public symbols. |
-| `current-state.md` | operational state | status and migration-boundary tasks | Current limitations, accepted evidence, and warnings. |
+| `current-state.md` | operational state | status and migration-boundary tasks | Where the work stands, current limitations, accepted evidence, and warnings. |
+| `pipeline-operations.md` | operational routing | running, replaying, verifying or exporting a fish | Run-type choice, launch and result rules, review outputs, locations. |
 | `agentic-workflow-roadmap.md` | roadmap | staged-pipeline migration only | Living implementation status and next slice. |
 | `single-fish-pipeline-roadmap.md` | roadmap | staged-pipeline migration only | Target pipeline and migration plan. |
 | `single-fish-qc-suite-todo.md` | backlog | QC implementation planning only | Outstanding and accepted QC review work. |
-| `stage-map.md` | compatibility pointer | never directly | Redirects old references to `notebook-stage-map.md`. |
 | `recent-changes.md` | compatibility pointer | log selection only | Routes to workflow-specific logs. |
 | `recent-changes-single-fish.md` | history log | explicit queried lookup only | Append-only single-fish handoff evidence. |
 | `recent-changes-cohort.md` | history log | explicit queried lookup only | Append-only cohort handoff evidence. |

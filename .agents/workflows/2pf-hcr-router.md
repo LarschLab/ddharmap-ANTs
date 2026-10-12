@@ -17,6 +17,7 @@
 | If your task primarily targets... | Open this router |
 | --- | --- |
 | `notebooks/singleFish.ipynb` and single-fish stage ownership | `.agents/workflows/2pf-hcr-single-fish-router.md` |
+| single-fish status, readiness, run/replay/verify, job results or review exports | `.agents/workflows/2pf-hcr-single-fish-router.md` |
 | `notebooks/qc/`, `notebooks/hcr_activity_replay_qa.ipynb`, or their package-owned review surfaces | `.agents/workflows/2pf-hcr-single-fish-router.md` |
 | `registrations/` and its maintained manual registration utilities | `.agents/workflows/2pf-hcr-single-fish-router.md` |
 | `notebooks/multi_fish_56h_56g.ipynb`, `notebooks/multiFish.ipynb`, and cohort/multi-fish aggregation or orchestration ownership | `.agents/workflows/2pf-hcr-cohort-router.md` |
