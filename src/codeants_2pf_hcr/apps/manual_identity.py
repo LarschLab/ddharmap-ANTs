@@ -470,11 +470,11 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         boundary[:, [0, -1]] = True
         return boundary & np.isin(lab, list(wanted)) if wanted else np.zeros(lab.shape, dtype=bool)
 
-    def orthogonal_pixmap(a, h, lab, scale_y, scale_x, line_row, line_col):
+    def orthogonal_pixmap(a, h, lab, scale_y, scale_x):
         def norm(array, limits, gamma=1.0):
             lo, hi = limits
             return np.clip((array.astype(float) - lo) / max(hi - lo, 1e-9), 0, 1) ** gamma
-        a = norm(a, anatomy.contrast_limits) * anatomy.opacity
+        a = norm(a, anatomy.contrast_limits, anatomy.gamma) * anatomy.opacity
         h = norm(h, marker_layer.contrast_limits, marker_layer.gamma) * marker_layer.opacity
         if not marker_layer.visible:
             h = h * 0
@@ -495,13 +495,19 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         factor = min(box_w / phys_w, box_h / phys_h)
         width, height = max(1, int(phys_w * factor)), max(1, int(phys_h * factor))
         pixmap = QPixmap.fromImage(image).scaled(width, height, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        return pixmap
+
+    def position_pixmap(base, rows, cols, line_row, line_col):
+        # Paint a copy: cursor movement must never accumulate lines in the cached image.
+        pixmap = base.copy()
+        width, height = pixmap.width(), pixmap.height()
         # Position indicators: current Z slice (horizontal) and the other view's cut (vertical).
         painter = QPainter(pixmap)
         pen = QPen(QColor(CURSOR_COLOR))
         pen.setWidth(1)
         painter.setPen(pen)
-        row_y = int((line_row + 0.5) * height / rgb.shape[0])
-        col_x = int((line_col + 0.5) * width / rgb.shape[1])
+        row_y = int((line_row + 0.5) * height / rows)
+        col_x = int((line_col + 0.5) * width / cols)
         painter.drawLine(0, row_y, width, row_y)
         painter.drawLine(col_x, 0, col_x, height)
         painter.end()
@@ -571,27 +577,40 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         y0, y1 = ortho_window(y, spacing[1], dataset.labels.shape[1])
         x0, x1 = ortho_window(x, spacing[2], dataset.labels.shape[2])
         state['ortho'] = dict(y0=y0, y1=y1, x0=x0, x1=x1)
-        xz.setPixmap(orthogonal_pixmap(dataset.anatomy[:, y, x0:x1], marker_layer.data[:, y, x0:x1],
-                                       dataset.labels[:, y, x0:x1], spacing[0], spacing[2], z, x - x0))
-        yz.setPixmap(orthogonal_pixmap(dataset.anatomy[:, y0:y1, x], marker_layer.data[:, y0:y1, x],
-                                       dataset.labels[:, y0:y1, x], spacing[0], spacing[1], z, y - y0))
+        # Z is deliberately absent: orthogonal image content depends only on the XY cut.
+        appearance = tuple((id(layer.data), tuple(layer.contrast_limits), layer.gamma,
+                            layer.opacity, layer.visible) for layer in (anatomy, marker_layer))
+        key = (y, x, state.get('ortho_width'), state['stack'], state['label'], session.revision,
+               frozenset(pending.get(state['stack'], ())), show_positive.isChecked(), appearance)
+        if state.get('ortho_cache_key') != key:
+            state['ortho_bases'] = (
+                orthogonal_pixmap(dataset.anatomy[:, y, x0:x1], marker_layer.data[:, y, x0:x1],
+                                  dataset.labels[:, y, x0:x1], spacing[0], spacing[2]),
+                orthogonal_pixmap(dataset.anatomy[:, y0:y1, x], marker_layer.data[:, y0:y1, x],
+                                  dataset.labels[:, y0:y1, x], spacing[0], spacing[1]))
+            state['ortho_cache_key'] = key
+        xz.setPixmap(position_pixmap(state['ortho_bases'][0], dataset.labels.shape[0], x1 - x0, z, x - x0))
+        yz.setPixmap(position_pixmap(state['ortho_bases'][1], dataset.labels.shape[0], y1 - y0, z, y - y0))
         captions['xz'].setText(f'XZ at y {y}  ·  z {z}')
         captions['yz'].setText(f'YZ at x {x}  ·  z {z}')
-        ny, nx = dataset.labels.shape[1:]
-        g = CROSSHAIR_GAP
-        segments = []
-        if x - g > 0:
-            segments.append([[y, 0], [y, x - g]])
-        if x + g < nx - 1:
-            segments.append([[y, x + g], [y, nx - 1]])
-        if y - g > 0:
-            segments.append([[0, x], [y - g, x]])
-        if y + g < ny - 1:
-            segments.append([[y + g, x], [ny - 1, x]])
-        crosshair.data = []
-        if segments:
-            crosshair.add_lines([np.array(seg, float) for seg in segments], edge_color=CURSOR_COLOR, edge_width=0.6)
-        crosshair.visible = show_crosshair.isChecked()
+        if state.get('crosshair_cursor') != (y, x):
+            ny, nx = dataset.labels.shape[1:]
+            g = CROSSHAIR_GAP
+            segments = []
+            if x - g > 0:
+                segments.append([[y, 0], [y, x - g]])
+            if x + g < nx - 1:
+                segments.append([[y, x + g], [y, nx - 1]])
+            if y - g > 0:
+                segments.append([[0, x], [y - g, x]])
+            if y + g < ny - 1:
+                segments.append([[y + g, x], [ny - 1, x]])
+            crosshair.data = []
+            if segments:
+                crosshair.add_lines([np.array(seg, float) for seg in segments], edge_color=CURSOR_COLOR, edge_width=0.6)
+            crosshair.visible = show_crosshair.isChecked()
+
+            state['crosshair_cursor'] = (y, x)
 
     ortho_timer = QTimer()
     ortho_timer.setSingleShot(True)
@@ -874,11 +893,17 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     viewer.bind_key('n', lambda v: move(1), overwrite=True)
     viewer.bind_key('p', lambda v: move(-1), overwrite=True)
     viewer.bind_key('m', lambda v: toggle_mark(state['label']), overwrite=True)
+    def invalidate_orthos(*_):
+        # Data events can also mean an in-place refresh, so invalidate explicitly.
+        state.pop('ortho_cache_key', None)
+        update_orthos()
+
     for layer in (anatomy, marker_layer):
         layer.events.contrast_limits.connect(update_orthos)
         layer.events.opacity.connect(update_orthos)
         layer.events.visible.connect(update_orthos)
-    marker_layer.events.gamma.connect(update_orthos)
+        layer.events.gamma.connect(update_orthos)
+        layer.events.data.connect(invalidate_orthos)
     if session.view.get('anatomy_contrast'):
         anatomy.contrast_limits = session.view['anatomy_contrast']
     settings = session.view.get('stacks', {}).get(first_stack)

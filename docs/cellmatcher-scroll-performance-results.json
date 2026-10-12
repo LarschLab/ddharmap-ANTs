@@ -1,0 +1,68 @@
+{
+  "shape_zyx": [
+    72,
+    750,
+    750
+  ],
+  "eligible_cells": 20858,
+  "baseline": "294603f17d27b744e4dca9d513225b6dd24aabaf",
+  "steps": 30,
+  "repeats": 3,
+  "debounce_wait_ms": 35,
+  "trials": [
+    {
+      "implementation": "baseline",
+      "repeat": 0,
+      "orthos_median_ms": 125.02887498703785,
+      "full_scroll_median_ms": 433.66997948032804,
+      "full_scroll_total_ms": 13850.166002754122
+    },
+    {
+      "implementation": "optimized",
+      "repeat": 0,
+      "orthos_median_ms": 0.0983749923761934,
+      "full_scroll_median_ms": 258.578437496908,
+      "full_scroll_total_ms": 8211.481125908904
+    },
+    {
+      "implementation": "optimized",
+      "repeat": 1,
+      "orthos_median_ms": 0.10462501086294651,
+      "full_scroll_median_ms": 260.57972948183306,
+      "full_scroll_total_ms": 7818.679543910548
+    },
+    {
+      "implementation": "baseline",
+      "repeat": 1,
+      "orthos_median_ms": 138.8017289864365,
+      "full_scroll_median_ms": 450.97891648765653,
+      "full_scroll_total_ms": 14378.192959004082
+    },
+    {
+      "implementation": "baseline",
+      "repeat": 2,
+      "orthos_median_ms": 140.83818747894838,
+      "full_scroll_median_ms": 466.3295625068713,
+      "full_scroll_total_ms": 14852.1613261546
+    },
+    {
+      "implementation": "optimized",
+      "repeat": 2,
+      "orthos_median_ms": 0.08489549509249628,
+      "full_scroll_median_ms": 276.612791523803,
+      "full_scroll_total_ms": 8720.455710892566
+    }
+  ],
+  "fish_id": "L765_f04",
+  "date": "2026-10-12",
+  "python": "3.10.20",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "napari": "0.6.6",
+  "numpy": "2.2.6",
+  "PyQt5": "5.15.11",
+  "Qt": "5.15.19",
+  "window_pixels": [
+    1500,
+    1000
+  ]
+}

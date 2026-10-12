@@ -185,3 +185,68 @@ def test_functional_scope_limits_queue_and_bulk_negatives_preserves_pending(tmp_
     finally:
         viewer.close()
         session.close()
+
+
+def test_z_scroll_reuses_images_and_invalidates_changed_content(tmp_path):
+    from qtpy.QtWidgets import QApplication, QCheckBox
+    from qtpy.QtTest import QTest
+    dataset = make_dataset(tmp_path / 'data')
+    session = AnnotationSession(dataset, tmp_path / 'session', 'GUI reviewer')
+    controls = {}
+    viewer = create_viewer(dataset, session, show=False, controls=controls)
+    try:
+        state = controls['ortho_state']
+        update = controls['update_orthos']
+        crosshair = viewer.layers['Side-view crosshair']
+        update()
+        bases = state['ortho_bases']
+        initial = [label.pixmap().toImage() for label in controls['orthogonal_labels']]
+        events = []
+        crosshair.events.data.connect(lambda event: events.append(event))
+        viewer.dims.set_current_step(0, (viewer.dims.current_step[0] + 3) % 8)
+        QTest.qWait(80)  # Exercise the real debounced dims-event connection.
+        QApplication.instance().processEvents()
+        assert state['ortho_bases'] is bases
+        assert not events
+        assert any(label.pixmap().toImage() != image for label, image in zip(controls['orthogonal_labels'], initial))
+        # Returning to the same Z gives exactly the same pixels (no accumulated cursors).
+        viewer.dims.set_current_step(0, (viewer.dims.current_step[0] - 3) % 8)
+        update()
+        assert all(label.pixmap().toImage() == image for label, image in zip(controls['orthogonal_labels'], initial))
+
+        def changed(action):
+            before = state['ortho_bases']
+            action()
+            update()
+            assert state['ortho_bases'] is not before
+
+        for layer in (viewer.layers['Ex-vivo GCaMP'], viewer.layers['HCR: pth2-r1']):
+            changed(lambda: setattr(layer, 'contrast_limits', (0, 60)))
+            changed(lambda: setattr(layer, 'gamma', 1.4))
+            changed(lambda: setattr(layer, 'opacity', 0.6))
+            changed(lambda: setattr(layer, 'visible', False))
+            changed(lambda: layer.events.data())  # In-place refresh also invalidates.
+        changed(lambda: controls['toggle_mark'](11))
+        changed(lambda: session.set_call('pth2-r1', 22, 'positive'))
+        changed(lambda: controls['select_cell'](22))
+        positive_toggle = next(box for box in controls['panel'].findChildren(QCheckBox)
+                               if box.text() == 'Show recorded positives (green)')
+        changed(lambda: positive_toggle.setChecked(False))
+        crosshair_toggle = next(box for box in controls['panel'].findChildren(QCheckBox)
+                                if box.text() == 'Faint crosshair in image')
+        crosshair_toggle.setChecked(False)
+        assert not crosshair.visible
+        crosshair_toggle.setChecked(True)
+        assert crosshair.visible
+        changed(lambda: controls['stack'].setCurrentIndex(1))
+        changed(lambda: state.__setitem__('ortho_width', 300))
+        changed(lambda: controls['cut_through']([0, 4, 4]))
+        assert events
+        # Cached and explicitly rebuilt pixels agree after all invalidations.
+        images = [label.pixmap().toImage() for label in controls['orthogonal_labels']]
+        state.pop('ortho_cache_key')
+        update()
+        assert all(label.pixmap().toImage() == image for label, image in zip(controls['orthogonal_labels'], images))
+    finally:
+        viewer.close()
+        session.close()
