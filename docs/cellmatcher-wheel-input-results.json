@@ -1,0 +1,42 @@
+{
+  "baseline": "79abd3b",
+  "input": "synthetic native Qt packets: pixelDelta.y=1, angleDelta.y=1; 5 ms pacing",
+  "trials": [
+    {
+      "implementation": "baseline_cmd",
+      "repeat": 0,
+      "packets_to_first_z": 121,
+      "elapsed_to_first_z_ms": 828.1113339471631
+    },
+    {
+      "implementation": "plain_scroll",
+      "repeat": 0,
+      "packets_to_first_z": 20,
+      "elapsed_to_first_z_ms": 151.12312498968095
+    },
+    {
+      "implementation": "plain_scroll",
+      "repeat": 1,
+      "packets_to_first_z": 20,
+      "elapsed_to_first_z_ms": 149.2849579663016
+    },
+    {
+      "implementation": "baseline_cmd",
+      "repeat": 1,
+      "packets_to_first_z": 121,
+      "elapsed_to_first_z_ms": 901.9299999927171
+    },
+    {
+      "implementation": "baseline_cmd",
+      "repeat": 2,
+      "packets_to_first_z": 121,
+      "elapsed_to_first_z_ms": 892.1870000194758
+    },
+    {
+      "implementation": "plain_scroll",
+      "repeat": 2,
+      "packets_to_first_z": 20,
+      "elapsed_to_first_z_ms": 146.3813339942135
+    }
+  ]
+}
