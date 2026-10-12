@@ -126,3 +126,16 @@ Preferred structure:
 ## Decision rule when code and docs disagree
 
 Refactor toward this policy while preserving reproducibility; do not introduce new analyses that depend on historical ambiguity.
+
+
+## Manual ex-vivo identity review scope
+
+Reviewer decision (2026-10-12): cellMatcher review scope is computed independently
+for each fish from all of its globally indexed functional planes, including all
+sessions. A cell enters review when any voxel of its ex-vivo mask, warped into
+in-vivo anatomy intensity space, intersects the union of inclusive `best_z ±10`
+anatomy-slice slabs. Disjoint slabs retain their gaps; native ex-vivo Z indices
+and anatomy-label TIFF page polarity must not substitute for that fixed grid.
+This spatial scope does not establish trace quality or responsiveness. All-mask
+geometry/quality calculations remain unchanged. Existing calls are preserved;
+out-of-scope cells must never receive automatic negative calls.

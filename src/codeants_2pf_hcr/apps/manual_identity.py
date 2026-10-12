@@ -215,14 +215,16 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     selected.contour = 3
     for layer in (labels, positive_layer, pending_layer, selected):
         layer.editable = False
-    centers = ndimage.center_of_mass(np.ones(dataset.labels.shape, dtype=np.uint8), dataset.labels, dataset.eligible)
-    centers = {label: tuple(int(round(v)) for v in center) for label, center in zip(dataset.eligible, centers)}
-    pending = {stack: set(map(int, labels_)) & set(centers) for stack, labels_ in session.view.get('pending', {}).items()}
-    state = {'label': session.view.get('label', dataset.eligible[0]), 'stack': first_stack}
+    centers = ndimage.center_of_mass(np.ones(dataset.labels.shape, dtype=np.uint8), dataset.labels, dataset.review_eligible)
+    centers = {label: tuple(int(round(v)) for v in center) for label, center in zip(dataset.review_eligible, centers)}
+    pending = {stack: set(map(int, labels_)) & set(dataset.eligible) for stack, labels_ in session.view.get('pending', {}).items()}
+    state = {'label': session.view.get('label', dataset.review_eligible[0]), 'stack': first_stack}
     if state['label'] not in centers:
-        state['label'] = dataset.eligible[0]
+        state['label'] = dataset.review_eligible[0]
     # Where the side views cut (y, x); Z is the image's current slice.
     state['cursor'] = [dataset.labels.shape[1] // 2, dataset.labels.shape[2] // 2]
+    if dataset.review_scope:
+        viewer.status = f"{dataset.manifest['fish_id']}: {len(centers)} cells in functional best-Z ±10 scope"
     # Faint crosshair in the image with an open centre so the cell under it stays visible.
     CROSSHAIR_GAP = 14  # data pixels each side (~ one cell diameter overall)
     crosshair = viewer.add_shapes(name='Side-view crosshair', shape_type='line', edge_color=CURSOR_COLOR,
@@ -481,7 +483,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         rgb = np.stack([np.clip(a + h, 0, 1), a, np.clip(a + h, 0, 1)], axis=-1)
         positives = ({r['exvivo_label_id'] for r in stack_rows() if r['call'] == 'positive'}
                      if show_positive.isChecked() else set())
-        marked = pending.get(state['stack'], set())
+        marked = active_pending()
         for wanted, color in ((positives - marked, POSITIVE_COLOR), (marked, PENDING_COLOR), ({state['label']}, SELECTED_COLOR)):
             rgb[outline(lab, wanted & set(np.unique(lab).tolist()))] = color[:3]
         rgb = np.ascontiguousarray((rgb * 255).astype(np.uint8))
@@ -623,11 +625,14 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         else:
             set_cursor(y=bounds['y0'] + int(u * (bounds['y1'] - bounds['y0'])), z=z)
 
+    def active_pending():
+        return pending.get(state['stack'], set()) & set(centers)
+
     def stack_rows():
-        return [r for (stack, _), r in session.rows.items() if stack == state['stack']]
+        return [r for (stack, label), r in session.rows.items() if stack == state['stack'] and label in centers]
 
     def refresh_overlays():
-        marked = pending.get(state['stack'], set())
+        marked = active_pending()
         pending_layer.colormap = _label_colormap(marked, PENDING_COLOR)
         positives = [r['exvivo_label_id'] for r in stack_rows() if r['call'] == 'positive'] if show_positive.isChecked() else []
         positive_layer.colormap = _label_colormap(positives, POSITIVE_COLOR)
@@ -636,8 +641,10 @@ def create_viewer(dataset, session, *, show=True, controls=None):
     def refresh_status():
         rows = stack_rows()
         tally = {call: sum(r['call'] == call for r in rows) for call in CALLS}
-        marked = len(pending.get(state['stack'], ()))
-        counts.setText(f'<b>{marked}</b> pending · <span style="color:#4fdc6a">{tally["positive"]} positive</span> · '
+        marked = len(active_pending())
+        scope_text = (f'{dataset.manifest["fish_id"]}: {len(centers)} cells in functional review scope<br>'
+                      if dataset.review_scope else '')
+        counts.setText(scope_text + f'<b>{marked}</b> pending · <span style="color:#4fdc6a">{tally["positive"]} positive</span> · '
                        f'{tally["negative"]} negative<br>{tally["uncertain"]} uncertain · {tally["unassessable"]} unassessable · '
                        f'{tally["unreviewed"]} unreviewed')
         approve.setText(f'Approve {marked} as positive…')
@@ -645,7 +652,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         clear.setEnabled(bool(marked))
         row = session.rows[(state['stack'], state['label'])]
         marker = dataset.markers[state['stack']]
-        flag = ' · <span style="color:#ff9a1a">marked</span>' if state['label'] in pending.get(state['stack'], ()) else ''
+        flag = ' · <span style="color:#ff9a1a">marked</span>' if state['label'] in active_pending() else ''
         z = centers[state['label']][0]
         header.setText(f'<b>Selected cell {state["label"]}</b> (z {z}){flag}<br>'
                        f'{marker["gene"]} · {marker["round_id"]}: <b>{row["call"]}</b>'
@@ -672,6 +679,8 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         update_orthos()
 
     def save_view():
+        if dataset.review_scope:
+            session.view['functional_review_scope'] = dataset.review_scope
         session.view.update(stack=state['stack'], label=state['label'], filter=filter_select.currentText(),
             anatomy_contrast=list(anatomy.contrast_limits), zoom=float(viewer.camera.zoom),
             pending={stack: sorted(labels_) for stack, labels_ in pending.items() if labels_})
@@ -680,6 +689,8 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         session.save_view()
 
     def toggle_mark(label):
+        if label not in centers:
+            return
         marked = pending.setdefault(state['stack'], set())
         marked.symmetric_difference_update({label})
         select_cell(label)
@@ -689,7 +700,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         choice = filter_select.currentText()
         cell_select.blockSignals(True)
         cell_select.clear()
-        for label in dataset.eligible:
+        for label in dataset.review_eligible:
             row = session.rows[(state['stack'], label)]
             if choice == 'all' or row['call'] == choice or (choice == 'issue-flagged' and row['issue_code']):
                 cell_select.addItem(str(label), label)
@@ -734,7 +745,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
         try:
             session.set_call(state['stack'], state['label'], call, issue=issue.currentText(),
                              blocking=blocking.isChecked(), note=note.text())
-            pending.get(state['stack'], set()).discard(state['label'])
+            pending.setdefault(state['stack'], set()).discard(state['label'])
             refresh_queue()
             save_view()
             report_checkpoint()
@@ -743,7 +754,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
 
     def approve_marked(choice=None):
         """choice: None asks; 'positives' or 'with_negatives' skips the dialog."""
-        marked = sorted(pending.get(state['stack'], ()))
+        marked = sorted(active_pending())
         uncovered = set(session.uncovered_labels(state['stack'], marked))
         ready = [n for n in marked if n not in uncovered]
         others = [r['exvivo_label_id'] for r in stack_rows() if r['call'] == 'unreviewed' and r['exvivo_label_id'] not in set(marked)]
@@ -761,7 +772,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
                 text += (f'<br><br>{len(uncovered)} marked cell(s) extend outside the imaged area and cannot be positive; '
                          'they stay marked so you can call them uncertain or unassessable.')
             text += (f'<br><br>{len(others_covered)} other fully imaged cell(s) are still unreviewed. Leave them unreviewed '
-                     '(they never count as negative), or record them as negative only if you have looked at the whole stack.')
+                     '(they never count as negative), or record them as negative only if you have reviewed every cell in this fish’s functional review scope.')
             box.setText(text)
             only = box.addButton('Approve positives only', QMessageBox.AcceptRole)
             with_negatives = box.addButton(f'Approve + {len(others_covered)} others negative', QMessageBox.AcceptRole)
@@ -776,7 +787,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
                 session.set_calls(state['stack'], ready, 'positive')
             if choice == 'with_negatives' and others_covered:
                 session.set_calls(state['stack'], others_covered, 'negative')
-            pending[state['stack']] = set(uncovered)
+            pending[state['stack']] = (pending.get(state['stack'], set()) - set(centers)) | set(uncovered)
             refresh_queue()
             save_view()
             report_checkpoint()
@@ -784,7 +795,7 @@ def create_viewer(dataset, session, *, show=True, controls=None):
             report(exc)
 
     def clear_marks():
-        pending[state['stack']] = set()
+        pending[state['stack']] = pending.get(state['stack'], set()) - set(centers)
         refresh_overlays()
         refresh_status()
         update_orthos()
@@ -903,6 +914,11 @@ def main(argv=None):
     parser.add_argument('--reviewer', required=True)
     args = parser.parse_args(argv)
     dataset = Dataset(args.manifest)
+    from codeants_2pf_hcr.manual_identity_pipeline import apply_functional_review_scope
+    fish_root = next((p for p in dataset.path.parents if p.name == dataset.manifest['fish_id']), None)
+    if fish_root is None:
+        raise ValueError('Review requires a dataset under its fish directory to resolve functional scope')
+    apply_functional_review_scope(dataset, fish_root.parent)
     session = AnnotationSession(dataset, args.session, args.reviewer)
     try:
         import napari

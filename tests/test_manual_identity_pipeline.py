@@ -74,6 +74,8 @@ def make_fish(root):
                                  selected_anat_label=[101., 102., 103., np.nan], has_unique_anat_match=[True, True, True, False],
                                  anat_label=[101., 102., 103., np.nan]))
     (functional / 'registration').mkdir(parents=True)
+    (functional / 'registration/plane_refs_summary.json').write_text(json.dumps([
+        dict(index=0, best_z=2), dict(index=1, best_z=4)]))
     geometry.to_csv(functional / 'registration/functional_roi_anatomy_matches.csv', index=False)
     score = geometry.assign(is_active=[True, False, True, False], identity_label='', has_identity_assigned=False,
                             identity_display_label='', bpi=[.5, -.2, .1, 0.])
@@ -178,3 +180,63 @@ def test_manual_identity_source_replaces_hcr_control_parity(tmp_path):
     assert current_identity_source(paths) == 'manual_exvivo'
     checks = _build_staged_comparison_checks(paths, 'export-canonical-tables')
     assert checks and all(c.label.startswith('manual identity output present') for c in checks)
+
+
+def test_functional_review_scope_union_edges_cache_and_complete_fish(tmp_path, monkeypatch):
+    fish = make_fish(tmp_path)
+    manifest = mip.prepare_fish_dataset(FISH, tmp_path, log=lambda *_: None)
+    dataset = Dataset(manifest)
+    refs = fish / '03_analysis/functional/registration/plane_refs_summary.json'
+    refs.write_text(json.dumps([dict(index=0, best_z=5), dict(index=1, best_z=50)]))
+    # Fixed-space masks: 11 touches the upper inclusive edge, 22 lies in the gap,
+    # 33 touches the lower edge of the second plane. Their native centroids differ.
+    warped = np.zeros((70, 40, 40), dtype=np.uint16)
+    warped[15, 1, 1] = 11
+    warped[25, 1, 1] = 22
+    warped[40, 1, 1] = 33
+    calls = []
+    def warp(**kwargs):
+        calls.append(kwargs)
+        return warped, None
+    monkeypatch.setattr('codeants_2pf_hcr.hcr_warp._warp_zyx_labels_with_ants', warp)
+    scope = mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert dataset.review_eligible == [11, 33]
+    assert dataset.eligible == [11, 22, 33]  # immutable annotation inventory
+    assert scope['provenance']['fish_id'] == FISH
+    mip.apply_functional_review_scope(dataset, tmp_path)
+    assert len(calls) == 1  # hashed cache is reusable
+    refs.write_text(json.dumps([dict(index=0, best_z=5), dict(index=1, best_z=25)]))
+    mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert dataset.review_eligible == [11, 22] and len(calls) == 2
+    # Accepted geometry may override raw NCC best_z; that is the review authority.
+    effective = refs.with_name('plane_refs_summary_geometry.json')
+    effective.write_text(json.dumps([dict(index=0, best_z=5), dict(index=1, best_z=50)]))
+    mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert dataset.review_eligible == [11, 33] and len(calls) == 3
+    effective.write_text(json.dumps([dict(index=0, best_z=5), dict(index=1, best_z=25)]))
+    mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert dataset.review_eligible == [11, 22] and len(calls) == 4
+    effective.unlink()
+    refs.write_text(json.dumps([dict(index=0, best_z=5)]))
+    with pytest.raises(ValueError, match='fish inventory'):
+        mip.apply_functional_review_scope(dataset, tmp_path)
+
+
+def test_scope_preserves_existing_calls_and_blocks_new_outside_calls(tmp_path):
+    fish = make_fish(tmp_path)
+    dataset = Dataset(mip.prepare_fish_dataset(FISH, tmp_path, log=lambda *_: None))
+    directory = mip.session_dir(dataset)
+    with_session = AnnotationSession(dataset, directory, 'reviewer')
+    with_session.set_call('rbest-pth2', 22, 'positive')
+    with_session.close()
+    dataset.review_eligible = [11, 33]
+    session = AnnotationSession(dataset, directory, 'reviewer')
+    try:
+        assert session.rows[('rbest-pth2', 22)]['call'] == 'positive'
+        with pytest.raises(ValueError, match='outside'):
+            session.set_call('rbest-pth2', 22, 'negative')
+        session.set_call('rbest-pth2', 11, 'positive')
+        frozen = json.loads(session.freeze().read_text())
+        assert len(frozen['annotations']) == 6
+    finally:
+        session.close()

@@ -185,6 +185,84 @@ def _bind_exvivo_label_grid(paths, labels_path, anatomy_path):
     return manifest_path, shape
 
 
+def apply_functional_review_scope(dataset, local_root, *, pipeline_root=None, log=print):
+    """Restrict new review calls to this fish's functional best-Z slabs (±10).
+
+    Keep the immutable annotation inventory and complete geometry unchanged.
+    Cache the per-fish, per-mask scope separately so existing sessions reopen.
+    """
+    from .hcr_warp import _bridge_transform_pair, _warp_zyx_labels_with_ants
+    paths = fish_pipeline_paths(dataset.manifest['fish_id'], local_root, pipeline_root)
+    raw_refs_path = product_path(paths, 'register-functional-to-anatomy', 'plane_refs_summary.json')
+    geometry_refs_path = product_path(paths, 'match-roi-to-anatomy', 'registration/plane_refs_summary_geometry.json')
+    refs_path = geometry_refs_path if geometry_refs_path.is_file() else raw_refs_path
+    refs = json.loads(refs_path.read_text())
+    if not isinstance(refs, list) or not refs:
+        raise ValueError(f'No functional plane references for {paths.fish_dir.name}: {refs_path}')
+    planes = []
+    for row in refs:
+        index, z = row.get('index'), row.get('best_z')
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            raise ValueError('Functional plane index must be a nonnegative global integer')
+        if isinstance(z, bool) or not isinstance(z, int) or z < 0:
+            raise ValueError(f'Invalid best_z for functional plane {index}')
+        planes.append(dict(plane_idx=index, best_z=z))
+    indices = {p['plane_idx'] for p in planes}
+    if len(indices) != len(planes):
+        raise ValueError('Duplicate global functional plane indices')
+    expected = {int(p.name[5:]) for p in paths.functional_suite2p_dir.glob('plane*')
+                if p.is_dir() and p.name[5:].isdigit() and not p.name.startswith('._')}
+    geometry_path = product_path(paths, 'match-roi-to-anatomy', 'registration/functional_roi_anatomy_matches.csv')
+    if geometry_path.is_file():
+        geometry = pd.read_csv(geometry_path, usecols=['plane_idx'])
+        expected |= set(geometry.plane_idx.dropna().astype(int))
+    if refs_path != raw_refs_path:
+        raw_refs = json.loads(raw_refs_path.read_text())
+        if not isinstance(raw_refs, list) or not raw_refs or any(
+                isinstance(p.get('index'), bool) or not isinstance(p.get('index'), int) for p in raw_refs):
+            raise ValueError('Invalid global plane inventory in registration references')
+        expected |= {p['index'] for p in raw_refs}
+    if expected and indices != expected:
+        raise ValueError(f'Functional plane references {sorted(indices)} differ from fish inventory {sorted(expected)}')
+    transforms = _bridge_transform_pair(paths.preproc_dir.parent / '04_exvivo-2p' / 'transMatrices',
+                                        source_tokens=('exvivo', 'ex_vivo', 'ex-vivo'), target_tag='to_2p')
+    if not transforms:
+        raise FileNotFoundError('Functional review scope requires the ex vivo->2P transform pair')
+    fixed = invivo_anatomy_intensity_path(paths)
+    inputs = list(dict.fromkeys([raw_refs_path, refs_path])) + [fixed, Path(dataset.manifest['anatomy']['path']),
+              Path(dataset.manifest['labels']['path']), *map(Path, transforms)]
+    provenance = dict(fish_id=paths.fish_dir.name, dataset_fingerprint=dataset.fingerprint,
+                      half_width_planes=10, planes=sorted(planes, key=lambda p: p['plane_idx']),
+                      expected_plane_indices=sorted(expected),
+                      inputs=[dict(path=str(p), sha256=sha256(p)) for p in inputs])
+    cache_path = manual_identity_root(paths) / 'functional_review_scopes' / f'{dataset.manifest["dataset_id"]}.json'
+    cached = _read_json(cache_path)
+    if cached is None or cached.get('provenance') != provenance:
+        log(f'Computing functional review scope for {paths.fish_dir.name} (best Z ±10)')
+        warped, _ = _warp_zyx_labels_with_ants(labels_zyx=dataset.labels,
+            moving_intensity_path=Path(dataset.manifest['anatomy']['path']),
+            fixed_intensity_path=fixed, transformlist=transforms)
+        z_size = warped.shape[0]
+        allowed = np.zeros(z_size, dtype=bool)
+        for plane in planes:
+            z = plane['best_z']
+            if z >= z_size:
+                raise ValueError(f'Functional best_z {z} is outside in-vivo anatomy depth {z_size}')
+            allowed[max(0, z - 10):min(z_size, z + 11)] = True
+        # Use the fixed intensity grid: anatomy-label TIFF Z reversal is irrelevant here.
+        ids = sorted(set(map(int, np.unique(warped[allowed]))) & set(dataset.eligible))
+        cached = dict(provenance=provenance, eligible_label_ids=ids,
+                      policy='any warped cell voxel intersects the union of inclusive in-vivo best_z ±10 slabs')
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(cache_path, json.dumps(cached, indent=2))
+    ids = cached['eligible_label_ids']
+    if not ids or not set(ids).issubset(dataset.eligible):
+        raise ValueError(f'No valid cells in functional review scope for {paths.fish_dir.name}')
+    dataset.review_eligible = list(ids)
+    dataset.review_scope = cached
+    return cached
+
+
 def prepare_fish_dataset(fish_id, local_root, *, pipeline_root=None, log=print):
     """Discover pipeline inputs by convention and write a hash-bound dataset manifest."""
     import SimpleITK as sitk
@@ -199,7 +277,7 @@ def prepare_fish_dataset(fish_id, local_root, *, pipeline_root=None, log=print):
     root = manual_identity_root(paths) / dataset_id
     manifest_path = root / 'dataset_manifest.json'
     if manifest_path.exists():
-        Dataset(manifest_path)
+        apply_functional_review_scope(Dataset(manifest_path), local_root, pipeline_root=pipeline_root, log=log)
         return manifest_path
     reader = sitk.ImageFileReader()
     reader.SetFileName(str(anatomy))
@@ -213,7 +291,8 @@ def prepare_fish_dataset(fish_id, local_root, *, pipeline_root=None, log=print):
     root.mkdir(parents=True, exist_ok=True)
     eligibility = root / 'eligibility.json'
     atomic_write(eligibility, json.dumps(dict(
-        policy_source='All ex-vivo Cellpose masks enter review (reviewer decision 2026-10-06); '
+        policy_source='All ex-vivo Cellpose masks remain in the annotation inventory; '
+                      'functional review scope is computed separately per fish (reviewer decision 2026-10-12); '
                       f'segmentation provenance {segmentation_manifest}',
         eligible_label_ids=[int(n) for n in ids if n > 0]), indent=2))
     markers, validation = [], {}
@@ -241,7 +320,9 @@ def prepare_fish_dataset(fish_id, local_root, *, pipeline_root=None, log=print):
         # Repeated acquisitions need an explicit reviewer choice before export.
         config['unresolved_primary_stack_genes'] = duplicated
     atomic_write(root / 'input_config.json', json.dumps(config, indent=2))
-    return prepare_dataset(root / 'input_config.json', manifest_path)
+    prepare_dataset(root / 'input_config.json', manifest_path)
+    apply_functional_review_scope(Dataset(manifest_path), local_root, pipeline_root=pipeline_root, log=log)
+    return manifest_path
 
 
 def list_datasets(local_root):

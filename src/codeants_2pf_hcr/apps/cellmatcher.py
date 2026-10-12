@@ -223,6 +223,7 @@ def build_launcher(controls=None):
             from codeants_2pf_hcr.apps.manual_identity import create_viewer
             try:
                 dataset = Dataset(row['datasets'][-1] / 'dataset_manifest.json')
+                mip.apply_functional_review_scope(dataset, self.root.text())
                 session = AnnotationSession(dataset, mip.session_dir(dataset), reviewer)
             except Exception as exc:
                 log.exception('Open review failed')

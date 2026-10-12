@@ -163,3 +163,25 @@ def test_launcher_lists_fish_and_gates_actions(tmp_path):
             window.grab().save(path)
     finally:
         window.close()
+
+
+def test_functional_scope_limits_queue_and_bulk_negatives_preserves_pending(tmp_path):
+    dataset = make_dataset(tmp_path / 'data')
+    session = AnnotationSession(dataset, tmp_path / 'session', 'GUI reviewer')
+    session.view['pending'] = {'pth2-r1': [22]}
+    dataset.review_eligible = [11]
+    controls = {}
+    viewer = create_viewer(dataset, session, show=False, controls=controls)
+    try:
+        assert controls['cells'].count() == 1
+        assert controls['cells'].itemData(0) == 11
+        controls['toggle_mark'](22)
+        assert controls['pending']['pth2-r1'] == {22}
+        controls['approve']('with_negatives')
+        assert session.rows[('pth2-r1', 11)]['call'] == 'negative'
+        assert session.rows[('pth2-r1', 22)]['call'] == 'unreviewed'
+        controls['save_view']()
+        assert session.view['pending']['pth2-r1'] == [22]
+    finally:
+        viewer.close()
+        session.close()

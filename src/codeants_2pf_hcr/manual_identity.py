@@ -98,6 +98,8 @@ class Dataset:
             raise ValueError('Invalid eligible label inventory')
         if not set(self.eligible).issubset(set(np.unique(self.labels))):
             raise ValueError('Eligible labels absent from label image')
+        self.review_eligible = list(self.eligible)
+        self.review_scope = None
         self.markers = {}
         self._marker_cache = None
         for marker in m['markers']:
@@ -224,6 +226,8 @@ class AnnotationSession:
         if call not in CALLS:
             raise ValueError('Unknown annotation call')
         labels = [positive_label_id(label) for label in labels]
+        if not set(labels).issubset(self.dataset.review_eligible):
+            raise ValueError('Cell is outside this fish’s functional review scope')
         if call in ('positive', 'negative'):
             uncovered = self.uncovered_labels(stack, labels)
             if uncovered:
