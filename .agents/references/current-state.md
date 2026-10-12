@@ -110,4 +110,13 @@
 
 ## Manual identity app (2026-10-06)
 
-`cellMatcher` (napari) records independent per-marker calls on all ex-vivo Cellpose masks in ex-vivo space. Finish & export warps the ex-vivo masks to 2P with the accepted ex-vivo->2P transforms, matches them with the HCR matching code, writes only `functional_roi_activity_identity.csv` and `anatomy_identity_lookup.csv` to the assign-hcr-identity location, and stops at an explicit identity gate. Continue pipeline recomputes the HCR-centric tables (conf_label = ex-vivo mask ID) and the canonical/QA/motion-AUC/figure stages. The earlier correspondence-based ROI-only export was removed. HCR label-quality gates (200-native-voxel speck floor, q95 large-mask flag) currently apply to ex-vivo masks and drop flagged positives at matching. Validated end to end on a staging copy of L765_f04 with stand-in masks; production L765_f04 is unchanged until a reviewer exports from the app. Run instructions: `docs/manual-hcr-identity-gui.md`.
+`cellMatcher` (napari) records independent per-marker calls in ex-vivo space, with new review limited per fish to warped masks intersecting the union of accepted functional `best_z ±10` anatomy-slice slabs. It preserves the all-mask session inventory and existing out-of-scope calls/pending marks. Scope caches under `manual_identity/functional_review_scopes/` are hash-bound to each fish’s references, anatomy and bridge transforms. Finish & export warps the ex-vivo masks to 2P with the accepted ex-vivo->2P transforms, matches them with the HCR matching code, writes only `functional_roi_activity_identity.csv` and `anatomy_identity_lookup.csv` to the assign-hcr-identity location, and stops at an explicit identity gate. Continue pipeline recomputes the HCR-centric tables (conf_label = ex-vivo mask ID) and the canonical/QA/motion-AUC/figure stages. The earlier correspondence-based ROI-only export was removed. HCR label-quality gates (200-native-voxel speck floor, q95 large-mask flag) currently apply to ex-vivo masks and drop flagged positives at matching. Validated end to end on a staging copy of L765_f04 with stand-in masks; production L765_f04 is unchanged until a reviewer exports from the app. Run instructions: `docs/manual-hcr-identity-gui.md`.
+
+
+2026-10-12 validation: real `L765_f04` scope includes all ten global planes
+(two sessions), retaining 11,196 of 20,858 ex-vivo masks for review; validation
+used temporary caches and did not alter production annotations. Z-scroll
+performance was implemented on `codex/cellmatcher-scroll-performance` and
+merged only after three clean real-fish paired trials showed 40.7–45.6% shorter
+scroll time (median 14.378 → 8.211 s for 30 steps). See
+`docs/cellmatcher-scroll-performance.md` for the method and limitations.
