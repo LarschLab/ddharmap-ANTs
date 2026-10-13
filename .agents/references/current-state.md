@@ -184,3 +184,7 @@ Danin's gallery decisions are implemented in the exporter and package plots, wit
 ## Signed early-screen curation (2026-10-13, round 2)
 
 P014 is approved as signed [23c] AUC violins; P018 also uses independent signed AUCs. Retired single-fish [23b] 50 s scalar columns require refreshed display writer products and QC copies; existing f02 products were read only for previews and remain untouched. Response calls/windows/floor are unchanged. Cohort summary contamination remains separate open work.
+
+## P003 registration review (2026-10-13)
+
+QC 02 cell 13 now renders four columns per plane directly from persisted registration/QC inputs. Selected method-specific references include f06 plane-0 NCC-xy. Original writer PNGs and writer stages are unchanged; frozen replay review needs no writer rerun. Production notebook copies must execute the new cell to supply gallery role `nb:02:13:0`.

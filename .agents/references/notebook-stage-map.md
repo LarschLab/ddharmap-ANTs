@@ -151,7 +151,7 @@ The package-owned `make-figures` [56h] output now shows per-gene individual stim
 
 ## Curated QC gallery ownership (2026-10-13)
 
-QC 02 orchestrates the P003 writer-resolution composite; QC 03 orchestrates P005 geometry/offsets; QC 04 adds P008 saved HCR pair-status outlines for all functional anatomy planes; QC 06 orchestrates P010 accepted midline/ROI-side composite, P019 Q7 marker traces plus two-ring HCR-label status, and P020 HCR fate/ROI coverage/exact-identity composite. All renderers live in `plots.*`. Scientific stage/output ownership and standalone 56h filenames are unchanged.
+QC 02 cell 13 orchestrates P003 from persisted registration products in `plots.qc_registration` (four columns per plane, saved method/NCC and explicit label Z); QC 03 orchestrates P005 geometry/offsets; QC 04 adds P008 saved HCR pair-status outlines for all functional anatomy planes; QC 06 orchestrates P010 accepted midline/ROI-side composite, P019 Q7 marker traces plus two-ring HCR-label status, and P020 HCR fate/ROI coverage/exact-identity composite. All renderers live in `plots.*`. Scientific stage/output ownership and standalone 56h filenames are unchanged.
 
 ## Q1 signed AUC review (2026-10-13)
 

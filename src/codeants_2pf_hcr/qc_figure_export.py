@@ -23,7 +23,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageStat
 CURATED_CARDS = (
     ("P001", "Z-drift", ("nb:01:08:0",)),
     ("P002", "Z-drift", ("nb:01:15:0",)),
-    ("P003", "Registration/geometry", ("writer:functional_anatomy_plane_qc_rows", "writer:functional_anatomy_intensity_overlay_rows")),
+    ("P003", "Registration/geometry", ("nb:02:13:0",)),
     ("P004", "Registration/geometry", ("nb:03:06:0",)),
     ("P005", "Registration/geometry", ("nb:03:04:0", "nb:03:08:0")),
     ("P006", "Registration/geometry", ("nb:04:06:0",)),
@@ -67,7 +67,6 @@ CARD_TITLES = {
 }
 
 COMPOSITE_ROLES = {
-    "P003": "renderer:render_registration_review_composite",
     "P005": "renderer:render_geometry_offsets_composite",
     "P010": "renderer:render_midline_review_composite",
     "P020": "renderer:render_identity_coverage_composite",

@@ -136,7 +136,7 @@ class PngComposite:
         return buffer.getvalue()
 
 
-def _composite_image(panels, *, equal_width=False, side_by_side=False):
+def _composite_image(panels, *, equal_width=False):
     """Full-resolution panels, optionally enlarged to comparable display scale.
 
     Never shrink a source PNG. The gallery inventory also retains each original.
@@ -157,24 +157,11 @@ def _composite_image(panels, *, equal_width=False, side_by_side=False):
         width = max(p.width for p in images)
         images = [p if p.width == width else p.resize(
             (width, round(p.height * width / p.width)), Image.Resampling.LANCZOS) for p in images]
-    if side_by_side:
-        height = max(p.height for p in images)
-        images = [p if p.height == height else p.resize(
-            (round(p.width * height / p.height), height), Image.Resampling.LANCZOS) for p in images]
-        canvas = Image.new('RGB', (sum(p.width for p in images), height), 'white')
-        x = 0
-        for panel in images:
-            canvas.paste(panel, (x, 0)); x += panel.width
-    else:
-        canvas = Image.new('RGB', (max(p.width for p in images), sum(p.height for p in images)), 'white')
-        y = 0
-        for panel in images:
-            canvas.paste(panel, ((canvas.width-panel.width)//2, y)); y += panel.height
+    canvas = Image.new('RGB', (max(p.width for p in images), sum(p.height for p in images)), 'white')
+    y = 0
+    for panel in images:
+        canvas.paste(panel, ((canvas.width-panel.width)//2, y)); y += panel.height
     return PngComposite(canvas)
-
-
-def render_registration_review_composite(plane_rows, intensity_rows):
-    return _composite_image([plane_rows, intensity_rows], side_by_side=True)
 
 
 def render_geometry_offsets_composite(summary, offsets):

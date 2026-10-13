@@ -94,7 +94,7 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 ## Curated single-fish gallery (Danin, 2026-10-13)
 
 - `qc_figure_export.CURATED_CARDS` owns ordered role selection; never select by extraction F-number. Preserve complete inventory, source hashes, exclusions and missing evidence.
-- P003/P005/P010/P020 are package-rendered native-resolution composites, orchestrated in QC notebooks 02/03/06. The exporter only selects PNGs.
+- P003 is a four-column per-plane figure rendered from persisted registration products in QC 02 cell 13. Native reference + Suite2p outlines; best-Z anatomy + saved label-Z outlines; selected registered reference; magenta anatomy / green functional overlay. Keep all planes and full anatomy extents, writer percentile normalization (within the placed FOV for zero-padded NCC metric TIFFs), persisted method and available NCC metrics. Select method-specific TIFFs, including NCC-xy; never recompute registration. P005/P010/P020 remain native-resolution composites in QC 03/06. The exporter only selects PNGs.
 - P008 uses saved accepted/rejected HCR masks on every geometry-owned functional anatomy plane; no new matching.
 - P019 retains Q7 marker-stratified traces and adds the legacy two-ring HCR scope/status partition. Inner: within/outside functional planes/unmatched. Outer: responsive, low activity, response unavailable, no functional match, out-of-plane, unmatched. Count only persisted HCR status rows; do not add unmatched masks from the historical cohort summary. Trace ROI membership counts and HCR-label denominators remain distinct.
 - P013 retains the fixed any-presented-stimulus cohort. P014 is approved as signed [23c] AUC violins (round 2). P026 and the standalone 56h gallery card are omitted; writer products remain.
@@ -112,3 +112,7 @@ P014 is now approved: two violin rows (all represented Suite2p cells; fixed any-
 ### Violin display range (2026-10-13, review round 3)
 
 P014 uses row-wise symmetric bounds from the 0.5–99.5% finite AUC quantiles, shared across sessions within each row. Violin densities omit values outside those display bounds and label above/below counts per stimulus. Medians and saved call counts retain all observations. If the robust bound exceeds 15 times the row median absolute AUC, use a labelled symlog axis with that median as linthresh (a numerical safeguard applies for zero medians). P018 reserves an explicit adjacent colourbar column so no auto-shrink gap separates the mean-AUC panel. These are presentation changes only.
+
+### P003 registration review replacement (2026-10-13)
+
+The four-column persisted-input renderer supersedes the earlier side-by-side writer-PNG composite. Original plane-row and intensity-overlay writer PNGs remain unchanged in inventory/exclusions. QC uses `plane_refs_summary_qc.json` explicit label-Z provenance and the selected method, not TIFF discovery order; f06 plane 0 is NCC-xy. No table, scoring, geometry, or writer-stage changes.

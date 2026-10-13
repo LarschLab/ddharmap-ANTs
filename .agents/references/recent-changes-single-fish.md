@@ -4510,3 +4510,7 @@ Removed mean_z_pre/mean_z_post/mean_dff_post/peak_z_post from single-fish [23b] 
 ## 2026-10-13 — Gallery review round 3
 
 P014 now exposes the violin bodies with row-wise robust symmetric display limits, above/below counts, and labelled symlog where needed. Full-data medians, calls and fixed cohort unchanged. P018 uses an explicit colourbar axis beside the mean-AUC bars. Real f02 previews and complete test results are recorded in .agent-notes.md.
+
+## 2026-10-13 — P003 persisted-input registration review
+
+Replaced the redundant side-by-side writer PNG composite with QC 02 cell 13, package renderer `plots.qc_registration.render_registration_plane_review`. Four panels per saved plane: native reference + thin Suite2p outlines/count, best-Z anatomy + explicit label-Z outlines, selected warped reference, magenta/green overlay. Shared full anatomy extent and existing writer percentile normalization; NCC-xy contrast excludes canvas padding, matching the normalization-before-placement display convention. Uses context product helpers; selected method controls TIFF choice (f06 plane 0 NCC-xy), persisted comparison CSV supplies post/Z-selection NCC. Gallery P003 now selects `nb:02:13:0`; original writer PNGs stay inventory/exclusions. No scientific outputs, writers, scoring or geometry changed. Validation/preview evidence is recorded in clone `.agent-notes.md` and `previews/`. No jobs, dataDrive writes, delegation, commits or pushes.

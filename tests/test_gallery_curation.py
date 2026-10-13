@@ -26,7 +26,7 @@ def test_order_selection_and_complete_exclusion_map():
     assert [c['id'] for c in selected] == [f'P{i:03}' for i in range(1, 21)] + ['P020b'] + [f'P{i:03}' for i in range(21, 26)]
     assert exclusions.keys() == {'legacy'}
     assert exclusions['legacy']['sources'] == figures[-1]['sources']
-    assert selected[2]['roles'] == ['writer:functional_anatomy_plane_qc_rows', 'writer:functional_anatomy_intensity_overlay_rows']
+    assert selected[2]['roles'] == ['nb:02:13:0']
     assert selected[13]['decision'] == 'approved curation'
 
 
@@ -95,7 +95,7 @@ def test_per_stimulus_signed_margins_use_own_null_and_floor(tmp_path):
 
 
 @pytest.mark.parametrize('renderer_name', [
-    'render_registration_review_composite', 'render_geometry_offsets_composite',
+    'render_geometry_offsets_composite',
     'render_midline_review_composite', 'render_identity_coverage_composite',
 ])
 def test_each_notebook_composite_preserves_native_png_panels(tmp_path, renderer_name):
@@ -104,11 +104,7 @@ def test_each_notebook_composite_preserves_native_png_panels(tmp_path, renderer_
     Image.new('RGB', (120, 130), 'red').save(a)
     Image.new('RGB', (150, 160), 'blue').save(b)
     result = getattr(gallery, renderer_name)(a, b)
-    if renderer_name == 'render_registration_review_composite':
-        assert result.size == (298, 160)
-        np.testing.assert_array_equal(np.asarray(result)[:, 148:], np.asarray(Image.open(b)))
-        assert result.height >= 160  # no source shrinking
-    elif renderer_name == 'render_geometry_offsets_composite':
+    if renderer_name == 'render_geometry_offsets_composite':
         assert result.size == (150, 290)
         np.testing.assert_array_equal(np.asarray(result)[:130, 15:135], np.asarray(Image.open(a)))
         np.testing.assert_array_equal(np.asarray(result)[130:], np.asarray(Image.open(b)))
@@ -162,7 +158,7 @@ def test_notebook_composites_display_as_png_only(tmp_path):
     a = tmp_path / 'a.png'; b = tmp_path / 'b.png'
     Image.new('RGB', (20, 30), 'red').save(a)
     Image.new('RGB', (25, 35), 'blue').save(b)
-    data, _ = DisplayFormatter().format(gallery.render_registration_review_composite(a, b))
+    data, _ = DisplayFormatter().format(gallery.render_geometry_offsets_composite(a, b))
     assert 'image/png' in data and 'image/jpeg' not in data
 
 

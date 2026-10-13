@@ -560,7 +560,7 @@ Generated manually for the current extracted package surface.
 - `qc_figure_export.select_curated_cards`: ordered stable source-role selection with complete exclusion/missing maps.
 - `qc_figure_export.export_qc_figure_gallery`: curated publication with full inventory, provenance, optional response-trace inspector and explicit presentation artifact overrides.
 - `plots.gallery.render_gallery_composite`: native PNG stacking for offline previews.
-- `plots.gallery.render_registration_review_composite`, `render_geometry_offsets_composite`, `render_midline_review_composite`, `render_identity_coverage_composite`: notebook-owned original-resolution composites.
+- `render_geometry_offsets_composite`, `render_midline_review_composite`, `render_identity_coverage_composite`: notebook-owned original-resolution composites.
 - `plots.gallery.render_hcr_pair_status_planes`: every persisted functional anatomy plane with saved accepted/rejected HCR outlines.
 - `plots.gallery.hcr_status_ring_counts`, `draw_hcr_status_rings`: legacy aligned scope/status rings using only supplied HCR status rows.
 - `plots.qc_identity_functional.render_marker_traces_with_hcr_status`: unchanged Q7 trace rows/curves plus HCR-label rings.
@@ -579,3 +579,6 @@ Generated manually for the current extracted package surface.
 - `plots.qc_identity_functional.load_identity_functional_qc_bundle`: requires explicit `presented_response_path` and cross-checks ROI/session keys.
 - `plots.qc_identity_functional.build_population_response_matrix`: signed [23c] AUC input, same normalization/clustering/annotations.
 - `qc_figure_export._provenance_rows`: seven compact gates, inline key values from saved notebook HTML tables/manifests, source links and full evidence retained.
+
+- `plots.qc_registration.registration_review_product_paths`: read-only native/staged context paths for the QC writer plane summary, canonical anatomy, labels, native references/ROIs and positioned references.
+- `plots.qc_registration.render_registration_plane_review`: four-column all-plane registration review with saved method/NCC and explicit label Z; returns a Matplotlib Figure, orchestrated in QC 02 cell 13 with PNG-only display. Replaces the removed P003 PNG composite renderer.

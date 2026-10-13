@@ -52,15 +52,29 @@ any-stimulus responder rows and separate session columns. P012 uses `suite2p_sti
 the notebook's fixed any-presented-stimulus responder traces once. The replay8
 F057/F058 numbering differs from the proposal; output names own selection.
 
-Package `plots.gallery` constructs P003 (writer plane rows + intensity rows),
-P005 (geometry + offsets), P010 (accepted midline + ROI side/count grid), and
-P020 (accepted-HCR fate / responsive-ROI coverage + exact responsive identity).
-Explicit owning QC notebook cells display these composites. P003 places the two complete row sets side by side, enlarging the shorter set
-only to align plane rows. P005 retains native PNG stacking. P010/P020 enlarge the
-narrower part to equal width, so neither part becomes a small thumbnail.
-Matplotlib panels are rasterized at publication DPI. No source panel is shrunk,
-cropped, or plane-limited; original PNGs remain in the extraction inventory. The exporter only selects these
-rendered PNGs; it computes no cohorts, identities, traces or composites.
+P003 is a single figure rendered by `plots.qc_registration` in notebook 02,
+cell 13, directly from persisted numeric products. Every functional plane has
+four panels: native functional reference with thin Suite2p ROI outlines and count;
+best-Z in vivo anatomy with anatomy-label outlines and saved label Z; the selected
+registered reference; and magenta anatomy / green functional overlay. The last
+three panels use the same complete anatomy-space extent. Row headings show the
+saved plane, best Z, active method, post-transform NCC and Z-selection NCC where
+available. Contrast uses the writer's 1–99.5 percentile review normalization;
+for NCC-xy metric TIFFs it is applied within the placed FOV, preserving the black
+canvas padding and making the native intensity offset visible as contrast, as
+in the writer's normalization-before-placement display. The renderer uses explicit QC label-Z
+mapping, selects the method-specific warped TIFF (including NCC-xy), and writes
+no products. The original two writer PNGs remain in the complete inventory and
+exclusion map. No writer rerun is required for read-only frozen replays.
+
+Package `plots.gallery` constructs P005 (geometry + offsets), P010 (accepted
+midline + ROI side/count grid), and P020 (accepted-HCR fate / responsive-ROI
+coverage + exact responsive identity). Explicit owning QC notebook cells display
+these composites. P005 retains native PNG stacking. P010/P020 enlarge the narrower
+part to equal width. Matplotlib panels are rasterized at publication DPI. No
+source panel is shrunk, cropped, or plane-limited; original PNGs remain in the
+extraction inventory. The exporter selects rendered PNGs and computes no cohorts,
+identities, traces or composites.
 
 P008 displays thicker saved accepted/rejected HCR outlines in a two-column grid
 at every persisted functional anatomy plane, using the geometry-owned plane-reference sidecar. P019 retains
