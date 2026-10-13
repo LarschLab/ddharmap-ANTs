@@ -4,28 +4,26 @@
 
 **Use this file when:** you need where the work stands now, or you are editing downstream cells that may combine ROI-centric and HCR-centric paths.
 
-## Where we are (single-fish, updated 2026-10-12)
+## Where we are (single-fish, updated 2026-10-13)
 
 Keep this section short and current. Dated detail belongs in `recent-changes-single-fish.md`. How to run things is in `pipeline-operations.md`.
 
-- **Scoring.** Per-stimulus response scoring (`ce9128b`) is approved:
-  - LB/RB/LC/RC tests;
-  - suppressed and mixed classes;
-  - activation-only side tuning;
-  - a `suppression_confidence` label (not a gate);
-  - pooled results kept as comparison-only `pooled_*` columns.
-- **Native fish.** L765_f02, L758_f07, L765_f05 and L765_f06 were re-scored by frozen replay (`20261008_per_stimulus_replay5`; writers up to `match-roi-to-anatomy` reused). All passed.
-- **Early-screen leak.** The replays reused `prepare-functional-reference-stacks`, so their early-screen `[23b]/[23c]` tables predate the shared 16,000-bootstrap `ActivityConfig`. The isolated L765_f04 re-score failed its audit for the same reason: 42/47 baselines identical, including all registration and geometry; 5 early-screen tables differ.
-  - Danin accepted the early-screen change (2026-10-12).
-  - Next: replay the four fish again with that writer recomputed, and rerun the f04 check expecting those five tables to change.
-- **Open review items:**
+- **Scoring.** Per-stimulus response scoring (`ce9128b`) is approved: LB/RB/LC/RC tests, suppressed and mixed classes, activation-only side tuning, and a `suppression_confidence` label (not a gate). Pooled results are kept as comparison-only `pooled_*` columns.
+- **Early screen.** Danin accepted the shared 16,000-bootstrap `[23b]/[23c]` early screen (2026-10-12). `[23b]` no longer writes the contaminated 50 s summary scalars; early-screen figures use the `[23c]` signed mean AUC.
+- **Native fish.** L765_f02, L758_f07, L765_f05 and L765_f06 were last run as frozen replay `20261013_curated_gallery_replay11` at `edd41ac`.
+  - All four passed.
+  - The recomputed reference stacks are byte-identical to the freeze.
+  - Responders: 326 / 583 / 248 / 328.
+  - Each has a 26-card curated gallery under `review_gallery/20261013_curated_gallery_replay11/`.
+- **L765_f04.** The isolated current-code check passed its artifact audit (57/57) at `e2b6b58`, with the five early-screen baselines excluded by decision; 375 responders.
+- **QC.** Danin signed off the QC for all five fish (2026-10-13).
+- **Open items:**
   - f04 canonical choice (per-stimulus 375 responders versus the accepted 282);
   - HCR 18-vs-19 review;
   - laterality/identity release;
-  - gallery curation (Codex proposal 58 → 26 figures; F046 and F049 kept; F049 must show traces again);
-  - F004/F005 fixes;
-  - shared midline-proposal path debt.
-- **Branches.** Merge `codex/remaining-fish-readiness` → `codex/unattended-single-fish` → `codex/qc-notebooks`. `codex/manual-hcr-identity-gui` merges later; it is the cellMatcher checkout.
+  - shared midline-proposal path debt;
+  - the cohort code still uses a 50 s `[23b]` summary window.
+- **Branches.** `codex/remaining-fish-readiness` was merged into `codex/manual-hcr-identity-gui` (`944d78c`, local) and deleted on the Mac. Pipeline runs use this checkout, which is also cellMatcher's: never edit it during a run.
 
 ## Current mixed state (intentional)
 
