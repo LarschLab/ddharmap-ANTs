@@ -90,3 +90,25 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 - In-panel numeric annotations (e.g., medians, n-labels) must use collision-aware placement (minimum vertical separation and x-neighbor checks) and should use a subtle text background (`bbox`) when plotted over dense marks.
 - Prefer the 53a summary style for dense panels: place annotation text above the plotted data band, stack upward on collisions, and expand y-limits as needed so labels never overlap data or each other.
 - Prefer reusing existing anti-overlap helpers/patterns (e.g., sample-size label collision avoidance in `plots.qa`) instead of ad hoc fixed-y text placement.
+
+## Curated single-fish gallery (Danin, 2026-10-13)
+
+- `qc_figure_export.CURATED_CARDS` owns ordered role selection; never select by extraction F-number. Preserve complete inventory, source hashes, exclusions and missing evidence.
+- P003/P005/P010/P020 are package-rendered native-resolution composites, orchestrated in QC notebooks 02/03/06. The exporter only selects PNGs.
+- P008 uses saved accepted/rejected HCR masks on every geometry-owned functional anatomy plane; no new matching.
+- P019 retains Q7 marker-stratified traces and adds the legacy two-ring HCR scope/status partition. Inner: within/outside functional planes/unmatched. Outer: responsive, low activity, response unavailable, no functional match, out-of-plane, unmatched. Count only persisted HCR status rows; do not add unmatched masks from the historical cohort summary. Trace ROI membership counts and HCR-label denominators remain distinct.
+- P013 retains the fixed any-presented-stimulus cohort. P014 is approved as signed [23c] AUC violins (round 2). P026 and the standalone 56h gallery card are omitted; writer products remain.
+- Q7 response evidence shows LB/RB/LC/RC signed margins against each stimulus's own saved null and persisted floor, and saved selected tuning side. Pooled AUC panels are comparison-only with no floor decision lines.
+- F046 global and population AUC panels share one data-derived limit, with median labels in two fixed rows above data (independent of gene count). Identity count summaries label every non-zero count and zoom small categories.
+
+### Gallery review round 1 (Claude, 2026-10-13)
+
+P019 adds explicit figure-level inner-location and outer-status colour legends and a west-anchored adjacent donut column. P015 colours margins by saved per-stimulus valence (non-significant first, activation and suppression passes above); legends count finite plotted calls. Tuning-side bars include only rows with at least one saved activated call, with excluded/no-side counts in the title. The degenerate magnitude-bin curve is removed, retaining its annotation-count legend. P008 uses a two-column all-plane grid with thicker display-only outlines. P003 places both complete row sets side by side at equal heights; P010/P020 upscale narrower parts to equal widths. No source PNG is downsampled or cropped; originals remain in inventory. P005/P016/P020b remain unchanged.
+
+### Signed early-screen plots (Danin, 2026-10-13, round 2)
+
+P014 is now approved: two violin rows (all represented Suite2p cells; fixed any-presented-stimulus responders) × session columns, all ten presented stimuli, using saved [23c] signed `mean_auc_dff`. Show zero, median, n and activated/suppressed/not-significant/unavailable counts. Row 2 is selected by the same responses and labelled descriptive. P018 pivots that same independent AUC table; normalized colourbar is unitless with input dF/F·s, raw companion is dF/F·s. The four contaminated [23b] 50 s scalar columns are retired; no response tests or score windows change. Gallery provenance has one row per gate, inline saved values and collapsible original evidence. P014 is no longer held.
+
+### Violin display range (2026-10-13, review round 3)
+
+P014 uses row-wise symmetric bounds from the 0.5–99.5% finite AUC quantiles, shared across sessions within each row. Violin densities omit values outside those display bounds and label above/below counts per stimulus. Medians and saved call counts retain all observations. If the robust bound exceeds 15 times the row median absolute AUC, use a labelled symlog axis with that median as linthresh (a numerical safeguard applies for zero medians). P018 reserves an explicit adjacent colourbar column so no auto-shrink gap separates the mean-AUC panel. These are presentation changes only.

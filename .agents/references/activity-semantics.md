@@ -158,3 +158,9 @@ This palette is expected to stay synchronized across `[50ia]`, `[50j]`, and `[50
 - Activity wording and response-state meaning: this file is authoritative.
 - Output ownership and canonical table choice: defer to `canonical-tables.md`.
 - If code conflicts with policy docs, follow policy docs unless they are clearly outdated.
+
+## Single-fish display summaries retired (Danin, 2026-10-13)
+
+The [23b] 50 s appearance-aligned display window can include pauses and the next pseudo-random trial. `mean_z_pre`, `mean_z_post`, `mean_dff_post`, and `peak_z_post` are removed from single-fish trace rows and `suite2p_stimulus_locked_summary_23b.csv`; these are not valid stimulus measurements. Display `mean_trace` / `mean_dff_trace` windows remain unchanged. No [23c] calls, scoring windows, nulls or 0.05 AUC floor change.
+
+For P014 and P018, use only persisted [23c] `mean_auc_dff` from `suite2p_presented_stimulus_response_23c.csv`: the 12.5 s motion-window mean signed trial AUC, minus its matched true prestimulus pause. P014's second row uses the fixed any-presented-stimulus cohort, not each stimulus's own responder subset, and explicitly states that selection by the same responses makes it descriptive. P018 retains within-ROI normalization and clustering with signed AUC inputs. Cohort 50 s z-summary scalars remain open separate cohort work.

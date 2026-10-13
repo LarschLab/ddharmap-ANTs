@@ -554,3 +554,28 @@ Generated manually for the current extracted package surface.
 - `plots.analysis.render_single_fish_50l_bpi_panel`: counts suppression-only exclusions and permits an all-suppressed population without invented BPI coordinates.
 - `activity.NEW_RESPONSE_COLUMNS`: exact annotation/export column set; `POOLED_COMPARISON_COLUMNS` lists comparison-only sources.
 - `response_trace_inspector.render_response_trace_inspector`: per-stimulus reproduction guard, suppression/mixed labels, equal-height views and top-neuron scroll sync.
+
+## Gallery curation (2026-10-13)
+
+- `qc_figure_export.select_curated_cards`: ordered stable source-role selection with complete exclusion/missing maps.
+- `qc_figure_export.export_qc_figure_gallery`: curated publication with full inventory, provenance, optional response-trace inspector and explicit presentation artifact overrides.
+- `plots.gallery.render_gallery_composite`: native PNG stacking for offline previews.
+- `plots.gallery.render_registration_review_composite`, `render_geometry_offsets_composite`, `render_midline_review_composite`, `render_identity_coverage_composite`: notebook-owned original-resolution composites.
+- `plots.gallery.render_hcr_pair_status_planes`: every persisted functional anatomy plane with saved accepted/rejected HCR outlines.
+- `plots.gallery.hcr_status_ring_counts`, `draw_hcr_status_rings`: legacy aligned scope/status rings using only supplied HCR status rows.
+- `plots.qc_identity_functional.render_marker_traces_with_hcr_status`: unchanged Q7 trace rows/curves plus HCR-label rings.
+- `plots.qc_molecular.plot_activity_bpi_gate`: adds per-stimulus signed null/floor margins and selected tuning side; pooled panel comparison-only.
+- `plots.qc_molecular.plot_molecular_identity_qc`: labels small counts and adds inset.
+- `plots.analysis.render_single_fish_50l_gene_auc_panel`: fixed two-row median annotation band.
+- `plots.analysis.render_single_fish_50l_composite`: shared global/population AUC y-limits.
+
+- Review round 1: `plots.gallery` registration composite aligns whole row sets side by side; midline/coverage composites enlarge narrower parts only. HCR plane outlines use a two-column grid. `plot_activity_bpi_gate` consumes saved stimulus valence for colours and activation-only side counts; no binned curve. `render_marker_traces_with_hcr_status` exposes both colour legends.
+
+## Signed AUC gallery surfaces (2026-10-13)
+
+- `suite2p.build_suite2p_stimulus_locked_diagnostic`: display traces/row metadata only; retired four 50 s scalar summaries.
+- `plots.qc_functional.load_presented_stimulus_auc_qc`: read saved [23c] signed AUC/calls and fixed any-stimulus membership.
+- `plots.qc_functional.render_presented_stimulus_auc_violins`: two population rows × session columns; saved AUC/call counts. Replaces retired `render_stimulus_type_mean_dff` / `_frame` APIs.
+- `plots.qc_identity_functional.load_identity_functional_qc_bundle`: requires explicit `presented_response_path` and cross-checks ROI/session keys.
+- `plots.qc_identity_functional.build_population_response_matrix`: signed [23c] AUC input, same normalization/clustering/annotations.
+- `qc_figure_export._provenance_rows`: seven compact gates, inline key values from saved notebook HTML tables/manifests, source links and full evidence retained.

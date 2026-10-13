@@ -176,3 +176,11 @@ Keep this section short and current. Dated detail belongs in `recent-changes-sin
 ## F049 staged trace restoration (2026-10-12)
 
 The package-owned `make-figures` [56h] output now shows per-gene individual stimulus-locked dF/F traces and an equal-cell mean in contra/ipsi × bout/continuous grids, alongside HCR status donuts. It requires `[56i]` points and `motion_auc_roi_panels.csv`, canonical response/BPI cells and HCR status, the persisted scorer-window table, and Suite2p fluorescence. Plotting remains owned by `plots.analysis`; notebook [56h] legacy payloads are not inputs. The filename is unchanged; regenerate make-figures to replace historical AUC-bar PNGs. See `figure-rules.md` for the approved population, baseline, and suppressed-only display semantics.
+
+## Curated QC gallery (2026-10-13)
+
+Danin's gallery decisions are implemented in the exporter and package plots, with QC notebook orchestration. The complete extraction inventory remains accessible. Older executed notebook copies lack the new composite/P008/P019 surfaces: the curated exporter reports missing cards visibly; offline presentation overrides support read-only previews. Refresh executed QC copies before using a production curated gallery. P014 is approved as signed [23c] AUC violins (round 2). Registration, scoring and identity are unchanged; four invalid [23b] scalar columns are retired.
+
+## Signed early-screen curation (2026-10-13, round 2)
+
+P014 is approved as signed [23c] AUC violins; P018 also uses independent signed AUCs. Retired single-fish [23b] 50 s scalar columns require refreshed display writer products and QC copies; existing f02 products were read only for previews and remain untouched. Response calls/windows/floor are unchanged. Cohort summary contamination remains separate open work.

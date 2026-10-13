@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -66,11 +67,14 @@ def _write_bundle(tmp_path: Path) -> dict:
             summary_rows.append({
                 "fish_id": FISH, "plane_idx": 0, "func_label": func_label,
                 "session_label": "r1", "stim_type": stimulus,
-                "mean_dff_post": float(func_label + stim_index / 10),
                 "any_presented_response_state": "responsive" if func_label < 3 else "nonresponsive",
             })
             traces.append(np.linspace(0, func_label + stim_index, 5, dtype=np.float32))
     summary = pd.DataFrame(summary_rows)
+    presented = summary[["fish_id", "plane_idx", "func_label", "session_label", "stim_type"]].copy()
+    presented["mean_auc_dff"] = [float(row["func_label"] + (i % 10)/10) for i, row in enumerate(summary_rows)]
+    paths_presented = tmp_path / "presented.csv"
+    presented.to_csv(paths_presented, index=False)
     paths = {}
     for name, frame in (
         ("master", master), ("status", status), ("pairs", pairs), ("summary", summary),
@@ -103,7 +107,7 @@ def _write_bundle(tmp_path: Path) -> dict:
         fish_id=FISH, roi_master_path=paths["master"], hcr_status_path=paths["status"],
         hcr_pairs_path=paths["pairs"], trace_summary_path=paths["summary"],
         trace_payload_path=paths["payload"], motion_auc_points_path=paths["points"],
-        motion_auc_counts_path=paths["counts"],
+        motion_auc_counts_path=paths["counts"], presented_response_path=paths_presented,
     )
 
 
@@ -158,6 +162,7 @@ def test_loader_rejects_mixed_generation_trace_payload(tmp_path: Path) -> None:
             trace_summary_path=summary_path, trace_payload_path=bundle["paths"]["trace_payload"],
             motion_auc_points_path=bundle["paths"]["motion_auc_points"],
             motion_auc_counts_path=bundle["paths"]["motion_auc_counts"],
+            presented_response_path=bundle["paths"]["presented_response"],
         )
 
 
@@ -168,3 +173,47 @@ def test_marker_auc_requires_ready_global_laterality_gate(tmp_path: Path) -> Non
             bundle, accepted_midline_context={"sidecar_sha256": "hash"},
             global_laterality_status="blocked",
         )
+
+
+def test_curated_marker_traces_preserve_every_trace_and_add_label_denominator_rings(tmp_path):
+    from codeants_2pf_hcr.plots.qc_identity_functional import render_marker_traces_with_hcr_status
+    import matplotlib.pyplot as plt
+    bundle = _write_bundle(tmp_path)
+    original, original_rows = render_marker_stimulus_traces(bundle)
+    curated, rows = render_marker_traces_with_hcr_status(bundle)
+    pd.testing.assert_frame_equal(rows, original_rows)
+    assert len(curated.axes) == len(original.axes) + 2
+    for before, after in zip(original.axes, curated.axes):
+        assert len(before.lines) == len(after.lines)
+        for a, b in zip(before.lines, after.lines):
+            np.testing.assert_array_equal(a.get_ydata(), b.get_ydata())
+            np.testing.assert_array_equal(a.get_xdata(), b.get_xdata())
+    assert any('n=5' in t.get_text() for t in curated.axes[-1].texts)
+    legends = {legend.get_title().get_text(): legend for legend in curated.legends}
+    assert 'Inner ring: location' in legends
+    outer = legends['Outer ring: functional status']
+    assert [t.get_text() for t in outer.get_texts()] == [
+        'Responsive ROI', 'Low activity', 'Response unavailable',
+        'No functional ROI candidate', 'Out-of-plane', 'Unmatched']
+    assert (curated.axes[-2].get_position().x0 - curated.axes[4].get_position().x1) * curated.get_size_inches()[0] < .25
+    plt.close(original); plt.close(curated)
+
+
+def test_population_matrix_reads_signed_auc_independently_of_display_traces(tmp_path):
+    bundle = _write_bundle(tmp_path)
+    # Display traces contain no scalar response measurements. The matrix's raw
+    # values must come directly from the separate persisted scorer-window AUCs.
+    matrix = build_population_response_matrix(bundle)
+    expected = bundle['presented_response'].pivot(index=['plane_idx','func_label'], columns='stim_type', values='mean_auc_dff')
+    for i, row in matrix['annotations'].iterrows():
+        np.testing.assert_allclose(matrix['raw'][i], expected.loc[(row.plane_idx,row.func_label), matrix['stim_order']])
+    figure = render_population_response_raster(matrix, fish_id=FISH)
+    assert any('normalized signed AUC' in ax.get_ylabel() for ax in figure.axes)
+    figure.canvas.draw()
+    colorbar, magnitude = figure.axes[-2:]
+    # Reserve only enough space for ticks/label, without colorbar shrinkage
+    # stealing a large blank region from the matrix's gridspec cell.
+    assert 0 < magnitude.get_position().x0 - colorbar.get_position().x1 < .07
+    label_extent = colorbar.yaxis.label.get_window_extent()
+    assert label_extent.x1 < magnitude.get_window_extent().x0
+    plt.close(figure)

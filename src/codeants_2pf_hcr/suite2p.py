@@ -425,7 +425,6 @@ def build_suite2p_stimulus_locked_diagnostic(
                 stack = np.vstack(segs).astype(np.float32, copy=False)
                 mean_trace = np.nanmean(stack, axis=0).astype(np.float32, copy=False)
                 mean_dff_trace = np.nanmean(np.vstack(dff_segs), axis=0) if dff_segs else np.full_like(mean_trace, np.nan)
-                post_mask = tvec >= 0
                 trace_rows.append(
                     {
                         "fish_id": str(fish_id),
@@ -439,10 +438,6 @@ def build_suite2p_stimulus_locked_diagnostic(
                         "blocks_used": ", ".join(sorted({block for block in valid_trial_blocks if block})),
                         "mean_trace": mean_trace,
                         "mean_dff_trace": mean_dff_trace.astype(np.float32, copy=False),
-                        "mean_z_pre": float(np.nanmean(mean_trace[~post_mask])) if np.any(~post_mask) else np.nan,
-                        "mean_z_post": float(np.nanmean(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
-                        "mean_dff_post": float(np.nanmean(mean_dff_trace[post_mask])) if np.any(post_mask) else np.nan,
-                        "peak_z_post": float(np.nanmax(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
                     }
                 )
 

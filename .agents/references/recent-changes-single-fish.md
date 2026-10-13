@@ -4494,3 +4494,19 @@ Per-stimulus keys now admit only exact LB/RB/LC/RC trajectory names; non-BPI and
 - Added dependency-free paths helpers; operational discovery and recursive hashing across the package and QC code cells ignore `._*` and `.DS_Store`. Freeze literal inventory/protection remains intact by design.
 - Regression tests cover binary stage JSON, QC 05 masks, gallery discovery/reuse, product hashes, helper filtering, and preserved freeze sidecars. No scientific table, stage, filename, or real-product byte-check changes.
  Validation: `tests/test_appledouble.py` — 8 passed; full suite once — 691 passed, 2 skipped in 92.54s; no failures. All call sites and deliberate freeze exceptions are recorded in `appledouble_report.md`.
+
+## 2026-10-13 — Curated single-fish QC gallery
+
+Implemented Danin's ordered P001–P025 + P020b decisions. Exporter selects stable notebook/cell/PNG or writer-output roles, preserves extraction inventory and exclusions, surfaces provenance/missing cards and optionally links the response inspector. Composite construction remains package-owned and QC-orchestrated. Added all-plane saved HCR pair-status figure and Q7 traces with legacy two-ring HCR-label status; fixed F026 counts, F031 per-stimulus evidence and F046 shared AUC limits/annotation band. P013 fixed any-stimulus cohort and P014 held unchanged. Replay8 F057/F058 names are reversed relative to the proposal: heatmaps/traces are selected by output name. No scientific writers/tables changed; no jobs launched. f02 read-only previews and validation logs are in `previews/`; `.agent-notes.md` records final validation. Production QC copies need re-execution to materialize the new review surfaces.
+
+## 2026-10-13 — Claude gallery review round 1
+
+Revised P019 legends/spacing; P015 saved-call colours and activation-only side counts (f02 195 left, 131 right, 4408 excluded), dropping the degenerate bin curve; P008 two-column/thicker-outline grid; P010/P020 equal-width composites; P003 adjacent aligned row sets. Six real-data PNGs re-rendered and visually inspected in previews/; originals retained in previews/round0. No scientific table or gate changes. Final validation is recorded in .agent-notes.md and previews/round1-full-suite.log.
+
+## 2026-10-13 — Danin gallery review round 2: retire contaminated summaries
+
+Removed mean_z_pre/mean_z_post/mean_dff_post/peak_z_post from single-fish [23b] trace rows and summary output. Replaced the old P014 mean-dF/F plot with signed [23c] AUC violins and switched P018 to the independent AUC table; no calls, scoring windows or floor changes. Gallery provenance is seven compact rows with visible values. Real f02 preview cohorts: all cells r1=2006/r2=1477; fixed responders r1=851/r2=719; population matrix 3483 complete profiles. Full validation and PNG inspection recorded in .agent-notes.md and previews/. Cohort code unchanged: aggregate_cohort_23c_trace_means still computes three contaminated z-summary scalars, persisted/cached by the cohort stage and displayed as trace_summary_df in multiFish.ipynb. Rerun the single-fish display writer/QC copies when authorized to replace older summaries; no jobs launched here.
+
+## 2026-10-13 — Gallery review round 3
+
+P014 now exposes the violin bodies with row-wise robust symmetric display limits, above/below counts, and labelled symlog where needed. Full-data medians, calls and fixed cohort unchanged. P018 uses an explicit colourbar axis beside the mean-AUC bars. Real f02 previews and complete test results are recorded in .agent-notes.md.

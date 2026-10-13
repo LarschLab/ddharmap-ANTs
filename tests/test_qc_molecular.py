@@ -618,15 +618,27 @@ def test_activity_bpi_gate_uses_persisted_thresholds_and_all_categories(tmp_path
     work, thresholds = build_activity_bpi_gate_table(table)
     assert len(work) == 5
     assert thresholds == {"bpi_zero_band": 0.5, "bpi_activity_threshold": 0.05}
+    current = pd.read_csv(table)
+    for stim in ("lb", "rb", "lc", "rc"):
+        current[f"{stim}_mean_auc_dff"] = current["mean_bout_auc_dff"]
+        current[f"{stim}_null_upper_auc"] = 0.02
+        current[f"{stim}_null_lower_auc"] = -0.02
+        current[f"{stim}_response_valence"] = np.where(
+            current["response_class"].eq("response unavailable"), "unavailable",
+            np.where(current["mean_bout_auc_dff"].lt(-.05), "suppressed",
+                     np.where(current["mean_bout_auc_dff"].gt(.05), "activated", "not-significant")))
+    current["bpi_side"] = "left"
+    current.to_csv(table, index=False)
     figure, plotted = plot_activity_bpi_gate(table, fish_id=FISH_ID)
-    assert len(figure.axes) == 6
+    assert len(figure.axes) == 11
     assert set(plotted["bpi_category"]) == {"bout-responsive", "continuous-responsive", "low activity", "response unavailable"}
     assert len(figure.axes[1].lines) == 3  # zero and the two unitless BPI preference guides
     assert "effect-size rule, not a contrast test" in figure.axes[1].get_title()
     assert "n=4 assessable" in figure.axes[0].get_title()
     assert sum(len(collection.get_offsets()) for collection in figure.axes[1].collections) == 2
     assert figure.axes[3].get_ylim()[1] >= 1.4
-    assert figure.axes[2].get_ylabel() == "Fraction response-positive"
+    assert not figure.axes[2].axison
+    assert "Saved response and tuning annotations" in figure.axes[2].get_title()
     plt.close(figure)
 
 
@@ -698,6 +710,17 @@ def test_activity_bpi_gate_includes_suppression_only_without_finite_bpi(tmp_path
          "bpi_category": "bout-responsive", "bpi_preference": "suppressed-only",
          "bpi_zero_band": .5, "bpi_activity_threshold": .05},
     ])
+    current = pd.read_csv(table)
+    for stim in ("lb", "rb", "lc", "rc"):
+        current[f"{stim}_mean_auc_dff"] = current["mean_bout_auc_dff"]
+        current[f"{stim}_null_upper_auc"] = 0.02
+        current[f"{stim}_null_lower_auc"] = -0.02
+        current[f"{stim}_response_valence"] = np.where(
+            current["response_class"].eq("response unavailable"), "unavailable",
+            np.where(current["mean_bout_auc_dff"].lt(-.05), "suppressed",
+                     np.where(current["mean_bout_auc_dff"].gt(.05), "activated", "not-significant")))
+    current["bpi_side"] = np.nan
+    current.to_csv(table, index=False)
     fig, rows = plot_activity_bpi_gate(table, fish_id=FISH_ID)
     assert len(rows) == 1 and rows.iloc[0].bpi_preference == "suppressed-only"
     assert sum(len(c.get_offsets()) for c in fig.axes[0].collections) == 1

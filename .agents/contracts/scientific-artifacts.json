@@ -231,7 +231,8 @@
       "population": "Each panel uses the population declared by its source table; ROI-centric and HCR-centric panels remain labeled separately.",
       "filters": [
         "Response-unavailable rows remain visible in counts but not as finite BPI points.",
-        "Laterality panels require an accepted hash-bound anatomy-midline sidecar."
+        "Laterality panels require an accepted hash-bound anatomy-midline sidecar.",
+        "Global and gene-population AUC panels use one data-derived y-limit; median labels occupy a fixed two-row band above data independent of gene count."
       ],
       "denominator": "Explicit per panel from the corresponding persisted counts table; never inferred from plotted points alone.",
       "units": {
@@ -258,7 +259,8 @@
       ],
       "validation_tests": [
         "tests/test_plots_analysis.py::test_render_single_fish_50l_composite_saves_legacy_outputs_and_keys",
-        "tests/test_plots_analysis.py::test_q7_global_auc_requires_matching_accepted_sidecar_hash"
+        "tests/test_plots_analysis.py::test_q7_global_auc_requires_matching_accepted_sidecar_hash",
+        "tests/test_plots_analysis.py::test_render_single_fish_50l_gene_auc_panel_preserves_expanded_label_top_on_shared_axes"
       ]
     },
     {
@@ -475,6 +477,172 @@
         "tests/test_plots_analysis.py::test_single_fish_56h_draws_individual_traces_and_gene_means",
         "tests/test_plots_analysis.py::test_single_fish_56h_requires_current_windows_and_trace_inputs",
         "tests/test_pipeline.py::test_make_figures_writer_stages_declared_figure_artifacts"
+      ]
+    },
+    {
+      "artifact_id": "curated_Q7_marker_traces_with_hcr_status",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.qc_identity_functional",
+      "question": "How do selected marker-stratified stimulus traces relate to saved HCR-label location and functional status?",
+      "scope": "HCR-centric traces and label status, with distinct count units",
+      "authoritative_sources": [
+        "conf_to_func_pairs.csv",
+        "functional_roi_activity_identity.csv",
+        "suite2p_stimulus_locked_summary_23b.csv",
+        "suite2p_stimulus_locked_trace_payload_23c.npz",
+        "hcr_activity_status.csv",
+        "suite2p_presented_stimulus_response_23c.csv (independent bundle input, not trace normalization)"
+      ],
+      "population": "Unchanged Q7 selected response-positive gene/ROI trace memberships; donut population is the supplied per-gene HCR status rows.",
+      "filters": [
+        "Reuse build_marker_trace_rows without changes.",
+        "Use exact persisted HCR functional statuses; unknown statuses fail visibly."
+      ],
+      "denominator": "Trace panel n counts unique gene/ROI memberships; each donut counts HCR status rows, without historical unmatched-summary additions.",
+      "units": {
+        "traces": "Q7 persisted z-scored dF/F",
+        "donuts": "HCR labels"
+      },
+      "grouping": [
+        "gene",
+        "stimulus pair",
+        "HCR plane representation",
+        "functional status"
+      ],
+      "thresholds": {
+        "rule": "Persisted response state and selected HCR pairs only; no new thresholds."
+      },
+      "forbidden_reinterpretations": [
+        "Do not rebuild matching, identity, cohorts or response calls.",
+        "Do not mix HCR-label and functional-ROI denominators.",
+        "Do not substitute 56h dF/F trace normalization for the retained Q7 traces."
+      ],
+      "validation_tests": [
+        "tests/test_qc_identity_functional.py::test_curated_marker_traces_preserve_every_trace_and_add_label_denominator_rings",
+        "tests/test_gallery_curation.py::test_two_ring_partition_includes_unavailable_and_aligns_sectors"
+      ]
+    },
+    {
+      "artifact_id": "suite2p_stimulus_locked_summary_23b.csv",
+      "artifact_kind": "table",
+      "renderer_owner": "codeants_2pf_hcr.suite2p",
+      "question": "Which display-trace row keys, trial counts and saved cohort labels align with the numeric payload?",
+      "scope": "early single-fish functional response diagnostics",
+      "authoritative_sources": [
+        "Suite2p display traces",
+        "session-specific stimulus logs",
+        "saved [23c] fixed cohort"
+      ],
+      "population": "Same Suite2p-cell display-trace rows as before; only invalid scalar fields removed.",
+      "filters": [
+        "No mean_z_pre, mean_z_post, mean_dff_post or peak_z_post columns.",
+        "The numeric display payload remains hash-bound to this summary."
+      ],
+      "denominator": "Per ROI/session/stimulus metadata and valid trial counts, not a stimulus-response measurement.",
+      "units": {
+        "traces": "display-only; scalar measurements absent"
+      },
+      "grouping": [
+        "fish_id",
+        "session_label",
+        "plane_idx",
+        "func_label",
+        "stim_type"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Persisted [23c] calls/cohort only; no changes to score windows, nulls or 0.05 floor."
+      },
+      "forbidden_reinterpretations": [
+        "Do not derive scalar responses from a 50 s display trace.",
+        "Do not rebuild response calls, geometry or identity."
+      ],
+      "validation_tests": [
+        "tests/test_suite2p_stimulus_diagnostic.py::Suite2pStimulusDiagnosticTests::test_stage_filters_trace_panels_to_response_active_but_keeps_heatmap_rows"
+      ]
+    },
+    {
+      "artifact_id": "curated_P014_signed_auc_violins",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.qc_functional",
+      "question": "How are signed evoked responses distributed in all Suite2p cells and the fixed any-stimulus responders?",
+      "scope": "early single-fish functional response diagnostics",
+      "authoritative_sources": [
+        "suite2p_presented_stimulus_response_23c.csv",
+        "suite2p_any_presented_response_23c.csv"
+      ],
+      "population": "All represented Suite2p cells in row 1; one fixed any-presented responder cohort in row 2.",
+      "filters": [
+        "Split by saved session; keep all presented stimulus types.",
+        "All finite AUCs define medians; robust display bounds define violin densities; unavailable rows remain in n/call counts.",
+        "Second row is selected by these same responses and labelled descriptive.",
+        "Row-wise symmetric 0.5\u201399.5% quantile bounds; label omitted above/below counts. Label symlog and median-absolute-AUC linthresh when needed."
+      ],
+      "denominator": "Distinct ROI/session/stimulus rows; fixed responder membership independent of panel stimulus.",
+      "units": {
+        "AUC": "signed dF/F\u00b7s over saved 12.5 s motion window minus matched pause",
+        "counts": "cells"
+      },
+      "grouping": [
+        "fish_id",
+        "session_label",
+        "plane_idx",
+        "func_label",
+        "stim_type"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Persisted [23c] calls/cohort only; no changes to score windows, nulls or 0.05 floor."
+      },
+      "forbidden_reinterpretations": [
+        "Do not derive scalar responses from a 50 s display trace.",
+        "Do not rebuild response calls, geometry or identity."
+      ],
+      "validation_tests": [
+        "tests/test_presented_auc_gallery.py::test_violins_fixed_cohort_all_stimuli_and_saved_signed_calls",
+        "tests/test_presented_auc_gallery.py::test_violin_robust_row_bounds_clipping_and_full_data_medians",
+        "tests/test_presented_auc_gallery.py::test_violin_labels_symlog_when_dynamic_range_hides_body"
+      ]
+    },
+    {
+      "artifact_id": "curated_P018_population_response_matrix",
+      "artifact_kind": "figure",
+      "renderer_owner": "codeants_2pf_hcr.plots.qc_identity_functional",
+      "question": "What stimulus-response structure is present before marker-specific interpretation?",
+      "scope": "early single-fish functional response diagnostics",
+      "authoritative_sources": [
+        "suite2p_presented_stimulus_response_23c.csv",
+        "functional_roi_activity_identity.csv",
+        "accepted midline annotations"
+      ],
+      "population": "All Suite2p-cell profiles complete across the ten presented stimulus types.",
+      "filters": [
+        "Pivot signed mean_auc_dff; preserve within-ROI normalization and Ward clustering.",
+        "Annotations do not determine ordering; incomplete profiles remain counted."
+      ],
+      "denominator": "One complete profile per ROI, keyed by original acquisition plane and verified session.",
+      "units": {
+        "input": "signed dF/F\u00b7s",
+        "normalized raster": "unitless within-ROI normalized signed AUC",
+        "raw companion": "dF/F\u00b7s"
+      },
+      "grouping": [
+        "fish_id",
+        "session_label",
+        "plane_idx",
+        "func_label",
+        "stim_type"
+      ],
+      "thresholds": {
+        "authority": ".agents/references/activity-semantics.md",
+        "rule": "Persisted [23c] calls/cohort only; no changes to score windows, nulls or 0.05 floor."
+      },
+      "forbidden_reinterpretations": [
+        "Do not derive scalar responses from a 50 s display trace.",
+        "Do not rebuild response calls, geometry or identity."
+      ],
+      "validation_tests": [
+        "tests/test_qc_identity_functional.py::test_population_matrix_reads_signed_auc_independently_of_display_traces"
       ]
     }
   ]

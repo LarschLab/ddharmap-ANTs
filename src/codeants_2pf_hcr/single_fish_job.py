@@ -143,6 +143,9 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
                     sources = sorted(visible_glob(notebook_dir, "*.ipynb")) + sorted(
                         path for path in visible_glob(manifest_dir, "*_manifest.json")
                         if is_visible_path(path) and ".pre_" not in path.name)
+                    # Presentation changes must also create a new immutable gallery.
+                    from . import qc_figure_export
+                    sources.append(Path(qc_figure_export.__file__))
                     fingerprint = _json_hash([[str(path), _file_hash(path)] for path in sources])
                     gallery_dir = functional / "review_gallery" / spec.state_root.name / fingerprint
                 report["steps"]["export-qc"] = _gallery(

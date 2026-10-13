@@ -1744,9 +1744,9 @@ def render_single_fish_50l_gene_auc_panel(
         .median()
         .reset_index()
     )
-    current_ylim = ax.get_ylim()
-    current_top = float(current_ylim[1]) if len(current_ylim) == 2 and np.isfinite(current_ylim[1]) else y_max
-    target_top = max(float(y_max), float(current_top))
+    values = pd.to_numeric(source_points_df["auc_dff"], errors="coerce").dropna()
+    data_top = float(values.max()) if not values.empty else y_min
+    target_top = max(y_max, data_top + 0.12 * max(1e-6, data_top - y_min))
     ax.set_ylim(y_min, target_top)
     y_span = max(1e-6, target_top - y_min)
     label_items: list[tuple[float, float, str, dict[str, Any]]] = []
@@ -1756,13 +1756,12 @@ def render_single_fish_50l_gene_auc_panel(
             stat_row = group_stats[group_stats["stim_mode_norm"] == str(stim_mode)]
             if stat_row.empty:
                 continue
-            x_stat = float(group_positions[group_idx]) + float(mode_offsets[stim_mode])
             med_val = float(stat_row["auc_dff_num"].iloc[0])
             label_color = mode_color_map[group][stim_mode]
             label_items.append(
                 (
-                    x_stat,
-                    target_top,
+                    float(group_positions[group_idx]),
+                    target_top - (0.035 + 0.045 * mode_order.index(stim_mode)) * y_span,
                     f"med={med_val:.2f}",
                     {
                         "color": "#111111",
@@ -1776,17 +1775,10 @@ def render_single_fish_50l_gene_auc_panel(
                     },
                 )
             )
-    place_labels_no_overlap(
-        ax,
-        label_items,
-        y_span=float(y_span),
-        x_neighbor_thresh=0.0,
-        y_pad_frac=0.03,
-        min_sep_frac=0.05,
-        top_margin_frac=0.08,
-        fontsize=6.5,
-        text_kwargs={"zorder": 5},
-    )
+    # Two fixed rows (bout/continuous), independent of gene count. Labels
+    # are local to each x position, avoiding the old all-gene staircase.
+    for x, y, label, kwargs in label_items:
+        ax.text(x, y, label, ha="center", va="top", fontsize=6.5, **kwargs)
 
     ax.axhline(0.0, color="#d0d0d0", linewidth=0.9, zorder=0)
     ax.set_xlim(float(group_positions.min()) - 0.65, float(group_positions.max()) + 0.35)
@@ -2263,16 +2255,9 @@ def render_single_fish_50l_composite(
     gene_points_df = points_df[points_df["group"] != "All neurons"].copy()
     all_counts_df = counts_df[counts_df["group"] == "All neurons"].copy()
     gene_counts_df = counts_df[counts_df["group"] != "All neurons"].copy()
-    all_y_limits = _resolve_single_fish_50l_y_limits(
-        all_points_df,
-        run_config_d.get("COMPOSITE_50L_AUC_ALL_Y_MIN", 0.0),
-        run_config_d.get("COMPOSITE_50L_AUC_ALL_Y_MAX", None),
-    )
-    gene_y_limits = _resolve_single_fish_50l_y_limits(
-        gene_points_df,
-        run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MIN", 0.0),
-        run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MAX", None),
-    )
+    data_top = float(pd.to_numeric(points_df["auc_dff"], errors="coerce").max())
+    shared_y_limits = (0.0, max(0.1, data_top * 1.12))
+    all_y_limits = gene_y_limits = shared_y_limits
     global_sidecar_hash = None
     global_block_reason = "No accepted anatomy-midline review sidecar was supplied."
     if accepted_midline_sidecar_p is not None:

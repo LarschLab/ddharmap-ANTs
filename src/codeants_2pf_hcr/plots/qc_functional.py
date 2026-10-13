@@ -634,30 +634,106 @@ def render_early_response_full_session_heatmap(bundle: Mapping[str, Any]) -> plt
     return fig
 
 
-def render_stimulus_type_mean_dff(summary_path: str | Path, *, fish_id: str) -> plt.Figure:
-    """Render legacy-[23c] all-Suite2p-cell mean post-stimulus dF/F by type."""
-    path, summary = _csv(summary_path, label="stimulus-locked response summary")
-    _validate_table_fish(summary, _validate_fish_id(fish_id), path)
-    return render_stimulus_type_mean_dff_frame(summary, fish_id=fish_id)
+def load_presented_stimulus_auc_qc(*, fish_id: str, diagnostic_root: str | Path) -> dict[str, pd.DataFrame]:
+    """Read the independent [23c] AUC/call table and fixed responder membership."""
+    root = _path(diagnostic_root, label="early-response diagnostic root")
+    frames = {}
+    for key, filename in (("presented", "suite2p_presented_stimulus_response_23c.csv"),
+                          ("any_response", "suite2p_any_presented_response_23c.csv")):
+        path, frame = _csv(root / filename, label=key)
+        _validate_table_fish(frame, _validate_fish_id(fish_id), path)
+        frames[key] = frame
+    return frames
 
 
-def render_stimulus_type_mean_dff_frame(summary: pd.DataFrame, *, fish_id: str) -> plt.Figure:
-    """Render mean post-stimulus dF/F from a persisted or in-memory [23c] table."""
-    fish = _validate_fish_id(fish_id)
-    fig, ax = plt.subplots(figsize=(max(6.0, 1.2 * summary.get("stim_type", pd.Series()).nunique()), 4.5))
-    if not {"stim_type", "mean_dff_post"}.issubset(summary.columns):
-        ax.text(0.5, 0.5, "Persisted mean dF/F is unavailable; rerun [23c] with current code.", ha="center", va="center", transform=ax.transAxes)
-        ax.set_axis_off()
-        return fig
-    grouped = summary.groupby("stim_type", sort=True)["mean_dff_post"].agg(["mean", "sem", "count"]).reset_index()
-    ax.bar(grouped["stim_type"], grouped["mean"], yerr=grouped["sem"].fillna(0), color="#4c78a8", capsize=3)
-    for index, row in grouped.iterrows():
-        ax.text(index, row["mean"], f"n={int(row['count'])}", ha="center", va="bottom", fontsize=8)
-    ax.axhline(0, color="#444444", linewidth=0.8)
-    ax.set(xlabel="Stimulus type", ylabel="Mean post-stimulus dF/F", title="All Suite2p cells; per-cell stimulus means")
-    ax.tick_params(axis="x", rotation=30)
-    fig.suptitle(f"{fish}: mean dF/F by stimulus type", fontweight="bold")
-    fig.tight_layout()
+def render_presented_stimulus_auc_violins(presented: pd.DataFrame, any_response: pd.DataFrame, *, fish_id: str) -> plt.Figure:
+    """Signed scorer-window AUCs, with saved calls and one fixed any-stimulus cohort.
+
+    [23c] contains the stage-owned Suite2p-cell population; no response tests or
+    per-stimulus responder subsets are reconstructed here. Missing AUCs remain
+    in the n/call counts but cannot contribute to a violin or its median.
+    """
+    keys = ["plane_idx", "func_label"]
+    required = {*keys, "session_label", "stim_type", "mean_auc_dff", "response_valence"}
+    if missing := required - set(presented):
+        raise ValueError(f"Presented AUC table lacks {sorted(missing)}")
+    if missing := {*keys, "any_presented_response_is_active"} - set(any_response):
+        raise ValueError(f"Any-presented response table lacks {sorted(missing)}")
+    if presented.duplicated([*keys, "session_label", "stim_type"]).any() or any_response.duplicated(keys).any():
+        raise ValueError("Duplicate presented-response or fixed-cohort keys")
+    session_keys = presented[[*keys, "session_label"]].drop_duplicates()
+    if session_keys.duplicated(keys).any():
+        raise ValueError("An acquisition ROI belongs to multiple sessions")
+    work = presented.copy()
+    if "suite2p_is_cell" in work:
+        work = work.loc[work["suite2p_is_cell"].astype(str).str.lower().isin(["true", "1"])].copy()
+    work = work.merge(any_response[[*keys, "any_presented_response_is_active"]], on=keys,
+                      how="left", validate="many_to_one", indicator=True)
+    if not work["_merge"].eq("both").all():
+        raise ValueError("Presented AUC rows are absent from the fixed any-stimulus cohort table")
+    work["_responder"] = work["any_presented_response_is_active"].astype(str).str.lower().isin(["true", "1"])
+    work["mean_auc_dff"] = pd.to_numeric(work["mean_auc_dff"], errors="coerce")
+    call_order = ["activated", "suppressed", "not-significant", "unavailable"]
+    if unknown := set(work["response_valence"].fillna("unavailable")) - set(call_order):
+        raise ValueError(f"Unknown persisted presented-response calls: {sorted(unknown)}")
+    sessions = sorted(work["session_label"].astype(str).unique())
+    preferred = ["LB_trajectory", "RB_trajectory", "LC_trajectory", "RC_trajectory",
+                 "LAB_trajectory", "RAB_trajectory", "Ll_RB_trajectory", "Rl_RB_trajectory", "WFCl", "WFCo"]
+    available = set(work["stim_type"].astype(str))
+    stimuli = [s for s in preferred if s in available] + sorted(available - set(preferred))
+    if not sessions or not stimuli:
+        raise ValueError("No presented AUC rows are available")
+    fig, axes = plt.subplots(2, len(sessions), figsize=(10.5 * len(sessions), 11.5),
+                             sharey="row", squeeze=False)
+    finite = work["mean_auc_dff"][np.isfinite(work["mean_auc_dff"])]
+    if finite.empty:
+        raise ValueError("No finite presented AUCs are available")
+    # Display bounds only: calls, cohort membership and medians retain all rows.
+    row_views = []
+    for row in range(2):
+        values = work.loc[work["_responder"] if row else slice(None), "mean_auc_dff"].to_numpy()
+        values = values[np.isfinite(values)]
+        quantiles = np.quantile(values, [.005, .995]) if len(values) else [0., 0.]
+        bound = max(float(np.max(np.abs(quantiles))), 1e-6)
+        typical = float(np.median(np.abs(values))) if len(values) else bound
+        linthresh = max(typical, bound * 1e-9)
+        row_views.append((bound, linthresh, bound / linthresh > 15))
+    colors = plt.get_cmap("tab10")
+    for col, session in enumerate(sessions):
+        for row in range(2):
+            ax = axes[row, col]
+            group = work.loc[work["session_label"].astype(str).eq(session) & (work["_responder"] if row else True)]
+            bound, linthresh, use_symlog = row_views[row]
+            if use_symlog:
+                ax.set_yscale("symlog", linthresh=linthresh)
+            for i, stimulus in enumerate(stimuli):
+                sub = group.loc[group["stim_type"].eq(stimulus)]
+                values = sub["mean_auc_dff"].dropna().to_numpy()
+                values = values[np.isfinite(values)]
+                visible = values[(values >= -bound) & (values <= bound)]
+                above, below = int((values > bound).sum()), int((values < -bound).sum())
+                if len(visible) > 1 and np.ptp(visible) > 0:
+                    parts = ax.violinplot([visible], positions=[i], widths=.75, showextrema=False, showmedians=False)
+                    parts["bodies"][0].set_facecolor(colors(i % 10)); parts["bodies"][0].set_alpha(.65)
+                if len(values):
+                    ax.plot(i, np.median(values), marker="_", markersize=18, color="#222222", zorder=3)
+                median = f"{np.median(values):.3f}" if len(values) else "unavailable"
+                counts = sub["response_valence"].fillna("unavailable").value_counts()
+                a, s, ns, u = (int(counts.get(call, 0)) for call in call_order)
+                ax.text(i, 1.025, f"n={len(sub)}\nmed={median}\nA {a} · S {s}\nNS {ns} · U {u}\n{above} above\n{below} below",
+                        transform=ax.get_xaxis_transform(), ha="center", va="bottom", fontsize=7)
+            ax.axhline(0, color="#444444", linewidth=.8)
+            ax.set_ylim(-bound, bound)
+            ax.set_xlim(-.6, len(stimuli) - .4)
+            ax.set_xticks(range(len(stimuli)), [s.replace("_trajectory", "") for s in stimuli], rotation=35, ha="right", fontsize=8)
+            ax.set_ylabel("Signed evoked AUC (dF/F·s)" + (f"\nsymlog; linthresh={linthresh:.4g}" if use_symlog else "\nlinear axis"))
+            ax.set_title(f"{session} · " + ("Fixed any-presented-stimulus responders" if row else "All Suite2p cells"), fontsize=11, y=1.40)
+            ax.spines[["top", "right"]].set_visible(False)
+    fig.suptitle(f"{_validate_fish_id(fish_id)}: signed stimulus-evoked responses", fontsize=15, fontweight="bold", y=.99)
+    fig.text(.5, .947, "12.5 s from motion onset, minus matched prestimulus pause; symmetric row-wise 0.5–99.5% quantile bounds\n"
+             "Row 2 is selected by these same responses and is descriptive. A=activated; S=suppressed; NS=not significant; U=unavailable; medians use all finite AUCs. Above/below counts mark values omitted from violin bodies.",
+             ha="center", va="top", fontsize=9)
+    fig.subplots_adjust(top=.77, bottom=.10, left=.05, right=.985, wspace=.14, hspace=.85)
     return fig
 
 
@@ -1001,8 +1077,8 @@ __all__ = [
     "render_functional_reference_drift_summary",
     "render_early_response_timing_audit",
     "render_early_response_full_session_heatmap",
-    "render_stimulus_type_mean_dff",
-    "render_stimulus_type_mean_dff_frame",
+    "load_presented_stimulus_auc_qc",
+    "render_presented_stimulus_auc_violins",
     "render_functional_reference_artifacts",
     "render_functional_registration_plane",
     "render_functional_registration_all_planes",

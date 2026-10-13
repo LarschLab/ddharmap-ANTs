@@ -77,7 +77,7 @@ def load_identity_functional_qc_bundle(
     *, fish_id: str, roi_master_path: str | Path, hcr_status_path: str | Path,
     hcr_pairs_path: str | Path, trace_summary_path: str | Path,
     trace_payload_path: str | Path, motion_auc_points_path: str | Path,
-    motion_auc_counts_path: str | Path,
+    motion_auc_counts_path: str | Path, presented_response_path: str | Path,
 ) -> dict[str, Any]:
     """Load and cross-check the persisted inputs for identity-functional review."""
     master_path, master = _read_csv(roi_master_path, label="ROI master", fish_id=fish_id)
@@ -89,7 +89,17 @@ def load_identity_functional_qc_bundle(
     _require(master, (*_ROI_KEYS, "identity_label", "response_is_active", "response_class", "bpi_category", "centroid_x_anat", "centroid_y_anat"), label="ROI master")
     _require(status, ("gene", "anat_label", "functional_status"), label="HCR activity status")
     _require(pairs, ("gene", "plane", "func_label", "response_is_active", "response_class", "is_selected_for_analysis"), label="selected HCR pairs")
-    _require(summary, (*_ROI_KEYS, "session_label", "stim_type", "mean_dff_post", "any_presented_response_state"), label="Q1 trace summary")
+    _require(summary, (*_ROI_KEYS, "session_label", "stim_type", "any_presented_response_state"), label="Q1 trace summary")
+    presented_path, presented = _read_csv(presented_response_path, label="Q1 presented-stimulus signed AUC", fish_id=fish_id)
+    _require(presented, (*_ROI_KEYS, "session_label", "stim_type", "mean_auc_dff"), label="Q1 presented-stimulus signed AUC")
+    if presented.duplicated([*_ROI_KEYS, "session_label", "stim_type"]).any():
+        raise ValueError("Q1 presented response contains duplicate ROI/session/stimulus keys")
+    sessions = presented[[*_ROI_KEYS, "session_label"]].drop_duplicates()
+    if sessions.duplicated(list(_ROI_KEYS)).any():
+        raise ValueError("Q1 presented response assigns multiple sessions to one acquisition ROI")
+    trace_sessions = summary[[*_ROI_KEYS, "session_label"]].drop_duplicates()
+    if not trace_sessions.merge(sessions, on=[*_ROI_KEYS, "session_label"], how="left", indicator=True)["_merge"].eq("both").all():
+        raise ValueError("Q1 trace and presented-response ROI sessions do not agree")
     _require(points, ("group", "laterality", "stim_mode", "auc_dff", "accepted_midline_sidecar_sha256"), label="motion AUC points")
     _require(counts, ("group", "laterality", "stim_mode", "n_total", "accepted_midline_sidecar_sha256"), label="motion AUC counts")
     if master.duplicated(list(_ROI_KEYS)).any():
@@ -121,11 +131,11 @@ def load_identity_functional_qc_bundle(
         "fish_id": str(fish_id), "master": master, "hcr_status": status,
         "hcr_pairs": pairs, "trace_summary": summary, "tvec": tvec,
         "trace_metadata": metadata, "motion_auc_points": points,
-        "motion_auc_counts": counts, "read_only": True,
+        "motion_auc_counts": counts, "presented_response": presented, "read_only": True,
         "paths": {
             "master": master_path, "hcr_status": status_path, "hcr_pairs": pairs_path,
             "trace_summary": summary_path, "trace_payload": payload_path,
-            "motion_auc_points": points_path, "motion_auc_counts": counts_path,
+            "motion_auc_points": points_path, "motion_auc_counts": counts_path, "presented_response": presented_path,
         },
     }
 
@@ -134,11 +144,11 @@ def build_population_response_matrix(
     bundle: Mapping[str, Any], *, midline_rows: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Build a complete ROI-by-stimulus matrix and hierarchical ordering."""
-    summary = pd.DataFrame(bundle["trace_summary"]).copy()
+    summary = pd.DataFrame(bundle["presented_response"]).copy()
     master = pd.DataFrame(bundle["master"]).copy()
     # Keep left/right members adjacent; metadata order reflects file discovery.
     stim_order = [stim for pair in _TRACE_PAIRS for stim in pair[:2]]
-    summary["_value"] = pd.to_numeric(summary["mean_dff_post"], errors="coerce")
+    summary["_value"] = pd.to_numeric(summary["mean_auc_dff"], errors="coerce")
     pivot = summary.pivot(index=list(_ROI_KEYS), columns="stim_type", values="_value")
     missing = sorted(set(stim_order) - set(pivot.columns))
     if missing:
@@ -189,24 +199,26 @@ def render_population_response_raster(matrix_bundle: Mapping[str, Any], *, fish_
     )
     fig = plt.figure(figsize=(15.2, 8.4))
     fig.subplots_adjust(top=0.86, bottom=0.18, left=0.045, right=0.985, wspace=0.22)
-    grid = fig.add_gridspec(1, 5, width_ratios=(0.23, 0.23, 0.23, 5.0, 1.15))
+    grid = fig.add_gridspec(1, 7, width_ratios=(0.23, 0.23, 0.23, 5.0, 0.10, 0.36, 1.15), wspace=0.07)
     for index, (values, colors, title) in enumerate(strips_data):
         ax = fig.add_subplot(grid[0, index])
         ax.imshow(values.to_numpy()[:, None], aspect="auto", interpolation="nearest", cmap=ListedColormap(colors), vmin=0, vmax=max(1, len(colors) - 1))
-        ax.set(xticks=[], yticks=[], title=title)
+        ax.set(xticks=[], yticks=[])
+        ax.set_title(title, fontsize=8, pad=9)
     ax = fig.add_subplot(grid[0, 3])
     vmax = max(1.0, float(np.nanpercentile(np.abs(matrix), 99)))
     image = ax.imshow(matrix, aspect="auto", interpolation="nearest", cmap="RdBu_r", vmin=-vmax, vmax=vmax)
     ax.set_xticks(np.arange(len(stimuli)), stimuli, rotation=35, ha="right")
     ax.set_yticks([0, len(matrix) - 1], ["1", str(len(matrix))])
     ax.set(xlabel="All recorded stimulus types")
-    fig.colorbar(image, ax=ax, shrink=0.74, pad=0.01, label="Within-ROI normalized mean response")
-    magnitude_ax = fig.add_subplot(grid[0, 4])
+    colorbar_ax = fig.add_subplot(grid[0, 4])
+    fig.colorbar(image, cax=colorbar_ax, label="Within-ROI normalized signed AUC (unitless; input dF/F·s)")
+    magnitude_ax = fig.add_subplot(grid[0, 6])
     magnitude = np.maximum(raw, 0).mean(axis=1)
     magnitude_ax.barh(np.arange(len(magnitude)), magnitude, height=1.0, color="#6baed6")
     magnitude_ax.set_ylim(len(magnitude) - 0.5, -0.5)
     magnitude_ax.set_yticks([])
-    magnitude_ax.set_xlabel("Mean positive raw\nresponse companion")
+    magnitude_ax.set_xlabel("Mean positive signed AUC\n(dF/F·s)")
     magnitude_ax.spines[["top", "right"]].set_visible(False)
     fig.suptitle(f"{fish_id}: population response structure before marker-specific interpretation", fontsize=15, fontweight="bold", y=0.975)
     fig.text(0.5, 0.915, f"n={matrix_bundle['n_complete']} complete Suite2p-cell profiles; annotations do not determine ordering", ha="center", fontsize=9.5)
@@ -277,6 +289,38 @@ def render_marker_stimulus_traces(
         Line2D([0], [0], color=right_color, linewidth=2, label="right-side member"),
         Line2D([0], [0], color="#222222", linestyle="--", label="motion onset"),
     ], loc="lower center", bbox_to_anchor=(0.5, 0.02), ncol=3, frameon=False)
+    return fig, rows
+
+
+def render_marker_traces_with_hcr_status(bundle, **kwargs):
+    """Keep the Q7 marker traces and add legacy scope/status HCR-label rings."""
+    from .gallery import draw_hcr_status_rings, HCR_STATUS_COLORS
+    fig, rows = render_marker_stimulus_traces(bundle, **kwargs)
+    genes = list(dict.fromkeys(rows["gene"].astype(str)))
+    genes = [g for g in (kwargs.get("gene_order") or _GENE_COLORS) if g in genes] + [g for g in genes if g not in (kwargs.get("gene_order") or _GENE_COLORS)]
+    # Preserve the original trace panel dimensions while making room for rings.
+    width, height = fig.get_size_inches()
+    fig.set_size_inches(width + 6.0, height)
+    for ax in list(fig.axes):
+        box = ax.get_position()
+        ax.set_position([box.x0 * width / (width + 6.0), box.y0,
+                         box.width * width / (width + 6.0), box.height])
+    for index, gene in enumerate(genes):
+        row_axes = fig.axes[index * len(_TRACE_PAIRS):(index + 1) * len(_TRACE_PAIRS)]
+        box = row_axes[0].get_position()
+        ax = fig.add_axes([0.735, box.y0, 0.26, box.height])
+        draw_hcr_status_rings(ax, bundle["hcr_status"], gene)
+    fig.text(0.855, 0.90, "Inner: HCR location · Outer: functional status", ha="center", fontsize=9)
+    fig.legend(handles=[Patch(facecolor=color, label=label) for color, label in zip(
+        ["#4daf4a", "#377eb8", "#bdbdbd"],
+        ["Within functional planes", "Outside functional planes", "Unmatched HCR label"])],
+        title="Inner ring: location", title_fontsize=8,
+        loc="lower left", bbox_to_anchor=(0.735, 0.012), ncol=1, frameon=False, fontsize=8)
+    fig.legend(handles=[Patch(facecolor=color, label=label) for color, label in zip(
+        HCR_STATUS_COLORS,
+        ["Responsive ROI", "Low activity", "Response unavailable", "No functional ROI candidate", "Out-of-plane", "Unmatched"])],
+        title="Outer ring: functional status", title_fontsize=8,
+        loc="lower left", bbox_to_anchor=(0.855, 0.012), ncol=1, frameon=False, fontsize=8)
     return fig, rows
 
 

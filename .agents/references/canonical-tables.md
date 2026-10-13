@@ -122,3 +122,9 @@ Representative column groups:
 `tools/manual_hcr_identity.py` writes independent per-marker calls keyed by dataset, stack, and ex-vivo label. Reviewed geometry maps positives to in-vivo `anat_label`; old HCR-mask identity is not unioned. Canonical ROI schemas and keys remain unchanged. Complete calls (including negatives and unreviewed/unassessable states) and source hashes remain in sidecars. Legacy no-identity fields do not establish marker negativity.
 
 `export-canonical-tables --manual-identity-root` creates an isolated ROI-only bundle with BPI cells/summary from the validated score root. It refuses HCR root mixing and existing output directories, and returns `warn` for its declared scope. HCR-centric tables/figures are unsupported until an anatomy-centric route is explicitly implemented; consumers retain their missing-input gates. Manual roots supplied as legacy HCR roots are rejected. See `docs/manual-hcr-identity-gui.md`.
+
+## Single-fish early display summary and signed responses (2026-10-13)
+
+`suite2p_stimulus_locked_summary_23b.csv` owns trace row keys, sessions, trial counts and fixed any-presented-stimulus classification; its numeric trace payload remains hash-bound to those rows. It no longer persists `mean_z_pre`, `mean_z_post`, `mean_dff_post`, or `peak_z_post`. Do not recover scalar measurements from its 50 s display traces.
+
+`suite2p_presented_stimulus_response_23c.csv` owns signed `mean_auc_dff` and per-stimulus calls for P014 and the P018 population matrix. `suite2p_any_presented_response_23c.csv` owns P014's fixed responder membership. These remain early response diagnostics and do not replace the authoritative ROI identity master or [50ia] calls. The identity-functional loader takes the presented-response path explicitly and validates ROI/session agreement with the trace payload summary.

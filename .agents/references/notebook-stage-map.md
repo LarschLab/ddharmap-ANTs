@@ -148,3 +148,11 @@ The standalone `tools/manual_hcr_identity.py` app owns manual call persistence a
 ## F049 staged trace restoration (2026-10-12)
 
 The package-owned `make-figures` [56h] output now shows per-gene individual stimulus-locked dF/F traces and an equal-cell mean in contra/ipsi × bout/continuous grids, alongside HCR status donuts. It requires `[56i]` points and `motion_auc_roi_panels.csv`, canonical response/BPI cells and HCR status, the persisted scorer-window table, and Suite2p fluorescence. Plotting remains owned by `plots.analysis`; notebook [56h] legacy payloads are not inputs. The filename is unchanged; regenerate make-figures to replace historical AUC-bar PNGs. See `figure-rules.md` for the approved population, baseline, and suppressed-only display semantics.
+
+## Curated QC gallery ownership (2026-10-13)
+
+QC 02 orchestrates the P003 writer-resolution composite; QC 03 orchestrates P005 geometry/offsets; QC 04 adds P008 saved HCR pair-status outlines for all functional anatomy planes; QC 06 orchestrates P010 accepted midline/ROI-side composite, P019 Q7 marker traces plus two-ring HCR-label status, and P020 HCR fate/ROI coverage/exact-identity composite. All renderers live in `plots.*`. Scientific stage/output ownership and standalone 56h filenames are unchanged.
+
+## Q1 signed AUC review (2026-10-13)
+
+QC 01 now loads persisted presented-response and fixed-cohort CSVs and orchestrates P014 AUC violins. QC 06 supplies that presented-response path explicitly to the identity-functional bundle for P018. Reusable logic remains in plots.*; neither notebook computes calls. [23b] summary output loses four invalid display-window scalars; numeric display-trace payload/hash ownership remains with its writer.

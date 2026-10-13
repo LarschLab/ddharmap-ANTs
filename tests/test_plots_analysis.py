@@ -711,6 +711,11 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertEqual(out["pair_connector_count"], 2)
             self.assertEqual(out["box_count"], 4)
             self.assertEqual(out["median_label_count"], 4)
+            medians = [t for t in ax.texts if t.get_text().startswith("med=")]
+            self.assertEqual(len({t.get_position()[1] for t in medians}), 2)
+            self.assertEqual({t.get_position()[0] for t in medians}, {0.0, 1.0})
+            self.assertTrue(all(t.get_position()[1] > .50 for t in medians))
+            self.assertEqual(ax.get_ylim(), (0.0, 1.0))
             self.assertEqual(out["n_labels"]["sst1.1"], "n=1")
             self.assertEqual(out["n_labels"]["npy"], "n=2")
             self.assertGreater(len(ax.patches), 0)
@@ -761,6 +766,7 @@ class PlotsAnalysisTests(unittest.TestCase):
                 gene_colors={"sst1.1": "#d62728", "npy": "#1f9d55"},
             )
             first_top = float(ax1.get_ylim()[1])
+            self.assertAlmostEqual(first_top, .99 * 1.12)
             self.assertGreater(first_top, 1.0)
 
             label_texts_1 = [txt for txt in ax1.texts if str(txt.get_text()).startswith("med=")]

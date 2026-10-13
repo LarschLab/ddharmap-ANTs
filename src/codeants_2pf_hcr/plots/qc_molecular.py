@@ -1033,6 +1033,22 @@ def plot_molecular_identity_qc(report: Mapping) -> plt.Figure:
         ax.set_axis_off()
     else:
         ax.barh(summary["identity"].astype(str), summary["n_rois"], color="#756bb1")
+        for index, count in enumerate(summary["n_rois"]):
+            if count > 0:
+                ax.annotate(str(int(count)), (count, index), xytext=(4, 0),
+                            textcoords="offset points", va="center", fontsize=8)
+        small = summary.loc[summary["n_rois"].gt(0) & summary["n_rois"].lt(summary["n_rois"].max() / 10)]
+        if not small.empty:
+            inset = ax.inset_axes([0.47, 0.25, 0.48, 0.65])
+            inset.barh(np.arange(len(small)), small["n_rois"], color="#756bb1")
+            inset.set_yticks(np.arange(len(small)), small["identity"].astype(str))
+            inset.set_xlim(0, small["n_rois"].max() * 1.35)
+            for index, count in enumerate(small["n_rois"]):
+                inset.annotate(str(int(count)), (count, index), xytext=(3, 0),
+                               textcoords="offset points", va="center", fontsize=8)
+            inset.set_title("Small non-zero identity counts", fontsize=9)
+            inset.tick_params(labelsize=7)
+        ax.set_xlim(0, summary["n_rois"].max() * 1.12)
         ax.set_xlabel("Functional ROIs")
         ax.set_title("Identity attached after frozen geometry")
     fig.suptitle(f"{report['fish_id']} molecular identity review")
@@ -1340,8 +1356,53 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
     ].copy()
     nonresponsive = assessable.loc[~assessable["response_is_active"]].copy()
 
-    fig, axes = plt.subplots(2, 3, figsize=(15.0, 8.8), constrained_layout=True)
-    ax_plane, ax_bpi, ax_bins, ax_dist, ax_strength, ax_donut = axes.flat
+    fig = plt.figure(figsize=(16.0, 15.0), constrained_layout=True)
+    gs = fig.add_gridspec(4, 3)
+    axes = [fig.add_subplot(gs[r, c]) for r in range(2) for c in range(3)]
+    ax_plane, ax_bpi, ax_bins, ax_dist, ax_strength, ax_donut = axes
+    # Per-stimulus evidence is displayed as signed margins against each saved
+    # tail and the persisted floor. This view does not recompute response calls.
+    for index, stim in enumerate(("lb", "rb", "lc", "rc")):
+        ax = fig.add_subplot(gs[2 + index // 2, index % 2])
+        needed = [f"{stim}_mean_auc_dff", f"{stim}_null_upper_auc", f"{stim}_null_lower_auc", f"{stim}_response_valence"]
+        missing = set(needed) - set(work)
+        if missing:
+            raise ValueError(f"Per-stimulus response evidence missing: {sorted(missing)}")
+        mean, upper, lower = (pd.to_numeric(work[c], errors="coerce") for c in needed[:3])
+        positive_margin = mean - np.maximum(auc_floor, upper)
+        negative_margin = np.minimum(-auc_floor, lower) - mean
+        calls = work[f"{stim}_response_valence"].fillna("unavailable").astype(str)
+        unknown = set(calls) - {"activated", "suppressed", "not-significant", "unavailable"}
+        if unknown:
+            raise ValueError(f"Unknown saved {stim} response calls: {sorted(unknown)}")
+        finite = np.isfinite(positive_margin) & np.isfinite(negative_margin)
+        for call, label, color in (
+            ("not-significant", "Not significant", "#d3d3d3"),
+            ("activated", "Activated pass", "#2c7fb8"),
+            ("suppressed", "Suppression pass", "#d95f0e"),
+        ):
+            selected = calls.eq(call) & finite
+            ax.scatter(positive_margin[selected], negative_margin[selected],
+                       s=8 if call == "not-significant" else 16,
+                       alpha=0.28 if call == "not-significant" else 0.85,
+                       color=color, label=f"{label} (n={int(selected.sum())})")
+        ax.legend(loc="upper right", fontsize=7, frameon=False)
+        ax.axvline(0, color="#222222", linestyle=":")
+        ax.axhline(0, color="#222222", linestyle=":")
+        ax.set(xlabel="AUC − max(own upper null, floor)",
+               ylabel="min(own lower null, −floor) − AUC", title=f"{stim.upper()} signed response margins")
+        ax.set_xscale("symlog", linthresh=0.01); ax.set_yscale("symlog", linthresh=0.01)
+    side_ax = fig.add_subplot(gs[2:, 2])
+    if "bpi_side" not in work:
+        raise ValueError("Selected tuning side missing: bpi_side")
+    activated = work[[f"{stim}_response_valence" for stim in ("lb", "rb", "lc", "rc")]].eq("activated").any(axis=1)
+    sides = work.loc[activated, "bpi_side"].value_counts().reindex(["left", "right"], fill_value=0)
+    missing_side = int((activated & ~work["bpi_side"].isin(["left", "right"])).sum())
+    side_ax.bar(sides.index, sides.values, color="#756bb1")
+    for i, n in enumerate(sides.values):
+        side_ax.text(i, n, str(n), ha="center", va="bottom")
+    side_ax.set(title=f"Selected activation tuning side\nn={int(activated.sum())} activated; excluded {int((~activated).sum())}\nno saved side: {missing_side}", ylabel="Activated functional ROIs")
+    side_ax.title.set_fontsize(10)
 
     ax_plane.scatter(
         nonresponsive["mean_cont_auc_dff"], nonresponsive["mean_bout_auc_dff"],
@@ -1362,20 +1423,15 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
 
     limit = 1.05 * float(np.nanmax(np.abs(assessable[["mean_bout_auc_dff", "mean_cont_auc_dff"]].to_numpy())))
     ax_plane.plot([-limit, limit], [-limit, limit], "--", color="#444444", linewidth=0.9)
-    ax_plane.axvline(auc_floor, color="#777777", linestyle=":", linewidth=0.8)
-    ax_plane.text(
-        0.98, 0.02, "dotted: 0.05 AUC floor\nnull threshold: cell-specific",
-        transform=ax_plane.transAxes, ha="right", va="bottom", fontsize=7,
-        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8},
-    )
-    ax_plane.axhline(auc_floor, color="#777777", linestyle=":", linewidth=0.8)
     ax_plane.set_xscale("symlog", linthresh=0.01)
     ax_plane.set_yscale("symlog", linthresh=0.01)
     ax_plane.set(
         xlim=(-limit, limit), ylim=(-limit, limit),
         xlabel="Continuous response AUC (dF/F·s)", ylabel="Bout response AUC (dF/F·s)",
-        title=f"Pooled signed condition AUCs (n={len(assessable)} assessable)\ncalls: any side; color=BPI preference / suppression; marker=response test",
+        title=f"Comparison-only pooled signed condition AUCs\nn={len(assessable)} assessable; color=tuning / suppression\nshape=saved response class",
     )
+
+    ax_plane.title.set_fontsize(9.5)
 
     preference_handles = [
         Line2D(
@@ -1414,22 +1470,10 @@ def plot_activity_bpi_gate(bpi_cells_path: str | Path, *, fish_id: str) -> tuple
     ax_bpi.set_title("BPI versus response magnitude\n" + effect_note, fontsize=9.5)
     ax_strength.set_title("BPI versus z-scored response\n" + effect_note, fontsize=9.5)
 
-    n_bins = min(6, int(assessable["response_magnitude_auc"].nunique()))
-    if n_bins >= 2:
-        binned = (
-            assessable.assign(
-                _bin=pd.qcut(assessable["response_magnitude_auc"], q=n_bins, duplicates="drop")
-            )
-            .groupby("_bin", observed=False)["response_is_active"]
-            .agg(["mean", "count"])
-            .reset_index()
-        )
-        mids = np.asarray([0.5 * (item.left + item.right) for item in binned["_bin"]], dtype=float)
-        ax_bins.plot(mids, binned["mean"], marker="o", color="#1f77b4")
-    ax_bins.set(
-        xlabel="Response AUC (dF/F·s; bin midpoint)", ylabel="Fraction response-positive",
-        ylim=(0, 1.02), title=f"Response calls across all assessable ROIs (n={len(assessable)}; equal-frequency bins)",
-    )
+    # The old magnitude-bin curve was degenerate on persisted data and
+    # duplicates the four per-stimulus margins. Keep its useful count legend.
+    ax_bins.axis("off")
+    ax_bins.set_title(f"Saved response and tuning annotations\nn={len(assessable)} assessable ROIs", fontsize=10)
     ax_bins.legend(
         handles=[*preference_handles, *class_handles, nonresponse_handle],
         fontsize=6.4, frameon=False, loc="upper left", ncol=1,
