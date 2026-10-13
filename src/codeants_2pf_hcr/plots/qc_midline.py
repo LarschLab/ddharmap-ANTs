@@ -1,5 +1,6 @@
 """Manual, review-only anatomical midline annotation for QC Notebook 02."""
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -371,9 +372,9 @@ def load_legacy_midline_annotation_session(fish_root: str | Path) -> MidlineAnno
     fish_id = root.name
     if not fish_id or not re.fullmatch(r"[A-Z][0-9]{3}_f[0-9]{2}", fish_id):
         raise ValueError(f"fish root must be named like L395_f06, received {root}")
-    anatomy_paths = tuple((root / "02_reg" / "00_preprocessing" / "2p_anatomy").glob("*.nrrd"))
-    registration_paths = tuple((root / "02_reg" / "07_2pf-a").glob("*registration_results.csv"))
-    centroid_paths = tuple(root.glob("03_analysis/functional/**/ROI_transformed/*rois_transformed.csv"))
+    anatomy_paths = tuple(visible_glob(root / "02_reg" / "00_preprocessing" / "2p_anatomy", "*.nrrd"))
+    registration_paths = tuple(visible_glob(root / "02_reg" / "07_2pf-a", "*registration_results.csv"))
+    centroid_paths = tuple(visible_glob(root, "03_analysis/functional/**/ROI_transformed/*rois_transformed.csv"))
     if len(anatomy_paths) != 1:
         raise FileNotFoundError("legacy annotation requires exactly one preprocessed 2P anatomy NRRD")
     if len(registration_paths) == 1 and len(centroid_paths) == 1:
@@ -387,8 +388,8 @@ def load_legacy_midline_annotation_session(fish_root: str | Path) -> MidlineAnno
         centroid_map = {int(plane): group[["x_anat", "y_anat"]].dropna().to_numpy(dtype=float) for plane, group in centroids.groupby("plane", sort=False)}
         sources = (registration_paths[0], centroid_paths[0])
     else:
-        transform_paths = tuple(root.glob("03_analysis/functional/ncc/tforms_by_plane.csv"))
-        per_plane_paths = tuple(root.glob("03_analysis/functional/registration/f2a_centroid_matches_*_plane*.csv"))
+        transform_paths = tuple(visible_glob(root, "03_analysis/functional/ncc/tforms_by_plane.csv"))
+        per_plane_paths = tuple(visible_glob(root, "03_analysis/functional/registration/f2a_centroid_matches_*_plane*.csv"))
         if len(transform_paths) != 1 or not per_plane_paths:
             raise FileNotFoundError("annotation needs legacy registration tables or current tforms_by_plane plus per-plane f2a centroid tables")
         transforms = pd.read_csv(transform_paths[0])
@@ -420,7 +421,7 @@ def load_native_functional_midline_annotation_session(fish_root: str | Path) -> 
     root = Path(fish_root).resolve(); fish_id = root.name
     if not re.fullmatch(r"[A-Z][0-9]{3}_f[0-9]{2}", fish_id):
         raise ValueError(f"fish root must be named like L396_f03, received {root}")
-    references = tuple(root.glob("03_analysis/functional/raw/*_ref_norm.tif"))
+    references = tuple(visible_glob(root, "03_analysis/functional/raw/*_ref_norm.tif"))
     if not references:
         raise FileNotFoundError("native annotation requires persisted functional reference images")
     def plane(path: Path) -> int:
@@ -428,7 +429,7 @@ def load_native_functional_midline_annotation_session(fish_root: str | Path) -> 
         if match is None: raise ValueError(f"could not parse functional plane from {path}")
         return int(match.group(1))
     images = {plane(path): path for path in references}
-    labels = {plane(path): path for path in root.glob("03_analysis/functional/derived/*func_mask_in_2p.tif")}
+    labels = {plane(path): path for path in visible_glob(root, "03_analysis/functional/derived/*func_mask_in_2p.tif")}
     return MidlineAnnotationSession(
         fish_id=fish_id, anatomy_stack_path=None,
         plane_best_z={index: index for index in images},
@@ -449,7 +450,7 @@ def load_suite2p_meanimg_midline_session(fish_root: str | Path) -> MidlineAnnota
     fish_id = root.name
     if not re.fullmatch(r"[A-Z][0-9]{3}_f[0-9]{2}", fish_id):
         raise ValueError(f"fish root must be named like L427_f01, received {root}")
-    ops_paths = tuple(sorted(root.glob("03_analysis/functional/suite2P/plane*/ops.npy")))
+    ops_paths = tuple(sorted(visible_glob(root, "03_analysis/functional/suite2P/plane*/ops.npy")))
     if not ops_paths:
         raise FileNotFoundError("Suite2p meanImg review requires ops.npy under suite2P/plane*/")
     polarity, _ = resolve_func_polarity(fish_id, root / "matchingMetadata.csv", fish_dir=root)
@@ -497,7 +498,7 @@ def load_motion_corrected_mean_midline_session(
     fish_id = root.name
     if not re.fullmatch(r"[A-Z][0-9]{3}_f[0-9]{2}", fish_id):
         raise ValueError(f"fish root must be named like L395_f06, received {root}")
-    paths = tuple(sorted((root / "02_reg/00_preprocessing/2p_functional/02_motionCorrected").glob("*_plane*_mcorrected.tif")))
+    paths = tuple(sorted(visible_glob(root / "02_reg/00_preprocessing/2p_functional/02_motionCorrected", "*_plane*_mcorrected.tif")))
     if not paths:
         raise FileNotFoundError("motion-corrected mean review requires per-plane *_mcorrected.tif files")
     polarity, _ = resolve_func_polarity(fish_id, root / "matchingMetadata.csv", fish_dir=root)

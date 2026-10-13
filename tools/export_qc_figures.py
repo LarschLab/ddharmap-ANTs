@@ -12,6 +12,7 @@ def main() -> None:
     parser.add_argument("--manifest-dir", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--fish-dir", required=True, type=Path)
+    parser.add_argument("--response-trace-inspector", type=Path)
     args = parser.parse_args()
     print(json.dumps(export_qc_figure_gallery(**vars(args)), indent=2))
 

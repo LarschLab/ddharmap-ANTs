@@ -1,6 +1,7 @@
 """QA figure builders used by tools wrappers and notebook-adjacent workflows."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 
 import csv
 import json
@@ -185,7 +186,7 @@ def _plane_label_path(label_dir: Path, fish_id: str, plane_idx: int, plane_label
     for path in candidates:
         if path.exists():
             return path
-    hits = sorted(label_dir.glob(f"*plane{int(plane_idx)}*suite2p_labels_native.tif"))
+    hits = sorted(visible_glob(label_dir, f"*plane{int(plane_idx)}*suite2p_labels_native.tif"))
     return hits[0] if hits else None
 
 
@@ -198,13 +199,13 @@ def _anatomy_space_functional_label_path(label_dir: Path, fish_id: str, plane_id
         label_dir / f"affine_cellfit_hybrid_func_labels_plane{int(plane_idx)}.tif",
     ]
     for path in candidates:
-        if path.exists() and not path.name.startswith("._"):
+        if path.exists() and is_visible_path(path):
             return path
     for pattern in (
         f"*plane{int(plane_idx)}*func_mask_in_2p.tif",
         f"*plane{int(plane_idx)}*.tif",
     ):
-        hits = [path for path in sorted(label_dir.glob(pattern)) if not path.name.startswith("._")]
+        hits = [path for path in sorted(visible_glob(label_dir, pattern)) if is_visible_path(path)]
         if hits:
             return hits[0]
     return None
@@ -232,7 +233,7 @@ def _positioned_functional_reference_path(
         f"*plane{int(plane_idx)}*ants_rigid_affine_warped.tif",
         f"*plane{int(plane_idx)}*ncc_xy_warped.tif",
     ):
-        hits = sorted(positioned_reference_dir.glob(pattern))
+        hits = sorted(visible_glob(positioned_reference_dir, pattern))
         if hits:
             return hits[0]
     return None

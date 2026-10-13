@@ -1,6 +1,7 @@
 """Analysis figure builders used by trace-focused tools and notebook exports."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from pathlib import Path
 import re
@@ -816,7 +817,7 @@ SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES = {
 
 
 def _find_one(directory: Path, pattern: str) -> Path:
-    matches = sorted(directory.glob(pattern))
+    matches = sorted(visible_glob(directory, pattern))
     if not matches:
         raise FileNotFoundError(f"No files matching {pattern!r} under {directory}")
     return matches[0]
@@ -1028,17 +1029,18 @@ def render_single_fish_50l_bpi_panel(
     if "bpi_category" not in work.columns:
         work["bpi_category"] = "low activity"
     work["bpi_category"] = work["bpi_category"].fillna("low activity").astype(str).str.strip().str.lower()
+    n_suppressed_only = int((work.get("bpi_preference", pd.Series("", index=work.index)).eq("suppressed-only") & work["response_is_active"]).sum())
     work = work[
         np.isfinite(work["bpi"].to_numpy(dtype=float))
         & np.isfinite(work["mean_auc_dff"].to_numpy(dtype=float))
         & work["bpi_category"].ne("response unavailable")
     ].copy()
 
-    if work.empty:
+    if work.empty and not n_suppressed_only:
         raise RuntimeError("[single-fish-50l-bpi-panel] No plottable rows remain after filtering.")
 
     _ = int(jitter_seed)
-    band = float(zero_band) if zero_band is not None else _resolve_reference_threshold(work, "bpi_zero_band", 0.10)
+    band = float(zero_band) if zero_band is not None else _resolve_reference_threshold(bpi_cells_df, "bpi_zero_band", 0.10)
     category_counts = {
         category: int((work["bpi_category"] == category).sum())
         for category in SINGLE_FISH_50L_BPI_ORDER
@@ -1074,6 +1076,9 @@ def render_single_fish_50l_bpi_panel(
                 zorder=4,
             )
 
+    if n_suppressed_only:
+        ax.text(.98, .02, f"suppressed-only: {n_suppressed_only} (BPI unavailable)",
+                transform=ax.transAxes, ha="right", va="bottom", color="#756bb1", fontsize=8)
     ax.axhline(0.0, color="gray", linestyle="-", linewidth=0.5, alpha=0.3, zorder=0)
     ax.axhline(float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
     ax.axhline(-float(band), color="gray", linestyle="--", linewidth=1.0, alpha=0.6, zorder=1)
@@ -1108,6 +1113,7 @@ def render_single_fish_50l_bpi_panel(
 
     return {
         "n_plotted": int(len(work)),
+        "n_suppressed_only": n_suppressed_only,
         "x_limits": tuple(float(v) for v in ax.get_xlim()),
         "y_limits": tuple(float(v) for v in ax.get_ylim()),
         "category_counts": category_counts,
@@ -1738,9 +1744,9 @@ def render_single_fish_50l_gene_auc_panel(
         .median()
         .reset_index()
     )
-    current_ylim = ax.get_ylim()
-    current_top = float(current_ylim[1]) if len(current_ylim) == 2 and np.isfinite(current_ylim[1]) else y_max
-    target_top = max(float(y_max), float(current_top))
+    values = pd.to_numeric(source_points_df["auc_dff"], errors="coerce").dropna()
+    data_top = float(values.max()) if not values.empty else y_min
+    target_top = max(y_max, data_top + 0.12 * max(1e-6, data_top - y_min))
     ax.set_ylim(y_min, target_top)
     y_span = max(1e-6, target_top - y_min)
     label_items: list[tuple[float, float, str, dict[str, Any]]] = []
@@ -1750,13 +1756,12 @@ def render_single_fish_50l_gene_auc_panel(
             stat_row = group_stats[group_stats["stim_mode_norm"] == str(stim_mode)]
             if stat_row.empty:
                 continue
-            x_stat = float(group_positions[group_idx]) + float(mode_offsets[stim_mode])
             med_val = float(stat_row["auc_dff_num"].iloc[0])
             label_color = mode_color_map[group][stim_mode]
             label_items.append(
                 (
-                    x_stat,
-                    target_top,
+                    float(group_positions[group_idx]),
+                    target_top - (0.035 + 0.045 * mode_order.index(stim_mode)) * y_span,
                     f"med={med_val:.2f}",
                     {
                         "color": "#111111",
@@ -1770,17 +1775,10 @@ def render_single_fish_50l_gene_auc_panel(
                     },
                 )
             )
-    place_labels_no_overlap(
-        ax,
-        label_items,
-        y_span=float(y_span),
-        x_neighbor_thresh=0.0,
-        y_pad_frac=0.03,
-        min_sep_frac=0.05,
-        top_margin_frac=0.08,
-        fontsize=6.5,
-        text_kwargs={"zorder": 5},
-    )
+    # Two fixed rows (bout/continuous), independent of gene count. Labels
+    # are local to each x position, avoiding the old all-gene staircase.
+    for x, y, label, kwargs in label_items:
+        ax.text(x, y, label, ha="center", va="top", fontsize=6.5, **kwargs)
 
     ax.axhline(0.0, color="#d0d0d0", linewidth=0.9, zorder=0)
     ax.set_xlim(float(group_positions.min()) - 0.65, float(group_positions.max()) + 0.35)
@@ -2257,16 +2255,9 @@ def render_single_fish_50l_composite(
     gene_points_df = points_df[points_df["group"] != "All neurons"].copy()
     all_counts_df = counts_df[counts_df["group"] == "All neurons"].copy()
     gene_counts_df = counts_df[counts_df["group"] != "All neurons"].copy()
-    all_y_limits = _resolve_single_fish_50l_y_limits(
-        all_points_df,
-        run_config_d.get("COMPOSITE_50L_AUC_ALL_Y_MIN", 0.0),
-        run_config_d.get("COMPOSITE_50L_AUC_ALL_Y_MAX", None),
-    )
-    gene_y_limits = _resolve_single_fish_50l_y_limits(
-        gene_points_df,
-        run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MIN", 0.0),
-        run_config_d.get("COMPOSITE_50L_AUC_GENE_Y_MAX", None),
-    )
+    data_top = float(pd.to_numeric(points_df["auc_dff"], errors="coerce").max())
+    shared_y_limits = (0.0, max(0.1, data_top * 1.12))
+    all_y_limits = gene_y_limits = shared_y_limits
     global_sidecar_hash = None
     global_block_reason = "No accepted anatomy-midline review sidecar was supplied."
     if accepted_midline_sidecar_p is not None:
@@ -2844,32 +2835,6 @@ def _single_fish_56h_gene_order(points_df: pd.DataFrame, gene_order: list[str] |
     return [gene for gene in requested if gene in groups] + sorted(gene for gene in groups if gene not in requested)
 
 
-def _single_fish_56h_auc_summary(points_df: pd.DataFrame, genes: list[str]) -> pd.DataFrame:
-    required = {"group", "laterality", "stim_mode", "auc_dff", "response_is_active"}
-    missing = sorted(required - set(points_df.columns))
-    if missing:
-        raise RuntimeError(f"[single-fish-56h] motion AUC plot points missing columns {missing}; rerun [56i].")
-    work = points_df.copy()
-    work["group"] = work["group"].astype(str)
-    work = work[work["group"].isin(genes)].copy()
-    work = work[work["laterality"].astype(str).isin({"ipsi", "contra"}) & work["stim_mode"].astype(str).isin({"bout", "continuous"})].copy()
-    work["auc_dff"] = pd.to_numeric(work["auc_dff"], errors="coerce")
-    work["response_is_active"] = work["response_is_active"].map(lambda value: str(value).strip().lower() in {"true", "1", "yes"})
-    work = work[np.isfinite(work["auc_dff"])].copy()
-    if work.empty:
-        raise RuntimeError("[single-fish-56h] No finite gene-specific AUC rows available for per-gene stimulus summary.")
-    grouped = work.groupby(["group", "laterality", "stim_mode"], dropna=False)
-    summary = grouped.agg(
-        mean_auc=("auc_dff", "mean"),
-        median_auc=("auc_dff", "median"),
-        sem_auc=("auc_dff", lambda series: float(series.std(ddof=1) / np.sqrt(series.count())) if series.count() > 1 else 0.0),
-        n_points=("auc_dff", "size"),
-        n_responsive=("response_is_active", "sum"),
-    ).reset_index()
-    summary["condition"] = summary["laterality"].astype(str) + "_" + summary["stim_mode"].astype(str)
-    return summary
-
-
 def _single_fish_56h_status_summary(status_df: pd.DataFrame, genes: list[str]) -> pd.DataFrame:
     if status_df.empty:
         return pd.DataFrame(columns=["gene", "status_bucket", "n_labels"])
@@ -2900,18 +2865,105 @@ def _single_fish_56h_status_summary(status_df: pd.DataFrame, genes: list[str]) -
     return work.groupby(["gene", "status_bucket"], dropna=False).size().reset_index(name="n_labels")
 
 
+def _single_fish_56h_traces(
+    points: pd.DataFrame, panels: pd.DataFrame, responses: pd.DataFrame,
+    windows: pd.DataFrame, *, suite2p_root: str | Path, fish_id: str,
+) -> pd.DataFrame:
+    from ..activity import ActivityConfig, _as_bool_series, _extract_window
+    from ..suite2p import load_suite2p_dff_map
+
+    cfg = ActivityConfig()
+    keys = ["plane_idx", "func_label"]
+    for table in (points, panels, responses, windows):
+        if "fish_id" in table:
+            table.drop(table.index[table["fish_id"].astype(str) != fish_id], inplace=True)
+    identified = points[points["group"].astype(str).str.lower() != "all neurons"]
+    allowed_panels = set(identified[["group", *keys, "laterality", "stim_mode"]].itertuples(index=False, name=None))
+    cells = identified[["group", *keys]].drop_duplicates()
+    sides = panels[[*keys, "roi_side", "suite2p_is_cell"]].drop_duplicates()
+    cells = cells.merge(sides, on=keys, validate="many_to_one").merge(
+        responses[[*keys, "response_class", "response_is_active", "bpi_preference"]],
+        on=keys, validate="many_to_one",
+    )
+    cells = cells[_as_bool_series(cells["suite2p_is_cell"])
+                  & cells["roi_side"].isin(["left", "right"])
+                  & (_as_bool_series(cells["response_is_active"]) | cells["response_class"].eq("low activity"))].copy()
+    windows = windows[_as_bool_series(windows["used_for_bpi"])].copy()
+    windows = windows[windows["stim_type"].isin(["LB_trajectory", "RB_trajectory", "LC_trajectory", "RC_trajectory"])]
+    if windows.empty or not windows["response_window_policy"].eq("fixed_from_movement_onset_matched_prestim").all():
+        raise ValueError("[single-fish-56h] Current scored unilateral windows are required")
+    if not np.allclose(windows["scored_duration_sec"], cfg.response_window_sec):
+        raise ValueError("[single-fish-56h] Scorer windows must span 12.5 s")
+    dff_map = load_suite2p_dff_map(cells, suite2p_root=suite2p_root,
+                                dfof_baseline_pct=cfg.dfof_baseline_pct, dfof_eps=cfg.dfof_eps)
+    if not (np.isfinite(windows["fps"]) & (windows["fps"] > 0)).all():
+        raise ValueError("[single-fish-56h] Scorer frame rates must be finite and positive")
+    fps_max = float(windows["fps"].max())
+    time = np.arange(-cfg.response_window_sec, cfg.stim_onset_delay_sec + cfg.response_window_sec + 7.5 + 0.5 / fps_max, 1 / fps_max)
+    rows = []
+    for cell in cells.sort_values(["group", *keys]).itertuples(index=False):
+        plane = dff_map.get(int(cell.plane_idx))
+        if plane is None:
+            raise ValueError(f"[single-fish-56h] Missing Suite2p trace plane {cell.plane_idx}")
+        roi_idx = int(cell.func_label) - 1
+        if not 0 <= roi_idx < plane["dff"].shape[0]:
+            raise ValueError(f"[single-fish-56h] ROI label {cell.func_label} is outside plane {cell.plane_idx}")
+        trace = plane["dff"][roi_idx]
+        pw = windows[windows["plane_idx"] == cell.plane_idx]
+        for laterality in ("contra", "ipsi"):
+            for mode in ("bout", "continuous"):
+                if (cell.group, cell.plane_idx, cell.func_label, laterality, mode) not in allowed_panels:
+                    continue
+                trials, intervals = [], []
+                for event in pw.itertuples(index=False):
+                    side = "left" if event.stim_type.startswith("L") else "right"
+                    event_mode = "bout" if event.stim_type[1] == "B" else "continuous"
+                    if event_mode != mode or ("ipsi" if side == cell.roi_side else "contra") != laterality:
+                        continue
+                    fps = float(event.fps)
+                    onset = int(event.prestim_baseline_end_frame)
+                    baseline, _, _ = _extract_window(trace, int(event.prestim_baseline_start_frame), onset, mode="strict", min_valid_frac=cfg.min_valid_frac)
+                    response, _, _ = _extract_window(trace, int(event.scored_onset_frame), int(event.scored_offset_frame), mode=cfg.edge_policy, min_valid_frac=cfg.min_valid_frac)
+                    if baseline is None or response is None or not np.isfinite(np.nanmean(baseline)) or not np.isfinite(np.nanmean(response)):
+                        continue
+                    start = onset - int(round(cfg.response_window_sec * fps))
+                    end = onset + int(round((cfg.stim_onset_delay_sec + cfg.response_window_sec + 7.5) * fps)) + 1
+                    segment, _, _ = _extract_window(trace, start, end, mode=cfg.edge_policy, min_valid_frac=cfg.min_valid_frac)
+                    if segment is None:
+                        continue
+                    trials.append(np.interp(time, (np.arange(start, end) - onset) / fps, segment - np.nanmean(baseline), left=np.nan, right=np.nan))
+                    intervals.append(((event.scored_onset_frame - onset) / fps, (event.scored_offset_frame - onset) / fps))
+                if trials:
+                    rows.append(dict(gene=cell.group, plane_idx=cell.plane_idx, func_label=cell.func_label,
+                                     laterality=laterality, stim_mode=mode, response_class=cell.response_class,
+                                     bpi_preference=cell.bpi_preference, response_is_active=cell.response_is_active,
+                                     time=time, trace=np.nanmean(trials, axis=0), n_trials=len(trials),
+                                     motion_start=intervals[0][0], motion_end=intervals[0][1]))
+    if not rows:
+        raise ValueError("[single-fish-56h] No valid identified-cell traces")
+    return pd.DataFrame(rows)
+
+
 def render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(
     *,
     fish_id: str,
     points_csv: str | Path,
     hcr_status_csv: str | Path,
     outdir: str | Path,
+    roi_panels_csv: str | Path,
+    response_csv: str | Path,
+    scored_windows_csv: str | Path,
+    suite2p_root: str | Path,
     counts_csv: str | Path | None = None,
     gene_order: list[str] | tuple[str, ...] | None = None,
     gene_colors: dict[str, str] | None = None,
     basename: str = "per_gene_stimulus_trace_with_hcr_status_56h",
 ) -> dict[str, Any]:
-    """Render a table-driven [56h] per-gene stimulus/HCR status figure."""
+    """Render individual trial-averaged dF/F traces and equal-cell gene means.
+
+    Identity/populations come from [56i]; sides from its persisted ROI panels,
+    response state from [50ia], and trial clocks/baselines from scored windows.
+    """
     points_path = Path(points_csv)
     status_path = Path(hcr_status_csv)
     outdir_p = Path(outdir)
@@ -2924,78 +2976,72 @@ def render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(
     genes = _single_fish_56h_gene_order(points_df, gene_order)
     if not genes:
         raise RuntimeError("[single-fish-56h] No gene-specific groups found in motion_auc_plot_points.csv.")
-    auc_summary = _single_fish_56h_auc_summary(points_df, genes)
+    traces_df = _single_fish_56h_traces(
+        points_df, pd.read_csv(roi_panels_csv), pd.read_csv(response_csv),
+        pd.read_csv(scored_windows_csv), suite2p_root=suite2p_root, fish_id=fish_id,
+    )
+    if "fish_id" in status_df:
+        status_df = status_df[status_df["fish_id"].astype(str) == fish_id]
     status_summary = _single_fish_56h_status_summary(status_df, genes)
     colors = dict(gene_colors or {})
     fallback_cmap = plt.get_cmap("tab10")
     for idx, gene in enumerate(genes):
         colors.setdefault(gene, fallback_cmap(idx % fallback_cmap.N))
 
-    condition_order = ("contra_bout", "ipsi_bout", "contra_continuous", "ipsi_continuous")
-    condition_labels = {
-        "contra_bout": "Contra\nbout",
-        "ipsi_bout": "Ipsi\nbout",
-        "contra_continuous": "Contra\ncontinuous",
-        "ipsi_continuous": "Ipsi\ncontinuous",
-    }
-    fig_height = max(4.8, 1.25 * len(genes) + 1.8)
-    fig = plt.figure(figsize=(14.0, fig_height))
-    gs = GridSpec(len(genes), 2, figure=fig, width_ratios=[3.6, 1.25], wspace=0.28, hspace=0.5)
-    all_means = auc_summary["mean_auc"].to_numpy(dtype=float)
-    finite_abs = np.abs(all_means[np.isfinite(all_means)])
-    ymax = max(0.1, float(np.nanmax(finite_abs)) * 1.25 if finite_abs.size else 1.0)
+    fig = plt.figure(figsize=(12.0, max(5.0, 3.6 * len(genes) + 1.5)))
+    gs = GridSpec(len(genes), 2, figure=fig, width_ratios=[4, 1], wspace=0.25, hspace=0.55)
     status_colors = {
-        "responsive match": "#2ca25f",
-        "low activity match": "#bdbdbd",
-        "no functional match": "#fdae6b",
-        "outside functional planes": "#9ecae1",
+        "responsive match": "#2ca25f", "low activity match": "#bdbdbd",
+        "no functional match": "#fdae6b", "outside functional planes": "#9ecae1",
         "status unavailable": "#d9d9d9",
     }
     summary_rows: list[dict[str, Any]] = []
-
+    trace_axes: dict[tuple[str, str, str], Any] = {}
+    shared_ax = None
     for row_idx, gene in enumerate(genes):
-        ax = fig.add_subplot(gs[row_idx, 0])
+        trace_grid = GridSpecFromSubplotSpec(2, 2, subplot_spec=gs[row_idx, 0], hspace=0.35, wspace=0.12)
         ax_donut = fig.add_subplot(gs[row_idx, 1])
-        sub = auc_summary[auc_summary["group"].astype(str) == gene].copy()
-        heights = []
-        errors = []
-        labels_n = []
-        for condition in condition_order:
-            csub = sub[sub["condition"].astype(str) == condition]
-            if csub.empty:
-                heights.append(np.nan)
-                errors.append(0.0)
-                labels_n.append(0)
-                summary_rows.append({"gene": gene, "condition": condition, "mean_auc": np.nan, "sem_auc": np.nan, "n_points": 0, "n_responsive": 0})
-                continue
-            row = csub.iloc[0]
-            mean_auc = float(row["mean_auc"])
-            sem_auc = float(row["sem_auc"])
-            n_points = int(row["n_points"])
-            n_responsive = int(row["n_responsive"])
-            heights.append(mean_auc)
-            errors.append(sem_auc)
-            labels_n.append(n_points)
-            summary_rows.append({"gene": gene, "condition": condition, "mean_auc": mean_auc, "sem_auc": sem_auc, "n_points": n_points, "n_responsive": n_responsive})
-        x = np.arange(len(condition_order), dtype=float)
-        safe_heights = np.asarray([0.0 if not np.isfinite(value) else value for value in heights], dtype=float)
-        ax.bar(x, safe_heights, yerr=np.asarray(errors, dtype=float), color=colors[gene], alpha=0.72, width=0.68, edgecolor="#2b2b2b", linewidth=0.5)
-        ax.axhline(0.0, color="#222222", linewidth=0.8)
-        ax.set_ylim(-ymax, ymax)
-        ax.set_xticks(x)
-        if row_idx == len(genes) - 1:
-            ax.set_xticklabels([condition_labels[condition] for condition in condition_order], fontsize=8)
-        else:
-            ax.set_xticklabels([])
-            ax.tick_params(axis="x", which="both", bottom=False)
-        ax.set_ylabel("AUC dF/F", fontsize=9)
-        ax.set_title(f"{gene}: stimulus-window response summary", loc="left", fontsize=10, fontstyle="italic")
-        for xpos, ypos, n_points in zip(x, safe_heights, labels_n):
-            offset = 0.04 * ymax if ypos >= 0 else -0.08 * ymax
-            va = "bottom" if ypos >= 0 else "top"
-            ax.text(xpos, ypos + offset, f"n={n_points}", ha="center", va=va, fontsize=7)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+        gene_cells = traces_df[traces_df["gene"] == gene][["plane_idx", "func_label"]].drop_duplicates()
+        shade_map = {key: 0.25 + 0.55 * (i + 1) / len(gene_cells)
+                     for i, key in enumerate(gene_cells.itertuples(index=False, name=None))}
+        for r, laterality in enumerate(("contra", "ipsi")):
+            for c, mode in enumerate(("bout", "continuous")):
+                ax = fig.add_subplot(trace_grid[r, c], sharex=shared_ax, sharey=shared_ax)
+                if shared_ax is None:
+                    shared_ax = ax
+                trace_axes[(gene, laterality, mode)] = ax
+                sub = traces_df[(traces_df["gene"] == gene) & (traces_df["laterality"] == laterality) & (traces_df["stim_mode"] == mode)]
+                means = []
+                for row in sub.itertuples(index=False):
+                    shade = shade_map[(row.plane_idx, row.func_label)]
+                    base = np.array(to_rgb("#555555" if row.response_class == "low activity" else colors[gene]))
+                    color = 1 - shade * (1 - base)
+                    suppressed = row.bpi_preference == "suppressed-only"
+                    ax.plot(row.time, row.trace, color=color, linewidth=0.9,
+                            linestyle="--" if suppressed else "-", alpha=0.8,
+                            label=f"ROI p{row.plane_idx}:{row.func_label}")
+                    means.append(row.trace)
+                if means:
+                    ax.plot(sub.iloc[0]["time"], np.nanmean(np.vstack(means), axis=0),
+                            color=colors[gene], linewidth=2.2, label=f"{gene} mean (ROI n={len(sub)})")
+                else:
+                    ax.text(0.5, 0.5, "No valid trials", transform=ax.transAxes, ha="center", fontsize=8)
+                ax.axhline(0, color="#444444", linewidth=0.5)
+                ax.axvline(0, color="#777777", linewidth=0.6, linestyle=":")
+                # Exact scoring interval, relative to appearance; all persisted
+                # fixed-policy events share these offsets.
+                for start, end in set(zip(sub.get("motion_start", []), sub.get("motion_end", []))):
+                    ax.axvspan(start, end, color="#cccccc", alpha=0.22)
+                ax.set_title(f"{gene} · {laterality} · {'Bout-like' if mode == 'bout' else 'Continuous'}", fontsize=11)
+                if c == 0:
+                    ax.set_ylabel("Baseline-subtracted dF/F", fontsize=8)
+                if r == 1:
+                    ax.set_xlabel("Time from stimulus appearance (s)", fontsize=8)
+                ax.tick_params(labelsize=8, labelbottom=r == 1)
+                if means:
+                    ax.legend(handles=[ax.lines[len(means)]], loc="upper left", fontsize=7, frameon=False)
+                summary_rows.append({"gene": gene, "condition": f"{laterality}_{mode}",
+                                     "n_cells": len(sub), "n_trials": int(sub["n_trials"].sum())})
 
         donut_sub = status_summary[status_summary["gene"].astype(str) == gene].copy()
         if donut_sub.empty or int(donut_sub["n_labels"].sum()) <= 0:
@@ -3027,9 +3073,12 @@ def render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(
         for label, color in status_colors.items()
         if label in set(status_summary.get("status_bucket", pd.Series(dtype=str)).astype(str))
     ]
+    legend_handles.extend([Line2D([], [], color="#888888", label="Low activity"),
+                           Line2D([], [], color="#444444", linestyle="--", label="Suppressed-only"),
+                           Patch(facecolor="#cccccc", alpha=0.4, label="Scored movement window")])
     if legend_handles:
-        fig.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, 0.025), ncol=min(4, len(legend_handles)), frameon=False, fontsize=8)
-        bottom = 0.16
+        fig.legend(handles=legend_handles, loc="lower center", bbox_to_anchor=(0.5, 0.015), ncol=4, frameon=False, fontsize=8)
+        bottom = 0.10
     else:
         bottom = 0.045
     fig.suptitle(
@@ -3053,6 +3102,8 @@ def render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(
         "summary_csv": summary_csv,
         "summary_df": summary_df,
         "genes": genes,
+        "trace_axes": trace_axes,
+        "traces_df": traces_df,
     }
 
 
@@ -4811,7 +4862,7 @@ def render_cohort_50l_responsive_identity_donut_row(
     )
     legend._legend_box.align = "left"
     fig.suptitle(
-        "Stimulus-responsive tuning classes split into exact HCR-derived identities by fish",
+        "Response conditions (activation or suppression) split into exact HCR-derived identities by fish",
         y=0.98,
         fontsize=12.0,
         fontweight="bold",

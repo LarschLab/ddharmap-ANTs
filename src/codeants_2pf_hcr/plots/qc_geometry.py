@@ -6,6 +6,7 @@ activity, promote outputs, or mutate the reviewed tables.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 from ..native_paths import stage_product_path
 
 from dataclasses import dataclass
@@ -135,8 +136,8 @@ def load_geometry_review_bundle(
                 raise FileNotFoundError(f"Missing {label}: {path}")
         label_paths = tuple(
             path
-            for path in (tuple(sorted(transformed_dir.glob("*.tif"))) + tuple(sorted(transformed_dir.glob("*.tiff"))))
-            if not path.name.startswith("._")
+            for path in (tuple(sorted(visible_glob(transformed_dir, "*.tif"))) + tuple(sorted(visible_glob(transformed_dir, "*.tiff"))))
+            if is_visible_path(path)
         )
         if not label_paths:
             raise FileNotFoundError(f"No anatomy-space transformed ROI labels found: {transformed_dir}")

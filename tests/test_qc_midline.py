@@ -139,6 +139,32 @@ def test_native_midline_projection_uses_saved_scale_and_ncc_placement() -> None:
     assert row["fit_rmse_px"] == pytest.approx(0)
 
 
+def test_ncc_xy_plane_maps_native_rois_and_midline_with_scale_once() -> None:
+    from codeants_2pf_hcr.matching import harmonize_functional_labels_to_anatomy
+
+    ref = {"index": 0, "best_z": 2, "tform_src": "ncc_xy", "ref_shape": [10, 10],
+           "ref_scaled_shape": [20, 20], "ncc_xy": {"x0": 3, "y0": 4}}
+    row = project_native_midline_to_anatomy(ref, x0=5, y0=5, theta_deg=0, anatomy_shape=(30, 30), n_samples=5)
+    assert (row["x0"], row["y0"]) == pytest.approx((2 * 5 + 0.5 + 3, 2 * 5 + 0.5 + 4))
+    labels = np.zeros((10, 10), dtype=np.uint16)
+    labels[4:6, 4:6] = 1
+    warped = harmonize_functional_labels_to_anatomy(labels, ref, (30, 30))["labels"]
+    ys, xs = np.nonzero(warped == 1)
+    assert len(xs) == 16
+    # resize-centred scaling: native label centre 4.5 maps to 2 * 4.5 + 0.5 before NCC placement.
+    assert (xs.mean(), ys.mean()) == pytest.approx((2 * 4.5 + 0.5 + 3, 2 * 4.5 + 0.5 + 4), abs=0.5)
+
+
+def test_native_midline_proposals_round_trip_exactly_through_csv(tmp_path: Path) -> None:
+    from codeants_2pf_hcr.pipeline import _read_native_midline_proposals
+
+    values = np.random.default_rng(0).uniform(-500, 500, size=(200, 3))
+    frame = pd.DataFrame(values, columns=["fixed_x0", "fixed_y0", "fixed_theta_deg"])
+    path = tmp_path / "functional_automatic_midline_proposals.csv"
+    frame.to_csv(path, index=False)
+    assert _read_native_midline_proposals(path).to_numpy().tobytes() == frame.to_numpy().tobytes()
+
+
 def test_midline_qc_retains_scored_rois_without_anatomy_centroids_as_unknown(tmp_path: Path) -> None:
     fish_root = tmp_path / FISH
     fish_root.mkdir()

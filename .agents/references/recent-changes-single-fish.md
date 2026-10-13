@@ -1,10 +1,81 @@
 # Recent Changes - Single-Fish Workflow
 
+## 2026-10-07 — Legacy Suite2p relocation and frame repair (jobs held)
+
+User approved the fixed-seed control gallery and the subsequent native queue,
+which stopped after f02 anatomy preparation at obsolete Suite2p path provenance;
+the other three fish did not start. Inspection exposed an independent stale
+canonical-frame declaration across four legacy fish. Package-owned
+`suite2p_provenance.py` audits recorded raw averaging, motion/Suite2p mean
+orientation and dimensions, archives original JSON, records unchanged ops
+hashes/input fingerprints and applies only explicit aliases/acquisition frames.
+Suite2p loader checks this bound evidence; fresh recipes preflight it and pin
+the spatial manifest. No TIFF/NPY rewrite, thresholds/schema/eligibility change,
+Suite2p recomputation or production resubmission is authorized by this repair.
+Focused tests and per-fish audit results own validation; later fresh pinned
+specs must be prepared rather than altering failed recipes/state.
+
+## 2026-10-07 — Real fresh-control failure and seed diagnosis
+
+Detached batch `20261007T072652Z-fresh-single-fish-control-and-native-batch-b9dd`
+ran all 12 control writers plus six QC notebooks without intervention, then
+stopped at artifact audit (52 pass, 29 fail of 81), before any production fish.
+All 20 reference TIFFs/anatomy matched; all ten ANTs matrices differed and
+16/3553 anatomy-label assignments changed. Response counts remained 267/266/1.
+Two isolated plane-4 registrations at seed 0 differed; two at seed 123 matched
+byte-for-byte. ANTs zero is default random seeding, not a fixed seed. Fresh
+recipe and fresh-native guard now use/require positive seed 123; no frozen
+replay/default scientific writer behavior or preserved f04 checkout was changed.
+The failed v2 specs/state remain pinned to `42ea751`; do not mutate/adopt them.
+The unchanged control-vs-historical byte gate correctly blocks production.
+Next decision: authorize two new seeded fresh control runs matching each other
+with explicit historical geometry-delta review, rather than silently accepting
+a new baseline. Evidence: isolated v2 `run_specs/job_reports/0cf8d5893f394cb198fc15150a6070de.audit-artifacts.json`
+and `run_state/20261007_fresh_unattended_v2/diagnostics/seed_probe.json`.
+
+## 2026-10-07 — Fresh native orchestration implementation
+
+Added a common recipe builder from established fish paths, immutable NCC
+initializer copies, explicit eligible planes and exact code/runtime pins.
+Fresh mode executes all declared writers, safely redirects explicit anatomy
+outputs, archives retry output graphs and hashes every promoted product for
+resume. Frozen replay behavior remains available and its parity gates remain
+mandatory. Fresh artifact audits omit only undeclared historical baselines;
+universal table keys/schemas, signed response, window and two-sided checks stay.
+The preliminary finishing branch explicitly ends at midline review and exports
+QC 00–05 with current recipe manifests and correct fish names; full recipes
+still require all seven notebooks. No accepted midline is synthesized.
+User approved provisional retained masks, deferral of missing native HCR masks,
+post-run Z QC and all-ten-plane L765_f02 registration; f05 remains R2-only.
+Focused unit tests precede real detached writer validation. No fresh writer run
+is claimed by this implementation entry; later job reports own execution facts.
+
+## 2026-10-06 — Remaining-fish unattended readiness (not full analysis)
+
+Added package-owned read-only readiness jobs and CLI with explicit per-round
+HCR forward-chain checks, same-fish archive relocation, grid/count/dtype checks,
+input hashes, session/plane eligibility and existing QC copies. Four retained
+fish only; no excluded fish, scientific writer, registration or canonical
+replacement. L765_f05 is R2-only; L765_f02 selects plane-4 retry-v2 plus nine
+original planes; L758_f07 retains accepted NCC placement, not invented ANTs.
+Full production remains gated on marker acceptance, anatomy-label Z/midline
+provenance and generalizing the L765_f04 frozen-input native spec. Missing
+native masks and absent historical transform hashes stay explicit limits.
+See `docs/remaining-fish-readiness.md`. Eight focused route/relocation tests
+pass; real detached audit results are saved fish-local.
+
 **Purpose:** rolling handoff log for meaningful single-fish work, remaining breakpoints, and rerun implications.
 
 **Use this file when:** work targets `notebooks/singleFish.ipynb` or single-fish ownership modules.
 
 ## Latest completed checkpoint
+
+### 2026-10-06 - Unattended finishing job and geometry-owned molecular QC
+
+- Preserve ongoing manual-identity work in the original checkout. The independent clean `codex/unattended-single-fish` worktree owns automatic production execution. `tools/single_fish_job.py` runs hash-aware resume, verification, real-artifact audit, optional no-op proof, and all-QC gallery export without stdin or agent polling; compact terminal reports and detailed logs remain fish-local. Versioned galleries preserve previous evidence.
+- Registration/geometry false freshness failures came from `optional_inputs: [""]`: the empty string hashed the checkout as `.`. Blank/relative declarations now fail closed. The fish-specific adoption audit verifies every retained scientific input/output hash, archives old spec/state, and removes only those two known sentinel records; contracts and all seven QC notebooks execute afresh. No scientific writers need rerunning for this metadata/QC correction.
+- Molecular-fate and correspondence-tile QC now require geometry-owned direct/reversed label-page provenance; neither indexes raw labels with anatomy best-Z nor chooses an unrecorded maximum-section slice. Native 2358-label fate counts become unmatched2051, out-of-plane153, no ROI candidate96, response unavailable20, low activity29, responsive9; canonical scientific tables are unchanged.
+- Regression and real-job proof are recorded in the new fish-local `run_state/20261006_unattended/` and finishing-job reports. Consult their terminal status before claiming unattended validation. Human QC approval is distinct from biological acceptance of response/HCR differences; this implementation does not change accepted scientific decisions.
 
 ### 2026-10-06 - Native L765_f04 production and explained HCR replay drift
 
@@ -4321,3 +4392,152 @@
 - `codex/cellmatcher-wheel-navigation` reverses the canvas wheel mapping: plain wheel goes directly to ex-vivo Z, Cmd+wheel delegates to existing cursor-centred camera zoom. Native Qt filtering prevents default duplicate Zoom/Z, preserves natural direction, fractional input/endpoints, and batches large deltas into one model update. Side-panel scrolling, Z-arrow actions, annotations and mapped scope are unchanged.
 - Native GUI suite: six passed; added off-centre pointer-world-position check also passed after accounting for Qt integer pointer coordinates. Synthetic fine-input timing (three alternating pairs, one pixel/one angle unit per packet, 5 ms pacing) reached first Z at 20 packets/149.3 ms median versus baseline `79abd3b` at 121 packets/892.2 ms. Raw data in `docs/cellmatcher-wheel-input-results.json`; this measures first input/model response on a small fixture, not real-fish frame time or physical input latency.
 - Settled native render `/tmp/cellmatcher-wheel-navigation.png` checks the visible shortcut hint, native Z control and side views. Review found no bugs; off-centre coverage was added on reviewer advice. No production annotations/outputs touched. Native test-interpreter teardown still uses the previously documented explicit-exit workaround. Quit/relaunch cellMatcher to load changed code.
+
+# 2026-10-07 subset-plane identity correction
+
+- Correct geometry/master, per-plane summaries, debug and HCR candidate plane
+  keys to retain reference acquisition indices while preserving local array
+  access. Exclude unselected Suite2p planes from explicitly selected loads.
+- Add score-stage source consistency guard and regression coverage for R2-only,
+  non-contiguous and ordinary plane selections and overlapping wrong-source keys.
+- Previous failed f05 state is preserved. New isolated geometry verification
+  precedes a separately pinned maintenance continuation; completed f02/f07 are
+  untouched. Seed remains 123; f05 remains R2-only.
+# 2026-10-07 execution-layout preflight and monitored f05 continuation
+
+- f05 continuation previously failed before geometry: staged registration
+  references were absent despite canonical copies being present. Add read-only
+  graph dependency and selected input checks to plan and execution, plus
+  hash-verified retained graph materialization. Score-only recipes additionally
+  check acquisition-plane/source/ROI relationships before writers.
+- Preserve failed attempts; f05 reuses registration, f06 remains a full fresh
+  ten-plane run. Monitor f05 as requested; f06 unattended only after preflight.
+# 2026-10-07 native QC review: stale best-Z cache and diverged ANTs selection
+
+- L758_f07 F008: the reused May best-Z/scale cache predated the functional
+  orientation fix (plane 0 cached Z=8, current-reference recompute Z=64; plane 4
+  24 vs 48; cached profile matches a Y-flipped current reference). f02/f05/f06
+  caches reproduce exactly. Fresh recipes now search; any reused cache entry
+  must reproduce or is searched afresh; manifests record `ncc_cache_reused`.
+- L765_f06 F008 plane 0: ANTs post-NCC -0.117 vs NCC-xy 0.648 was still
+  selected. Per user decision each plane now selects the higher post-NCC method.
+- NCC-xy selections were never exercised in staged runs and were wrong: ROI
+  labels lacked native-to-scaled resampling and midlines added the NCC offset
+  twice. `resolve_plane_transform` now owns the composed transform.
+- Midline audit: native consensus lines (dark corridor, fish-level angle,
+  per-session robust depth offset) are projected through each plane's selected
+  transform; `make-functional-registration-qc` and `make-anatomy-midline-proposal`
+  write byte-identical anatomy proposals to the same path for all four fish.
+- Remaining: rerun f07/f06 from fresh recipes; geometry, identity, canonical
+  tables and anatomy-grid midlines for f07 planes 0-7 and f06 plane 0 are
+  invalid until then. Midline and laterality remain review-gated.
+- First f06/f07 reruns (`20261007_bestz_selection_fix`) promoted corrected
+  registration/transform/QC/HCR-registration stages, then failed at
+  match-roi-to-anatomy: the fish-local control is the superseded geometry
+  (f06 changes confined to plane 0, 314/327 rows; f07 5119/5756 rows, matched
+  3275 -> 5532). Per user decision (Option A) the stage accepts an explicit
+  `--supersede-accepted-control-reason`; drift is then warned and recorded.
+  Fish folders remain mixed (new registration, old geometry onward) until the
+  superseding rerun completes.
+- v2 reruns passed geometry, then failed at score-activity-bpi against the
+  score-owned control: only carried geometry columns differed (f06 plane 0:
+  anat/selected 314, unique 198; f07 all planes 5119/5119/2419); every
+  response/BPI/identity column and the BPI cell/summary tables were identical.
+  Per user decision the same recorded supersession now covers the score,
+  identity and export control comparisons: content drift (shape, keyed rows,
+  exact/numeric cells) warns with control hashes and reason recorded in
+  `superseded_accepted_controls`; missing columns, duplicate keys and missing
+  inputs stay hard failures.
+- v3: f06 passed score; assign-hcr-identity failed only on its stage-specific
+  anatomy-identity-lookup and ROI-identity-master parity checks against the same
+  superseded controls (pairs 313->333, candidates 203->226). These two labels are
+  now included in the recorded supersession; final-pair acceptance stays strict.
+- v4 f06 completed all writers but verify failed: make-anatomy-midline-proposal
+  (110) re-reads the native midline CSV with pandas default float parsing and
+  overwrites the shared anatomy proposal path written by registration QC (050).
+  The NCC-xy plane exposed last-bit differences. Stage 110 now reads with
+  round_trip precision; on real f06 v4 inputs its output is byte-identical to
+  stage 050. The shared-path ownership remains a known design debt.
+- Accepted-midline continuation: fresh recipes accept --midline-decision-path and
+  --midline-reviewer to append materialize-anatomy-midline, make-motion-auc-tables,
+  make-figures and QC notebook 06 after Danin accepted the f02/f07/f05/f06
+  anatomy-grid midlines (hash-bound sample-page decisions).
+- Accepted-midline continuation runs passed all stages but the review-gated
+  gallery exporter required exactly notebooks 00-05. The job now passes the
+  recipe notebook count; seven notebooks produce an accepted-midline review gallery.
+
+## 2026-10-08 — All-neuron response trace inspector (read-only review tool)
+
+- Generalised the one-off L765_f04 inspector Danin used to accept the 282
+  responders on 2026-09-17 (`L765_f04/03_analysis/functional/qc/all_neuron_trace_inspector_2026-09-17/`,
+  hardcoded to f04 counts) into `response_trace_inspector.render_response_trace_inspector`
+  with thin CLI `tools/render_response_trace_inspector.py`.
+- Differences from the f04 original: trials come from the persisted per-plane
+  `scored_stimulus_windows.csv` (not re-derived stimulus contexts); labels show
+  two-sided valence and both condition AUCs; a review-only `floor-excluded`
+  group marks ROIs that pass a persisted null threshold but fail only the
+  `response_auc_threshold` floor; display scale has no 0.01 minimum; no PDF/PNG.
+  Rendering refuses unless every trial AUC reproduces the table (tol 1e-5).
+- Rendered for f02/f07/f05/f06 into fish-local
+  `03_analysis/functional/qc/response_trace_inspector_2026-10-08/` from the
+  `20261007_accepted_midline` score outputs: responders 260/452/224/250,
+  floor-excluded 199/380/87/221, AUC reproduction error ~1e-16.
+- Danin kept the 0.05 floor (2026-10-08); these inspectors test whether the
+  f04-validated categories generalise. No scoring, schema or contract change.
+- Same day, after Danin flagged it (confirmed by a read-only Codex check): the
+  inspector's bold label and colour showed `response_class` (which response
+  test passed), which reads as tuning but is not. Rows are now labelled and
+  coloured by tuning = stored `bpi_preference` among response-positive ROIs
+  (bout-tuned BPI > `bpi_zero_band` 0.5, continuous-tuned < -0.5,
+  non-preferential responder), with "tests passed: bout only/continuous
+  only/both" and valence as the second line; filters for tuning, response
+  test, review group and the exact ±1 BPI boundary. Stored data unchanged; the
+  f04 original had the same presentation. Re-rendered for the four fish
+  (bout-tuned 25/186/5/95, continuous-tuned 37/36/17/25 for f02/f07/f05/f06).
+- Layout fix after Danin's review (laptop use): one scroll area for the traces
+  (page itself no longer scrolls), sticky column header and label column,
+  "fit window" column width by default (120/190 px options), a row-height
+  slider, compact four-line labels whose rows grow instead of overlapping when
+  zoomed out, and BPI shown greyed as "unused" for non-responders.
+
+## 2026-10-08 — Approved per-stimulus response/suppression change
+
+Danin approved separate LB/RB/LC/RC tests, Bonferroni four-stimulus/two-tail alpha, any-side condition calls, activation-only side BPI, suppression-only and mixed valence classes, and non-gating suppression confidence. Signed pooled AUC/contrast remain intact; `pooled_` fields preserve old calls/BPI as comparison-only. ActivityConfig promotes legacy small bootstrap counts to ≥16,000 at 0.99. Inspector consumes new evidence, preserves top neuron when switching views and fixes equal row heights. QC molecular gate includes suppression-only rows without finite-BPI requirements. Composite tuning panels annotate suppression-only exclusions, and response-condition donuts retain them in counts. No geometry/identity changes. Old cached scoring and dependent exports/figures must be regenerated by the owner before using these semantics; no pipeline jobs were run in this clone. Validation and benchmark details are recorded in `.agent-notes.md`.
+
+### Review round 1
+
+Per-stimulus keys now admit only exact LB/RB/LC/RC trajectory names; non-BPI and legacy alias events cannot enter those pools. Inspector rows grow to fit identical labels in both views, with minimum row height and SVG size containment; no clipping or maximum row height. Quantile metadata explicitly distinguishes the 0.00125/0.99875 per-stimulus family from pooled comparison thresholds at 0.005/0.995. Tests and acceptance results are recorded in `.agent-notes.md`.
+
+## 2026-10-12 — F049 restore individual stimulus-locked traces
+
+- Danin explicitly approved restoring the trace-first question for `per_gene_stimulus_trace_with_hcr_status_56h.png`; AUC mean bars were replaced at `plots.analysis`, keeping HCR-status donuts and the filename.
+- Writer now passes `motion_auc_roi_panels.csv`, `functional_roi_activity_bpi_cells.csv`, persisted `scored_stimulus_windows.csv`, and the Suite2p root alongside existing points/status/counts. Uses the scoring dF/F loader, exact trial prestimulus subtraction, individual trial means plus equal-cell gene means in contra/ipsi × bout/continuous grids.
+- Gene-colored dashed suppressed-only cells remain visible without a BPI gate; low activity is graded grey; identified ROIs are deduped per gene/condition. No identity reconstruction or scientific response changes.
+- Added synthetic renderer and writer checks, approved figure contract, and visual preview `f049_preview.png`. Validation results are recorded in `.agent-notes.md`.
+- `.agents/` is read-only in this work session: this entry and the reference/contract changes are supplied in `f049_agent_docs.patch` for application by the reviewing orchestrator.
+
+### 2026-10-13 — AppleDouble-safe operational scans
+
+- Added dependency-free paths helpers; operational discovery and recursive hashing across the package and QC code cells ignore `._*` and `.DS_Store`. Freeze literal inventory/protection remains intact by design.
+- Regression tests cover binary stage JSON, QC 05 masks, gallery discovery/reuse, product hashes, helper filtering, and preserved freeze sidecars. No scientific table, stage, filename, or real-product byte-check changes.
+ Validation: `tests/test_appledouble.py` — 8 passed; full suite once — 691 passed, 2 skipped in 92.54s; no failures. All call sites and deliberate freeze exceptions are recorded in `appledouble_report.md`.
+
+## 2026-10-13 — Curated single-fish QC gallery
+
+Implemented Danin's ordered P001–P025 + P020b decisions. Exporter selects stable notebook/cell/PNG or writer-output roles, preserves extraction inventory and exclusions, surfaces provenance/missing cards and optionally links the response inspector. Composite construction remains package-owned and QC-orchestrated. Added all-plane saved HCR pair-status figure and Q7 traces with legacy two-ring HCR-label status; fixed F026 counts, F031 per-stimulus evidence and F046 shared AUC limits/annotation band. P013 fixed any-stimulus cohort and P014 held unchanged. Replay8 F057/F058 names are reversed relative to the proposal: heatmaps/traces are selected by output name. No scientific writers/tables changed; no jobs launched. f02 read-only previews and validation logs are in `previews/`; `.agent-notes.md` records final validation. Production QC copies need re-execution to materialize the new review surfaces.
+
+## 2026-10-13 — Claude gallery review round 1
+
+Revised P019 legends/spacing; P015 saved-call colours and activation-only side counts (f02 195 left, 131 right, 4408 excluded), dropping the degenerate bin curve; P008 two-column/thicker-outline grid; P010/P020 equal-width composites; P003 adjacent aligned row sets. Six real-data PNGs re-rendered and visually inspected in previews/; originals retained in previews/round0. No scientific table or gate changes. Final validation is recorded in .agent-notes.md and previews/round1-full-suite.log.
+
+## 2026-10-13 — Danin gallery review round 2: retire contaminated summaries
+
+Removed mean_z_pre/mean_z_post/mean_dff_post/peak_z_post from single-fish [23b] trace rows and summary output. Replaced the old P014 mean-dF/F plot with signed [23c] AUC violins and switched P018 to the independent AUC table; no calls, scoring windows or floor changes. Gallery provenance is seven compact rows with visible values. Real f02 preview cohorts: all cells r1=2006/r2=1477; fixed responders r1=851/r2=719; population matrix 3483 complete profiles. Full validation and PNG inspection recorded in .agent-notes.md and previews/. Cohort code unchanged: aggregate_cohort_23c_trace_means still computes three contaminated z-summary scalars, persisted/cached by the cohort stage and displayed as trace_summary_df in multiFish.ipynb. Rerun the single-fish display writer/QC copies when authorized to replace older summaries; no jobs launched here.
+
+## 2026-10-13 — Gallery review round 3
+
+P014 now exposes the violin bodies with row-wise robust symmetric display limits, above/below counts, and labelled symlog where needed. Full-data medians, calls and fixed cohort unchanged. P018 uses an explicit colourbar axis beside the mean-AUC bars. Real f02 previews and complete test results are recorded in .agent-notes.md.
+
+## 2026-10-13 — P003 persisted-input registration review
+
+Replaced the redundant side-by-side writer PNG composite with QC 02 cell 13, package renderer `plots.qc_registration.render_registration_plane_review`. Four panels per saved plane: native reference + thin Suite2p outlines/count, best-Z anatomy + explicit label-Z outlines, selected warped reference, magenta/green overlay. Shared full anatomy extent and existing writer percentile normalization; NCC-xy contrast excludes canvas padding, matching the normalization-before-placement display convention. Uses context product helpers; selected method controls TIFF choice (f06 plane 0 NCC-xy), persisted comparison CSV supplies post/Z-selection NCC. Gallery P003 now selects `nb:02:13:0`; original writer PNGs stay inventory/exclusions. No scientific outputs, writers, scoring or geometry changed. Validation/preview evidence is recorded in clone `.agent-notes.md` and `previews/`. No jobs, dataDrive writes, delegation, commits or pushes.

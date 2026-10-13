@@ -1,6 +1,19 @@
 # Symbol Index
 
+- `single_fish_readiness.audit_readiness`: read-only, spec-pinned remaining-fish
+  readiness reports; never scientific writers or gate acceptance.
+- `single_fish_readiness.expected_transform_paths`: explicit forward HCR route
+  ordering in ANTs argument order.
+- `single_fish_readiness.resolve_archive_path`: same-fish explicit archive-to-mirror
+  path relocation, without rewriting original provenance.
+
 Generated manually for the current extracted package surface.
+
+## `codeants_2pf_hcr.paths`
+
+- `is_appledouble(path)`: Check whether the basename starts with `._`.
+- `is_visible_path(path)`: Exclude AppleDouble and `.DS_Store` components; retain other hidden entries.
+- `visible_glob(directory, pattern)`, `visible_rglob(directory, pattern)`, `visible_iterdir(directory)`: Dependency-free, order-preserving Path iterators for operational directory scans.
 
 ## Trusted patterns
 
@@ -43,7 +56,7 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.midline_review`
 
-- `project_native_midline_to_anatomy`, `build_anatomy_midline_proposal_table`: Project persisted native-functional fixed-consensus lines through selected scale/NCC/ANTs registration and require exact registered-plane coverage.
+- `project_native_midline_to_anatomy`, `build_anatomy_midline_proposal_table`: Project persisted native-functional fixed-consensus lines through selected scale/NCC/ANTs registration and require exact registered-plane coverage. NCC-xy planes apply the composed native-to-anatomy transform once.
 - `validate_logbook_midline_gate`, `load_accepted_anatomy_midline_context`: Require fish-specific logbook acceptance bound to proposal CSV/PNG hashes and verify the materialized anatomy-grid input and its source artifacts.
 
 ## `codeants_2pf_hcr.spatial`
@@ -70,13 +83,19 @@ Generated manually for the current extracted package surface.
 - `resolve_hcr_matching_artifact_root`, `build_hcr_anatomy_match_outcome_table`, `plot_hcr_anatomy_match_outcome_donuts`: Select one persisted HCR artifact root (staged when present, otherwise the legacy fish-local set) and render the legacy `[50]` one-ring per-gene anatomical outcome donuts from saved labels, match tables, q95 metadata, and saved plane representation; no matching or assignment is recomputed.
 - `build_hcr_functional_plane_status_donut_table`, `plot_hcr_functional_plane_status_donuts`: Recreate the legacy two-ring functional-plane representation audit in notebook `04`: inner scope is within/outside/unmatched after the q95 exclusion, and the outer ring partitions saved within-plane HCR activity status or records the outside/unmatched outcome; both functions are read-only.
 - `inspect_molecular_identity_qc`, `plot_molecular_identity_qc`: Enforce frozen geometry and compare geometry fields before/after identity attachment in notebook `05`.
-- `plot_molecular_correspondence_tiles`: Render persisted HCR→anatomy→functional correspondence crops in anatomy/GCaMP context for notebook `05`, retaining every selected frozen-geometry link by default and exposing display-only gene, response, and flag filters; it never changes final-pair membership or creates exclusions.
+- `build_molecular_identity_fate_table`: Read frozen ROI-centric links and HCR final pairs with required geometry-owned `plane_refs_path`; validate explicit direct/reverse anatomy-label Z provenance before classifying in-plane label fates.
+- `plot_molecular_correspondence_tiles`: Render persisted HCR→anatomy→functional correspondence crops in anatomy/GCaMP context for notebook `05`, requiring geometry table and plane-reference paths to resolve label pages independently of intensity `best_z`; retains every selected frozen-geometry link by default and display-only gene, response, and flag filters, without inferred Z fallback or changed final-pair membership.
 - `inspect_activity_export_qc`, `plot_activity_export_qc`: Review session-aware response/BPI provenance, canonical keys, figures, and ROI-centric versus HCR-centric scopes in notebook `06`; optional `scored_windows_path` and `reference_manifest_path` validate the persisted plane/session mapping without extending ROI schemas.
 - `build_activity_bpi_gate_table`, `plot_activity_bpi_gate`: Read persisted response classes and strict BPI preferences for ROI-centric Notebook 06 review; non-BPI summaries use every response-assessable ROI, BPI panels use response-positive ROIs only, preference is color-coded, response-test class is marker-coded, and the all-ROI donut retains unavailable rows.
 
 ## `codeants_2pf_hcr.hcr_match_inspector`
 
 - `render_hcr_match_inspector`: Render a self-contained, read-only HTML inventory of every transformed HCR label from saved metrics, candidate/final-pair tables, the geometry Z sidecar, anatomy/functional masks, and the identity-writer ROI table. It does not recompute matches or record gate decisions. The thin CLI is `tools/render_hcr_match_inspector.py`.
+
+## `codeants_2pf_hcr.response_trace_inspector`
+
+- `render_response_trace_inspector`: Render a self-contained, read-only HTML of baseline-shifted dF/F traces for every ROI over the persisted LB/RB/LC/RC BPI windows (16 trials and 4 means), labelled and coloured by tuning (stored `bpi_preference` among responders, |BPI| > `bpi_zero_band`), with the response test passed, valence and a review-only floor-excluded group; refuses unless trial AUCs reproduce the score table. Thin CLI `tools/render_response_trace_inspector.py`.
+- `floor_excluded_mask`: ROIs that pass a persisted null threshold but are not response-positive only because |mean AUC| is below `response_auc_threshold`.
 
 ## `codeants_2pf_hcr.pipeline`
 
@@ -108,7 +127,7 @@ Generated manually for the current extracted package surface.
 - `run_make_functional_registration_qc_stage`: Render four post-transform review artifacts—plane rows, intensity overlays, center label overlays, and NCC depth profiles—plus companion CSV provenance only after transformed functional labels exist.
 - `run_register_hcr_to_anatomy_stage`: Writer for one staged HCR label stack per mask plus `hcr_label_metrics.csv` and freshly computed match/review/final-pair tables. It applies table-driven small-speck and low-confidence-segmentation exclusions and the fish-derived all-anatomy maximal-section XY-radius gate before dedup. `recompute_direct_ants=True` additionally warps labels using the selected ex-vivo bridge or explicit legacy direct route without writing a filtered duplicate stack.
 - `build_hcr_label_metrics`: Measure each HCR label in native space when available, otherwise explicitly in aligned 2P space, and assign small/large quality flags without editing the label image.
-- `run_match_roi_to_anatomy_stage`: Writer stage for geometry-only ROI/anatomy matches. The recompute mode resolves direct-versus-reversed anatomy-label Z order against the anatomy intensity stack (or consumes an explicit mode), persists every resolved label page in `plane_refs_summary_geometry.json`, and uses those exact pages for matching. It restores the NCC preplacement before replaying an ANTs residual transform and can explicitly orient acquisition-framed Suite2p `stat.npy` labels before writing the three geometry CSVs. Missing or ambiguous label-Z provenance fails closed; control-geometry staging from an explicit `--source-root` remains available for bootstrap/diagnostic use.
+- `run_match_roi_to_anatomy_stage`: Writer stage for geometry-only ROI/anatomy matches. The recompute mode resolves direct-versus-reversed anatomy-label Z order against the anatomy intensity stack (or consumes an explicit mode), persists every resolved label page in `plane_refs_summary_geometry.json`, and uses those exact pages for matching. It restores the NCC preplacement before replaying an ANTs residual transform and can explicitly orient acquisition-framed Suite2p `stat.npy` labels before writing the three geometry CSVs. Missing or ambiguous label-Z provenance fails closed; control-geometry staging from an explicit `--source-root` remains available for bootstrap/diagnostic use. An explicit `supersede_accepted_control_reason` turns label/unique drift against the fish-local control into recorded warnings (control hash and reason in parameters); key parity stays strict.
 - `build_single_fish_status`: Build a compact read-only trust-state summary from the dry-run input audit plus any persisted audit manifest.
 - `build_single_fish_compare_staged_manifest`: Build a read-only comparison manifest for one existing declared staged output surface, including upstream writer surfaces and post-processing stages; for `make-qa-report`, also validates QA summary JSON parseability, required sections, review status, and image metadata/readability.
 - `run_single_fish_freeze_legacy_baseline_stage`: Freeze declared legacy/control outputs for one or all comparison-stage specs into `DATA_ROOT/pipeline_baselines/FISH_ID/legacy_singleFish/stages/`, refusing overwrite without `overwrite=True`.
@@ -245,6 +264,12 @@ Generated manually for the current extracted package surface.
 - `apply_square_region_mask`: Preserve values inside an anatomy-space square and set outside pixels to zero for masked registration.
 - `build_functional_references_stage`: Notebook-facing functional reference stage for `[12]` that preserves `plane_refs` plus legacy bindings/cache names, validates declared XY frames, skips orientation for upstream canonical inputs, and applies direct orientation only for explicit legacy/acquisition inputs.
 
+## `codeants_2pf_hcr.suite2p_provenance`
+
+- `check_suite2p_input_provenance`: Read-only per-plane source/frame/trace-count preflight; rejects stale or wrong-plane inputs before recipe creation.
+- `resolve_reconciled_suite2p_input`: Resolve explicit recorded aliases only when ops hashes, metadata hash and audited input fingerprints still match; used by the authoritative Suite2p loader.
+- `reconcile_legacy_functional_provenance`: Evidence-backed one-time JSON repair for recorded resonant legacy averaging; sample raw blocks, check motion orientation, archive/checksum original spatial manifest, preserve TIFFs and all Suite2p arrays.
+
 ## `codeants_2pf_hcr.spatial_contract`
 
 - `load_spatial_manifest`: Validate the upstream canonical functional/anatomy XY and registration-Z contract; unknown or contradictory frames fail closed.
@@ -265,8 +290,8 @@ Generated manually for the current extracted package surface.
 - `load_functional_frame_selection`: Read and validate the matching accepted preparation manifest's per-plane first-block-exclusion boundary, source-frame count, and retained-frame count; fail closed if exclusion provenance is absent or inconsistent.
 - `run_functional_z_drift_diagnostic`: Build time-windowed, top-correlated functional references from the manifest-selected post-block-0 motion-corrected frames using manifest-resolved polarity, reuse persisted per-plane NCC scales, score the canonical anatomy Z stack, and write interval/profile/session-summary CSVs plus review plots whose X axis names each retained block and within-block window; it does not rerun ANTs or change canonical registration outputs.
 - `run_ncc_placement_stage`: Notebook-facing NCC XY placement stage for `[20]` that updates `plane_refs` with placement metadata and warped reference aliases.
-- `run_in_plane_registration_comparison_stage`: Notebook-facing `[20]` comparison stage that evaluates current NCC XY placement against optional ANTs rigid+affine placement while keeping the configured active backend explicit.
-- `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, and rebinds legacy globals.
+- `run_in_plane_registration_comparison_stage`: Notebook-facing `[20]` comparison stage that evaluates current NCC XY placement against optional ANTs rigid+affine placement while keeping the configured active backend explicit; per plane it selects the successful method with the higher post-transform NCC and records the reason.
+- `run_registration_search_stage`: Notebook-facing registration-search stage for `[16]` that updates `plane_refs`, persists scale/best-z caches, rejects cached entries whose profile does not reproduce from the current reference, and rebinds legacy globals.
 
 ## `codeants_2pf_hcr.matching`
 
@@ -276,7 +301,7 @@ Generated manually for the current extracted package surface.
 - `HcrActivityExportConfig`: Typed HCR-centric activity export configuration for notebook cell `[50]`.
 - `hcr_response_lookup_from_roi_master_df`: Normalize response-aware ROI master columns into the plane/function-label lookup used by HCR-centric identified-cell activity exports.
 - `finalize_hcr_activity_export_tables`: Package-owned finalizer for notebook `[50]` HCR activity exports. It decorates HCR candidate geometry with ROI response calls and produces finalized status, raw candidate, responsive analysis, and candidate tables; it does not build `hcr_activity_status_summary.csv`.
-- `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record.
+- `resolve_plane_transform`: Resolve the notebook’s per-plane affine/tform binding from a plane-ref record; `tform_src == "ncc_xy"` with reference shapes returns the native-to-anatomy scale-plus-placement transform.
 - `resolve_anatomy_label_z`: Map an anatomy-intensity `best_z` to the corresponding anatomy-label stack page, including reversed label stacks.
 - `infer_anatomy_label_z_mode`: Compare anatomy-label boundaries with intensity edges across registered best-Z planes and return the direct or reversed page convention plus both aggregate scores.
 - `validate_anatomy_label_z_provenance`: Fail-closed validator for explicit mode/page consistency, page range, geometry-plane coverage, and selected-label membership.
@@ -416,7 +441,7 @@ Generated manually for the current extracted package surface.
 - `render_single_fish_50l_global_auc_panel`: Render the single-fish `[50l]` all-neurons ipsi/contra AUC panels as paired bout↔continuous ROI points with class-colored directional highlights, neutral non-directional classes, directional class-mean summaries, and unchanged count strips.
 - `render_accepted_global_laterality_auc_qc`: Read-only Notebook 06 Q7 global ipsi/contra AUC plus count strips. It visibly blocks unless the persisted all-neuron outputs carry the exact hash of a complete accepted anatomy-grid midline review sidecar.
 - `render_single_fish_50l_composite`: Render notebook stage `[50l]` as one package-owned composite, including stale `[56i]` AUC cache rebuilding, BPI panel, response/BPI donut, AUC panels, legacy figure globals, and `compound_50j_56i_unified.png/.pdf`.
-- `render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status`: Render `per_gene_stimulus_trace_with_hcr_status_56h.png/.pdf` plus a plotted-values CSV from `[56i]` per-gene motion AUC plot points and `hcr_activity_status.csv`; this replaces the copied legacy PNG in `make-figures` without depending on hidden notebook trace payloads.
+- `render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status`: Render `per_gene_stimulus_trace_with_hcr_status_56h.png/.pdf` and cell/trial-count summary CSV. Required inputs: `points_csv`, `hcr_status_csv`, `roi_panels_csv`, `response_csv`, `scored_windows_csv`, `suite2p_root`, `fish_id`, `outdir`. Uses persisted gene/ROI populations and midline sides, scoring dF/F and trial baselines, individual traces plus equal-cell means in per-gene 2×2 grids; grey low activity and dashed suppressed-only cells remain visible. Returns `trace_axes` and numeric `traces_df` for verification.
 - `render_single_fish_50l_population_response_donut_poster`: Render a standalone poster-scale `[50l]` population response donut with original response-status inner classes and collision-aware perimeter indicators.
 - `render_cohort_56h_by_fish`: Render cohort per-gene/per-fish [56h]-style trace panels from prebuilt cohort trace payloads.
 - `render_cohort_56h_fish_average_poster_traces`: Render a gene-row cohort [56h]-style poster trace figure with equal-weight fish-averaged gene traces and SEM across fish.
@@ -480,6 +505,11 @@ Generated manually for the current extracted package surface.
 - `verify_run`: Verify the pinned environment/provenance and every saved input/output hash.
 - `audit_run_artifacts`: Read-only validation of real ROI key relationships, signed-response union, family-wise 23c tails, fixed response windows, BPI pool and geometry-assignment hashes; reports response/suppression counts.
 
+## `codeants_2pf_hcr.single_fish_job`
+
+- `run_finishing_job`: Noninteractive fish-locked resume, pinned/hash verification, real-artifact audit, optional no-op proof, and QC gallery export; explicit fresh review-gate recipes export preliminary notebooks 00–05 without accepting laterality, while full recipes require all seven. Saves atomic terminal reports without polling.
+- CLI: `tools/single_fish_job.py`; usage and failure/reuse policy: `docs/single-fish-unattended-job.md`.
+
 ## `codeants_2pf_hcr.freeze_run`
 
 - `freeze_single_fish_run`: Copy and SHA-256 verify the complete working run plus external manifests; capture scientific commit/runtime and utility checkout provenance; protect the verified snapshot with permissions or a mounted UDRO image.
@@ -489,8 +519,19 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.qc_figure_export`
 
-- `export_qc_figure_gallery`: Extract all seven executed QC notebooks' PNGs and current writer PNGs into a deduplicated full-resolution gallery/contact sheets, preserving exact source/cell/output/manifest hashes and coverage records without writing notebook or scientific inputs.
+- `export_qc_figure_gallery`: Extract seven executed QC notebooks' PNGs (six only with explicit `review_gate`) and selected/current writer PNGs into a fish-named full-resolution gallery/contact sheets with exact provenance hashes. `manifest_paths` narrows coverage to the current fresh recipe rather than unrelated historical manifests.
 - CLI: `tools/export_qc_figures.py`; source coverage and output-directory rules: `docs/qc-figure-gallery.md`.
+
+## `codeants_2pf_hcr.fresh_run_spec`
+
+- `build_fresh_run_spec`: Build a clean-pinned common native writer recipe using shared fish paths, explicit eligible planes, fresh best-Z/scale search by default (optional pinned NCC initializer copies), an optional recorded control-supersession reason passed to match-roi-to-anatomy, score-activity-bpi, assign-hcr-identity and export-canonical-tables, provisional aligned HCR inputs and a deferred midline review gate; never imports another fish's frozen products or review decisions.
+- CLI: `tools/build_fresh_single_fish_spec.py`; policy: `docs/single-fish-unattended-job.md`.
+
+## `codeants_2pf_hcr.fresh_batch`
+
+- `prepare_fresh_batch`: Construct isolated writable L765_f04 control inputs with read-only source links, pin scientific CSV/matrix baselines, and create four shared native recipes.
+- `run_fresh_batch`: Run the isolated control first, then remaining recipes sequentially only after its finishing/hash/artifact/no-op checks pass. Stop at any failure; save compact terminal batch/job reports without polling or automatic repair.
+- CLI: `tools/fresh_single_fish_batch.py` (`prepare`, `run`).
 
 ## Manual ex-vivo HCR identity review
 
@@ -503,3 +544,45 @@ Generated manually for the current extracted package surface.
 - `apps.manual_identity.create_viewer`: Optional napari/Qt fixed-mask reviewer with independent marker selection and orthogonal context; canvas scroll steps ex-vivo Z directly and Cmd+scroll zooms around the pointer.
 - `apps.cellmatcher`: Launcher (fish list, prepare, review, Finish & export, Continue pipeline); `tools/install_cellmatcher_app.sh` builds `~/Applications/cellMatcher.app`.
 - CLI: `tools/manual_hcr_identity.py` (`app`, `prepare-fish`, `prepare`, `view`, `gate`, `continue`, `recover-lock`); setup/contracts: `docs/manual-hcr-identity-gui.md`.
+# Native execution preflight
+
+- `run_preflight.preflight_native_run`: read-only staged dependency and selected input checks.
+- `run_preflight.check_geometry_trace_identity`: source-aware geometry/trace key validation.
+- `run_preflight.materialize_retained_graph`: verified graph copies for declared continuations.
+
+## Per-stimulus response scoring (2026-10-08)
+
+- `activity.ActivityConfig`: promotes bootstrap count to ≥20 expected draws per stimulus tail (16,000 at 0.99).
+- `activity.build_response_bpi_tables`: per-stimulus two-sided calls, any-side condition classes, activation-only side BPI, suppression confidence; signed pooled comparisons retained.
+- `activity._compute_bootstrap_null_quantiles`: pooled and LB/RB/LC/RC event sets; optional config supplies valid-trial extraction policy; 128-ROI chunks share float32 cumsum/AUC caches.
+- `plots.analysis.render_single_fish_50l_bpi_panel`: counts suppression-only exclusions and permits an all-suppressed population without invented BPI coordinates.
+- `activity.NEW_RESPONSE_COLUMNS`: exact annotation/export column set; `POOLED_COMPARISON_COLUMNS` lists comparison-only sources.
+- `response_trace_inspector.render_response_trace_inspector`: per-stimulus reproduction guard, suppression/mixed labels, equal-height views and top-neuron scroll sync.
+
+## Gallery curation (2026-10-13)
+
+- `qc_figure_export.select_curated_cards`: ordered stable source-role selection with complete exclusion/missing maps.
+- `qc_figure_export.export_qc_figure_gallery`: curated publication with full inventory, provenance, optional response-trace inspector and explicit presentation artifact overrides.
+- `plots.gallery.render_gallery_composite`: native PNG stacking for offline previews.
+- `render_geometry_offsets_composite`, `render_midline_review_composite`, `render_identity_coverage_composite`: notebook-owned original-resolution composites.
+- `plots.gallery.render_hcr_pair_status_planes`: every persisted functional anatomy plane with saved accepted/rejected HCR outlines.
+- `plots.gallery.hcr_status_ring_counts`, `draw_hcr_status_rings`: legacy aligned scope/status rings using only supplied HCR status rows.
+- `plots.qc_identity_functional.render_marker_traces_with_hcr_status`: unchanged Q7 trace rows/curves plus HCR-label rings.
+- `plots.qc_molecular.plot_activity_bpi_gate`: adds per-stimulus signed null/floor margins and selected tuning side; pooled panel comparison-only.
+- `plots.qc_molecular.plot_molecular_identity_qc`: labels small counts and adds inset.
+- `plots.analysis.render_single_fish_50l_gene_auc_panel`: fixed two-row median annotation band.
+- `plots.analysis.render_single_fish_50l_composite`: shared global/population AUC y-limits.
+
+- Review round 1: `plots.gallery` registration composite aligns whole row sets side by side; midline/coverage composites enlarge narrower parts only. HCR plane outlines use a two-column grid. `plot_activity_bpi_gate` consumes saved stimulus valence for colours and activation-only side counts; no binned curve. `render_marker_traces_with_hcr_status` exposes both colour legends.
+
+## Signed AUC gallery surfaces (2026-10-13)
+
+- `suite2p.build_suite2p_stimulus_locked_diagnostic`: display traces/row metadata only; retired four 50 s scalar summaries.
+- `plots.qc_functional.load_presented_stimulus_auc_qc`: read saved [23c] signed AUC/calls and fixed any-stimulus membership.
+- `plots.qc_functional.render_presented_stimulus_auc_violins`: two population rows × session columns; saved AUC/call counts. Replaces retired `render_stimulus_type_mean_dff` / `_frame` APIs.
+- `plots.qc_identity_functional.load_identity_functional_qc_bundle`: requires explicit `presented_response_path` and cross-checks ROI/session keys.
+- `plots.qc_identity_functional.build_population_response_matrix`: signed [23c] AUC input, same normalization/clustering/annotations.
+- `qc_figure_export._provenance_rows`: seven compact gates, inline key values from saved notebook HTML tables/manifests, source links and full evidence retained.
+
+- `plots.qc_registration.registration_review_product_paths`: read-only native/staged context paths for the QC writer plane summary, canonical anatomy, labels, native references/ROIs and positioned references.
+- `plots.qc_registration.render_registration_plane_review`: four-column all-plane registration review with saved method/NCC and explicit label Z; returns a Matplotlib Figure, orchestrated in QC 02 cell 13 with PNG-only display. Replaces the removed P003 PNG composite renderer.

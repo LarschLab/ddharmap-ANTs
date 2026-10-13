@@ -43,85 +43,93 @@ decay enters the null. Planned acquisition-grid onsets and logged pause
 durations are combined on one trace grid because the mapped raw-log and planned
 block offsets can differ. The Q1 timing audit retains both clocks.
 
-### Stage 1: response-state classification
+### Stage 1: per-stimulus signed response tests (approved 2026-10-08)
 
-- **Responsive**: passes the two-sided AUC null-threshold test in the positive
-  or negative direction for bout and/or continuous condition.
-- **Low activity**: extractable/high-quality trace with sufficient trials but fails both response thresholds.
-- **Response unavailable**: insufficient trials or low-quality trace policy gate, including the current `suite2p_is_cell=False` policy.
+LB, RB, LC and RC `used_for_bpi` trajectories are tested separately. Each mean
+uses valid trials (minimum `min_trials_per_class`, default 3); its per-cell null
+uses the same number of valid duration-matched trial draws. Total family alpha
+`1-response_null_q` is split over four stimuli and two tails: at 0.99 the applied
+lower/upper quantiles are **0.00125 / 0.99875**. The persisted
+`response_null_lower_quantile` / `response_null_upper_quantile` are exclusively
+these **per-stimulus family-wise** quantiles and describe `s_null_lower_auc` /
+`s_null_upper_auc` for `s` in LB/RB/LC/RC. They do not describe the pooled
+condition thresholds. Only exact `LB_trajectory`, `RB_trajectory`,
+`LC_trajectory`, `RC_trajectory` names enter these per-stimulus pools; legacy
+LLB/RLB/LLC/RLC aliases and all non-BPI types are excluded.
+Activation requires mean AUC
+≥ max(0.05, upper); suppression requires mean AUC ≤ min(-0.05, lower).
+The 12.5 s response/prestimulus windows and dF/F definition are unchanged.
+`ActivityConfig` promotes old smaller bootstrap settings to at least 20 expected
+samples per tail (16,000 at 0.99). ROI chunks of 128 share float32 cumsum/AUC caches.
 
-Response significance and response valence are separate. A significant
-positive AUC is `activated`; a significant negative AUC is `suppressed`.
-The condition-level response pass is true for either valence. Consequently,
-`response_class` continues to report which condition classes are responsive,
-while the valence fields report the sign of those responses.
+For each `s` in `lb`, `rb`, `lc`, `rc`, persist `s_mean_auc_dff`,
+`s_null_upper_auc`, `s_null_lower_auc`, `s_n_trials`, `s_response_valence`
+(`activated`, `suppressed`, `not-significant`, `unavailable`),
+`s_n_consistent_suppressed_trials`, and `s_n_prestim_elevated_trials`.
 
-`response_valence_complete=True` means both bout and continuous valence were
-assessable; false never means that suppression was measured and absent.
+`response_is_active` means any stimulus passes either tail. Condition passes
+mean any side passes. Existing `response_class` and `bpi_category` vocabulary
+remains bout-/continuous-/both-responsive, low activity, response unavailable.
+A non-passing cell is low activity only if all four stimulus tests are
+assessable; otherwise unavailable. A passing cell may have incomplete evidence.
+`response_valence_complete` means all four tests are assessable.
+Condition valence gives activation precedence, then suppression, then
+not-significant (unavailable if non-passing incomplete evidence).
+`bout_mixed_side_valence` / `cont_mixed_side_valence` flag simultaneous activation
+and suppression on opposite sides. Positive/negative pass fields both remain true
+in that case. `response_has_suppression` retains any suppressed stimulus.
 
-`response_null_quantile` is the retained total two-sided confidence level.
-With the default value 0.99, the remaining 0.01 false-positive allowance is
-split equally across both response directions: the activation gate is the
-0.995 null quantile and the suppression gate is the 0.005 null quantile.
-`response_null_upper_quantile` and `response_null_lower_quantile` persist
-those applied values explicitly. The legacy `bout_null_q99_auc` and
-`cont_null_q99_auc` fields remain comparison-only during validation;
-classification uses the explicit upper/lower threshold fields.
+`response_valence_class` values: bout-activated, continuous-activated,
+both-activated, bout-suppressed, continuous-suppressed, both-suppressed,
+bout-activated/continuous-suppressed, continuous-activated/bout-suppressed,
+low activity, response unavailable. These use condition-valence precedence;
+read mixed-side flags as well for same-condition mixed evidence.
 
-Primary fields:
+### Stage 2: activation-only side tuning
 
-- `response_is_active`
-- `response_class`
-- `response_summary_class`
-- `bout_response_pass`, `cont_response_pass`
-- `bout_positive_response_pass`, `bout_negative_response_pass`,
-  `cont_positive_response_pass`, `cont_negative_response_pass`
-- `bout_response_valence`, `cont_response_valence`,
-  `response_valence_pattern`, `response_has_suppression`,
-  `response_valence_complete`
-- trial-count and upper/lower null-threshold fields
+`bpi_left = (LB⁺-LC⁺)/(LB⁺+LC⁺)`; `bpi_right` uses RB/RC, with
+X⁺ = max(0, mean signed trial AUC). A side BPI is defined only with finite paired
+means and denominator > `denom_eps`. The side containing the strongest
+significantly activated stimulus supplies authoritative `bpi`, `denom`, and
+`bpi_side` (left/right, otherwise NaN). Ties follow LB/RB/LC/RC order, choosing
+left for equal opposite-side activation strengths. Missing paired means leave
+that selected BPI unavailable; do not switch sides to fill missing evidence.
 
-### Stage 2: BPI preference, separate from response class
+Only cells with significant activation receive bout-preferential (BPI > 0.5),
+continuous-preferential (BPI < -0.5), or non-preferential tuning. Suppression-only
+cells emit **suppressed-only**, with `bpi` NaN and `bpi_data_available=False`.
+Nonresponders emit not-responsive; incomplete nonresponders emit unavailable.
+`bpi_z` remains a legacy pooled z-response diagnostic, not activation tuning.
 
-BPI formula: `(max(0, bout_auc) - max(0, cont_auc)) / (max(0, bout_auc) + max(0, cont_auc))`,
-using session-local, baseline-subtracted mean condition AUCs. The ratio is
-unavailable when its denominator is negligible.
+Signed `mean_bout_auc_dff` / `mean_cont_auc_dff`, response magnitudes and
+`signed_condition_contrast = (bout_auc-cont_auc)/(abs(bout_auc)+abs(cont_auc))`
+remain unchanged. They are signed pooled condition summaries, not the new gates.
+`bout_null_lower_auc` / `cont_null_lower_auc` and `bout_null_upper_auc` /
+`cont_null_upper_auc` retain the **pooled comparison** thresholds at 0.005 /
+0.995 (default total confidence 0.99), respectively. Pair these condition
+thresholds only with `pooled_response_null_lower_quantile` /
+`pooled_response_null_upper_quantile`, never the unprefixed per-stimulus
+quantile metadata. `bout_null_q99_auc` / `cont_null_q99_auc` are older pooled
+0.99 upper-tail comparison quantiles, not either classification gate.
+The `s_null_*` columns alone own the per-stimulus decisions. The old AUCs, nulls,
+positive/negative/condition passes, valence, response class, rectified BPI,
+preference, availability, category, denominator and applied quantiles are copied
+to `pooled_` names (exact list in the scientific artifact contract). All
+`pooled_` fields are **comparison-only**, including legacy quantiles 0.005/0.995.
 
-The legacy `bpi` remains unchanged during validation so existing plots and
-controls remain comparable. It is intentionally rectified and therefore does
-not preserve suppression valence. The parallel signed condition contrast is:
+### Suppression confidence: annotation only, never a gate
 
-`(bout_auc - cont_auc) / (abs(bout_auc) + abs(cont_auc))`
-
-This contrast is unavailable when its denominator is negligible. Exact -1 or
-+1 values are legitimate and are not clipping: they occur when one condition
-is zero or when the condition AUCs have opposite signs. The raw
-`mean_bout_auc_dff` and `mean_cont_auc_dff` columns remain the authoritative
-values whenever the individual condition magnitudes and valences matter.
-
-- `response_class` and compatibility `bpi_category` encode which response
-  tests passed: bout, continuous, both, low activity, or unavailable.
-- `bpi_preference` is bout-preferential for BPI > 0.5, continuous-preferential
-  for BPI < -0.5, non-preferential otherwise, and not-responsive when neither
-  response test passes. Boundaries are strict; `weak-response` is retired
-  for newly scored rows.
-
-Primary fields:
-
-- `response_magnitude_auc` (mean nonnegative bout/continuous AUC; dF/F·s)
-- `response_absolute_magnitude_auc` (mean absolute signed condition AUC; dF/F·s)
-- `mean_bout_auc_dff`, `mean_cont_auc_dff` (signed condition AUCs; dF/F·s)
-- `signed_condition_contrast`, `signed_condition_contrast_denom`,
-  `signed_condition_contrast_data_available`
-- `bpi`
-- `bpi_z`
-- `denom` (sum of nonnegative condition AUCs; dF/F·s)
-- `activity_mag`
-- `bpi_data_available`
-- `bpi_preference`
-- `bpi_category`
-- `bpi_zero_band`
-- `bpi_activity_threshold`
+`quiet_level_dff` is the median over the union of all presented-trial prestimulus
+pause frames on that plane (including non-BPI trials). B0 and poststimulus decay
+are excluded. `quiet_spread_dff` = 1.4826 × median absolute deviation.
+For each stimulus, a consistent suppression trial has signed trial AUC < 0
+and response-window mean dF/F < quiet. An elevated prestimulus trial has its
+12.5 s prestimulus mean > quiet + 2 × spread. `suppression_confidence` is high
+if every significantly suppressed stimulus has ≥ 3 consistent trials (the usual
+four repetitions); low otherwise; NaN without suppression. The elevated-trial
+count is contextual and never vetoes a call or confidence label. The inspector
+renders high as “highly probable suppression”. Danin will review this definition
+with Johannes; it is not a significance test.
 
 ## Threshold ownership
 
@@ -150,3 +158,9 @@ This palette is expected to stay synchronized across `[50ia]`, `[50j]`, and `[50
 - Activity wording and response-state meaning: this file is authoritative.
 - Output ownership and canonical table choice: defer to `canonical-tables.md`.
 - If code conflicts with policy docs, follow policy docs unless they are clearly outdated.
+
+## Single-fish display summaries retired (Danin, 2026-10-13)
+
+The [23b] 50 s appearance-aligned display window can include pauses and the next pseudo-random trial. `mean_z_pre`, `mean_z_post`, `mean_dff_post`, and `peak_z_post` are removed from single-fish trace rows and `suite2p_stimulus_locked_summary_23b.csv`; these are not valid stimulus measurements. Display `mean_trace` / `mean_dff_trace` windows remain unchanged. No [23c] calls, scoring windows, nulls or 0.05 AUC floor change.
+
+For P014 and P018, use only persisted [23c] `mean_auc_dff` from `suite2p_presented_stimulus_response_23c.csv`: the 12.5 s motion-window mean signed trial AUC, minus its matched true prestimulus pause. P014's second row uses the fixed any-presented-stimulus cohort, not each stimulus's own responder subset, and explicitly states that selection by the same responses makes it descriptive. P018 retains within-ROI normalization and clustering with signed AUC inputs. Cohort 50 s z-summary scalars remain open separate cohort work.

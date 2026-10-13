@@ -13,6 +13,9 @@
   - whole-population activity/BPI views after `[50ia]`
   - default figure filtering semantics unless a figure is explicitly HCR-centric
 - One row per functional ROI (`plane_idx`, `func_label`).
+- `plane_idx` is the original acquisition-plane index, not the position in a
+  selected reference list. R2-only planes 5–9 retain those keys. Array/list
+  positions remain internal; scoring verifies the matching Suite2p source path.
 - Includes all segmented ROIs (including `suite2p_is_cell=False`).
 - Carries geometry match status, identity annotation, and post-`[50ia]` response/BPI fields.
 - This is the default source for whole-population analyses and figure filtering.
@@ -117,3 +120,9 @@ Representative column groups:
 ## Manual ex-vivo identity source (2026-10-06)
 
 `assign-hcr-identity --identity-source manual_exvivo` consumes a manual aligned bundle (`structural/ex_vivo/manual_identity/<dataset>/exports/<rev>/aligned`) with the HCR file contract: per-gene `*_cp_masks_in_2p_{labels_uint16.tif,matches,final_pairs,review}.csv`, `*_warp_meta.json`, and `hcr_label_metrics.csv`. All seven assign outputs keep their names and schemas; in HCR-centric tables `conf_label` is the ex-vivo Cellpose mask ID and `conf_mask` points at the manual aligned labels. The manual identity gate first writes only the two ROI-centric tables plus a `warn` manifest (`identity_gate=awaiting_continuation`); continuation must reproduce them byte for byte. The persisted assign manifest's `identity_source` disables HCR-route control parity in assign, export-canonical-tables, make-qa-report, and make-figures. Complete calls (negatives, uncertain, unassessable, issues) and the per-label audit stay in the export folder. See `docs/manual-hcr-identity-gui.md`.
+
+## Single-fish early display summary and signed responses (2026-10-13)
+
+`suite2p_stimulus_locked_summary_23b.csv` owns trace row keys, sessions, trial counts and fixed any-presented-stimulus classification; its numeric trace payload remains hash-bound to those rows. It no longer persists `mean_z_pre`, `mean_z_post`, `mean_dff_post`, or `peak_z_post`. Do not recover scalar measurements from its 50 s display traces.
+
+`suite2p_presented_stimulus_response_23c.csv` owns signed `mean_auc_dff` and per-stimulus calls for P014 and the P018 population matrix. `suite2p_any_presented_response_23c.csv` owns P014's fixed responder membership. These remain early response diagnostics and do not replace the authoritative ROI identity master or [50ia] calls. The identity-functional loader takes the presented-response path explicitly and validates ROI/session agreement with the trace payload summary.

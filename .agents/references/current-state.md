@@ -2,9 +2,51 @@
 
 **Purpose:** short status of the intentional mixed migration state.
 
-**Use this file when:** editing downstream cells that may combine ROI-centric and HCR-centric paths.
+**Use this file when:** you need where the work stands now, or you are editing downstream cells that may combine ROI-centric and HCR-centric paths.
+
+## Where we are (single-fish, updated 2026-10-12)
+
+Keep this section short and current. Dated detail belongs in `recent-changes-single-fish.md`. How to run things is in `pipeline-operations.md`.
+
+- **Scoring.** Per-stimulus response scoring (`ce9128b`) is approved:
+  - LB/RB/LC/RC tests;
+  - suppressed and mixed classes;
+  - activation-only side tuning;
+  - a `suppression_confidence` label (not a gate);
+  - pooled results kept as comparison-only `pooled_*` columns.
+- **Native fish.** L765_f02, L758_f07, L765_f05 and L765_f06 were re-scored by frozen replay (`20261008_per_stimulus_replay5`; writers up to `match-roi-to-anatomy` reused). All passed.
+- **Early-screen leak.** The replays reused `prepare-functional-reference-stacks`, so their early-screen `[23b]/[23c]` tables predate the shared 16,000-bootstrap `ActivityConfig`. The isolated L765_f04 re-score failed its audit for the same reason: 42/47 baselines identical, including all registration and geometry; 5 early-screen tables differ.
+  - Danin accepted the early-screen change (2026-10-12).
+  - Next: replay the four fish again with that writer recomputed, and rerun the f04 check expecting those five tables to change.
+- **Open review items:**
+  - f04 canonical choice (per-stimulus 375 responders versus the accepted 282);
+  - HCR 18-vs-19 review;
+  - laterality/identity release;
+  - gallery curation (Codex proposal 58 → 26 figures; F046 and F049 kept; F049 must show traces again);
+  - F004/F005 fixes;
+  - shared midline-proposal path debt.
+- **Branches.** Merge `codex/remaining-fish-readiness` → `codex/unattended-single-fish` → `codex/qc-notebooks`. `codex/manual-hcr-identity-gui` merges later; it is the cellMatcher checkout.
 
 ## Current mixed state (intentional)
+
+- Native `plan` and execution now run read-only execution-graph preflight:
+  implicit producer dependencies, hash-bound retained registration bundles,
+  selected Suite2p provenance, and source-aware score-only geometry joins.
+  Maintenance continuations declare `native_production.retained_graph`;
+  verified copies populate the new transaction graph before any writer.
+  Canonical input presence alone does not satisfy a staged-root dependency.
+
+- Subset-plane geometry exports preserve acquisition indices; selected-list
+  offsets must never become canonical ROI keys. Suite2p loading with explicit
+  references skips unselected planes. Scoring fails on source-plane mismatch
+  even when numeric ROI keys overlap. The f05 R2-only failure exposed this
+  previously hidden full-ten-plane assumption.
+
+- Fresh recipes now preflight Suite2p input identity, trace frame counts and
+  frame declarations and pin the spatial manifest. Moved legacy inputs require
+  explicit hash/fingerprint-bound reconciliation, never basename-only bypass.
+  `suite2p_provenance.py` can audit the recorded resonant raw averaging and
+  archive/correct stale acquisition-frame declarations without editing data.
 
 - ROI-centric path (`[50i]`, `[50ia]`, `[50j]`, `[50k]`) is used for authoritative whole-population outputs.
 - HCR-centric identified-cell path (`[50]`, `[50e]`, `[51]`, `[56]`, `[56h]`, `[57]`) remains active for identified-cell activity workflows.
@@ -16,6 +58,25 @@
 - Cohort notebook stages are **not** authoritative for single-fish identity/response semantics.
 
 ## Practical warnings
+
+- The 2026-10-07 fresh control stopped at artifact audit: 52/81 checks passed,
+  29 byte comparisons failed, including all ten ANTs matrices. References and
+  anatomy were byte-identical; 16/3553 anatomy assignments changed while 267
+  response calls remained. The real seed-0 repeat probe was nondeterministic;
+  seed-123 repeat matrices matched exactly. Fresh recipes now use 123 and
+  reject zero before writes. Historical zero-seed frozen products remain
+  preserved; full production is stopped pending a reviewed reproducibility
+  gate that does not demand recovery of an unrecorded historical random seed.
+
+- Fresh native recipes now use `native_production.mode=fresh`, without another
+  fish's frozen bundle. `build_fresh_single_fish_spec.py` generates the shared
+  writer DAG through canonical tables, QA and midline proposals, followed by
+  QC 00–05. L765_f05 is constrained to functional R2/planes 5–9. Existing aligned
+  HCR masks are provisional overview inputs; missing original HCR masks remain
+  deferred. This recipe does not accept midlines or release laterality/final
+  figures: successful execution and scientific review remain separate states.
+  L765_f02's current user decision is to rerun all ten registrations, superseding
+  the historical nine-plus-plane4-retry readiness plan. See unattended job docs.
 
 - On 2026-10-06 the complete L765_f04 working run and fish-local stage manifests were frozen together at `/Volumes/dataDrive/dataProcessing/2p_processing/_frozen_pipeline_runs/20261006_L765_f04_dfbc3b8`; the browsable payload is mounted read-only at `/Volumes/20261006_L765_f04_dfbc3b8`. Independent rehash verified 420 records / 760,053,426 bytes, including AppleDouble files. UDRO protection is required because the source volume is exFAT; the payload rejects writes with EROFS, while the image container remains replaceable/deletable by its owner. Source trees remained unchanged.
 - `tools/single_fish_run.py` drives the declarative 22-stage DAG; the production specification is `L765_f04/03_analysis/functional/run_specs/L765_f04.json` and saved run state is authoritative. Native production uses the existing consumer directories within the fish folder: eight verified frozen imports preserve upstream products and six downstream writers recompute scoring, identity, exports, QA, motion AUC, and figures. On exFAT, promotion uses recoverable per-file replacement with verified backups and manifest/state publication; a whole multi-file stage is not filesystem-atomic. Current canonical ROI tables contain 3,553 ROIs, 267 responsive ROIs including one suppressed responder, and 160 fixed-12.5-s BPI windows. Final QC execution and scientific review remain separate gates. The frozen HCR replay used historical August transforms from the old native comparison whereas frozen ROI geometry used September transforms; coherent native replay produces 18 responsive HCR pairs instead of 19. The causal replay exactly reproduces all seven frozen HCR tables using the historical comparison. Durable source/hash and table-difference evidence is in `L765_f04/03_analysis/functional/run_state/20261006_production/hcr_replay_transform_source_audit.json`, `frozen_native_table_comparison.json`, and `diagnostics/historical-august-hcr-replay/`. This explained HCR parity failure remains computed/unreviewed; the older 282-neuron accepted comparison remains preserved.
@@ -53,7 +114,7 @@
 - The temporal Z-drift CLI can run before a static functional reference is chosen by using `--fish-dir` instead of a functional-reference manifest. This direct source-validation mode resolves polarity from raw metadata and reuses the same exact selected-block/frame-boundary checks as reference preparation, but writes only drift diagnostic CSV/PNG/JSON artifacts and no full-session reference TIFFs.
 - Temporal Z-drift movie sampling uses explicit TIFF page reads rather than `tifffile.memmap`, avoiding `SIGBUS` failures when multi-gigabyte motion-corrected movies are read from NAS mounts.
 - Functional-to-anatomy registration now has an explicit three-stage dependency chain. `register-functional-to-anatomy` uses NCC XY placement to preinitialize deterministic ANTs rigid+affine (seed 0 by default) and persists the composed preplacement plus ANTs transform; ANTs failure fails the stage with no NCC fallback. `transform-functional-rois-to-anatomy` then applies the identical composed transform to rasterized Suite2p labels. `make-functional-registration-qc` consumes those transformed labels and the exact registration inputs to render four review PNGs plus CSV provenance; registration no longer tries to render downstream label QC before these labels exist.
-- Bounded functional-plane retries can pass `--reuse-ncc-cache-dir` to copy prior scale/best-Z caches into a fresh isolated root, avoiding a new scale sweep while still recomputing XY placement and ANTs. NRRD anatomy loading now prefers SimpleITK Z/Y/X (or pynrrd C-order fallback), and bounded in-plane comparison preserves the original plane index rather than renumbering the selected subset. The corrected L765_f02 plane-4 retry reused scale 1.167/Z=54 and improved post-NCC from 0.596 to 0.728; it remains review-gated and unpromoted.
+- Fresh native recipes search scale and best Z from the current references and no longer copy NCC caches (2026-10-07: a May L758_f07 cache built from the pre-orientation-fix reference was silently reused). When `--reuse-ncc-cache-dir` is still passed, each cached best-Z profile must reproduce from the current reference at its cached scale (same argmax, r >= 0.999) or that plane is searched afresh, and the manifest records `ncc_cache_reused`. Bounded functional-plane retries can pass `--reuse-ncc-cache-dir` to copy prior scale/best-Z caches into a fresh isolated root, avoiding a new scale sweep while still recomputing XY placement and ANTs. NRRD anatomy loading now prefers SimpleITK Z/Y/X (or pynrrd C-order fallback), and bounded in-plane comparison preserves the original plane index rather than renumbering the selected subset. The corrected L765_f02 plane-4 retry reused scale 1.167/Z=54 and improved post-NCC from 0.596 to 0.728; it remains review-gated and unpromoted.
 - Broader cross-fish evidence now includes `L765_f03` at `/tmp/codeants-preprocess-crossfish-1783591488`: `prepare-in-vivo-anatomy-stack` passed with explicit temp NRRD/JSON output and uint8 `(750, 750)` Y/X checks, `prepare-functional-reference-stacks` passed with 10 raw and 10 normalized references, stage-specific compare-staged commands exited 0, and upstream status reports both persisted manifests current. The same temp root now also validates bounded two-plane `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1` and `match-roi-to-anatomy`: registration discovered 10 references, selected 2, wrote a 2-row transform table, and matching wrote 480 geometry rows with 288 nonzero anatomy-label assignments across 215 unique nonzero labels. The writer manifests passed with zero errors/warnings. Stage-specific compare commands report warning-only missing-control checks because `L765_f03` has no accepted parity outputs in the temp-root path. The aggregate status for that temp root is overall `fail` only because unrelated downstream controls are intentionally absent.
 - `L758_f06` at `/tmp/codeants-crossfish-L758f06-1783596306` adds another independent mounted-fish validation through preprocessing, bounded registration, and ROI/anatomy matching. The temp root symlinks canonical raw/preprocessed/Suite2p inputs without writing fish outputs. `prepare-in-vivo-anatomy-stack`, `prepare-functional-reference-stacks`, `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1`, and `match-roi-to-anatomy` all passed with zero errors/warnings. Preprocessing compare-staged commands pass; registration/matching compare-staged commands are warning-only missing-control checks. Matching wrote 947 geometry rows with 443 nonzero anatomy-label assignments across 372 unique nonzero labels. Aggregate status is overall `fail` only because unrelated downstream controls are absent.
 - `L758_f07` at `/tmp/codeants-crossfish-L758f07-1783597131` adds a fourth bounded non-baseline chain. The temp root uses canonical raw/preprocessed/Suite2p inputs as symlinks and writes all generated outputs under `/tmp`. `prepare-in-vivo-anatomy-stack`, `prepare-functional-reference-stacks`, `register-functional-to-anatomy --reference-plane-index 0 --reference-plane-index 1`, and `match-roi-to-anatomy` all passed with zero errors/warnings. Preprocessing compare-staged commands pass; registration/matching compare-staged commands are warning-only missing-control checks. Matching wrote 1,064 geometry rows with 498 nonzero anatomy-label assignments across 377 unique nonzero labels. Aggregate status is overall `fail` only because unrelated downstream controls are absent.
@@ -120,3 +181,19 @@ performance was implemented on `codex/cellmatcher-scroll-performance` and
 merged only after three clean real-fish paired trials showed 40.7–45.6% shorter
 scroll time (median 14.378 → 8.211 s for 30 steps). See
 `docs/cellmatcher-scroll-performance.md` for the method and limitations.
+
+## F049 staged trace restoration (2026-10-12)
+
+The package-owned `make-figures` [56h] output now shows per-gene individual stimulus-locked dF/F traces and an equal-cell mean in contra/ipsi × bout/continuous grids, alongside HCR status donuts. It requires `[56i]` points and `motion_auc_roi_panels.csv`, canonical response/BPI cells and HCR status, the persisted scorer-window table, and Suite2p fluorescence. Plotting remains owned by `plots.analysis`; notebook [56h] legacy payloads are not inputs. The filename is unchanged; regenerate make-figures to replace historical AUC-bar PNGs. See `figure-rules.md` for the approved population, baseline, and suppressed-only display semantics.
+
+## Curated QC gallery (2026-10-13)
+
+Danin's gallery decisions are implemented in the exporter and package plots, with QC notebook orchestration. The complete extraction inventory remains accessible. Older executed notebook copies lack the new composite/P008/P019 surfaces: the curated exporter reports missing cards visibly; offline presentation overrides support read-only previews. Refresh executed QC copies before using a production curated gallery. P014 is approved as signed [23c] AUC violins (round 2). Registration, scoring and identity are unchanged; four invalid [23b] scalar columns are retired.
+
+## Signed early-screen curation (2026-10-13, round 2)
+
+P014 is approved as signed [23c] AUC violins; P018 also uses independent signed AUCs. Retired single-fish [23b] 50 s scalar columns require refreshed display writer products and QC copies; existing f02 products were read only for previews and remain untouched. Response calls/windows/floor are unchanged. Cohort summary contamination remains separate open work.
+
+## P003 registration review (2026-10-13)
+
+QC 02 cell 13 now renders four columns per plane directly from persisted registration/QC inputs. Selected method-specific references include f06 plane-0 NCC-xy. Original writer PNGs and writer stages are unchanged; frozen replay review needs no writer rerun. Production notebook copies must execute the new cell to supply gallery role `nb:02:13:0`.

@@ -1,6 +1,7 @@
 """Suite2p stage helpers for notebook cells [23a], [25], and trace consumers."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import dataclass
 import hashlib
@@ -33,12 +34,12 @@ def _find_suite2p_file(plane_dir: str | Path, kind: str) -> Path | None:
         return exact
     plane_match = re.search(r"plane(\d+)", str(plane_dir.name))
     if plane_match:
-        tagged_hits = sorted(plane_dir.glob(f"*plane{int(plane_match.group(1))}_{kind}.npy"))
+        tagged_hits = sorted(visible_glob(plane_dir, f"*plane{int(plane_match.group(1))}_{kind}.npy"))
         if tagged_hits:
             return tagged_hits[0]
     hits: list[Path] = []
     for pattern in (f"*_{kind}.npy", f"*{kind}.npy"):
-        hits.extend(sorted(plane_dir.glob(pattern)))
+        hits.extend(sorted(visible_glob(plane_dir, pattern)))
     hits = sorted(set(hits))
     return hits[0] if hits else None
 
@@ -188,6 +189,7 @@ def build_suite2p_stimulus_locked_diagnostic(
     cfg = config or Suite2pStimulusLockedDiagnosticConfig()
     if not suite2p_by_ref_idx:
         raise RuntimeError("[23c] Suite2p data not loaded; run [23a] first.")
+    suite2p_by_ref_idx = _acquisition_indexed_planes(suite2p_by_ref_idx)
     plane_indices = sorted(int(plane) for plane in suite2p_by_ref_idx.keys())
     stim_cfg = StimulusConfig(
         stim_time_scale=float(cfg.stim_time_scale),
@@ -423,7 +425,6 @@ def build_suite2p_stimulus_locked_diagnostic(
                 stack = np.vstack(segs).astype(np.float32, copy=False)
                 mean_trace = np.nanmean(stack, axis=0).astype(np.float32, copy=False)
                 mean_dff_trace = np.nanmean(np.vstack(dff_segs), axis=0) if dff_segs else np.full_like(mean_trace, np.nan)
-                post_mask = tvec >= 0
                 trace_rows.append(
                     {
                         "fish_id": str(fish_id),
@@ -437,10 +438,6 @@ def build_suite2p_stimulus_locked_diagnostic(
                         "blocks_used": ", ".join(sorted({block for block in valid_trial_blocks if block})),
                         "mean_trace": mean_trace,
                         "mean_dff_trace": mean_dff_trace.astype(np.float32, copy=False),
-                        "mean_z_pre": float(np.nanmean(mean_trace[~post_mask])) if np.any(~post_mask) else np.nan,
-                        "mean_z_post": float(np.nanmean(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
-                        "mean_dff_post": float(np.nanmean(mean_dff_trace[post_mask])) if np.any(post_mask) else np.nan,
-                        "peak_z_post": float(np.nanmax(mean_trace[post_mask])) if np.any(post_mask) else np.nan,
                     }
                 )
 
@@ -510,6 +507,17 @@ def _scored_windows_to_heatmap_spans(
     return spans.drop(columns=["row_last"], errors="ignore")
 
 
+def _acquisition_indexed_planes(planes):
+    result = {}
+    for local_idx, plane in planes.items():
+        index = plane.get("plane_num")
+        index = int(index if index is not None else local_idx)
+        if index in result:
+            raise ValueError(f"Duplicate acquisition-plane identity: {index}")
+        result[index] = plane
+    return result
+
+
 def run_suite2p_stimulus_locked_diagnostic_stage(
     *,
     fish_dir: str | Path,
@@ -523,6 +531,7 @@ def run_suite2p_stimulus_locked_diagnostic_stage(
     activity_config: Any | None = None,
 ) -> dict[str, Any]:
     cfg = config or Suite2pStimulusLockedDiagnosticConfig()
+    suite2p_by_ref_idx = _acquisition_indexed_planes(suite2p_by_ref_idx)
     result = build_suite2p_stimulus_locked_diagnostic(
         fish_dir=fish_dir,
         fish_id=fish_id,
@@ -816,7 +825,7 @@ def load_suite2p_stage(
             f"(effective {orient_effective}, polarity={polarity}, source={polarity_source})"
         )
 
-    plane_dirs = [path for path in resolved_root.glob(cfg.plane_glob) if path.is_dir()]
+    plane_dirs = [path for path in visible_glob(resolved_root, cfg.plane_glob) if path.is_dir()]
     plane_dirs = sorted(
         plane_dirs,
         key=lambda path: (_plane_num_from_name(path.name) if _plane_num_from_name(path.name) is not None else path.name),
@@ -855,6 +864,8 @@ def load_suite2p_stage(
 
     for pd_idx, plane_dir in enumerate(plane_dirs):
         plane_num = _plane_num_from_name(plane_dir.name)
+        if plane_ref_map and plane_num not in plane_ref_map:
+            continue
         ref_idx = plane_ref_map.get(plane_num)
         if ref_idx is None and pd_idx < len(plane_refs):
             ref_idx = pd_idx
@@ -902,7 +913,9 @@ def load_suite2p_stage(
                             data_paths = [data_paths]
                         if data_paths:
                             candidate = Path(str(data_paths[0])) / candidate
-                    ops_inputs.add(candidate.resolve())
+                    from .suite2p_provenance import resolve_reconciled_suite2p_input
+                    ops_inputs.add(resolve_reconciled_suite2p_input(
+                        candidate, ops_path=paths["ops"], manifest=manifest))
             if not ops_inputs or not ops_inputs.issubset(declared_plane_paths):
                 raise ValueError(
                     "Suite2P outputs are stale or lack declared input provenance: "

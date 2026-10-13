@@ -359,6 +359,9 @@ class Suite2pStimulusDiagnosticTests(unittest.TestCase):
             self.assertTrue(fig.axes)
             plt.close(fig)
             summary_path = root / "qa" / "suite2p_stimulus_locked_summary_23b.csv"
+            summary = pd.read_csv(summary_path)
+            self.assertTrue({"mean_z_pre", "mean_z_post", "mean_dff_post", "peak_z_post"}.isdisjoint(summary))
+            self.assertTrue({"mean_z_pre", "mean_z_post", "mean_dff_post", "peak_z_post"}.isdisjoint(result["trace_df"]))
             summary_path.write_text(summary_path.read_text() + "\n")
             with self.assertRaisesRegex(RuntimeError, "different runs"):
                 load_early_response_trace_qc(fish_id=fish_id, diagnostic_root=root / "qa")

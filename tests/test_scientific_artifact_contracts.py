@@ -71,3 +71,16 @@ def test_whole_population_contracts_keep_roi_master_authority() -> None:
 def test_figure_rules_point_to_machine_readable_contracts() -> None:
     source = (REPO_ROOT / ".agents" / "references" / "figure-rules.md").read_text()
     assert ".agents/contracts/scientific-artifacts.json" in source
+
+
+def test_per_stimulus_runtime_contract_preserves_signed_comparisons() -> None:
+    from codeants_2pf_hcr.activity import ActivityConfig, NEW_RESPONSE_COLUMNS, POOLED_COMPARISON_COLUMNS
+    expected = {f"{stim}_{suffix}" for stim in ("lb", "rb", "lc", "rc") for suffix in (
+        "mean_auc_dff", "null_upper_auc", "null_lower_auc", "n_trials", "response_valence",
+        "n_consistent_suppressed_trials", "n_prestim_elevated_trials")}
+    assert expected <= set(NEW_RESPONSE_COLUMNS)
+    assert {"bpi_left", "bpi_right", "bpi_side", "response_valence_class", "suppression_confidence"} <= set(NEW_RESPONSE_COLUMNS)
+    assert {"mean_bout_auc_dff", "mean_cont_auc_dff", "bpi", "bpi_preference", "response_class"} <= set(POOLED_COMPARISON_COLUMNS)
+    assert {f"pooled_{col}" for col in POOLED_COMPARISON_COLUMNS} <= set(NEW_RESPONSE_COLUMNS)
+    cfg = ActivityConfig()
+    assert cfg.response_null_bootstrap_n * ((1-cfg.response_null_q)/8) >= 20-1e-9

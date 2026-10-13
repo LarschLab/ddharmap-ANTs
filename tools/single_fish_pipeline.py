@@ -169,6 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit staged HCR/anatomy aligned artifact root. Defaults to pipeline_root/register-hcr-to-anatomy/confocal/aligned.",
     )
+    assign_writer.add_argument("--supersede-accepted-control-reason", help="Record why a deliberate upstream correction supersedes the existing fish-local controls; content drift then warns instead of failing.")
     assign_writer.add_argument("--force-recompute", action="store_true")
 
     score_writer = subparsers.add_parser(
@@ -181,6 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit frozen ROI/anatomy geometry CSV. Defaults to staged match-roi-to-anatomy output.",
     )
+    score_writer.add_argument("--supersede-accepted-control-reason", help="Record why a deliberate upstream correction supersedes the existing fish-local controls; content drift then warns instead of failing.")
     score_writer.add_argument("--force-recompute", action="store_true")
 
     export_canonical = subparsers.add_parser(
@@ -198,6 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="Explicit HCR/identity registration CSV root. Defaults to staged assign-hcr-identity output root.",
     )
+    export_canonical.add_argument("--supersede-accepted-control-reason", help="Record why a deliberate upstream correction supersedes the existing fish-local controls; content drift then warns instead of failing.")
     export_canonical.add_argument("--force-recompute", action="store_true")
 
     make_qa_report = subparsers.add_parser(
@@ -380,6 +383,10 @@ def build_parser() -> argparse.ArgumentParser:
     match_roi.add_argument("--anatomy-label-z-mode", choices=("auto", "direct", "reverse"), default="auto")
     match_roi.add_argument("--output-root", type=Path)
     match_roi.add_argument("--suite2p-stat-xy-frame")
+    match_roi.add_argument(
+        "--supersede-accepted-control-reason",
+        help="Record why a deliberate upstream correction supersedes the existing fish-local ROI/anatomy control; label drift then warns instead of failing.",
+    )
     match_roi.add_argument("--force-recompute", action="store_true")
 
     prepare_ex_vivo = subparsers.add_parser(
@@ -575,6 +582,7 @@ def main(argv: list[str] | None = None) -> int:
             hcr_anatomy_root=args.hcr_anatomy_root,
             identity_source=args.identity_source,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -594,6 +602,7 @@ def main(argv: list[str] | None = None) -> int:
             config,
             geometry_input_path=args.geometry_input_path,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -614,6 +623,7 @@ def main(argv: list[str] | None = None) -> int:
             score_input_root=args.score_input_root,
             hcr_input_root=args.hcr_input_root,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))
@@ -838,6 +848,7 @@ def main(argv: list[str] | None = None) -> int:
             output_root=args.output_root,
             suite2p_stat_xy_frame=args.suite2p_stat_xy_frame,
             force_recompute=args.force_recompute,
+            supersede_accepted_control_reason=args.supersede_accepted_control_reason,
         )
         if args.write_manifest:
             write_stage_manifest(manifest, resolve_pipeline_paths(config))

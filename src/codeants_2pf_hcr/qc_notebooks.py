@@ -5,6 +5,7 @@ Scientific decisions are recorded by the agent in wikiLogbook.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_rglob, is_visible_path
 
 from dataclasses import dataclass
 import json
@@ -158,7 +159,7 @@ def resolve_qc_notebook_context(config: QCNotebookConfig) -> QCNotebookContext:
     root_manifests: list[Path] = []
     if pipeline_root.is_dir() and not native:
         root_manifests = sorted(
-            path for path in pipeline_root.rglob("*manifest.json") if path.is_file()
+            path for path in visible_rglob(pipeline_root, "*manifest.json") if path.is_file()
         )
     for manifest_path in root_manifests:
         payload = _read_json_object(manifest_path)
@@ -257,8 +258,8 @@ def build_qc_stage_inventory(context: QCNotebookContext) -> pd.DataFrame:
                     "required": False,
                     "label": path.name,
                 }
-                for path in sorted(stage_root.rglob("*"))
-                if path.is_file() and not path.name.startswith("._") and path.name != ".DS_Store"
+                for path in sorted(visible_rglob(stage_root, "*"))
+                if path.is_file() and is_visible_path(path) and path.name != ".DS_Store"
             ]
         required = [record for record in artifacts if record["required"]]
         rows.append(

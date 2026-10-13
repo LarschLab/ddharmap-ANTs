@@ -1,6 +1,7 @@
 """Time-resolved NCC diagnostic for within-session functional Z drift."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_iterdir
 
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -481,7 +482,7 @@ def run_functional_z_drift_diagnostic(
     fish_root = Path(fish_dir) if fish_dir not in (None, "", False) else None
     scale_path = Path(scale_cache_path)
     out_dir = Path(output_dir)
-    if out_dir.exists() and any(out_dir.iterdir()):
+    if out_dir.exists() and any(visible_iterdir(out_dir)):
         raise FileExistsError(f"Output directory is not empty: {out_dir}")
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -1,6 +1,7 @@
 """Helpers to organize analysis outputs into a stable folder layout."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 import shutil
 from dataclasses import dataclass
@@ -65,7 +66,7 @@ def organize(
     for source_dir in _source_candidates(analysis_path):
         if not source_dir.exists():
             continue
-        for src in sorted(source_dir.glob("*")):
+        for src in sorted(visible_glob(source_dir, "*")):
             if not src.is_file():
                 continue
             dst = _target_for_name(functional_dir, src.name)

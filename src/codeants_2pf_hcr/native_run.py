@@ -1,4 +1,5 @@
 """Validated native-file promotion; scientific stages keep their own writers."""
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -58,7 +59,7 @@ def rollback_promotion(journal: Path) -> None:
     """Recover exact prior files after an interrupted uncommitted stage."""
     from .single_fish_run import _file_hash, _write_json_atomic
     if (journal / "rollback.json").exists(): return
-    for path in sorted(journal.glob("intent-*.json"), reverse=True):
+    for path in sorted(visible_glob(journal, "intent-*.json"), reverse=True):
         intent = json.loads(path.read_text()); target = Path(intent["destination"]); backup = Path(intent["backup"])
         actual = _file_hash(target) if target.exists() else None
         if actual == intent["old_sha256"]: continue
@@ -70,7 +71,7 @@ def rollback_promotion(journal: Path) -> None:
             restored.replace(target)
         else:
             target.replace(journal / (path.stem + "-uncommitted-new"))
-    for backup in journal.glob("previous*manifest.json"):
+    for backup in visible_glob(journal, "previous*manifest.json"):
         previous = json.loads(backup.read_text()); target = Path(previous["path"])
         if previous["payload"] is not None: _write_json_atomic(target, previous["payload"])
         elif target.exists(): target.replace(journal / (backup.stem + "-uncommitted.json"))
@@ -102,8 +103,8 @@ def _rebind(text: str, roots: list[str], fish: Path) -> str:
 
 
 def _relocate_tree(stage_root: Path, roots: list[str], fish: Path) -> None:
-    for path in stage_root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in {".json", ".csv", ".md", ".html", ".txt"} and not path.name.startswith("._"):
+    for path in visible_rglob(stage_root, "*"):
+        if path.is_file() and path.suffix.lower() in {".json", ".csv", ".md", ".html", ".txt"} and is_visible_path(path):
             original = path.read_text()
             relocated = _rebind(original, roots, fish)
             if relocated != original:
@@ -175,8 +176,14 @@ def _native_proposal_manifest(frozen_manifest: Path, frozen: Path, roots: list[s
     return native
 
 
-def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_override: str | None = None) -> None:
-    """Check current immutable raw inputs against the archived writer inventory."""
+def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_override: str | None = None,
+                         run_promoted: frozenset[str] = frozenset()) -> None:
+    """Check current immutable raw inputs against the archived writer inventory.
+
+    Paths promoted by earlier stages of this same run (products and stage
+    manifests) are skipped: the runner already tracks those dependencies, and
+    re-promotion legitimately refreshes their timestamps.
+    """
     aligned = fish / "03_analysis/confocal/aligned"
     if aligned_override is not None:
         # This one accepted-source override imports the frozen aligned bundle,
@@ -184,16 +191,21 @@ def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_ov
         # Existing accepted masks must still agree byte-for-byte.
         from .single_fish_run import _file_hash
         override = Path(aligned_override)
-        labels = list(override.glob("*_cp_masks_in_2p_labels_uint16.tif"))
+        labels = list(visible_glob(override, "*_cp_masks_in_2p_labels_uint16.tif"))
         if not labels: raise RuntimeError("Accepted frozen aligned override has no labels")
         for source in labels:
             current = aligned / source.name
             if current.exists() and _file_hash(current) != _file_hash(source):
                 raise RuntimeError(f"Accepted native HCR label differs from frozen source: {current}")
+    # A reused stage that rewrites a file in place (input and output) gets it back from the
+    # hash-verified frozen copy on promotion, so its current timestamp is irrelevant.
+    owned = {str(record.get("path")) for record in manifest.get("outputs", []) if isinstance(record, dict)}
     for old in manifest.get("inputs", []):
         path = Path(old["path"])
         if aligned_override is not None and path == aligned: continue
+        if str(path) in owned: continue
         if not path.is_relative_to(fish) or str(path).startswith(original_root): continue
+        if str(path) in run_promoted: continue
         if old.get("kind") not in {"file", "glob"}: continue
         current = _refresh_records([old])[0]
         if old.get("required") and not current["exists"]: raise RuntimeError(f"Frozen input no longer exists: {path}")
@@ -214,23 +226,48 @@ def execute_native_run(spec, *, resume: bool):
         raise RuntimeError("Production environment does not match the pinned specification")
     fish = spec.data_root / spec.fish_id
     policy = spec.raw["native_production"]
-    frozen = Path(policy["frozen_root"])
-    source_root = policy["original_root"]
+    mode = policy.get("mode", "frozen_replay")
+    if mode not in {"fresh", "frozen_replay"}:
+        raise ValueError(f"Unknown native production mode: {mode}")
+    if mode == "fresh" and policy.get("reuse_stages"):
+        raise ValueError("Fresh native runs cannot reuse frozen writer stages")
+    if mode == "fresh" and spec.pipeline_root != fish:
+        raise ValueError("Fresh native production pipeline_root must be the fish folder")
+    if mode == "fresh":
+        for declared in spec.stages:
+            if len(declared.command) > 2 and declared.command[2] == "register-functional-to-anatomy":
+                flag = "--ants-deterministic-seed"
+                if flag not in declared.command or int(declared.command[declared.command.index(flag) + 1]) <= 0:
+                    raise ValueError("Fresh ANTs registration requires an explicit positive fixed seed; zero uses default random seeding")
+    frozen = Path(policy["frozen_root"]) if mode == "frozen_replay" else None
+    source_root = policy.get("original_root") if frozen is not None else None
     graph = spec.state_root / "transaction_graph"
+    if mode == "fresh":
+        from .run_preflight import preflight_native_run, materialize_retained_graph
+        preflight = preflight_native_run(spec)
+        if not preflight["ok"]:
+            raise RuntimeError("Execution preflight failed: " + "; ".join(preflight["errors"]))
+        materialize_retained_graph(spec)
     graph.mkdir(parents=True, exist_ok=True)
-    for journal in (spec.state_root / "history").glob("*"):
-        if journal.is_dir() and list(journal.glob("intent-*.json")) and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():
+    for journal in visible_glob(spec.state_root / "history", "*"):
+        if journal.is_dir() and list(visible_glob(journal, "intent-*.json")) and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():
             rollback_promotion(journal)
             backup = journal / "previous_manifest.json"
             if backup.exists():
                 previous = json.loads(backup.read_text())
                 if previous["payload"] is not None: _write_json_atomic(Path(previous["path"]), previous["payload"])
     # Accepted proposal is an immutable input, outside the writer DAG.
-    proposal = frozen / "make-anatomy-midline-proposal"
-    if not (graph / proposal.name).exists():
+    proposal = frozen / "make-anatomy-midline-proposal" if frozen is not None else None
+    if proposal is not None and not (graph / proposal.name).exists():
         shutil.copytree(proposal, graph / proposal.name)
-    _write_json_atomic(fish / "03_analysis/functional/pipeline_manifests/native_layout.json", {"fish_id": spec.fish_id, "pipeline_root": str(fish), "layout": "existing-fish-tree-v1"})
+    layout_path = fish / "03_analysis/functional/pipeline_manifests/native_layout.json"
+    layout = {"fish_id": spec.fish_id, "pipeline_root": str(fish), "layout": "existing-fish-tree-v1"}
+    if not layout_path.exists():
+        _write_json_atomic(layout_path, layout)
+    elif json.loads(layout_path.read_text()) != layout:
+        raise RuntimeError("Existing native layout disagrees with the run specification")
     results = []
+    run_promoted: set[str] = set()
     for stage in spec.stages:
         current, _ = _stage_current(spec, stage, environment)
         if resume and current:
@@ -244,7 +281,7 @@ def execute_native_run(spec, *, resume: bool):
         started = _utc_now()
         output_dir = graph / writer
         log = spec.state_root / "logs" / (stage.name + ".log")
-        imported = writer in policy["reuse_stages"]
+        imported = writer in policy.get("reuse_stages", ())
         _write_json_atomic(spec.state_root / "current_stage.json", {"stage": stage.name, "started_at": started, "state": "running"})
         actual_command = None
         if imported:
@@ -257,8 +294,8 @@ def execute_native_run(spec, *, resume: bool):
                     archived = spec.state_root / "history" / ("graph-" + stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
                     archived.parent.mkdir(parents=True, exist_ok=True);output_dir.replace(archived)
                 shutil.copytree(frozen / writer, output_dir)
-                for original in (frozen / writer).rglob("*"):
-                    if original.is_file() and not original.name.startswith("._"):
+                for original in visible_rglob(frozen / writer, "*"):
+                    if original.is_file() and is_visible_path(original):
                         copied = output_dir / original.relative_to(frozen / writer)
                         if _file_hash(original) != _file_hash(copied): raise RuntimeError("Frozen reuse hash mismatch")
             manifest = json.loads((Path(policy["frozen_manifests"]) / (writer + "_manifest.json")).read_text())
@@ -268,14 +305,21 @@ def execute_native_run(spec, *, resume: bool):
                 if writer != "register-hcr-to-anatomy" or Path(override) != expected or override not in stage.inputs:
                     raise RuntimeError("Undeclared accepted aligned-source override")
                 manifest["accepted_source_override"] = {"path": override, "reason": "frozen accepted labels and generated matching tables; archived source matching glob was absent", "original_source_inputs": manifest.get("inputs", [])}
-            _verify_reuse_inputs(manifest, fish, source_root, aligned_override=override)
+            _verify_reuse_inputs(manifest, fish, source_root, aligned_override=override, run_promoted=frozenset(run_promoted))
             # Reuse is a separate recorded action, never presented as recompute.
             manifest["reused_from"] = {"root": str(frozen), "writer_generated_at": manifest["generated_at"], "scientific_commit": policy["scientific_commit"]}
             log.parent.mkdir(parents=True, exist_ok=True); log.write_text("Reused verified frozen writer products; no scientific recomputation.\n")
         else:
+            if mode == "fresh" and output_dir.exists():
+                archived = spec.state_root / "history" / ("graph-" + stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
+                archived.parent.mkdir(parents=True, exist_ok=True)
+                output_dir.replace(archived)
             command = list(stage.command)
             command[command.index("--pipeline-root") + 1] = str(graph)
             command = [item for item in command if item != "--write-manifest"]
+            if writer == "prepare-in-vivo-anatomy-stack" and "--output-path" in command:
+                index = command.index("--output-path") + 1
+                command[index] = str(output_dir / Path(command[index]).name)
             actual_command = command
             if "--accepted-midline-path" in command:
                 # Read the previously committed native accepted artifact.
@@ -294,9 +338,11 @@ def execute_native_run(spec, *, resume: bool):
         if manifest.get("fish_id") != spec.fish_id or manifest.get("status") not in {"pass", "warn"} or manifest.get("errors") or manifest.get("dry_run") is not False or any(c.get("status") == "fail" for c in manifest.get("checks", ())):
             raise RuntimeError(f"Writer/reuse manifest validation failed: {writer}")
         # Bind paths by individual product prefixes, preserving explicit history.
-        roots = [str(graph), source_root, str(frozen)]
+        roots = [str(graph)] + ([source_root, str(frozen)] if frozen is not None else [])
         _relocate_tree(output_dir, roots, fish)
-        if writer == "materialize-anatomy-midline":
+        # Reviewed-midline relocation applies only when the accepted midline itself is reused; a
+        # recomputed materialization verifies its logbook decision against the regenerated proposal.
+        if writer == "materialize-anatomy-midline" and frozen is not None and imported:
             _relocate_accepted_midline(output_dir / "anatomy_midline.json", frozen, roots, fish)
         if writer == "make-qa-report":
             from .pipeline import _write_qa_report_pdf
@@ -314,9 +360,9 @@ def execute_native_run(spec, *, resume: bool):
                 parameters["anatomy_label_z_mode"] = value
             elif observed != value:
                 raise RuntimeError(f"Scientific parameter mismatch {writer}: {key}: {observed} != {value}")
-        products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in output_dir.rglob("*") if p.is_file() and not p.name.startswith("._")}
-        if writer == "materialize-anatomy-midline":
-            products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in proposal.rglob("*") if p.is_file() and not p.name.startswith("._")})
+        products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in visible_rglob(output_dir, "*") if p.is_file() and is_visible_path(p)}
+        if writer == "materialize-anatomy-midline" and proposal is not None and imported:
+            products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in visible_rglob(proposal, "*") if p.is_file() and is_visible_path(p)})
         validate_native_inputs(stage.inputs, products.values())
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
         promote_files(fish, products, journal, manifest_path=Path(stage.manifest))
@@ -336,7 +382,7 @@ def execute_native_run(spec, *, resume: bool):
                 if _run_command(validator, cwd=spec.repo_root, env=env, log_path=spec.state_root / "logs" / f"{stage.name}.validator-{index}.log"):
                     rollback_promotion(journal)
                     raise RuntimeError(f"Native stage validator failed: {stage.name}")
-            if writer == "materialize-anatomy-midline":
+            if writer == "materialize-anatomy-midline" and frozen is not None and imported:
                 proposal_manifest = fish / "03_analysis/functional/pipeline_manifests/make-anatomy-midline-proposal_manifest.json"
                 _write_json_atomic(journal / "previous_proposal_manifest.json", {"path": str(proposal_manifest), "payload": json.loads(proposal_manifest.read_text()) if proposal_manifest.exists() else None})
                 proposal_record = _native_proposal_manifest(Path(policy["frozen_manifests"]) / proposal_manifest.name, frozen, roots, fish)
@@ -344,8 +390,10 @@ def execute_native_run(spec, *, resume: bool):
             _write_json_atomic(Path(stage.manifest), manifest)
             state = {"schema_version": 1, "fish_id": spec.fish_id, "stage": stage.name, "spec_path": str(spec.path), "spec_sha256": _spec_hash(spec), "command": list(stage.command), "git_commit": environment["git"]["actual_commit"], "scientific_code_commit": spec.git_commit, "interpreter": environment["interpreter"]["actual_executable"], "started_at": started, "finished_at": _utc_now(), "inputs": _describe_paths(stage.inputs + stage.optional_inputs), "outputs": _describe_paths(stage.outputs), "dependencies": _dependency_records(spec, stage), "exit_status": 0, "log": str(log), "action": "reuse_verified_frozen" if imported else "recompute_transaction", "validation": {"status": "pass", "checks": [{"kind": "writer_manifest_and_verified_promotion", "status": "pass"}]}}
             state["actual_command"] = actual_command;state["execution_root"] = str(graph)
+            state["promoted_products"] = _describe_paths(tuple(str(p) for p in products.values()))
             _write_json_atomic(_state_path(spec, stage), state)
             _write_json_atomic(journal / "stage_commit.json", {"stage": stage.name, "manifest": stage.manifest})
+            run_promoted.update(str(path) for path in products.values()); run_promoted.add(str(stage.manifest))
         except Exception:
             rollback_promotion(journal)
             backup = journal / "previous_manifest.json"
@@ -354,5 +402,7 @@ def execute_native_run(spec, *, resume: bool):
         results.append({"stage": stage.name, "action": state["action"], "status": "pass"})
         _write_json_atomic(spec.state_root / "current_stage.json", {"stage": stage.name, "state": "committed"})
     summary = {"fish_id": spec.fish_id, "status": "pass" if len(results) == len(spec.stages) and all(r["status"] == "pass" for r in results) else "fail", "results": results, "spec_sha256": _spec_hash(spec)}
+    if spec.raw.get("review_gate"):
+        summary["scientific_release"] = spec.raw["review_gate"]
     _write_json_atomic(spec.state_root / "run_summary.json", summary)
     return summary

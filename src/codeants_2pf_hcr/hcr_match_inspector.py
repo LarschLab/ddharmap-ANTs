@@ -1,6 +1,7 @@
 """Self-contained, read-only HCR/anatomy/functional mask review artifact."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 import base64
 import io
@@ -165,7 +166,7 @@ def render_hcr_match_inspector(
     functional_by_z: dict[int, list[tuple[int, np.ndarray]]] = defaultdict(list)
     func_dir = pipeline_root / "transform-functional-rois-to-anatomy/functional/anatomy"
     for plane, z in plane_z.items():
-        paths = sorted(func_dir.glob(f"{fish_id}_plane{plane}_*_func_mask_in_2p.tif"))
+        paths = sorted(visible_glob(func_dir, f"{fish_id}_plane{plane}_*_func_mask_in_2p.tif"))
         if len(paths) != 1:
             raise ValueError(f"Expected one transformed functional mask for plane {plane}")
         functional = tifffile.imread(paths[0])
@@ -189,7 +190,7 @@ def render_hcr_match_inspector(
         })
     anat_boxes = ndi.find_objects(anatomy)
     rows = []
-    mask_paths = sorted(aligned.glob("*_cp_masks_in_2p_labels_uint16.tif"))
+    mask_paths = sorted(visible_glob(aligned, "*_cp_masks_in_2p_labels_uint16.tif"))
     for mask_path in mask_paths:
         uid = mask_path.name.removesuffix("_cp_masks_in_2p_labels_uint16.tif")
         mask_metrics = metrics.loc[metrics.mask_uid.eq(uid)]

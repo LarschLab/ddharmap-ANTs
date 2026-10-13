@@ -1,6 +1,7 @@
 """Stimulus parsing and shared trial-window helpers for notebook cells [55]+."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import dataclass
 import json
@@ -289,7 +290,7 @@ def find_experiment_log(fish_dir: str | Path, fish_id: str, session_label: str |
     patterns = [f"*{fish_id}*experiment_log*.csv", "*experiment_log*.csv"] if fish_id else ["*experiment_log*.csv"]
     hits: list[Path] = []
     for pattern in patterns:
-        hits.extend(sorted(base.glob(pattern)))
+        hits.extend(sorted(visible_glob(base, pattern)))
     hits = _visible_csv_hits(hits)
     hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
     latest = _latest_file(hits)
@@ -300,7 +301,7 @@ def find_experiment_log(fish_dir: str | Path, fish_id: str, session_label: str |
     metadata_patterns = [f"*{fish_id}*metadata*.csv", "*metadata*.csv"] if fish_id else ["*metadata*.csv"]
     metadata_hits: list[Path] = []
     for pattern in metadata_patterns:
-        metadata_hits.extend(sorted(base.glob(pattern)))
+        metadata_hits.extend(sorted(visible_glob(base, pattern)))
     return _session_companion_log_from_metadata(_visible_csv_hits(metadata_hits), fish_id, session_label)
 
 
@@ -311,7 +312,7 @@ def find_metadata_csv(fish_dir: str | Path, fish_id: str, session_label: str | i
     patterns = [f"*{fish_id}*metadata*.csv", "*metadata*.csv"] if fish_id else ["*metadata*.csv"]
     hits: list[Path] = []
     for pattern in patterns:
-        hits.extend(sorted(base.glob(pattern)))
+        hits.extend(sorted(visible_glob(base, pattern)))
     hits = _visible_csv_hits(hits)
     hits = [path for path in hits if "experiment_log" not in path.name.lower()]
     hits = _filter_session_files(sorted(set(hits)), fish_id, session_label)
@@ -333,7 +334,7 @@ def _discover_explicit_stimulus_sessions(fish_dir: str | Path, fish_id: str) -> 
     patterns = [f"*{fish_id}*experiment_log*.csv", "*experiment_log*.csv"] if fish_id else ["*experiment_log*.csv"]
     labels: set[str] = set()
     for pattern in patterns:
-        for path in base.glob(pattern):
+        for path in visible_glob(base, pattern):
             if path.name.startswith("."):
                 continue
             label = _explicit_session_token_in_name(path, fish_id)
@@ -385,7 +386,7 @@ def _companion_path_from_log(log_path: str | Path, companion_kind: str) -> Path 
         if candidate.exists():
             return candidate
     prefix = re.sub(r"_?experiment_log$", "", stem)
-    hits = sorted(path.parent.glob(f"{prefix}*{companion_kind}*.csv"))
+    hits = sorted(visible_glob(path.parent, f"{prefix}*{companion_kind}*.csv"))
     return hits[0] if hits else None
 
 
@@ -543,9 +544,9 @@ def resolve_presented_stimulus_metadata(
 
 def discover_functional_sessions(fish_dir: str | Path, fish_id: str) -> list[dict[str, Any]]:
     preproc = Path(fish_dir) / "02_reg" / "00_preprocessing" / "2p_functional" / "01_individualPlanes"
-    candidates = sorted(preproc.glob(f"*{fish_id}*preprocessing_metadata.json")) if preproc.exists() else []
+    candidates = sorted(visible_glob(preproc, f"*{fish_id}*preprocessing_metadata.json")) if preproc.exists() else []
     if not candidates and preproc.exists():
-        candidates = sorted(preproc.glob("*preprocessing_metadata.json"))
+        candidates = sorted(visible_glob(preproc, "*preprocessing_metadata.json"))
     for path in reversed(candidates):
         try:
             payload = json.loads(path.read_text())

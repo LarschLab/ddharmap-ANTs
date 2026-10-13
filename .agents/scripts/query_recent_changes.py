@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 
 
+REPO_NAME = "codeANTs"
 LOG_NAMES = (
     "recent-changes-single-fish.md",
     "recent-changes-cohort.md",
@@ -53,8 +54,9 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
-    if args.repo.casefold() != repo_root.name.casefold():
-        parser.error(f"--repo must name {repo_root.name!r}")
+    # Accept the repository name even when the checkout folder is named differently.
+    if args.repo.casefold() not in {REPO_NAME.casefold(), repo_root.name.casefold()}:
+        parser.error(f"--repo must name {REPO_NAME!r}")
     if args.limit < 1:
         parser.error("--limit must be positive")
 

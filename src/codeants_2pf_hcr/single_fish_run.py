@@ -5,6 +5,7 @@ the existing package stages invoked through ``tools/single_fish_pipeline.py``.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_rglob
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -79,6 +80,16 @@ def _expand(value: str, variables: Mapping[str, str]) -> str:
         raise RunSpecError(f"unknown placeholder {exc.args[0]!r} in {value!r}") from exc
 
 
+def _declared_path(value: Any, variables: Mapping[str, str]) -> str:
+    """Reject accidental cwd hashing; all artifact declarations are absolute."""
+    if not isinstance(value, str) or not value.strip():
+        raise RunSpecError("artifact paths must be nonblank strings")
+    expanded = _expand(value, variables)
+    if not Path(expanded).is_absolute():
+        raise RunSpecError(f"artifact path must be absolute: {expanded!r}")
+    return expanded
+
+
 def load_run_spec(path: Path | str) -> RunSpec:
     """Load and strictly validate one JSON single-fish run specification."""
     spec_path = Path(path).expanduser().resolve()
@@ -140,13 +151,13 @@ def load_run_spec(path: Path | str) -> RunSpec:
             StageSpec(
                 name=name,
                 command=command,
-                inputs=tuple(_expand(str(value), variables) for value in record.get("inputs") or ()),
-                outputs=tuple(_expand(str(value), variables) for value in record.get("outputs") or ()),
+                inputs=tuple(_declared_path(value, variables) for value in record.get("inputs") or ()),
+                outputs=tuple(_declared_path(value, variables) for value in record.get("outputs") or ()),
                 validators=validators,
                 depends_on=dependencies,
-                manifest=_expand(record["manifest"], variables) if record.get("manifest") else None,
+                manifest=_declared_path(record["manifest"], variables) if record.get("manifest") is not None else None,
                 parameter_pins=record.get("parameter_pins") or {},
-                optional_inputs=tuple(_expand(str(value), variables) for value in record.get("optional_inputs", ())),
+                optional_inputs=tuple(_declared_path(value, variables) for value in record.get("optional_inputs", ())),
             )
         )
         names.add(name)
@@ -191,7 +202,7 @@ def load_run_spec(path: Path | str) -> RunSpec:
         provenance_pins=tuple(
             {
                 **{str(k): str(v) for k, v in pin.items()},
-                "path": _expand(str(pin.get("path", "")), variables),
+                "path": _declared_path(pin.get("path"), variables),
             }
             for pin in raw.get("provenance_pins") or ()
         ),
@@ -292,6 +303,8 @@ def _file_hash(path: Path) -> str:
 
 def describe_path(path_value: str | Path) -> dict[str, Any]:
     """Return a deterministic content record for a file, symlink, or tree."""
+    if isinstance(path_value, str) and not path_value.strip():
+        raise RunSpecError("cannot hash a blank path (it would mean the working directory)")
     path = Path(path_value)
     record: dict[str, Any] = {"path": str(path), "exists": path.exists() or path.is_symlink()}
     if path.is_symlink():
@@ -306,7 +319,7 @@ def describe_path(path_value: str | Path) -> dict[str, Any]:
     if path.is_dir():
         members: list[dict[str, Any]] = []
         total_size = 0
-        for child in sorted(path.rglob("*"), key=lambda value: value.relative_to(path).as_posix()):
+        for child in sorted(visible_rglob(path, "*"), key=lambda value: value.relative_to(path).as_posix()):
             relative = child.relative_to(path).as_posix()
             if child.is_symlink():
                 target = os.readlink(child)
@@ -373,6 +386,10 @@ def _stage_current(spec: RunSpec, stage: StageSpec, runtime: Mapping[str, Any]) 
         reasons.append("inputs changed")
     if state.get("outputs") != current_outputs:
         reasons.append("outputs changed")
+    if "promoted_products" in state:
+        owned = state["promoted_products"]
+        if owned != _describe_paths(tuple(record["path"] for record in owned)):
+            reasons.append("promoted writer products changed")
     if any(not record["exists"] for record in current_outputs):
         reasons.append("declared output missing")
     return not reasons, reasons
@@ -424,6 +441,10 @@ def build_run_plan(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
     """Build a compact, read-only execution plan."""
     environment = validate_spec_environment(spec)
     stages: list[dict[str, Any]] = []
+    if spec.raw.get("native_production", {}).get("mode") == "fresh":
+        from .run_preflight import preflight_native_run
+        environment["execution_preflight"] = preflight_native_run(spec)
+        environment["ok"] = environment["ok"] and environment["execution_preflight"]["ok"]
     for stage in spec.stages:
         current, reasons = _stage_current(spec, stage, environment)
         stages.append({
@@ -448,7 +469,7 @@ def build_run_plan(spec: RunSpec, *, resume: bool) -> dict[str, Any]:
 def _run_command(command: Sequence[str], *, cwd: Path, env: Mapping[str, str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log:
-        process = subprocess.run(command, cwd=cwd, env=dict(env), text=True, stdout=log, stderr=subprocess.STDOUT, check=False)
+        process = subprocess.run(command, cwd=cwd, env=dict(env), text=True, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, check=False)
     return int(process.returncode)
 
 
@@ -654,19 +675,31 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
         baseline = spec.raw.get("artifact_baseline", {})
         membership = sorted([[row[key] for key in ("plane_idx", "session_label", "block", "stim_idx", "stim_type")] for row in pool])
         pool_hash = _json_hash(membership)
-        check("BPI pool membership baseline", pool_hash == baseline.get("bpi_pool_sha256"), pool_hash)
+        if "bpi_pool_sha256" in baseline:
+            check("BPI pool membership baseline", pool_hash == baseline["bpi_pool_sha256"], pool_hash)
         geometry_hash = _json_hash(sorted([[row.get(key, "") for key in ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")] for row in tables["geometry"]]))
-        check("geometry baseline", geometry_hash == baseline.get("geometry_assignment_sha256"), geometry_hash)
-        if spec.raw.get("native_production"):
+        if "geometry_assignment_sha256" in baseline:
+            check("geometry baseline", geometry_hash == baseline["geometry_assignment_sha256"], geometry_hash)
+        if spec.raw.get("native_production") and spec.raw["native_production"].get("mode", "frozen_replay") == "frozen_replay":
             from .native_run import _rebind
             from .native_paths import native_product_path
             policy = spec.raw["native_production"]; frozen = Path(policy["frozen_root"])
             original = frozen / "match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv"
             actual = native_product_path(root, "match-roi-to-anatomy", "registration/functional_roi_anatomy_matches.csv")
             check("entire frozen geometry table including coordinates", actual.read_text() == _rebind(original.read_text(), [policy["original_root"]], root), str(actual))
-            transforms = list((frozen / "register-functional-to-anatomy").rglob("*.mat"))
+            transforms = list(visible_rglob(frozen / "register-functional-to-anatomy", "*.mat"))
             check("frozen ANTs transform bytes", bool(transforms) and all(_file_hash(path) == _file_hash(native_product_path(root, "register-functional-to-anatomy", path.relative_to(frozen / "register-functional-to-anatomy").as_posix())) for path in transforms), len(transforms))
         counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "activated": sum(truth(row[signed[0]]) or truth(row[signed[2]]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
+        for pin in spec.raw.get("artifact_byte_baselines", ()):
+            path = root / pin["relative_path"]
+            if not path.resolve().is_relative_to(root.resolve()):
+                raise ValueError("Artifact baseline escapes the fish root")
+            data = path.read_bytes()
+            if pin.get("normalize_fish_root"):
+                data = data.replace(str(root).encode(), b"{fish_dir}")
+                if pin.get("source_fish_root"):
+                    data = data.replace(pin["source_fish_root"].encode(), b"{fish_dir}")
+            check("control artifact bytes: " + pin["relative_path"], hashlib.sha256(data).hexdigest() == pin["sha256"], str(path))
     except (OSError, KeyError, ValueError, ZeroDivisionError, IndexError) as exc:
         check("artifact readability/schema", False, str(exc)); counts = {}
     return {"fish_id": spec.fish_id, "pipeline_root": str(root), "checks": checks,

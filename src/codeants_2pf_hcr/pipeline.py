@@ -1,6 +1,7 @@
 """Read-only staged single-fish pipeline contracts and input audits."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
 
 import csv
 from dataclasses import asdict, dataclass, replace
@@ -636,7 +637,7 @@ def describe_glob(
     label: str | None = None,
 ) -> ManifestPathRecord:
     base = Path(base_dir)
-    matches = tuple(path for path in sorted(base.glob(pattern)) if _is_real_match(path))
+    matches = tuple(path for path in sorted(visible_glob(base, pattern)) if _is_real_match(path))
     file_matches = tuple(path for path in matches if path.is_file())
     mtimes = tuple(path.stat().st_mtime for path in file_matches)
     return ManifestPathRecord(
@@ -653,8 +654,7 @@ def describe_glob(
 
 
 def _is_real_match(path: Path) -> bool:
-    ignored_names = {".DS_Store"}
-    return not any(part.startswith("._") or part in ignored_names for part in path.parts)
+    return is_visible_path(path)
 
 
 def _nonempty_artifact(path: Path) -> tuple[bool, str]:
@@ -662,7 +662,7 @@ def _nonempty_artifact(path: Path) -> tuple[bool, str]:
         size = path.stat().st_size
         return size > 0, f"file_size={size}"
     if path.is_dir():
-        count = sum(1 for child in path.rglob("*") if child.is_file() and _is_real_match(child))
+        count = sum(1 for child in visible_rglob(path, "*") if child.is_file() and _is_real_match(child))
         return count > 0, f"file_count={count}"
     return False, "missing"
 
@@ -674,7 +674,7 @@ def _nonempty_artifact_matching(path: Path, pattern: str | None) -> tuple[bool, 
         matches = path.match(pattern) and path.stat().st_size > 0 and _is_real_match(path)
         return bool(matches), f"pattern={pattern}; file_match={bool(matches)}"
     if path.is_dir():
-        matches = tuple(child for child in sorted(path.rglob(pattern)) if child.is_file() and _is_real_match(child))
+        matches = tuple(child for child in sorted(visible_rglob(path, pattern)) if child.is_file() and _is_real_match(child))
         return bool(matches), f"pattern={pattern}; file_count={len(matches)}"
     return False, f"pattern={pattern}; missing"
 
@@ -884,7 +884,7 @@ def _csv_dict_rows(path: Path) -> tuple[dict[str, str], ...] | None:
 
 
 def _real_files_matching(directory: Path, pattern: str) -> tuple[Path, ...]:
-    return tuple(path for path in sorted(directory.glob(pattern)) if path.is_file() and _is_real_match(path))
+    return tuple(path for path in sorted(visible_glob(directory, pattern)) if path.is_file() and _is_real_match(path))
 
 
 def _suite2p_plane_dirs(paths: PipelinePaths) -> tuple[Path, ...]:
@@ -892,7 +892,7 @@ def _suite2p_plane_dirs(paths: PipelinePaths) -> tuple[Path, ...]:
         return ()
     return tuple(
         path
-        for path in sorted(paths.functional_suite2p_dir.glob("plane*"))
+        for path in sorted(visible_glob(paths.functional_suite2p_dir, "plane*"))
         if path.is_dir() and _is_real_match(path)
     )
 
@@ -2582,6 +2582,52 @@ def _append_manual_identity_gate_parity_checks(
                 observed="match" if same else f"different or missing ({gate_path})",
             )
         )
+_STRICT_CONTROL_CHECK_MARKERS = ("semantic columns", "unique keys", "inputs exist")
+_SUPERSEDABLE_CONTROL_PARITY_LABELS = (
+    "assign-hcr-identity anatomy identity lookup parity",
+    "assign-hcr-identity ROI identity master parity",
+)
+
+
+def _supersede_reason(value: str | None) -> str | None:
+    reason = str(value or "").strip() or None
+    if value is not None and reason is None:
+        raise ValueError("Superseding accepted controls requires a non-empty reason")
+    return reason
+
+
+def _supersede_control_comparisons(
+    paths: PipelinePaths,
+    stage_name: str,
+    checks: tuple[StageCheckRecord, ...],
+    reason: str | None,
+) -> tuple[list[StageCheckRecord], dict[str, Any] | None]:
+    """Report content drift against superseded fish-local controls as warnings.
+
+    Used only after a deliberate upstream correction. Schema checks (columns,
+    unique keys, present inputs) stay strict; each control is hash-recorded.
+    """
+    if reason is None:
+        return list(checks), None
+    import hashlib
+
+    superseded: list[StageCheckRecord] = []
+    for check in checks:
+        if check.status == "fail" and (
+            check.label in _SUPERSEDABLE_CONTROL_PARITY_LABELS
+            or (
+                check.label.startswith("comparison")
+                and not any(marker in check.label for marker in _STRICT_CONTROL_CHECK_MARKERS)
+            )
+        ):
+            check = replace(check, status="warn", expected=f"{check.expected}; control superseded: {reason}")
+        superseded.append(check)
+    controls = [
+        {"path": str(spec.control_path), "sha256": hashlib.sha256(Path(spec.control_path).read_bytes()).hexdigest()}
+        for spec in _stage_output_specs_for_inventory(paths, stage_name)
+        if spec.control_path is not None and Path(spec.control_path).is_file()
+    ]
+    return superseded, {"reason": reason, "controls": controls}
 
 
 def _build_staged_comparison_checks(paths: PipelinePaths, stage_name: str) -> tuple[StageCheckRecord, ...]:
@@ -3426,6 +3472,19 @@ def _build_activity_detail_from_geometry(
         config=Suite2pStageConfig(verbose=False),
     )
     seed, dff_map = build_suite2p_response_seed_table(loaded["suite2p_by_ref_idx"], fish_id=fish_id)
+    if "func_source" not in geometry.columns or geometry["func_source"].isna().any():
+        raise RuntimeError("Frozen geometry requires explicit Suite2p func_source provenance")
+    sources = geometry[["plane_idx", "func_label", "func_source"]].merge(
+        seed[["plane_idx", "func_label", "func_source"]],
+        on=["plane_idx", "func_label"], how="left", validate="one_to_one",
+        suffixes=("_geometry", "_trace"),
+    )
+    wrong_source = sources["func_source_trace"].notna() & (
+        sources["func_source_geometry"].map(lambda value: str(Path(value).resolve()))
+        != sources["func_source_trace"].map(lambda value: str(Path(value).resolve()) if pd.notna(value) else None)
+    )
+    if wrong_source.any():
+        raise RuntimeError(f"Suite2p source-plane mismatch for {int(wrong_source.sum())} frozen geometry ROI rows")
     trace_columns = ["plane_idx", "func_label", "activity_class", "is_active"]
     detail = geometry.merge(seed[trace_columns], on=["plane_idx", "func_label"], how="left", validate="one_to_one")
     if detail[["activity_class", "is_active"]].isna().any(axis=None):
@@ -3508,8 +3567,8 @@ def _append_assign_identity_geometry_dependency_checks(
         for column in ("identity_label", "has_identity_assigned", "response_class", "response_summary_class", "bpi", "bpi_category", "gene")
         if column in roi_header
     )
-    hcr_label_count = len(tuple(path for path in hcr_anatomy_root.glob("*_cp_masks_in_2p_labels_uint16.tif") if _is_real_match(path)))
-    hcr_final_pair_paths = tuple(path for path in hcr_anatomy_root.glob("*_cp_masks_in_2p_final_pairs.csv") if _is_real_match(path))
+    hcr_label_count = len(tuple(path for path in visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_labels_uint16.tif") if _is_real_match(path)))
+    hcr_final_pair_paths = tuple(path for path in visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_final_pairs.csv") if _is_real_match(path))
     hcr_final_pair_rows = sum((_csv_row_count(path) or 0) for path in hcr_final_pair_paths)
     final_pair_schema_status, final_pair_schema_observed = _hcr_final_pair_schema_status(hcr_final_pair_paths)
     final_pair_acceptance_status, final_pair_acceptance_observed = _hcr_final_pair_acceptance_status(hcr_final_pair_paths)
@@ -3681,7 +3740,7 @@ def _hcr_high_quality_mask_counts_by_gene(hcr_anatomy_root: Path) -> dict[str, i
     from .matching import gene_from_mask
 
     counts: dict[str, int] = {}
-    for meta_path in sorted(hcr_anatomy_root.glob("*_cp_masks_in_2p_warp_meta.json")):
+    for meta_path in sorted(visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_warp_meta.json")):
         if not _is_real_match(meta_path):
             continue
         try:
@@ -3771,10 +3830,13 @@ def run_single_fish_assign_hcr_identity_stage(
     hcr_anatomy_root: str | Path | None = None,
     identity_source: str = "hcr",
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
     if identity_source not in IDENTITY_SOURCES:
         raise ValueError(f"Unknown identity source: {identity_source!r}")
     manual_identity = identity_source == MANUAL_EXVIVO_IDENTITY_SOURCE
+    supersede_reason = _supersede_reason(supersede_accepted_control_reason)
+    superseded_controls = None
     paths = resolve_pipeline_paths(config)
     input_root = _assign_hcr_identity_source_root(paths, source_root)
     roi_anatomy_root_path = _assign_hcr_identity_roi_anatomy_root(paths, roi_anatomy_root)
@@ -4007,6 +4069,10 @@ def run_single_fish_assign_hcr_identity_stage(
             )
         )
         checks.extend(_build_staged_comparison_checks(paths, "assign-hcr-identity"))
+        # Identity parity checks compare with the same superseded fish-local controls.
+        checks[:], superseded_controls = _supersede_control_comparisons(
+            paths, "assign-hcr-identity", tuple(checks), supersede_reason
+        )
 
     outputs = _stage_output_records(paths, "assign-hcr-identity")
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
@@ -4044,6 +4110,7 @@ def run_single_fish_assign_hcr_identity_stage(
             "force_recompute": bool(force_recompute),
             "identity_source": identity_source,
             **({"identity_gate": "continued", "conf_label_semantics": "ex-vivo Cellpose mask ID"} if manual_identity else {}),
+            "superseded_accepted_controls": superseded_controls,
             "source_policy": "functional_roi_activity_identity.csv and anatomy_identity_lookup.csv are recomputed from staged ROI/anatomy geometry and staged HCR final pairs; response fields come from the explicit or same-root score-activity-bpi ROI table; HCR activity/status/candidate exports are recomputed by label-first HCR replay; source registration CSVs are optional comparison controls",
         },
         warnings=warnings,
@@ -4099,7 +4166,7 @@ def build_single_fish_hcr_activity_replay_manifest(
     )
     final_pair_paths = tuple(
         path
-        for path in sorted(hcr_root.glob("*_cp_masks_in_2p_final_pairs.csv"))
+        for path in sorted(visible_glob(hcr_root, "*_cp_masks_in_2p_final_pairs.csv"))
         if _is_real_match(path)
     )
     inputs = (
@@ -4523,7 +4590,10 @@ def run_single_fish_score_activity_bpi_stage(
     *,
     geometry_input_path: str | Path | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    supersede_reason = _supersede_reason(supersede_accepted_control_reason)
+    superseded_controls = None
     paths = resolve_pipeline_paths(config)
     geometry_path = _score_activity_bpi_geometry_input_path(paths, geometry_input_path=geometry_input_path)
     output_specs = _stage_output_specs(paths, "score-activity-bpi")
@@ -4674,7 +4744,10 @@ def run_single_fish_score_activity_bpi_stage(
                     fps_by_plane=result.get("fps_by_plane"),
                 )
                 timing_df.to_csv(output_paths[3], index=False)
-                for comparison in _build_staged_comparison_checks(paths, "score-activity-bpi"):
+                comparisons, superseded_controls = _supersede_control_comparisons(
+                    paths, "score-activity-bpi", _build_staged_comparison_checks(paths, "score-activity-bpi"), supersede_reason
+                )
+                for comparison in comparisons:
                     if comparison.label.startswith("comparison inputs exist:") and "control=False" in comparison.observed:
                         comparison = replace(
                             comparison,
@@ -4709,6 +4782,7 @@ def run_single_fish_score_activity_bpi_stage(
             "geometry_input_path": str(geometry_path),
             "geometry_input_is_explicit": geometry_input_path not in (None, "", False),
             "force_recompute": bool(force_recompute),
+            "superseded_accepted_controls": superseded_controls,
             "uses_precomputed_scored_bpi_df": False,
             "control_outputs_are_comparison_only": True,
             "activity_config": asdict(activity_config) if activity_config is not None else None,
@@ -4765,7 +4839,10 @@ def run_single_fish_export_canonical_tables_stage(
     score_input_root: str | Path | None = None,
     hcr_input_root: str | Path | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    supersede_reason = _supersede_reason(supersede_accepted_control_reason)
+    superseded_controls = None
     paths = resolve_pipeline_paths(config)
     score_root, hcr_root = _canonical_export_source_roots(
         paths,
@@ -4802,7 +4879,10 @@ def run_single_fish_export_canonical_tables_stage(
             output_path = output_by_name[filename]
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(source_path.read_bytes())
-        checks.extend(_build_staged_comparison_checks(paths, "export-canonical-tables"))
+        comparisons, superseded_controls = _supersede_control_comparisons(
+            paths, "export-canonical-tables", _build_staged_comparison_checks(paths, "export-canonical-tables"), supersede_reason
+        )
+        checks.extend(comparisons)
 
     outputs = _stage_output_records(paths, "export-canonical-tables")
     failed_checks = tuple(f"{check.label}: {check.observed}" for check in checks if check.status == "fail")
@@ -4832,6 +4912,7 @@ def run_single_fish_export_canonical_tables_stage(
             "score_input_root_is_explicit": score_input_root not in (None, "", False),
             "hcr_input_root_is_explicit": hcr_input_root not in (None, "", False),
             "force_recompute": bool(force_recompute),
+            "superseded_accepted_controls": superseded_controls,
             "source_policy": "ROI identity master and HCR-centric CSVs from staged assign root; BPI cells/summary from staged score root unless explicit roots are supplied",
         },
         warnings=warnings,
@@ -5887,6 +5968,8 @@ def _render_package_owned_single_fish_figures(
     composite_input_root: Path,
     accepted_midline_sidecar: Path | None,
     output_dir: Path,
+    scored_windows_csv: Path,
+    suite2p_root: Path,
 ) -> None:
     from codeants_2pf_hcr.plots.analysis import render_single_fish_bpi_all_pairs_diagnostics
     from codeants_2pf_hcr.plots.analysis import render_single_fish_50l_composite
@@ -5905,7 +5988,7 @@ def _render_package_owned_single_fish_figures(
         temp_reg.mkdir(parents=True, exist_ok=True)
         for source in (master_csv, bpi_cells_csv, conf_func_csv, status_csv):
             (temp_reg / source.name).write_bytes(source.read_bytes())
-        for filename in COMPOSITE_50L_RENDER_INPUT_FILES:
+        for filename in (*COMPOSITE_50L_RENDER_INPUT_FILES, "motion_auc_roi_panels.csv"):
             source = composite_input_root / filename
             (temp_reg / source.name).write_bytes(source.read_bytes())
         render_single_fish_50l_composite(
@@ -5930,6 +6013,10 @@ def _render_package_owned_single_fish_figures(
             fish_id=fish_id,
             points_csv=temp_reg / "motion_auc_plot_points.csv",
             counts_csv=temp_reg / "motion_auc_plot_counts.csv",
+            roi_panels_csv=temp_reg / "motion_auc_roi_panels.csv",
+            response_csv=temp_reg / bpi_cells_csv.name,
+            scored_windows_csv=scored_windows_csv,
+            suite2p_root=suite2p_root,
             hcr_status_csv=temp_reg / status_csv.name,
             outdir=output_dir,
         )
@@ -5975,7 +6062,9 @@ def run_single_fish_make_figures_stage(
     figure_sources = {filename: figure_root / filename for filename in LEGACY_COPIED_FIGURE_FILES}
     inputs = (
         describe_glob(canonical_root, "*.csv", label="make-figures staged canonical CSV inputs"),
-        describe_manifest_path(scored_windows_path, required=False, label="make-figures scorer window provenance"),
+        describe_manifest_path(scored_windows_path, label="make-figures scorer window provenance"),
+        describe_manifest_path(composite_input_root / "motion_auc_roi_panels.csv", label="56h persisted ROI sides and trace quality"),
+        describe_glob(paths.functional_suite2p_dir, "plane*/*F.npy", label="56h Suite2p raw fluorescence"),
         *(
             describe_manifest_path(canonical_root / filename, label=f"make-figures canonical render input: {filename}")
             for filename in (
@@ -6034,7 +6123,7 @@ def run_single_fish_make_figures_stage(
             ))
     auc_inputs_current = True
     if staged_auc_root.is_dir():
-        auc_tables = tuple(staged_auc_root / filename for filename in COMPOSITE_50L_RENDER_INPUT_FILES)
+        auc_tables = tuple(staged_auc_root / filename for filename in (*COMPOSITE_50L_RENDER_INPUT_FILES, "motion_auc_roi_panels.csv"))
         upstream = tuple(path for path in (
             canonical_root / "functional_roi_activity_identity.csv",
             canonical_root / "hcr_activity_status.csv",
@@ -6063,6 +6152,8 @@ def run_single_fish_make_figures_stage(
             canonical_root=canonical_root,
             composite_input_root=composite_input_root,
             accepted_midline_sidecar=accepted_midline,
+            scored_windows_csv=scored_windows_path,
+            suite2p_root=paths.functional_suite2p_dir,
             output_dir=output_by_name[RENDERED_FIGURE_FILES[0]].parent,
         )
         checks.extend(_build_staged_comparison_checks(paths, "make-figures"))
@@ -6098,7 +6189,7 @@ def run_single_fish_make_figures_stage(
             "force_recompute": bool(force_recompute),
             "rendered_figures": RENDERED_FIGURE_FILES,
             "legacy_copied_figures": LEGACY_COPIED_FIGURE_FILES,
-            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, per-gene 56h stimulus/HCR status summary, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus the stage-declared 56i AUC inputs",
+            "source_policy": "package-owned renderers produce the 50l composite, BPI all-pairs diagnostic, per-gene 56h individual stimulus-locked dF/F traces and HCR status, responsive identity donut, and HCR anatomy coexpression summary from staged canonical CSVs plus stage-declared 56i AUC/ROI-side inputs, scorer windows, and Suite2p fluorescence",
         },
         warnings=warnings,
         errors=errors,
@@ -6255,7 +6346,7 @@ def _upstream_stage_has_tracking_evidence(
     if manifest_path.exists():
         return True
     stage_root = _stage_root(paths, stage_name)
-    if stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*")):
+    if stage_root.exists() and any(_is_real_match(path) for path in visible_rglob(stage_root, "*")):
         return True
     output_roots = {Path(record.path) for record in manifest.outputs if record.exists}
     return any(path.is_relative_to(paths.pipeline_root) for path in output_roots)
@@ -6305,7 +6396,7 @@ def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: Per
 
 def _stage_has_existing_outputs(paths: PipelinePaths, stage_name: str) -> bool:
     stage_root = _stage_root(paths, stage_name)
-    if stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*")):
+    if stage_root.exists() and any(_is_real_match(path) for path in visible_rglob(stage_root, "*")):
         return True
     manifest_path = _upstream_stage_manifest_path(paths, stage_name) if stage_name in UPSTREAM_STAGE_NAMES else None
     if manifest_path is not None and manifest_path.exists():
@@ -6322,7 +6413,7 @@ def _stage_has_existing_outputs(paths: PipelinePaths, stage_name: str) -> bool:
             continue
         if path.is_file() and _is_real_match(path):
             return True
-        if path.is_dir() and any(_is_real_match(child) for child in path.rglob("*")):
+        if path.is_dir() and any(_is_real_match(child) for child in visible_rglob(path, "*")):
             return True
     return False
 
@@ -6853,7 +6944,7 @@ def discover_ex_vivo_anatomy_stack(paths: PipelinePaths) -> Path:
     )
     matches: list[Path] = []
     for pattern in patterns:
-        matches.extend(path for path in sorted(paths.raw_2p_anatomy_dir.glob(pattern)) if _is_real_match(path))
+        matches.extend(path for path in sorted(visible_glob(paths.raw_2p_anatomy_dir, pattern)) if _is_real_match(path))
     unique = tuple(dict.fromkeys(matches))
     if not unique:
         raise FileNotFoundError(f"No ex vivo anatomy stack found under {paths.raw_2p_anatomy_dir}")
@@ -6893,7 +6984,7 @@ def roi_to_anatomy_match_root(paths: PipelinePaths) -> Path:
 
 def discover_functional_motion_corrected_stacks(paths: PipelinePaths) -> tuple[Path, ...]:
     motion_dir = paths.functional_preproc_dir / "02_motionCorrected"
-    matches = tuple(path for path in sorted(motion_dir.glob("*mcorrected*.tif")) if _is_real_match(path))
+    matches = tuple(path for path in sorted(visible_glob(motion_dir, "*mcorrected*.tif")) if _is_real_match(path))
     if not matches:
         raise FileNotFoundError(f"No motion-corrected functional stacks found under {motion_dir}")
     return matches
@@ -6918,7 +7009,7 @@ def discover_functional_reference_pairs(reference_dir: Path | str) -> tuple[tupl
     raw_paths = tuple(
         path
         for pattern in ("*_ref_raw.tif", "*_raw.tif")
-        for path in sorted(ref_dir.glob(pattern))
+        for path in sorted(visible_glob(ref_dir, pattern))
         if _is_real_match(path)
     )
     pairs: list[tuple[str, Path, Path]] = []
@@ -8203,6 +8294,7 @@ def run_register_functional_to_anatomy_stage(
                 else None
             ),
             "ncc_search_reused": bool(using_preprocessing_ncc_handoff),
+            "ncc_cache_reused": cache_source_dir is not None,
             "registration_backend": str(active_inplane_method),
             "run_inplane_comparison": bool(run_inplane_comparison),
             "inplane_methods": tuple(inplane_methods),
@@ -8609,8 +8701,8 @@ def run_make_functional_registration_qc_stage(
             automatic_midline,
             functional_label_paths={
                 int(re.search(r"plane(\d+)", path.name).group(1)): path
-                for path in native_dir.glob("*.tif")
-                if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+                for path in visible_glob(native_dir, "*.tif")
+                if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
             },
         )
         automatic_midline_figure.savefig(automatic_midline_png, dpi=180, bbox_inches="tight")
@@ -8624,8 +8716,8 @@ def run_make_functional_registration_qc_stage(
             anatomy_midline, anatomy_stack,
             transformed_roi_labels={
                 int(re.search(r"plane(\d+)", path.name).group(1)): path
-                for path in transformed_dir.glob("*.tif")
-                if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+                for path in visible_glob(transformed_dir, "*.tif")
+                if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
             },
         )
         anatomy_midline_figure.savefig(anatomy_midline_png, dpi=180, bbox_inches="tight")
@@ -8690,7 +8782,7 @@ def run_make_functional_registration_qc_stage(
 
 
 def _discover_hcr_aligned_stage_files(source_root: Path) -> dict[str, tuple[Path, ...]]:
-    files = tuple(path for path in sorted(source_root.glob("*")) if path.is_file() and _is_real_match(path))
+    files = tuple(path for path in sorted(visible_glob(source_root, "*")) if path.is_file() and _is_real_match(path))
     return {
         "label_tiffs": tuple(path for path in files if path.name.endswith("_cp_masks_in_2p_labels_uint16.tif")),
         "qc_tiffs": tuple(path for path in files if path.suffix.lower() in {".tif", ".tiff"} and "_cp_masks_in_2p_" in path.name),
@@ -8778,7 +8870,7 @@ def _hcr_match_results_from_staged_final_pairs(hcr_anatomy_root: Path) -> list[d
     import pandas as pd
 
     results: list[dict[str, Any]] = []
-    for final_pairs_path in sorted(hcr_anatomy_root.glob("*_cp_masks_in_2p_final_pairs.csv")):
+    for final_pairs_path in sorted(visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_final_pairs.csv")):
         if not _is_real_match(final_pairs_path):
             continue
         mask_name = final_pairs_path.name.replace("_final_pairs.csv", "_labels_uint16.tif")
@@ -8836,7 +8928,7 @@ def _hcr_channel_nrrds(directory: Path) -> tuple[Path, ...]:
         return ()
     return tuple(
         path
-        for path in sorted(directory.glob("*.nrrd"))
+        for path in sorted(visible_glob(directory, "*.nrrd"))
         if path.is_file() and _is_real_match(path) and "gcamp" not in path.name.lower()
     )
 
@@ -8844,7 +8936,7 @@ def _hcr_channel_nrrds(directory: Path) -> tuple[Path, ...]:
 def _transform_file_counts(directory: Path) -> dict[str, int]:
     if not directory.exists():
         return {"affine": 0, "warp": 0, "inverse_warp": 0}
-    files = tuple(path for path in directory.glob("*") if path.is_file() and _is_real_match(path))
+    files = tuple(path for path in visible_glob(directory, "*") if path.is_file() and _is_real_match(path))
     return {
         "affine": sum(1 for path in files if path.name.endswith("0GenericAffine.mat")),
         "warp": sum(1 for path in files if path.name.endswith("1Warp.nii.gz")),
@@ -8853,7 +8945,7 @@ def _transform_file_counts(directory: Path) -> dict[str, int]:
 
 
 def _count_real_files(directory: Path, pattern: str) -> int:
-    return len(tuple(path for path in directory.glob(pattern) if path.is_file() and _is_real_match(path)))
+    return len(tuple(path for path in visible_glob(directory, pattern) if path.is_file() and _is_real_match(path)))
 
 
 def _anatomy_zyx_spacing_from_voxel_cache(paths: PipelinePaths) -> dict[str, float]:
@@ -8897,10 +8989,10 @@ def _hcr_raw_mask_paths(paths: PipelinePaths) -> tuple[Path, ...]:
         path
         for path in sorted(
             [
-                *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tif"),
-                *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tiff"),
-                *paths.confocal_raw_cp_masks_dir.glob("*rbest*_cp_masks*.tif"),
-                *paths.confocal_raw_cp_masks_dir.glob("*rbest*_cp_masks*.tiff"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*round*_cp_masks*.tif"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*round*_cp_masks*.tiff"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*rbest*_cp_masks*.tif"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*rbest*_cp_masks*.tiff"),
             ]
         )
         if path.is_file() and _is_real_match(path)
@@ -8939,7 +9031,7 @@ def _hcr_final_pair_key_set(path: Path) -> set[tuple[str, str]]:
 
 def _hcr_final_pair_key_parity_checks(source_root: Path, output_root: Path) -> tuple[StageCheckRecord, ...]:
     checks: list[StageCheckRecord] = []
-    for output_path in sorted(output_root.glob("*_cp_masks_in_2p_final_pairs.csv")):
+    for output_path in sorted(visible_glob(output_root, "*_cp_masks_in_2p_final_pairs.csv")):
         if not _is_real_match(output_path):
             continue
         source_path = source_root / output_path.name
@@ -9182,6 +9274,17 @@ def _hcr_direct_ants_recompute_provenance(
     return provenance, tuple(checks)
 
 
+def _read_native_midline_proposals(path: Path) -> "pd.DataFrame":
+    """Read native proposals exactly as make-functional-registration-qc held them in memory.
+
+    Both writers project these lines to the same anatomy proposal path, so the
+    float parse must round-trip or the outputs differ in the last bit.
+    """
+    import pandas as pd
+
+    return pd.read_csv(path, float_precision="round_trip")
+
+
 def run_make_anatomy_midline_proposal_stage(
     config: SingleFishPipelineConfig, *, force_recompute: bool = False,
 ) -> StageManifest:
@@ -9209,12 +9312,12 @@ def run_make_anatomy_midline_proposal_stage(
         refs = load_plane_refs_summary(refs_path)
         anatomy = imread_any(anatomy_path)
         proposals = build_anatomy_midline_proposal_table(
-            refs, pd.read_csv(native_csv), anatomy_shape=tuple(anatomy.shape[-2:]),
+            refs, _read_native_midline_proposals(native_csv), anatomy_shape=tuple(anatomy.shape[-2:]),
         )
         labels = {
             int(re.search(r"plane(\d+)", path.name).group(1)): path
-            for path in (transform / "functional" / "anatomy").glob("*.tif")
-            if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+            for path in visible_glob(transform / "functional" / "anatomy", "*.tif")
+            if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
         }
         if set(labels) != set(proposals["plane_idx"].astype(int)):
             raise ValueError("Transformed ROI labels do not cover every proposed anatomy-midline plane")
@@ -9318,8 +9421,8 @@ def run_materialize_anatomy_midline_stage(
         json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         labels = {
             int(re.search(r"plane(\d+)", path.name).group(1)): path
-            for path in (functional_roi_anatomy_transform_root(paths) / "functional" / "anatomy").glob("*.tif")
-            if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+            for path in visible_glob(functional_roi_anatomy_transform_root(paths) / "functional" / "anatomy", "*.tif")
+            if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
         }
         fig = render_anatomy_midline_proposal_grid(
             proposals, imread_any(anatomy_path),
@@ -9362,7 +9465,7 @@ def run_register_hcr_to_anatomy_stage(
         source_groups = _discover_hcr_aligned_stage_files(source_root_path)
         if not source_groups["label_tiffs"] and not recompute_direct_ants:
             raise FileNotFoundError(f"HCR aligned label TIFFs are missing from {source_root_path}")
-        existing_outputs = tuple(path for path in aligned_output_root.glob("*") if path.is_file() and _is_real_match(path))
+        existing_outputs = tuple(path for path in visible_glob(aligned_output_root, "*") if path.is_file() and _is_real_match(path))
         if existing_outputs and not force_recompute:
             raise FileExistsError(
                 "register-hcr-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
@@ -9406,7 +9509,7 @@ def run_register_hcr_to_anatomy_stage(
             Path(result.output_metadata_path) for result in direct_warp_results
         )
         aligned_label_paths = tuple(sorted(
-            path for path in aligned_output_root.glob("*_cp_masks_in_2p_labels_uint16.tif")
+            path for path in visible_glob(aligned_output_root, "*_cp_masks_in_2p_labels_uint16.tif")
             if path.is_file() and _is_real_match(path)
         ))
         label_metrics_path = _build_hcr_label_metrics_csv(
@@ -9612,7 +9715,18 @@ def run_match_roi_to_anatomy_stage(
     output_root: str | Path | None = None,
     suite2p_stat_xy_frame: str | None = None,
     force_recompute: bool = False,
+    supersede_accepted_control_reason: str | None = None,
 ) -> StageManifest:
+    """Write geometry-only ROI/anatomy matches.
+
+    An existing fish-local ROI master is an accepted control: label and unique-
+    match drift beyond the regenerated-ANTs tolerance fails. A deliberate
+    upstream correction may supersede that control only with an explicit reason;
+    drift is then reported as warnings, the control hash and reason are recorded,
+    and ROI key parity remains strict.
+    """
+    import hashlib
+
     import numpy as np
     import pandas as pd
 
@@ -9628,6 +9742,10 @@ def run_match_roi_to_anatomy_stage(
     from .spatial import imread_any
     from .suite2p import Suite2pStageConfig, load_suite2p_stage
 
+    supersede_reason = str(supersede_accepted_control_reason or "").strip() or None
+    if supersede_accepted_control_reason is not None and supersede_reason is None:
+        raise ValueError("Superseding the accepted ROI/anatomy control requires a non-empty reason")
+    superseded_control = None
     paths = resolve_pipeline_paths(config)
     stage_root = Path(output_root) if output_root not in (None, "", False) else roi_to_anatomy_match_root(paths)
     registration_dir = stage_root / "registration"
@@ -9824,6 +9942,12 @@ def run_match_roi_to_anatomy_stage(
             accepted_detail_path = paths.functional_registration_dir / "functional_roi_activity_identity.csv"
             if accepted_detail_path.exists():
                 accepted_df = pd.read_csv(accepted_detail_path)
+                if supersede_reason is not None:
+                    superseded_control = {
+                        "path": str(accepted_detail_path),
+                        "sha256": hashlib.sha256(accepted_detail_path.read_bytes()).hexdigest(),
+                        "reason": supersede_reason,
+                    }
                 parity_columns = ("plane_idx", "func_label", "anat_label", "selected_anat_label", "has_unique_anat_match")
                 if all(column in accepted_df.columns for column in parity_columns) and all(column in detail_df.columns for column in parity_columns):
                     merged = detail_df.loc[:, list(parity_columns)].merge(
@@ -9861,13 +9985,15 @@ def run_match_roi_to_anatomy_stage(
                             return "pass"
                         if max_warn_rows > 0 and int(mismatches) <= max_warn_rows:
                             return "warn"
-                        return "fail"
+                        return "warn" if supersede_reason is not None else "fail"
 
                     exact_or_warn_expected = (
                         f"{len(merged)}/{len(merged)} exact preferred; warn <= {max_warn_rows} regenerated-ANTs drift rows"
                         if max_warn_rows > 0
                         else f"{len(merged)}/{len(merged)}"
                     )
+                    if supersede_reason is not None:
+                        exact_or_warn_expected += f"; control superseded: {supersede_reason}"
                     accepted_parity_checks = (
                         StageCheckRecord(
                             label="accepted ROI/anatomy key parity",
@@ -10028,6 +10154,7 @@ def run_match_roi_to_anatomy_stage(
             "anatomy_label_z_mode_declared": declared_label_z_modes if "declared_label_z_modes" in locals() else (),
             "anatomy_label_z_mode_scores": label_z_scores if "label_z_scores" in locals() else {},
             "output_root": str(stage_root),
+            "superseded_accepted_control": superseded_control,
             "match_policy_version": FunctionalRoiIdentityConfig().match_policy_version,
             "geometry_only": True,
             "mode": mode if "mode" in locals() else None,

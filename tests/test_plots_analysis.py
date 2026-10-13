@@ -711,6 +711,11 @@ class PlotsAnalysisTests(unittest.TestCase):
             self.assertEqual(out["pair_connector_count"], 2)
             self.assertEqual(out["box_count"], 4)
             self.assertEqual(out["median_label_count"], 4)
+            medians = [t for t in ax.texts if t.get_text().startswith("med=")]
+            self.assertEqual(len({t.get_position()[1] for t in medians}), 2)
+            self.assertEqual({t.get_position()[0] for t in medians}, {0.0, 1.0})
+            self.assertTrue(all(t.get_position()[1] > .50 for t in medians))
+            self.assertEqual(ax.get_ylim(), (0.0, 1.0))
             self.assertEqual(out["n_labels"]["sst1.1"], "n=1")
             self.assertEqual(out["n_labels"]["npy"], "n=2")
             self.assertGreater(len(ax.patches), 0)
@@ -761,6 +766,7 @@ class PlotsAnalysisTests(unittest.TestCase):
                 gene_colors={"sst1.1": "#d62728", "npy": "#1f9d55"},
             )
             first_top = float(ax1.get_ylim()[1])
+            self.assertAlmostEqual(first_top, .99 * 1.12)
             self.assertGreater(first_top, 1.0)
 
             label_texts_1 = [txt for txt in ax1.texts if str(txt.get_text()).startswith("med=")]
@@ -1604,3 +1610,114 @@ class PlotsAnalysisTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_bpi_panel_counts_suppression_only_without_inventing_coordinates():
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import numpy as np
+    table = pd.DataFrame(dict(bpi=[np.nan], mean_bout_auc_dff=[-.2], mean_cont_auc_dff=[0.],
+                              response_is_active=[True], bpi_category=["bout-responsive"],
+                              bpi_preference=["suppressed-only"], bpi_zero_band=[.5]))
+    fig, ax = plt.subplots()
+    out = render_single_fish_50l_bpi_panel(ax, table, axis_label="BPI", title="Tuning")
+    assert out["n_plotted"] == 0 and out["n_suppressed_only"] == 1
+    assert out["zero_band"] == .5
+    assert any("suppressed-only: 1" in text.get_text() for text in ax.texts)
+    plt.close(fig)
+
+
+def _f049_trace_fixture(root: Path) -> dict:
+    """Two identified populations with both sides, repeats, quiet and suppressed cells."""
+    rng = np.random.default_rng(49)
+    fps = 4.0
+    n_cells, n_frames = 10, 3000
+    raw = 100 + rng.normal(0, 0.5, (n_cells, n_frames))
+    windows = []
+    for trial, stim in enumerate(["LB_trajectory", "RB_trajectory", "LC_trajectory", "RC_trajectory"] * 3 + ["LAB"]):
+        onset = 100 + trial * 200
+        for cell in range(n_cells):
+            amplitude = 0 if cell % 5 in (2, 3) else -8 if cell % 5 == 4 else (10 + cell * 2) * (1 if stim[1] == "B" else 0.4)
+            t = np.arange(50) / fps
+            raw[cell, onset + 40:onset + 90] += amplitude * (1 - np.exp(-t / 2))
+        windows.append(dict(fish_id="F049", plane_idx=0, fps=fps, stim_type=stim,
+                            used_for_bpi=stim != "LAB", response_window_policy="fixed_from_movement_onset_matched_prestim",
+                            prestim_baseline_start_frame=onset - 50, prestim_baseline_end_frame=onset,
+                            scored_onset_frame=onset + 40, scored_offset_frame=onset + 90, scored_duration_sec=12.5))
+    plane = root / "suite2p" / "plane0"
+    plane.mkdir(parents=True)
+    np.save(plane / "F.npy", raw.astype(np.float32))
+    points, panels, responses, status = [], [], [], []
+    for cell in range(n_cells):
+        gene = "sst1.1" if cell < 5 else "npy"
+        low, suppressed = cell % 5 in (2, 3), cell % 5 == 4
+        response_class = "low activity" if low else "both-responsive"
+        responses.append(dict(plane_idx=0, func_label=cell + 1, response_class=response_class,
+                              response_is_active=not low, bpi_preference="suppressed-only" if suppressed else "not-responsive" if low else "bout-preferential"))
+        panels.append(dict(plane_idx=0, func_label=cell + 1, roi_side="left" if cell % 2 == 0 else "right", suite2p_is_cell=True))
+        status.append(dict(gene=gene, anat_label=cell + 1, functional_status="in-plane low activity ROI" if low else "in-plane responsive ROI"))
+        for laterality in ("contra", "ipsi"):
+            for mode in ("bout", "continuous"):
+                points.append(dict(group=gene, plane_idx=0, func_label=cell + 1,
+                                   laterality=laterality, stim_mode=mode, auc_dff=0.1,
+                                   response_class=response_class, response_is_active=not low))
+    # Multiple HCR labels must not duplicate a functional cell's trace.
+    points.append(points[0].copy())
+    tables = dict(points_csv=points, roi_panels_csv=panels, response_csv=responses,
+                  scored_windows_csv=windows, hcr_status_csv=status)
+    kwargs = dict(fish_id="F049", suite2p_root=root / "suite2p", outdir=root,
+                  gene_colors={"sst1.1": "#189b70", "npy": "#9c4795"})
+    for name, rows in tables.items():
+        path = root / f"{name}.csv"
+        pd.DataFrame(rows).to_csv(path, index=False)
+        kwargs[name] = path
+    return kwargs
+
+
+def test_single_fish_56h_draws_individual_traces_and_gene_means(tmp_path: Path) -> None:
+    from codeants_2pf_hcr.plots.analysis import render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status
+    from matplotlib.colors import to_rgb
+    kwargs = _f049_trace_fixture(tmp_path)
+    out = render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(**kwargs)
+    assert out["out_path"].name == "per_gene_stimulus_trace_with_hcr_status_56h.png"
+    assert out["out_path"].is_file()
+    assert len(out["trace_axes"]) == 8
+    assert len(out["traces_df"]) == 40
+    for (gene, laterality, mode), ax in out["trace_axes"].items():
+        lines = [line for line in ax.lines if line.get_label().startswith("ROI ")]
+        mean = [line for line in ax.lines if "mean (ROI n=" in line.get_label()]
+        assert len(lines) == 5 and len(mean) == 1
+        np.testing.assert_allclose(mean[0].get_ydata(), np.nanmean([line.get_ydata() for line in lines], axis=0))
+        low_label = 4 if gene == "sst1.1" else 9
+        quiet = next(line for line in lines if line.get_label() == f"ROI p0:{low_label}")
+        r, g, b = to_rgb(quiet.get_color())
+        assert r == g == b
+        other_quiet = next(line for line in lines if line.get_label() == f"ROI p0:{low_label - 1}")
+        assert to_rgb(other_quiet.get_color()) != to_rgb(quiet.get_color())
+        suppressed_label = 5 if gene == "sst1.1" else 10
+        suppressed = next(line for line in lines if line.get_label() == f"ROI p0:{suppressed_label}")
+        assert suppressed.get_linestyle() == "--"
+        assert np.min(suppressed.get_ydata()) < -0.04
+        box = ax.get_subplotspec()
+        assert box.rowspan.start == (0 if laterality == "contra" else 1)
+        assert box.colspan.start == (0 if mode == "bout" else 1)
+    # A right-side ROI's ipsi bout is RB, while a left-side ROI's is LB.
+    traces = out["traces_df"]
+    row = traces[(traces.func_label == 2) & (traces.laterality == "ipsi") & (traces.stim_mode == "bout")].iloc[0]
+    from codeants_2pf_hcr.suite2p import load_suite2p_dff_map
+    raw_dff = load_suite2p_dff_map(pd.DataFrame({"plane_idx": [0]}), suite2p_root=kwargs["suite2p_root"])[0]["dff"][1]
+    expected = np.mean([raw_dff[onset-50:onset+121] - np.mean(raw_dff[onset-50:onset]) for onset in (300, 1100, 1900)], axis=0)
+    np.testing.assert_allclose(row.trace, expected, atol=1e-7)
+    assert row.n_trials == 3
+    assert row.motion_start == 10 and row.motion_end == 22.5
+
+
+def test_single_fish_56h_requires_current_windows_and_trace_inputs(tmp_path: Path) -> None:
+    import pytest
+    from codeants_2pf_hcr.plots.analysis import render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status
+    kwargs = _f049_trace_fixture(tmp_path)
+    windows = pd.read_csv(kwargs["scored_windows_csv"])
+    windows["response_window_policy"] = "old"
+    windows.to_csv(kwargs["scored_windows_csv"], index=False)
+    with pytest.raises(ValueError, match="Current scored unilateral windows"):
+        render_single_fish_56h_per_gene_stimulus_trace_with_hcr_status(**kwargs)

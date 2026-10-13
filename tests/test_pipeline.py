@@ -813,6 +813,12 @@ def test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_sour
         ]
     )
 
+    # Activity annotations pass through frozen geometry/identity attachment.
+    passthrough_df["bpi_preference"] = ["suppressed-only", "unavailable"]
+    passthrough_df["response_valence_class"] = ["bout-suppressed", "response unavailable"]
+    passthrough_df["lb_mean_auc_dff"] = [-0.2, float("nan")]
+    passthrough_df["suppression_confidence"] = ["high", float("nan")]
+
     out = attach_identity_to_functional_roi_geometry_df(
         geometry_df,
         lookup_df,
@@ -826,6 +832,10 @@ def test_attach_identity_to_functional_roi_geometry_uses_staged_lookup_over_sour
     assert first["identity_label"] == "sst1.1"
     assert bool(first["has_identity_assigned"]) is True
     assert first["activity_class"] == "Active neurons"
+    assert first["bpi_preference"] == "suppressed-only"
+    assert first["response_valence_class"] == "bout-suppressed"
+    assert first["lb_mean_auc_dff"] == -0.2
+    assert first["suppression_confidence"] == "high"
     second = out[out["func_label"].astype(str).eq("2")].iloc[0]
     assert str(second["identity_label"]) in {"", "<NA>", "nan", "NaN"}
     assert bool(second["has_identity_assigned"]) is False
@@ -2304,7 +2314,7 @@ def test_match_roi_to_anatomy_stage_prefers_staged_ants_transformlist(tmp_path: 
     assert manifest.parameters["selected_ants_missing_transform_files"] == 0
 
 
-def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tmp_path: Path) -> None:
+def _run_match_against_accepted_control(tmp_path: Path, *, changed_rows: int, **stage_kwargs):
     from unittest.mock import patch
 
     import pandas as pd
@@ -2341,7 +2351,7 @@ def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tm
 
     detail_rows = []
     for idx in range(1000):
-        label = 10000 + idx if idx < 2 else 7 + idx
+        label = 10000 + idx if idx < changed_rows else 7 + idx
         detail_rows.append(
             {
                 "fish_id": fish_dir.name,
@@ -2370,12 +2380,77 @@ def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tm
             anatomy_labels_path=anatomy_labels,
             anatomy_label_z_mode="direct",
             force_recompute=True,
+            **stage_kwargs,
         )
+    return manifest, accepted_path
+
+
+def test_match_roi_to_anatomy_stage_warns_for_small_staged_ants_control_drift(tmp_path: Path) -> None:
+    manifest, _ = _run_match_against_accepted_control(tmp_path, changed_rows=2)
 
     assert manifest.status == "pass"
     assert manifest.parameters["staged_ants_transformlist_count"] == 1
     assert any(check.label == "accepted ROI/anatomy label parity" and check.status == "warn" for check in manifest.checks)
     assert manifest.warnings == ("accepted ROI/anatomy label parity: anat_label=998/1000,selected_anat_label=998/1000",)
+
+
+def test_match_roi_to_anatomy_stage_fails_large_control_drift_unless_superseded(tmp_path: Path) -> None:
+    import hashlib
+
+    failed, _ = _run_match_against_accepted_control(tmp_path / "strict", changed_rows=300)
+    assert failed.status == "fail"
+    assert failed.parameters["superseded_accepted_control"] is None
+
+    reason = "upstream registration corrected; prior geometry used a stale best-Z cache"
+    superseded, accepted_path = _run_match_against_accepted_control(
+        tmp_path / "superseded", changed_rows=300, supersede_accepted_control_reason=reason,
+    )
+    assert superseded.status == "pass"
+    assert superseded.parameters["superseded_accepted_control"] == {
+        "path": str(accepted_path),
+        "sha256": hashlib.sha256(accepted_path.read_bytes()).hexdigest(),
+        "reason": reason,
+    }
+    parity = {check.label: check for check in superseded.checks}
+    assert parity["accepted ROI/anatomy label parity"].status == "warn"
+    assert reason in parity["accepted ROI/anatomy label parity"].expected
+    assert parity["accepted ROI/anatomy key parity"].status == "pass"
+
+    with pytest.raises(ValueError, match="non-empty reason"):
+        _run_match_against_accepted_control(tmp_path / "blank", changed_rows=0, supersede_accepted_control_reason="  ")
+
+
+def test_superseded_control_comparisons_warn_on_content_but_keep_schema_strict(tmp_path: Path, monkeypatch) -> None:
+    import hashlib
+    from types import SimpleNamespace
+
+    from codeants_2pf_hcr import pipeline
+    from codeants_2pf_hcr.pipeline import StageCheckRecord
+
+    control = tmp_path / "control.csv"
+    control.write_text("plane_idx,func_label\n0,1\n")
+    monkeypatch.setattr(pipeline, "_stage_output_specs_for_inventory",
+                        lambda paths, stage: (SimpleNamespace(control_path=str(control)), SimpleNamespace(control_path=None)))
+    checks = (
+        StageCheckRecord(label="comparison CSV exact cells: master", status="fail", detail="d", expected="0", observed="826"),
+        StageCheckRecord(label="comparison CSV shape: pairs", status="fail", detail="d", expected="rows=40", observed="rows=55"),
+        StageCheckRecord(label="comparison CSV semantic columns: master", status="fail", detail="d", expected="all", observed="missing"),
+        StageCheckRecord(label="comparison CSV unique keys: master", status="fail", detail="d", expected="0", observed="2"),
+        StageCheckRecord(label="comparison inputs exist: master", status="fail", detail="d", expected="both", observed="control=False"),
+        StageCheckRecord(label="assign-hcr-identity ROI identity master parity", status="fail", detail="d", expected="same", observed="0|1"),
+        StageCheckRecord(label="assign-hcr-identity staged HCR/anatomy final-pair acceptance", status="fail", detail="d", expected="good", observed="bad"),
+    )
+
+    unchanged, none = pipeline._supersede_control_comparisons(None, "score-activity-bpi", checks, None)
+    assert none is None and [c.status for c in unchanged] == ["fail"] * 7
+
+    reason = "upstream registration corrected"
+    superseded, record = pipeline._supersede_control_comparisons(None, "score-activity-bpi", checks, reason)
+    assert [c.status for c in superseded] == ["warn", "warn", "fail", "fail", "fail", "warn", "fail"]
+    assert superseded[0].expected.endswith(f"control superseded: {reason}")
+    assert record == {"reason": reason, "controls": [{"path": str(control), "sha256": hashlib.sha256(control.read_bytes()).hexdigest()}]}
+    with pytest.raises(ValueError, match="non-empty reason"):
+        pipeline._supersede_reason("   ")
 
 
 def test_match_roi_to_anatomy_stage_stages_control_geometry_only(tmp_path: Path) -> None:
@@ -5286,6 +5361,7 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
     _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
+    _add_make_figures_trace_inputs(fish_dir, output_root, canonical_root)
     scored_windows = output_root / "score-activity-bpi" / "registration" / "scored_stimulus_windows.csv"
     scored_windows.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"fish_id": [fish_dir.name], "used_for_bpi": [True], "response_window_policy": ["old"], "scored_duration_sec": [7.0]}).to_csv(scored_windows, index=False)
@@ -5294,7 +5370,7 @@ def test_make_figures_writer_stages_declared_figure_artifacts(tmp_path: Path) ->
     assert blocked.status == "fail"
     assert any(check.label == "make-figures scorer window provenance" and check.status == "fail" for check in blocked.checks)
     assert not (output_root / "make-figures" / "04_plots").exists()
-    pd.DataFrame({"fish_id": [fish_dir.name], "used_for_bpi": [True], "response_window_policy": ["fixed_from_movement_onset_matched_prestim"], "scored_duration_sec": [12.5]}).to_csv(scored_windows, index=False)
+    _add_make_figures_trace_inputs(fish_dir, output_root, canonical_root)
 
     manifest = run_single_fish_make_figures_stage(
         SingleFishPipelineConfig(
@@ -5383,6 +5459,7 @@ def test_single_fish_pipeline_cli_make_figures_outputs_manifest(tmp_path: Path) 
     ):
         _copy_file(registration_dir / filename, canonical_root / filename)
     _add_make_figures_bpi_render_columns(canonical_root / "functional_roi_activity_bpi_cells.csv")
+    _add_make_figures_trace_inputs(fish_dir, output_root, canonical_root)
     result = subprocess.run(
         [
             sys.executable,
@@ -5658,3 +5735,22 @@ def test_single_fish_pipeline_cli_audit_score_activity_bpi_outputs_manifest_json
     assert payload["dry_run"] is True
     assert payload["parameters"]["control_outputs_are_comparison_only"] is True
     assert not (fish_dir / "03_analysis" / "functional" / "pipeline_manifests").exists()
+
+
+def _add_make_figures_trace_inputs(fish_dir: Path, output_root: Path, canonical_root: Path) -> None:
+    import numpy as np
+    registration = fish_dir / "03_analysis" / "functional" / "registration"
+    pd.DataFrame([dict(plane_idx=0, func_label=1, roi_side="left", suite2p_is_cell=True)]).to_csv(registration / "motion_auc_roi_panels.csv", index=False)
+    response_path = canonical_root / "functional_roi_activity_bpi_cells.csv"
+    response = pd.read_csv(response_path)
+    response["bpi_preference"] = "bout-preferential"
+    response.to_csv(response_path, index=False)
+    plane = fish_dir / "03_analysis" / "functional" / "suite2P" / "plane0"
+    np.save(plane / f"{fish_dir.name}_plane0_F.npy", np.full((1, 300), 100, dtype=np.float32))
+    windows = output_root / "score-activity-bpi" / "registration" / "scored_stimulus_windows.csv"
+    windows.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([dict(fish_id=fish_dir.name, plane_idx=0, fps=4, stim_type=stim,
+                       used_for_bpi=True, response_window_policy="fixed_from_movement_onset_matched_prestim",
+                       scored_duration_sec=12.5, prestim_baseline_start_frame=0,
+                       prestim_baseline_end_frame=50, scored_onset_frame=90, scored_offset_frame=140)
+                  for stim in ("LB_trajectory", "RB_trajectory", "LC_trajectory", "RC_trajectory")]).to_csv(windows, index=False)

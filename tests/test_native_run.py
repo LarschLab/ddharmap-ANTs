@@ -13,6 +13,99 @@ def test_routes_preserve_native_consumers(tmp_path):
     assert native_product_path(fish, "make-figures", "04_plots/example.png") == fish / "04_plots/example.png"
 
 
+def test_fresh_native_run_has_no_frozen_bundle_dependency(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr import single_fish_run
+    from codeants_2pf_hcr.native_run import execute_native_run
+    monkeypatch.setattr(single_fish_run, "validate_spec_environment", lambda spec: {"ok": True})
+    spec = SimpleNamespace(data_root=tmp_path, fish_id="L000_f00", pipeline_root=tmp_path / "L000_f00", state_root=tmp_path / "state",
+                           raw={"native_production": {"mode": "fresh"}}, stages=[])
+    result = execute_native_run(spec, resume=False)
+    assert result["status"] == "pass"
+    assert not (spec.state_root / "transaction_graph/make-anatomy-midline-proposal").exists()
+    spec.raw["native_production"]["reuse_stages"] = ["prepare-functional-reference-stacks"]
+    with pytest.raises(ValueError, match="cannot reuse"):
+        execute_native_run(spec, resume=False)
+
+
+def test_unknown_native_mode_fails_before_writes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr import single_fish_run
+    from codeants_2pf_hcr.native_run import execute_native_run
+    monkeypatch.setattr(single_fish_run, "validate_spec_environment", lambda spec: {"ok": True})
+    spec = SimpleNamespace(data_root=tmp_path, fish_id="L000_f00", state_root=tmp_path / "state",
+                           raw={"native_production": {"mode": "typo"}}, stages=[])
+    with pytest.raises(ValueError, match="Unknown native"):
+        execute_native_run(spec, resume=False)
+    assert not spec.state_root.exists()
+
+
+def test_fresh_zero_seed_is_rejected_before_any_write(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr import single_fish_run
+    from codeants_2pf_hcr.native_run import execute_native_run
+    monkeypatch.setattr(single_fish_run, "validate_spec_environment", lambda spec: {"ok": True})
+    spec = SimpleNamespace(data_root=tmp_path, fish_id="L000_f00", pipeline_root=tmp_path / "L000_f00", state_root=tmp_path / "state",
+                           raw={"native_production": {"mode": "fresh"}}, stages=[SimpleNamespace(command=("python", "writer", "register-functional-to-anatomy", "--ants-deterministic-seed", "0"))])
+    with pytest.raises(ValueError, match="positive fixed seed"):
+        execute_native_run(spec, resume=False)
+    assert not spec.state_root.exists()
+
+
+def test_fresh_writer_stages_explicit_output_and_tracks_every_product(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from test_single_fish_run import _build_spec
+    from codeants_2pf_hcr import single_fish_run as runner
+    from codeants_2pf_hcr.native_run import execute_native_run
+    path, _, _ = _build_spec(tmp_path)
+    spec = runner.load_run_spec(path)
+    fish = spec.data_root / spec.fish_id
+    destination = fish / "02_reg/00_preprocessing/2p_anatomy/test.nrrd"
+    manifest = fish / "03_analysis/functional/pipeline_manifests/prepare-in-vivo-anatomy-stack_manifest.json"
+    command = (str(spec.python), "tools/single_fish_pipeline.py", "prepare-in-vivo-anatomy-stack",
+               "--pipeline-root", str(fish), "--output-path", str(destination))
+    stage = runner.StageSpec(name="anatomy", command=command, inputs=(), outputs=(str(manifest),), manifest=str(manifest), parameter_pins={})
+    spec = replace(spec, pipeline_root=fish, raw={**spec.raw, "native_production": {"mode": "fresh"}}, stages=(stage,))
+    runtime = {"ok": True, "git": {"actual_commit": spec.git_commit}, "interpreter": {"actual_executable": str(spec.python)}}
+    monkeypatch.setattr(runner, "validate_spec_environment", lambda spec: runtime)
+    def execute(command, *, cwd, env, log_path):
+        out = Path(command[command.index("--output-path") + 1])
+        assert out != destination and not destination.exists()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"new anatomy")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps({"stage_name": command[2], "fish_id": spec.fish_id, "status": "pass", "errors": [], "dry_run": False, "parameters": {}, "outputs": [{"path": str(out)}]}))
+        return 0
+    monkeypatch.setattr(runner, "_run_command", execute)
+    assert execute_native_run(spec, resume=False)["status"] == "pass"
+    assert destination.read_bytes() == b"new anatomy"
+    assert runner._stage_current(spec, stage, runtime)[0]
+    destination.write_bytes(b"tampered")
+    current, reasons = runner._stage_current(spec, stage, runtime)
+    assert not current and "promoted writer products changed" in reasons
+
+
+def test_noop_native_resume_preserves_layout_mtime_and_blocks_mismatch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from codeants_2pf_hcr import single_fish_run
+    from codeants_2pf_hcr.native_run import execute_native_run
+    fish = tmp_path / "L000_f00"
+    state = fish / "state"
+    frozen = tmp_path / "frozen"
+    (frozen / "make-anatomy-midline-proposal").mkdir(parents=True)
+    spec = SimpleNamespace(data_root=tmp_path, fish_id="L000_f00", state_root=state,
+                           raw={"native_production": {"frozen_root": str(frozen), "original_root": "/old"}}, stages=[])
+    monkeypatch.setattr(single_fish_run, "validate_spec_environment", lambda spec: {"ok": True})
+    execute_native_run(spec, resume=True)
+    layout = fish / "03_analysis/functional/pipeline_manifests/native_layout.json"
+    mtime = layout.stat().st_mtime_ns
+    execute_native_run(spec, resume=True)
+    assert layout.stat().st_mtime_ns == mtime
+    layout.write_text("{}")
+    with pytest.raises(RuntimeError, match="layout disagrees"):
+        execute_native_run(spec, resume=True)
+
+
 def test_native_score_parity_uses_own_stage_control_even_when_missing(tmp_path):
     from types import SimpleNamespace
     from codeants_2pf_hcr.pipeline import _stage_output_specs
@@ -167,3 +260,26 @@ def test_crash_after_publication_restores_manifest_and_products(tmp_path, prior_
     assert target.read_text() == "old"
     if prior_manifest: assert json.loads(manifest.read_text()) == {"old": True}
     else: assert not manifest.exists()
+
+
+def test_reuse_check_skips_paths_promoted_earlier_in_same_run(tmp_path):
+    from codeants_2pf_hcr.native_run import _verify_reuse_inputs
+    fish = tmp_path / "fish"; manifests = fish / "03_analysis/functional/pipeline_manifests"; manifests.mkdir(parents=True)
+    upstream = manifests / "prepare-in-vivo-anatomy-stack_manifest.json"; upstream.write_text("{}")
+    raw = fish / "01_raw/x.tif"; raw.parent.mkdir(parents=True); raw.write_bytes(b"raw")
+    record = lambda p: {"path": str(p), "kind": "file", "required": True, "exists": True, "size_bytes": 999, "count": None, "mtime": 1.0}
+    manifest = {"inputs": [record(upstream)]}
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        _verify_reuse_inputs(manifest, fish, "unused")
+    _verify_reuse_inputs(manifest, fish, "unused", run_promoted=frozenset({str(upstream)}))
+    with pytest.raises(RuntimeError, match="inventory changed"):  # raw inputs stay strictly checked
+        _verify_reuse_inputs({"inputs": [record(raw)]}, fish, "unused", run_promoted=frozenset({str(upstream)}))
+
+
+def test_reuse_check_skips_inputs_the_stage_itself_rewrites(tmp_path):
+    from codeants_2pf_hcr.native_run import _verify_reuse_inputs
+    fish = tmp_path / "fish"; label = fish / "03_analysis/confocal/aligned/x_labels.tif"; label.parent.mkdir(parents=True); label.write_bytes(b"x")
+    record = {"path": str(label), "kind": "file", "required": True, "exists": True, "size_bytes": 1, "count": None, "mtime": 1.0}
+    with pytest.raises(RuntimeError, match="inventory changed"):
+        _verify_reuse_inputs({"inputs": [record]}, fish, "unused")
+    _verify_reuse_inputs({"inputs": [record], "outputs": [dict(record)]}, fish, "unused")

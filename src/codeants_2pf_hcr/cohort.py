@@ -1,6 +1,7 @@
 """Cohort build/cache stage helpers for `multi_fish_56h_56g.ipynb` cells [cfg], [helpers], and [cohort-build]."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import asdict, dataclass, field
 import json
@@ -340,7 +341,7 @@ def _find_experiment_log(metadata_dir: str | Path, fish_id: str) -> Path | None:
         return None
     hits: list[Path] = []
     for pattern in (f"*{fish_id}*experiment_log*.csv", "*experiment_log*.csv"):
-        hits.extend(sorted(base.glob(pattern)))
+        hits.extend(sorted(visible_glob(base, pattern)))
     if not hits:
         return None
     return sorted(set(hits), key=lambda path: path.stat().st_mtime)[-1]
@@ -496,7 +497,7 @@ def _find_suite2p_file(plane_dir: str | Path, key: str) -> Path | None:
     path = Path(plane_dir) / f"{key}.npy"
     if path.exists():
         return path
-    hits = sorted(Path(plane_dir).glob(f"*_{key}.npy"))
+    hits = sorted(visible_glob(Path(plane_dir), f"*_{key}.npy"))
     return hits[0] if hits else None
 
 
@@ -537,7 +538,7 @@ def _load_suite2p_map(
     dfof_eps: float = 1e-6,
 ) -> tuple[dict[int, dict[str, Any]], pd.DataFrame, float | None]:
     root = Path(suite2p_root)
-    plane_dirs = [path for path in root.glob("plane*") if path.is_dir()]
+    plane_dirs = [path for path in visible_glob(root, "plane*") if path.is_dir()]
     plane_dirs = sorted(plane_dirs, key=lambda p: (_plane_num_from_name(p.name) if _plane_num_from_name(p.name) is not None else p.name))
     s2p_map: dict[int, dict[str, Any]] = {}
     roi_rows: list[pd.DataFrame] = []

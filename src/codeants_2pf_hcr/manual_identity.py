@@ -1,5 +1,6 @@
 """Independent per-stack manual identity review on fixed ex-vivo masks."""
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_iterdir
 
 import hashlib
 import json

@@ -43,6 +43,13 @@ Notebook 04 reads the backend `hcr_label_metrics.csv` to display retained large 
 For individual HCR-label inspection, the backend wrapper `tools/render_hcr_match_inspector.py` writes standalone HTML from a specified fish directory and pinned pipeline root. It shows every HCR label, saved anatomy candidate/final-pair status, size and XY-radius gates, same-grid mask overlays, and anatomy-linked functional ROI context. This is an optional review artifact, not a notebook output or gate decision. The grayscale backdrop is 2P anatomy intensity, not HCR fluorescence; missing native HCR masks remain marked as aligned-grid size measurements.
 
 The logbook owns gate decisions; the pipeline owns computational artifacts.
+Notebook 05 molecular-fate classification consumes the geometry-owned
+`plane_refs_summary_geometry.json` label pages rather than indexing labels
+with anatomy intensity `best_z`. Missing, duplicate, or inconsistent
+direct/reverse label-Z provenance blocks the review.
+The correspondence tiles use that same mapping for anatomy/HCR label pages,
+while anatomy intensity and transformed ROI volume pages retain `best_z`.
+They never select another Z page using a label-volume maximum.
 An executed notebook is evidence of inspection, never an acceptance signal.
 For midline review, the pipeline projects persisted native-functional lines
 to the anatomy grid, the logbook binds acceptance to the proposal CSV/PNG

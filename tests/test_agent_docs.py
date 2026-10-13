@@ -208,11 +208,16 @@ class AgentDocsTests(unittest.TestCase):
         self.assertIn("external confocal registration uses current rbest/rn names", completed.stdout)
 
 
+    def test_claude_entrypoint_only_imports_agents(self) -> None:
+        lines = [l for l in _read("CLAUDE.md").splitlines() if l.strip() and not l.startswith("<!--")]
+        self.assertEqual(lines, ["@AGENTS.md"])
+
     def test_root_file_allowlist_and_registration_entrypoints(self) -> None:
         allowed = {
             ".gitattributes",
             ".gitignore",
             "AGENTS.md",
+            "CLAUDE.md",
             "pyproject.toml",
         }
         tracked_root_files = {

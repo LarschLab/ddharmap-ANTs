@@ -10,6 +10,7 @@ import pandas as pd
 from codeants_2pf_hcr.activity import (
     ActivityConfig,
     SingleFishBpiDiagnosticsConfig,
+    _bpi_stimulus_key,
     _build_activity_stimulus_context,
     _compute_bootstrap_null_quantiles,
     build_presented_stimulus_response_tables,
@@ -141,8 +142,8 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(any_response.loc[0, "any_presented_response_state"], "nonresponsive")
 
     def test_scored_window_provenance_retains_plane_keys_for_shared_sessions(self) -> None:
-        events = {0: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}], 1: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LLB", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}]}
-        source = {plane: pd.DataFrame([{"block": "B1", "stim_idx": 0, "type": "LLB", "start": 2.0, "end": 4.0}]) for plane in events}
+        events = {0: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LB_trajectory", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}], 1: [{"session_label": "r1", "block": "B1", "stim_idx": 0, "stim_type": "LB_trajectory", "stim_class": "bout", "idx0": 4, "idx1": 8, "duration_frames": 4, "duration_s": 2.0}]}
+        source = {plane: pd.DataFrame([{"block": "B1", "stim_idx": 0, "type": "LB_trajectory", "start": 2.0, "end": 4.0}]) for plane in events}
         table = build_scored_stimulus_windows_table(fish_id="L758_f02", df_stim=pd.DataFrame(), stim_events=[], stim_events_by_plane=events, df_stim_by_plane=source, fps_by_plane={0: 2.0, 1: 2.0})
         self.assertEqual(table["plane_idx"].tolist(), [0, 1])
         self.assertEqual(len(table), 2)
@@ -181,18 +182,18 @@ class ActivityTests(unittest.TestCase):
             (metadata / f"2026_f{fish_id}_experiment_log.csv").write_text(
                 "event,timestamp\n"
                 "B0_start,0\nB0_end,10\n"
-                "B1_start,10\nB1_prestim0_pause,10\nB1_stim0_LLB,12\nB1_poststim0_pause,14\nB1_end,20\n"
-                "B2_start,20\nB2_prestim1_pause,20\nB2_stim1_RLC,22\nB2_poststim1_pause,24\nB2_end,30\n"
+                "B1_start,10\nB1_prestim0_pause,10\nB1_stim0_LB_trajectory,12\nB1_poststim0_pause,14\nB1_end,20\n"
+                "B2_start,20\nB2_prestim1_pause,20\nB2_stim1_RC_trajectory,22\nB2_poststim1_pause,24\nB2_end,30\n"
             )
             (metadata / f"2026_f{fish_id}_planned_schedule.csv").write_text(
                 "kind,label,start_sec,duration_sec,end_sec,trial_index,block_num,stimulus_name\n"
                 "rest,Baseline rest,0,10,10,,0,\n"
                 "trigger,B1_start,10,0,10,,1,\n"
-                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,LLB\n"
-                "stimulus,LLB,12,2,14,0,1,LLB\n"
+                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,LB_trajectory\n"
+                "stimulus,LB_trajectory,12,2,14,0,1,LB_trajectory\n"
                 "trigger,B2_start,20,0,20,,2,\n"
-                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RLC\n"
-                "stimulus,RLC,22,2,24,1,2,RLC\n"
+                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RC_trajectory\n"
+                "stimulus,RC_trajectory,22,2,24,1,2,RC_trajectory\n"
             )
             dff = np.ones((1, 30), dtype=np.float32)
             dff[0, 12:14] = 4.0
@@ -235,6 +236,8 @@ class ActivityTests(unittest.TestCase):
                 "bout_lower": np.array([-7.0], dtype=np.float32),
                 "continuous_lower": np.array([-3.5], dtype=np.float32),
             }
+            boundary_null.update({"lb_upper": boundary_null["bout_upper"], "lb_lower": boundary_null["bout_lower"],
+                                  "rc_upper": boundary_null["continuous_upper"], "rc_lower": boundary_null["continuous_lower"]})
             with patch(
                 "codeants_2pf_hcr.activity._compute_bootstrap_null_quantiles",
                 return_value=boundary_null,
@@ -270,18 +273,18 @@ class ActivityTests(unittest.TestCase):
             (metadata / f"2026_f{fish_id}_experiment_log.csv").write_text(
                 "event,timestamp\n"
                 "B0_start,0\nB0_end,10\n"
-                "B1_start,10\nB1_prestim0_pause,10\nB1_stim0_LLB,12\nB1_poststim0_pause,14\nB1_end,20\n"
-                "B2_start,20\nB2_prestim1_pause,20\nB2_stim1_RLC,22\nB2_poststim1_pause,24\nB2_end,30\n"
+                "B1_start,10\nB1_prestim0_pause,10\nB1_stim0_LB_trajectory,12\nB1_poststim0_pause,14\nB1_end,20\n"
+                "B2_start,20\nB2_prestim1_pause,20\nB2_stim1_RC_trajectory,22\nB2_poststim1_pause,24\nB2_end,30\n"
             )
             (metadata / f"2026_f{fish_id}_planned_schedule.csv").write_text(
                 "kind,label,start_sec,duration_sec,end_sec,trial_index,block_num,stimulus_name\n"
                 "rest,Baseline rest,0,10,10,,0,\n"
                 "trigger,B1_start,10,0,10,,1,\n"
-                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,LLB\n"
-                "stimulus,LLB,12,2,14,0,1,LLB\n"
+                "prestim_pause,Trial 1 pre-pause,10,2,12,0,1,LB_trajectory\n"
+                "stimulus,LB_trajectory,12,2,14,0,1,LB_trajectory\n"
                 "trigger,B2_start,20,0,20,,2,\n"
-                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RLC\n"
-                "stimulus,RLC,22,2,24,1,2,RLC\n"
+                "prestim_pause,Trial 2 pre-pause,20,2,22,1,2,RC_trajectory\n"
+                "stimulus,RC_trajectory,22,2,24,1,2,RC_trajectory\n"
             )
             dff = np.ones((2, 30), dtype=np.float32)
             dff[0, 12:14] = -1.0
@@ -318,8 +321,8 @@ class ActivityTests(unittest.TestCase):
             self.assertLess(scored["mean_bout_auc_dff"], 0.0)
             self.assertGreater(scored["mean_cont_auc_dff"], 0.0)
             self.assertAlmostEqual(scored["response_null_quantile"], 0.99)
-            self.assertAlmostEqual(scored["response_null_upper_quantile"], 0.995)
-            self.assertAlmostEqual(scored["response_null_lower_quantile"], 0.005)
+            self.assertAlmostEqual(scored["response_null_upper_quantile"], 0.99875)
+            self.assertAlmostEqual(scored["response_null_lower_quantile"], 0.00125)
             self.assertTrue(scored["bout_negative_response_pass"])
             self.assertFalse(scored["bout_positive_response_pass"])
             self.assertTrue(scored["cont_positive_response_pass"])
@@ -331,16 +334,18 @@ class ActivityTests(unittest.TestCase):
             self.assertEqual(scored["cont_response_valence"], "activated")
             self.assertEqual(scored["response_valence_pattern"], "suppressed|activated")
             self.assertTrue(scored["response_has_suppression"])
-            self.assertTrue(scored["response_valence_complete"])
+            self.assertFalse(scored["response_valence_complete"])
             self.assertAlmostEqual(scored["signed_condition_contrast"], -1.0)
             self.assertAlmostEqual(scored["response_absolute_magnitude_auc"], 4.0)
-            self.assertAlmostEqual(scored["bpi"], -1.0)
+            self.assertTrue(pd.isna(scored["bpi"]))
+            self.assertAlmostEqual(scored["pooled_bpi"], -1.0)
+            self.assertEqual(scored["bpi_side"], "right")
 
             both_suppressed = scored_rows.iloc[1]
             self.assertEqual(both_suppressed["response_valence_pattern"], "suppressed|suppressed")
             self.assertTrue(both_suppressed["bout_negative_response_pass"])
             self.assertTrue(both_suppressed["cont_negative_response_pass"])
-            self.assertTrue(both_suppressed["response_valence_complete"])
+            self.assertFalse(both_suppressed["response_valence_complete"])
             self.assertAlmostEqual(both_suppressed["mean_bout_auc_dff"], -2.0)
             self.assertAlmostEqual(both_suppressed["mean_cont_auc_dff"], -1.0)
             self.assertAlmostEqual(both_suppressed["signed_condition_contrast"], -1.0 / 3.0)
@@ -450,10 +455,10 @@ class ActivityTests(unittest.TestCase):
                 "event,timestamp\n"
                 "B1_start,0\n"
                 "B1_prestim1_pause,0\n"
-                "B1_stim1_LLB,2\n"
+                "B1_stim1_LB_trajectory,2\n"
                 "B1_poststim1_pause,4\n"
                 "B1_prestim2_pause,5\n"
-                "B1_stim2_RLC,7\n"
+                "B1_stim2_RC_trajectory,7\n"
                 "B1_poststim2_pause,9\n"
                 "B1_end,10\n"
             )
@@ -461,10 +466,10 @@ class ActivityTests(unittest.TestCase):
                 "event,timestamp\n"
                 "B1_start,0\n"
                 "B1_prestim1_pause,0\n"
-                "B1_stim1_LLB,4\n"
+                "B1_stim1_LB_trajectory,4\n"
                 "B1_poststim1_pause,6\n"
                 "B1_prestim2_pause,6\n"
-                "B1_stim2_RLC,8\n"
+                "B1_stim2_RC_trajectory,8\n"
                 "B1_poststim2_pause,10\n"
                 "B1_end,11\n"
             )
@@ -537,10 +542,10 @@ class ActivityTests(unittest.TestCase):
                 "event,timestamp\n"
                 "B1_start,0\n"
                 "B1_prestim1_pause,0\n"
-                "B1_stim1_LLB,2\n"
+                "B1_stim1_LB_trajectory,2\n"
                 "B1_poststim1_pause,4\n"
                 "B1_prestim2_pause,5\n"
-                "B1_stim2_RLC,7\n"
+                "B1_stim2_RC_trajectory,7\n"
                 "B1_poststim2_pause,9\n"
                 "B1_end,10\n"
             )
@@ -679,3 +684,127 @@ def test_prepare_single_fish_bpi_diagnostics_stage_backfills_response_columns() 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _per_stimulus_scoring_fixture():
+    """Eight trace behaviours, four repetitions per side, actual writer and null."""
+    profiles = np.array([
+        [.099, -.005, 0, 0], [-2, 0, 0, 0], [-2, 0, -2, 0],
+        [2, 0, -2, 0], [.1, .3, .09, .01], [2, -2, 0, 0],
+        [-2, 0, 0, 0], [-2, 0, 0, 0],
+    ])
+    dff = np.zeros((len(profiles), 1600), dtype=np.float32)
+    events, pauses = [], []
+    for j, stim in enumerate(("LB", "RB", "LC", "RC")):
+        for rep in range(4):
+            start = 30 + (j*4 + rep)*90
+            event = dict(stim_type=stim+"_trajectory", stim_class="bout" if j < 2 else "continuous",
+                         used_for_bpi=True, idx0=start+45, idx1=start+70,
+                         baseline_idx0=start, baseline_idx1=start+25, duration_frames=25)
+            events.append(event)
+            pauses.append((start, start+25))
+            dff[:, start+45:start+70] = profiles[:, j, None] / 12.5
+            if j == 0:
+                for roi, genuine in ((6, 3), (7, 2)):
+                    if rep >= genuine:
+                        dff[roi, start:start+25] = .02
+                        dff[roi, start+45:start+70] = 0
+    starts = np.array([start for start, _ in pauses])
+    ctx = dict(fps=2., df_evt=pd.DataFrame(), df_stim=pd.DataFrame(), session_label="r1", stim_source="fixture",
+               stim_events=events, presented_stim_events=events, baseline_windows=pauses,
+               prestim_trial_windows=[], null_starts_by_duration={25: starts})
+    detail = pd.DataFrame(dict(plane_idx=[0]*len(profiles), func_label=np.arange(1, len(profiles)+1),
+                               activity_class=["Active neurons"]*len(profiles), is_active=True))
+    with patch("codeants_2pf_hcr.activity.resolve_plane_stimulus_contexts", return_value={0: dict(session_label="r1", log_path="fixture", frame_rate=2.)}), \
+         patch("codeants_2pf_hcr.activity.map_stimulus_context_to_trace_grid", return_value={}), \
+         patch("codeants_2pf_hcr.activity._build_activity_stimulus_context", return_value=ctx):
+        return build_response_bpi_tables(detail, fish_dir=Path("."), fish_id="fixture", frame_rate=2.,
+                                        suite2p_dff_map={0: {"dff": dff}}, config=ActivityConfig())
+
+
+def test_per_stimulus_authoritative_calls_and_activation_only_tuning():
+    result = _per_stimulus_scoring_fixture()
+    rows = result["scored_bpi_df"]
+    one = rows.iloc[0]
+    assert one.response_is_active and not one.pooled_response_is_active
+    np.testing.assert_allclose(one.lb_mean_auc_dff, .099, atol=1e-6)
+    assert one.bout_response_pass and one.bpi_preference == "bout-preferential"
+    for index, cls in ((1, "bout-suppressed"), (2, "both-suppressed")):
+        row = rows.iloc[index]
+        assert row.response_valence_class == cls
+        assert row.bpi_preference == "suppressed-only" and pd.isna(row.bpi)
+        assert row.response_is_active and not row.bpi_data_available
+    mixed = rows.iloc[3]
+    assert mixed.response_valence_class == "bout-activated/continuous-suppressed"
+    assert mixed.bpi_preference == "bout-preferential" and mixed.bpi_side == "left"
+    assert mixed.bpi == 1
+    side = rows.iloc[4]
+    assert side.bpi_side == "right"
+    np.testing.assert_allclose(side.bpi, (.3-.01)/(.3+.01), atol=1e-6)
+    assert rows.iloc[5].bout_mixed_side_valence
+    assert rows.iloc[5].bout_response_valence == "activated"
+    assert rows.iloc[6].suppression_confidence == "high"
+    assert rows.iloc[6].lb_n_consistent_suppressed_trials == 3
+    assert rows.iloc[6].lb_n_prestim_elevated_trials == 1
+    assert rows.iloc[7].suppression_confidence == "low"
+    assert rows.iloc[7].lb_n_consistent_suppressed_trials == 2
+    assert rows.iloc[7].lb_n_prestim_elevated_trials == 2
+    assert rows.iloc[7].response_is_active  # confidence never gates suppression
+    assert pd.isna(one.suppression_confidence)
+    for col in ("lb_response_valence", "response_valence_class", "pooled_bpi", "suppression_confidence"):
+        assert col in result["detail_df"]
+    # Same annotations must survive the precomputed path and rescoring without suffixes.
+    detail = result["detail_df"]
+    merged = build_response_bpi_tables(detail, fish_dir=Path("."), fish_id="fixture", frame_rate=2.,
+                                      precomputed_scored_bpi_df=rows)["detail_df"]
+    assert not any(col.endswith(("_x", "_y")) for col in merged)
+    assert merged.lb_response_valence.tolist() == detail.lb_response_valence.tolist()
+
+
+def test_per_stimulus_null_uses_four_stimulus_two_tail_family():
+    dff = np.arange(50, dtype=np.float32)[None, :]
+    event = dict(stim_type="LB_trajectory", stim_class="bout", duration_frames=2)
+    with patch("codeants_2pf_hcr.activity.np.quantile", wraps=np.quantile) as quantile:
+        result = _compute_bootstrap_null_quantiles(dff, [event]*4, {2: np.arange(20)},
+                                                   fps=1., n_boot=100, q=.99, seed=1)
+    qs = [float(call.args[1]) for call in quantile.call_args_list]
+    np.testing.assert_allclose(qs[-3:], [.99, .99875, .00125])
+    assert result["lb_upper"][0] >= result["lb_lower"][0]
+    assert ActivityConfig(response_null_bootstrap_n=2000).response_null_bootstrap_n == 16000
+
+
+def test_per_stimulus_null_matches_valid_trial_set_size():
+    cfg = ActivityConfig(min_valid_frac=.5)
+    rng = np.random.default_rng(9)
+    dff = rng.normal(size=(1, 80)).astype(np.float32)
+    events = [dict(stim_type="LB_trajectory", stim_class="bout", duration_frames=2,
+                   idx0=40+4*i, idx1=42+4*i, baseline_idx0=20+2*i, baseline_idx1=22+2*i) for i in range(4)]
+    dff[0, events[-1]["idx0"]:events[-1]["idx1"]] = np.nan
+    kwargs = dict(fps=1., n_boot=1000, q=.99, seed=5, config=cfg)
+    four = _compute_bootstrap_null_quantiles(dff, events, {2: np.arange(18)}, **kwargs)
+    three = _compute_bootstrap_null_quantiles(dff, events[:3], {2: np.arange(18)}, **kwargs)
+    np.testing.assert_array_equal(four["lb_upper"], three["lb_upper"])
+    np.testing.assert_array_equal(four["lb_lower"], three["lb_lower"])
+
+
+def test_per_stimulus_pools_admit_only_exact_bpi_trajectories():
+    for stimulus, key in (("LB_trajectory", "lb"), ("RB_trajectory", "rb"),
+                          ("LC_trajectory", "lc"), ("RC_trajectory", "rc")):
+        assert _bpi_stimulus_key({"stim_type": stimulus}) == key
+        assert _bpi_stimulus_key({"stim_type": stimulus, "used_for_bpi": False}) == ""
+    excluded = ("Ll_RB_trajectory", "Rl_RB_trajectory", "LAB_trajectory", "RAB_trajectory",
+                "WFCl", "WFCo", "LLB", "RLB", "LLC", "RLC", "LB", "RB", "lb_trajectory")
+    for stimulus in excluded:
+        assert _bpi_stimulus_key({"stim_type": stimulus}) == ""
+    # Even wrongly tagged non-BPI events cannot change either side's bootstrap pool.
+    dff = np.arange(80, dtype=np.float32)[None, :]
+    valid = [dict(stim_type=stim, stim_class="bout", duration_frames=2)
+             for stim in ("LB_trajectory", "RB_trajectory") for _ in range(4)]
+    unrelated = [dict(stim_type=stim, stim_class="bout", duration_frames=7)
+                 for stim in ("Ll_RB_trajectory", "LAB_trajectory")]
+    kwargs = dict(fps=1., n_boot=1000, q=.99, seed=3)
+    clean = _compute_bootstrap_null_quantiles(dff, valid, {2: np.arange(20)}, **kwargs)
+    contaminated = _compute_bootstrap_null_quantiles(dff, valid+unrelated, {2: np.arange(20)}, **kwargs)
+    for key in ("lb", "rb"):
+        for suffix in ("", "_upper", "_lower"):
+            np.testing.assert_array_equal(clean[key+suffix], contaminated[key+suffix])

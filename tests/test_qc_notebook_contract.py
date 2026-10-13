@@ -117,7 +117,9 @@ def test_functional_reference_notebook_renders_persisted_numeric_early_response_
     assert "render_early_response_stimulus_traces" in source
     assert 'EARLY_RESPONSE_QC["heatmap_path"]' not in source
     assert 'EARLY_RESPONSE_QC["traces_path"]' not in source
-    assert "suite2p_stimulus_locked_summary_23b.csv" in source
+    assert "load_presented_stimulus_auc_qc" in source
+    assert "render_presented_stimulus_auc_violins" in source
+    assert "render_stimulus_type_mean_dff_frame" not in source
     assert "score-activity-bpi" in source
     assert "build_early_response_qc_from_raw" not in source
 

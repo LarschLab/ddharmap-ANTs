@@ -1,6 +1,7 @@
 """Verified, read-only snapshots of a staged single-fish pipeline run."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -65,6 +66,7 @@ def build_inventory(roots: Iterable[tuple[str, Path]]) -> list[InventoryRecord]:
         root = root.expanduser().resolve()
         if not root.is_dir():
             raise FileNotFoundError(f"Required freeze source directory is missing: {root}")
+        # Literal freeze inventory preserves sidecars (docs/freeze-single-fish-run.md).
         for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
             relative = f"{label}/{path.relative_to(root).as_posix()}"
             mode = stat.S_IMODE(path.lstat().st_mode)
@@ -171,8 +173,8 @@ def build_stage_records(manifest_dir: Path) -> tuple[list[dict[str, Any]], list[
     """Extract parameters/outputs and a compact status from current stage manifests."""
     details: list[dict[str, Any]] = []
     compact: list[dict[str, Any]] = []
-    for manifest_path in sorted(manifest_dir.glob("*_manifest.json")):
-        if manifest_path.name.startswith("._") or ".pre_" in manifest_path.name:
+    for manifest_path in sorted(visible_glob(manifest_dir, "*_manifest.json")):
+        if (not is_visible_path(manifest_path)) or ".pre_" in manifest_path.name:
             continue
         try:
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -221,6 +223,7 @@ def build_stage_records(manifest_dir: Path) -> tuple[list[dict[str, Any]], list[
 
 def _make_read_only(root: Path, *, include_root: bool = True) -> None:
     """Protect a verified tree on POSIX filesystems and macOS noowners volumes."""
+    # Protect every archived entry, including preserved AppleDouble sidecars.
     paths = sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True)
     if include_root:
         paths.append(root)
@@ -254,6 +257,7 @@ def _is_read_only(path: Path) -> bool:
 
 
 def _unlock_for_cleanup(root: Path) -> None:
+    # Cleanup must unlock preserved sidecars too.
     paths = [root, *root.rglob("*")]
     for path in paths:
         if path.is_symlink():
@@ -265,6 +269,7 @@ def _unlock_for_cleanup(root: Path) -> None:
 
 
 def _writable_paths(root: Path, *, include_root: bool = True) -> list[str]:
+    # Verify protection of the complete literal archive, including sidecars.
     paths = [*root.rglob("*")]
     if include_root:
         paths.insert(0, root)
@@ -272,12 +277,8 @@ def _writable_paths(root: Path, *, include_root: bool = True) -> list[str]:
 
 
 def _remove_staging_tree(root: Path) -> None:
-    def ignore_disappearing_sidecar(function: Any, path: str, error: Any) -> None:
-        # exFAT removes AppleDouble sidecars when the corresponding file is
-        # removed; scandir can have already returned that sidecar's old name.
-        if not isinstance(error[1], FileNotFoundError):
-            raise error[1]
-    shutil.rmtree(root, onerror=ignore_disappearing_sidecar)
+    from .paths import remove_tree
+    remove_tree(root)
 
 
 def _attach_read_only(image: Path, mountpoint: Path, *, read_only: bool = True) -> None:
@@ -330,6 +331,7 @@ def _image_snapshot(partial: Path, destination: Path, fish_id: str, records: lis
     attached = False
     promoted = False
     try:
+        # Image capacity includes literal sidecars preserved in the frozen image.
         byte_count = sum(path.stat().st_size for path in partial.rglob("*") if path.is_file())
         size_mb = max(64, (byte_count * 5 // 4) // (1024 * 1024) + 64)
         subprocess.run(

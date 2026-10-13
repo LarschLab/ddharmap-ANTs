@@ -20,7 +20,8 @@
 
 | If task is about... | Read this first |
 | --- | --- |
-| current status or next staged-pipeline step | `.agents/references/current-state.md` + `.agents/references/agentic-workflow-roadmap.md` |
+| current status or next staged-pipeline step | `.agents/references/current-state.md` ("Where we are" first); roadmaps only for migration background |
+| running, replaying, verifying or exporting a fish; reading a job result; review HTML; data/interpreter locations | `.agents/references/pipeline-operations.md` |
 | notebook path/setup/state issue | `.agents/references/notebook-stage-map.md` + `.agents/references/refactor-rules.md` |
 | QC notebook review or refactor | `notebooks/qc/README.md` + `.agents/references/notebook-stage-map.md` + the semantic policy for that review gate |
 | HCR activity replay QA | `.agents/references/current-state.md` + `.agents/references/canonical-tables.md` |

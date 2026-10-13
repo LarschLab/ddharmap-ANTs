@@ -50,10 +50,15 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
   - whole-population response/BPI panels source ROI-centric `[50ia]` outputs
   - gene-specific AUC panels source HCR-centric identified-cell rows from package-owned `[56i]` motion-AUC plot tables
   - plotting code lives in `plots.analysis.render_single_fish_50l_composite`; the notebook cell should only provide knobs, paths, display, and legacy bindings
-- `[56h]` staged `make-figures` trace/status artifact is package-rendered as a table-driven per-gene stimulus/HCR status summary:
-  - source per-gene response magnitudes from package-owned `[56i]` `motion_auc_plot_points.csv`
-  - source HCR functional-status counts from `hcr_activity_status.csv`
-  - do not depend on notebook-local `results`, `results_per_cell`, or unpersisted trace payloads
+- `[56h]` staged `make-figures` trace/status artifact (F049 restoration approved by Danin, 2026-10-12):
+  - primary content is individual identified-cell trial-averaged dF/F plus an equal-cell gene mean, in contra/ipsi rows × bout-like/continuous columns per gene; bilateral conditions are excluded
+  - cell sets and gene membership come from `[56i]` `motion_auc_plot_points.csv`, with `(gene, plane_idx, func_label)` deduplication; persisted `motion_auc_roi_panels.csv` supplies `roi_side` (the stage's midline-side annotation) and Suite2p quality
+  - current `functional_roi_activity_bpi_cells.csv` supplies response state and `bpi_preference`; low activity is graded grey, suppressed-only is gene-colored and dashed, with no BPI availability gate
+  - load fluorescence via the same `suite2p.load_suite2p_dff_map` as response scoring (10th-percentile F0, epsilon 1e-6), subtract each persisted trial's true prestimulus mean, then average trials per cell; no z-score or new normalization
+  - `score-activity-bpi/registration/scored_stimulus_windows.csv` is required: time zero is stimulus appearance (`prestim_baseline_end_frame`), and the shaded movement interval uses persisted scored frame boundaries; display includes 12.5 s before appearance and 7.5 s after the 12.5 s movement interval
+  - HCR-status donuts retain the HCR-label denominator from `hcr_activity_status.csv`, separately from trace ROI counts
+  - keep `per_gene_stimulus_trace_with_hcr_status_56h.png/.pdf`; the summary CSV records plotted cell/trial counts, not AUC bars
+  - no notebook-local `results` or `results_per_cell` payloads; no identity reconstruction in plotting
 - `[57a-responsive-identity-donut]` is explicitly hybrid-scoped:
   - denominator is ROI-centric and responsive-only from `functional_roi_activity_identity.csv` (`response_is_active == True` and responsive `bpi_category` classes)
   - identity assignment for the identified fraction comes from selected `conf_to_func_pairs.csv` rows collapsed to exact per-ROI gene combinations
@@ -85,3 +90,29 @@ For explicitly identified-cell activity figures, starting from `hcr_activity_sta
 - In-panel numeric annotations (e.g., medians, n-labels) must use collision-aware placement (minimum vertical separation and x-neighbor checks) and should use a subtle text background (`bbox`) when plotted over dense marks.
 - Prefer the 53a summary style for dense panels: place annotation text above the plotted data band, stack upward on collisions, and expand y-limits as needed so labels never overlap data or each other.
 - Prefer reusing existing anti-overlap helpers/patterns (e.g., sample-size label collision avoidance in `plots.qa`) instead of ad hoc fixed-y text placement.
+
+## Curated single-fish gallery (Danin, 2026-10-13)
+
+- `qc_figure_export.CURATED_CARDS` owns ordered role selection; never select by extraction F-number. Preserve complete inventory, source hashes, exclusions and missing evidence.
+- P003 is a four-column per-plane figure rendered from persisted registration products in QC 02 cell 13. Native reference + Suite2p outlines; best-Z anatomy + saved label-Z outlines; selected registered reference; magenta anatomy / green functional overlay. Keep all planes and full anatomy extents, writer percentile normalization (within the placed FOV for zero-padded NCC metric TIFFs), persisted method and available NCC metrics. Select method-specific TIFFs, including NCC-xy; never recompute registration. P005/P010/P020 remain native-resolution composites in QC 03/06. The exporter only selects PNGs.
+- P008 uses saved accepted/rejected HCR masks on every geometry-owned functional anatomy plane; no new matching.
+- P019 retains Q7 marker-stratified traces and adds the legacy two-ring HCR scope/status partition. Inner: within/outside functional planes/unmatched. Outer: responsive, low activity, response unavailable, no functional match, out-of-plane, unmatched. Count only persisted HCR status rows; do not add unmatched masks from the historical cohort summary. Trace ROI membership counts and HCR-label denominators remain distinct.
+- P013 retains the fixed any-presented-stimulus cohort. P014 is approved as signed [23c] AUC violins (round 2). P026 and the standalone 56h gallery card are omitted; writer products remain.
+- Q7 response evidence shows LB/RB/LC/RC signed margins against each stimulus's own saved null and persisted floor, and saved selected tuning side. Pooled AUC panels are comparison-only with no floor decision lines.
+- F046 global and population AUC panels share one data-derived limit, with median labels in two fixed rows above data (independent of gene count). Identity count summaries label every non-zero count and zoom small categories.
+
+### Gallery review round 1 (Claude, 2026-10-13)
+
+P019 adds explicit figure-level inner-location and outer-status colour legends and a west-anchored adjacent donut column. P015 colours margins by saved per-stimulus valence (non-significant first, activation and suppression passes above); legends count finite plotted calls. Tuning-side bars include only rows with at least one saved activated call, with excluded/no-side counts in the title. The degenerate magnitude-bin curve is removed, retaining its annotation-count legend. P008 uses a two-column all-plane grid with thicker display-only outlines. P003 places both complete row sets side by side at equal heights; P010/P020 upscale narrower parts to equal widths. No source PNG is downsampled or cropped; originals remain in inventory. P005/P016/P020b remain unchanged.
+
+### Signed early-screen plots (Danin, 2026-10-13, round 2)
+
+P014 is now approved: two violin rows (all represented Suite2p cells; fixed any-presented-stimulus responders) × session columns, all ten presented stimuli, using saved [23c] signed `mean_auc_dff`. Show zero, median, n and activated/suppressed/not-significant/unavailable counts. Row 2 is selected by the same responses and labelled descriptive. P018 pivots that same independent AUC table; normalized colourbar is unitless with input dF/F·s, raw companion is dF/F·s. The four contaminated [23b] 50 s scalar columns are retired; no response tests or score windows change. Gallery provenance has one row per gate, inline saved values and collapsible original evidence. P014 is no longer held.
+
+### Violin display range (2026-10-13, review round 3)
+
+P014 uses row-wise symmetric bounds from the 0.5–99.5% finite AUC quantiles, shared across sessions within each row. Violin densities omit values outside those display bounds and label above/below counts per stimulus. Medians and saved call counts retain all observations. If the robust bound exceeds 15 times the row median absolute AUC, use a labelled symlog axis with that median as linthresh (a numerical safeguard applies for zero medians). P018 reserves an explicit adjacent colourbar column so no auto-shrink gap separates the mean-AUC panel. These are presentation changes only.
+
+### P003 registration review replacement (2026-10-13)
+
+The four-column persisted-input renderer supersedes the earlier side-by-side writer-PNG composite. Original plane-row and intensity-overlay writer PNGs remain unchanged in inventory/exclusions. QC uses `plane_refs_summary_qc.json` explicit label-Z provenance and the selected method, not TIFF discovery order; f06 plane 0 is NCC-xy. No table, scoring, geometry, or writer-stage changes.
