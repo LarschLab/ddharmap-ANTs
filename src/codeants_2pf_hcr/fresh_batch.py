@@ -1,4 +1,5 @@
 """Fresh control validation followed by a conditional unattended fish batch."""
+from codeants_2pf_hcr.paths import visible_iterdir
 import hashlib
 import json
 from pathlib import Path
@@ -21,10 +22,10 @@ def prepare_fresh_batch(*, data_root: Path, repo_root: Path, validation_root: Pa
     (fish / "01_raw").symlink_to(source / "01_raw")
     preproc = fish / "02_reg/00_preprocessing"
     preproc.mkdir(parents=True)
-    for child in (source / "02_reg").iterdir():
+    for child in visible_iterdir(source / "02_reg"):
         if child.name != "00_preprocessing" and not child.name.startswith("."):
             (fish / "02_reg" / child.name).symlink_to(child)
-    for child in (source / "02_reg/00_preprocessing").iterdir():
+    for child in visible_iterdir(source / "02_reg/00_preprocessing"):
         if child.name != "2p_anatomy" and not child.name.startswith("."):
             (preproc / child.name).symlink_to(child)
     anatomy_dir = preproc / "2p_anatomy"
@@ -42,7 +43,7 @@ def prepare_fresh_batch(*, data_root: Path, repo_root: Path, validation_root: Pa
     if (source / "03_analysis/voxel_sizes.json").exists():
         shutil.copy2(source / "03_analysis/voxel_sizes.json", analysis / "voxel_sizes.json")
     (analysis / "confocal").mkdir()
-    for child in (source / "03_analysis/confocal").iterdir():
+    for child in visible_iterdir(source / "03_analysis/confocal"):
         if child.name == "aligned":
             shutil.copytree(child, analysis / "confocal/aligned", ignore=shutil.ignore_patterns("._*"))
         elif not child.name.startswith("."):

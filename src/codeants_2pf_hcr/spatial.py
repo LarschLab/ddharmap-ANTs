@@ -1,6 +1,7 @@
 """Spatial/image helpers and notebook-facing stages for functional reference cells [12], [16], and [20]."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -429,7 +430,7 @@ def _functional_preprocessing_metadata_path(source_path: Path, configured_path: 
     exact = metadata_dir / f"{fish_id}_preprocessing_metadata.json"
     if exact.exists():
         return exact
-    candidates = sorted(metadata_dir.glob("*_preprocessing_metadata.json"))
+    candidates = sorted(visible_glob(metadata_dir, "*_preprocessing_metadata.json"))
     if len(candidates) == 1:
         return candidates[0]
     raise FileNotFoundError(
@@ -612,9 +613,9 @@ def build_functional_references_stage(
         legacy_norm_path = (outdir_path / f"{stem}_ref_norm.tif") if outdir_path is not None else None
 
         if reuse_saved_refs and frame_start == 0:
-            plane_raws = sorted(out_raw_path.glob(f"{stem}_plane*_raw.tif"))
+            plane_raws = sorted(visible_glob(out_raw_path, f"{stem}_plane*_raw.tif"))
             if (not plane_raws) and outdir_path is not None:
-                plane_raws = sorted(outdir_path.glob(f"{stem}_plane*_raw.tif"))
+                plane_raws = sorted(visible_glob(outdir_path, f"{stem}_plane*_raw.tif"))
             stack_plane_refs: list[dict[str, Any]] = []
             for rawp in plane_raws:
                 match = re.search(r"plane(\d+)", rawp.stem)

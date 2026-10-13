@@ -8,6 +8,7 @@ scored; it never recomputes response calls or records gate decisions.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 import base64
 import html
@@ -88,7 +89,7 @@ def _plane_trials(windows: pd.DataFrame, plane_idx: int) -> pd.DataFrame:
 
 
 def _load_plane_f(suite2p_dir: Path, plane_idx: int) -> tuple[np.ndarray, Path]:
-    matches = sorted((suite2p_dir / f"plane{plane_idx}").glob("*_F.npy"))
+    matches = sorted(visible_glob(suite2p_dir / f"plane{plane_idx}", "*_F.npy"))
     if len(matches) != 1:
         raise RuntimeError(f"expected one *_F.npy for plane {plane_idx}, found {matches}")
     return np.load(matches[0], mmap_mode="r"), matches[0]

@@ -1,4 +1,5 @@
 """Read-only native execution-layout and ROI trace-identity preflight."""
+from codeants_2pf_hcr.paths import visible_glob
 from pathlib import Path
 import json
 import re
@@ -28,7 +29,7 @@ def check_geometry_trace_identity(path, *, fish_dir, eligible_planes):
         if "func_source" not in group or any(Path(str(p)).resolve() != expected for p in group.func_source):
             errors.append(f"geometry plane {idx} has inconsistent Suite2p source")
             continue
-        files = list(expected.glob("*F.npy"))
+        files = list(visible_glob(expected, "*F.npy"))
         if len(files) != 1:
             errors.append(f"plane {idx} requires exactly one F trace array")
             continue

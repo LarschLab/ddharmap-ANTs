@@ -5,6 +5,7 @@ never run a pipeline stage and never write analysis products.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 from ..native_paths import stage_product_path
 
 import hashlib
@@ -735,8 +736,8 @@ def load_functional_registration_qc(
     anatomy_label_dir = _path(stage_product_path(transformed_dir, "transform-functional-rois-to-anatomy", "functional/anatomy"), label="anatomy-space transformed ROI labels")
     transformed_labels = tuple(
         path
-        for path in (tuple(sorted(anatomy_label_dir.glob("*.tif"))) + tuple(sorted(anatomy_label_dir.glob("*.tiff"))))
-        if not path.name.startswith("._")
+        for path in (tuple(sorted(visible_glob(anatomy_label_dir, "*.tif"))) + tuple(sorted(visible_glob(anatomy_label_dir, "*.tiff"))))
+        if is_visible_path(path)
     )
     if not transformed_labels:
         raise FileNotFoundError(f"No anatomy-space transformed ROI label TIFFs found: {anatomy_label_dir}")

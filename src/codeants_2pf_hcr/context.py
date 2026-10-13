@@ -1,6 +1,7 @@
 """Context and fish-scoped stage helpers for notebook cells [4], [4a], [4b], [4c], [8], [8a], [10], [14], and [14a]."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import dataclass
 import json
@@ -446,7 +447,7 @@ def read_raw_metadata_polarity(fish_dir: Path | str) -> tuple[str | None, str]:
         return None, "missing raw metadata dir"
     hits = sorted(
         path
-        for path in metadata_dir.glob("*metadata*.csv")
+        for path in visible_glob(metadata_dir, "*metadata*.csv")
         if not path.name.startswith(".")
     )
     if not hits:
@@ -524,7 +525,7 @@ def first_match(fish_dir: Path | str, globs: list[str], all_hits: bool = False) 
     hits_all: list[Path] = []
     root = Path(fish_dir)
     for pattern in globs:
-        hits_all.extend(sorted(root.glob(pattern)))
+        hits_all.extend(sorted(visible_glob(root, pattern)))
     if all_hits:
         return hits_all
     return hits_all[0] if hits_all else None
@@ -636,7 +637,7 @@ def infer_hcr_stack_paths(preproc_dir: Path | str | None, fish_id: str) -> list[
             "*HCR*.tif",
             "*HCR*.tiff",
         ):
-            hits.extend(sorted(directory.glob(pattern)))
+            hits.extend(sorted(visible_glob(directory, pattern)))
     out: list[Path] = []
     seen: set[Path] = set()
     for path in hits:
@@ -668,7 +669,7 @@ def infer_anat_labels_path(fish_dir: Path | str, fish_id: str) -> Path | None:
         if not directory.exists():
             continue
         for pattern in patterns:
-            hits = sorted(directory.glob(pattern))
+            hits = sorted(visible_glob(directory, pattern))
             if hits:
                 return hits[0]
     return None
@@ -727,7 +728,7 @@ def infer_hcr_label_paths(fish_dir: Path | str, fish_id: str) -> list[Path]:
         if not directory.exists():
             continue
         for pattern in patterns:
-            for hit in sorted(directory.glob(pattern)):
+            for hit in sorted(visible_glob(directory, pattern)):
                 name = hit.name.lower()
                 if any(token in name for token in excluded_tokens):
                     continue
@@ -791,7 +792,7 @@ def infer_func_labels_path(
         if not directory.exists():
             continue
         for pattern in candidate_patterns:
-            for hit in sorted(directory.glob(pattern)):
+            for hit in sorted(visible_glob(directory, pattern)):
                 name_lower = hit.name.lower()
                 if any(token in name_lower for token in excluded_name_tokens):
                     continue
@@ -838,7 +839,7 @@ def _collect_anatomy_stack_candidates(
     hits: list[Path] = []
     seen: set[Path] = set()
     for pattern in patterns:
-        for hit in sorted(directory.glob(pattern)):
+        for hit in sorted(visible_glob(directory, pattern)):
             if not hit.is_file():
                 continue
             name_lower = hit.name.lower()
@@ -1170,7 +1171,7 @@ def _read_anatomy_z_metadata(metadata_dir: Path | str | None) -> tuple[float | N
     if not base.exists():
         return None, []
     values: list[tuple[Path, float]] = []
-    for path in sorted(base.glob("*metadata*.csv")):
+    for path in sorted(visible_glob(base, "*metadata*.csv")):
         if "experiment_log" in path.name.lower():
             continue
         try:
@@ -1242,7 +1243,7 @@ def _resolve_anatomy_source_path(
         anat_dir = preproc_dir / "2p_anatomy" if preproc_dir is not None else None
         if anat_dir is None or not anat_dir.exists():
             return None
-        hits = list(anat_dir.glob(stem + ".nrrd"))
+        hits = list(visible_glob(anat_dir, stem + ".nrrd"))
         return hits[0] if hits else None
     except Exception:
         return None

@@ -5,6 +5,7 @@ registration, segmentation, matching, scoring, export, or promotion stage.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 
 from dataclasses import dataclass
 import json
@@ -1498,10 +1499,10 @@ def resolve_hcr_matching_artifact_root(
     """
     staged = Path(staged_root)
     pattern = "*_cp_masks_in_2p_labels_uint16.tif"
-    if any(not path.name.startswith("._") for path in staged.glob(pattern)):
+    if any(is_visible_path(path) for path in visible_glob(staged, pattern)):
         return staged
     legacy = Path(fish_dir) / "03_analysis" / "confocal" / "aligned"
-    if any(not path.name.startswith("._") for path in legacy.glob(pattern)):
+    if any(is_visible_path(path) for path in visible_glob(legacy, pattern)):
         return legacy
     return staged
 
@@ -2144,8 +2145,8 @@ def plot_molecular_correspondence_tiles(
     def _functional_mask(plane_idx: int) -> np.ndarray:
         if plane_idx not in functional_masks:
             candidates = sorted(
-                path for path in functional_dir.glob(f"*plane{plane_idx}*func_mask_in_2p.tif")
-                if path.is_file() and not path.name.startswith("._")
+                path for path in visible_glob(functional_dir, f"*plane{plane_idx}*func_mask_in_2p.tif")
+                if path.is_file() and is_visible_path(path)
             )
             path = candidates[0] if candidates else None
             if path is None:

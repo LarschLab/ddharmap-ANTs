@@ -3,6 +3,7 @@
 Never warps, registers, promotes canonical products, or accepts masks/identity.
 """
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 
 import json
 from pathlib import Path
@@ -120,7 +121,7 @@ def audit_readiness(spec_path: Path) -> dict:
         check("eligible_plane_coverage", sorted(r["plane"] for r in report["functional_planes"]) == sorted(eligible))
         archive = Path(spec["archive_root"])
         aligned = fish_dir / "03_analysis/confocal/aligned"
-        actual = {p.name for p in aligned.glob("*warp_meta.json") if not p.name.startswith("._")}
+        actual = {p.name for p in visible_glob(aligned, "*warp_meta.json") if is_visible_path(p)}
         check("exact_retained_hcr_inventory", actual == set(spec["hcr_routes"]), sorted(actual))
         for name, expected in spec["hcr_routes"].items():
             path = aligned / name

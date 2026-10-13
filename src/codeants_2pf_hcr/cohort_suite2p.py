@@ -1,6 +1,7 @@
 """Cohort Suite2p [23c] response-overview builders."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_iterdir
 
 from dataclasses import asdict, dataclass
 import os
@@ -121,7 +122,7 @@ def resolve_cohort_suite2p_23c_fish_dir(data_root: str | Path, fish_id: str) -> 
     fish_id_str = str(fish_id)
     candidates = [root / fish_id_str]
     if root.exists():
-        owner_dirs = [path for path in sorted(root.iterdir()) if path.is_dir()]
+        owner_dirs = [path for path in sorted(visible_iterdir(root)) if path.is_dir()]
         candidates.extend(path / fish_id_str for path in owner_dirs)
         candidates.extend(path / "Microscopy" / fish_id_str for path in owner_dirs)
     for candidate in candidates:

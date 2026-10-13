@@ -1,6 +1,7 @@
 """Read-only staged single-fish pipeline contracts and input audits."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
 
 import csv
 from dataclasses import asdict, dataclass, replace
@@ -628,7 +629,7 @@ def describe_glob(
     label: str | None = None,
 ) -> ManifestPathRecord:
     base = Path(base_dir)
-    matches = tuple(path for path in sorted(base.glob(pattern)) if _is_real_match(path))
+    matches = tuple(path for path in sorted(visible_glob(base, pattern)) if _is_real_match(path))
     file_matches = tuple(path for path in matches if path.is_file())
     mtimes = tuple(path.stat().st_mtime for path in file_matches)
     return ManifestPathRecord(
@@ -645,8 +646,7 @@ def describe_glob(
 
 
 def _is_real_match(path: Path) -> bool:
-    ignored_names = {".DS_Store"}
-    return not any(part.startswith("._") or part in ignored_names for part in path.parts)
+    return is_visible_path(path)
 
 
 def _nonempty_artifact(path: Path) -> tuple[bool, str]:
@@ -654,7 +654,7 @@ def _nonempty_artifact(path: Path) -> tuple[bool, str]:
         size = path.stat().st_size
         return size > 0, f"file_size={size}"
     if path.is_dir():
-        count = sum(1 for child in path.rglob("*") if child.is_file() and _is_real_match(child))
+        count = sum(1 for child in visible_rglob(path, "*") if child.is_file() and _is_real_match(child))
         return count > 0, f"file_count={count}"
     return False, "missing"
 
@@ -666,7 +666,7 @@ def _nonempty_artifact_matching(path: Path, pattern: str | None) -> tuple[bool, 
         matches = path.match(pattern) and path.stat().st_size > 0 and _is_real_match(path)
         return bool(matches), f"pattern={pattern}; file_match={bool(matches)}"
     if path.is_dir():
-        matches = tuple(child for child in sorted(path.rglob(pattern)) if child.is_file() and _is_real_match(child))
+        matches = tuple(child for child in sorted(visible_rglob(path, pattern)) if child.is_file() and _is_real_match(child))
         return bool(matches), f"pattern={pattern}; file_count={len(matches)}"
     return False, f"pattern={pattern}; missing"
 
@@ -876,7 +876,7 @@ def _csv_dict_rows(path: Path) -> tuple[dict[str, str], ...] | None:
 
 
 def _real_files_matching(directory: Path, pattern: str) -> tuple[Path, ...]:
-    return tuple(path for path in sorted(directory.glob(pattern)) if path.is_file() and _is_real_match(path))
+    return tuple(path for path in sorted(visible_glob(directory, pattern)) if path.is_file() and _is_real_match(path))
 
 
 def _suite2p_plane_dirs(paths: PipelinePaths) -> tuple[Path, ...]:
@@ -884,7 +884,7 @@ def _suite2p_plane_dirs(paths: PipelinePaths) -> tuple[Path, ...]:
         return ()
     return tuple(
         path
-        for path in sorted(paths.functional_suite2p_dir.glob("plane*"))
+        for path in sorted(visible_glob(paths.functional_suite2p_dir, "plane*"))
         if path.is_dir() and _is_real_match(path)
     )
 
@@ -3491,8 +3491,8 @@ def _append_assign_identity_geometry_dependency_checks(
         for column in ("identity_label", "has_identity_assigned", "response_class", "response_summary_class", "bpi", "bpi_category", "gene")
         if column in roi_header
     )
-    hcr_label_count = len(tuple(path for path in hcr_anatomy_root.glob("*_cp_masks_in_2p_labels_uint16.tif") if _is_real_match(path)))
-    hcr_final_pair_paths = tuple(path for path in hcr_anatomy_root.glob("*_cp_masks_in_2p_final_pairs.csv") if _is_real_match(path))
+    hcr_label_count = len(tuple(path for path in visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_labels_uint16.tif") if _is_real_match(path)))
+    hcr_final_pair_paths = tuple(path for path in visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_final_pairs.csv") if _is_real_match(path))
     hcr_final_pair_rows = sum((_csv_row_count(path) or 0) for path in hcr_final_pair_paths)
     final_pair_schema_status, final_pair_schema_observed = _hcr_final_pair_schema_status(hcr_final_pair_paths)
     final_pair_acceptance_status, final_pair_acceptance_observed = _hcr_final_pair_acceptance_status(hcr_final_pair_paths)
@@ -3664,7 +3664,7 @@ def _hcr_high_quality_mask_counts_by_gene(hcr_anatomy_root: Path) -> dict[str, i
     from .matching import gene_from_mask
 
     counts: dict[str, int] = {}
-    for meta_path in sorted(hcr_anatomy_root.glob("*_cp_masks_in_2p_warp_meta.json")):
+    for meta_path in sorted(visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_warp_meta.json")):
         if not _is_real_match(meta_path):
             continue
         try:
@@ -4077,7 +4077,7 @@ def build_single_fish_hcr_activity_replay_manifest(
     )
     final_pair_paths = tuple(
         path
-        for path in sorted(hcr_root.glob("*_cp_masks_in_2p_final_pairs.csv"))
+        for path in sorted(visible_glob(hcr_root, "*_cp_masks_in_2p_final_pairs.csv"))
         if _is_real_match(path)
     )
     inputs = (
@@ -6293,7 +6293,7 @@ def _upstream_stage_has_tracking_evidence(
     if manifest_path.exists():
         return True
     stage_root = _stage_root(paths, stage_name)
-    if stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*")):
+    if stage_root.exists() and any(_is_real_match(path) for path in visible_rglob(stage_root, "*")):
         return True
     output_roots = {Path(record.path) for record in manifest.outputs if record.exists}
     return any(path.is_relative_to(paths.pipeline_root) for path in output_roots)
@@ -6343,7 +6343,7 @@ def _summarize_downstream_stage_manifest(manifest: StageManifest, persisted: Per
 
 def _stage_has_existing_outputs(paths: PipelinePaths, stage_name: str) -> bool:
     stage_root = _stage_root(paths, stage_name)
-    if stage_root.exists() and any(_is_real_match(path) for path in stage_root.rglob("*")):
+    if stage_root.exists() and any(_is_real_match(path) for path in visible_rglob(stage_root, "*")):
         return True
     manifest_path = _upstream_stage_manifest_path(paths, stage_name) if stage_name in UPSTREAM_STAGE_NAMES else None
     if manifest_path is not None and manifest_path.exists():
@@ -6360,7 +6360,7 @@ def _stage_has_existing_outputs(paths: PipelinePaths, stage_name: str) -> bool:
             continue
         if path.is_file() and _is_real_match(path):
             return True
-        if path.is_dir() and any(_is_real_match(child) for child in path.rglob("*")):
+        if path.is_dir() and any(_is_real_match(child) for child in visible_rglob(path, "*")):
             return True
     return False
 
@@ -6891,7 +6891,7 @@ def discover_ex_vivo_anatomy_stack(paths: PipelinePaths) -> Path:
     )
     matches: list[Path] = []
     for pattern in patterns:
-        matches.extend(path for path in sorted(paths.raw_2p_anatomy_dir.glob(pattern)) if _is_real_match(path))
+        matches.extend(path for path in sorted(visible_glob(paths.raw_2p_anatomy_dir, pattern)) if _is_real_match(path))
     unique = tuple(dict.fromkeys(matches))
     if not unique:
         raise FileNotFoundError(f"No ex vivo anatomy stack found under {paths.raw_2p_anatomy_dir}")
@@ -6931,7 +6931,7 @@ def roi_to_anatomy_match_root(paths: PipelinePaths) -> Path:
 
 def discover_functional_motion_corrected_stacks(paths: PipelinePaths) -> tuple[Path, ...]:
     motion_dir = paths.functional_preproc_dir / "02_motionCorrected"
-    matches = tuple(path for path in sorted(motion_dir.glob("*mcorrected*.tif")) if _is_real_match(path))
+    matches = tuple(path for path in sorted(visible_glob(motion_dir, "*mcorrected*.tif")) if _is_real_match(path))
     if not matches:
         raise FileNotFoundError(f"No motion-corrected functional stacks found under {motion_dir}")
     return matches
@@ -6956,7 +6956,7 @@ def discover_functional_reference_pairs(reference_dir: Path | str) -> tuple[tupl
     raw_paths = tuple(
         path
         for pattern in ("*_ref_raw.tif", "*_raw.tif")
-        for path in sorted(ref_dir.glob(pattern))
+        for path in sorted(visible_glob(ref_dir, pattern))
         if _is_real_match(path)
     )
     pairs: list[tuple[str, Path, Path]] = []
@@ -8648,8 +8648,8 @@ def run_make_functional_registration_qc_stage(
             automatic_midline,
             functional_label_paths={
                 int(re.search(r"plane(\d+)", path.name).group(1)): path
-                for path in native_dir.glob("*.tif")
-                if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+                for path in visible_glob(native_dir, "*.tif")
+                if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
             },
         )
         automatic_midline_figure.savefig(automatic_midline_png, dpi=180, bbox_inches="tight")
@@ -8663,8 +8663,8 @@ def run_make_functional_registration_qc_stage(
             anatomy_midline, anatomy_stack,
             transformed_roi_labels={
                 int(re.search(r"plane(\d+)", path.name).group(1)): path
-                for path in transformed_dir.glob("*.tif")
-                if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+                for path in visible_glob(transformed_dir, "*.tif")
+                if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
             },
         )
         anatomy_midline_figure.savefig(anatomy_midline_png, dpi=180, bbox_inches="tight")
@@ -8729,7 +8729,7 @@ def run_make_functional_registration_qc_stage(
 
 
 def _discover_hcr_aligned_stage_files(source_root: Path) -> dict[str, tuple[Path, ...]]:
-    files = tuple(path for path in sorted(source_root.glob("*")) if path.is_file() and _is_real_match(path))
+    files = tuple(path for path in sorted(visible_glob(source_root, "*")) if path.is_file() and _is_real_match(path))
     return {
         "label_tiffs": tuple(path for path in files if path.name.endswith("_cp_masks_in_2p_labels_uint16.tif")),
         "qc_tiffs": tuple(path for path in files if path.suffix.lower() in {".tif", ".tiff"} and "_cp_masks_in_2p_" in path.name),
@@ -8817,7 +8817,7 @@ def _hcr_match_results_from_staged_final_pairs(hcr_anatomy_root: Path) -> list[d
     import pandas as pd
 
     results: list[dict[str, Any]] = []
-    for final_pairs_path in sorted(hcr_anatomy_root.glob("*_cp_masks_in_2p_final_pairs.csv")):
+    for final_pairs_path in sorted(visible_glob(hcr_anatomy_root, "*_cp_masks_in_2p_final_pairs.csv")):
         if not _is_real_match(final_pairs_path):
             continue
         mask_name = final_pairs_path.name.replace("_final_pairs.csv", "_labels_uint16.tif")
@@ -8875,7 +8875,7 @@ def _hcr_channel_nrrds(directory: Path) -> tuple[Path, ...]:
         return ()
     return tuple(
         path
-        for path in sorted(directory.glob("*.nrrd"))
+        for path in sorted(visible_glob(directory, "*.nrrd"))
         if path.is_file() and _is_real_match(path) and "gcamp" not in path.name.lower()
     )
 
@@ -8883,7 +8883,7 @@ def _hcr_channel_nrrds(directory: Path) -> tuple[Path, ...]:
 def _transform_file_counts(directory: Path) -> dict[str, int]:
     if not directory.exists():
         return {"affine": 0, "warp": 0, "inverse_warp": 0}
-    files = tuple(path for path in directory.glob("*") if path.is_file() and _is_real_match(path))
+    files = tuple(path for path in visible_glob(directory, "*") if path.is_file() and _is_real_match(path))
     return {
         "affine": sum(1 for path in files if path.name.endswith("0GenericAffine.mat")),
         "warp": sum(1 for path in files if path.name.endswith("1Warp.nii.gz")),
@@ -8892,7 +8892,7 @@ def _transform_file_counts(directory: Path) -> dict[str, int]:
 
 
 def _count_real_files(directory: Path, pattern: str) -> int:
-    return len(tuple(path for path in directory.glob(pattern) if path.is_file() and _is_real_match(path)))
+    return len(tuple(path for path in visible_glob(directory, pattern) if path.is_file() and _is_real_match(path)))
 
 
 def _anatomy_zyx_spacing_from_voxel_cache(paths: PipelinePaths) -> dict[str, float]:
@@ -8936,10 +8936,10 @@ def _hcr_raw_mask_paths(paths: PipelinePaths) -> tuple[Path, ...]:
         path
         for path in sorted(
             [
-                *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tif"),
-                *paths.confocal_raw_cp_masks_dir.glob("*round*_cp_masks*.tiff"),
-                *paths.confocal_raw_cp_masks_dir.glob("*rbest*_cp_masks*.tif"),
-                *paths.confocal_raw_cp_masks_dir.glob("*rbest*_cp_masks*.tiff"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*round*_cp_masks*.tif"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*round*_cp_masks*.tiff"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*rbest*_cp_masks*.tif"),
+                *visible_glob(paths.confocal_raw_cp_masks_dir, "*rbest*_cp_masks*.tiff"),
             ]
         )
         if path.is_file() and _is_real_match(path)
@@ -8978,7 +8978,7 @@ def _hcr_final_pair_key_set(path: Path) -> set[tuple[str, str]]:
 
 def _hcr_final_pair_key_parity_checks(source_root: Path, output_root: Path) -> tuple[StageCheckRecord, ...]:
     checks: list[StageCheckRecord] = []
-    for output_path in sorted(output_root.glob("*_cp_masks_in_2p_final_pairs.csv")):
+    for output_path in sorted(visible_glob(output_root, "*_cp_masks_in_2p_final_pairs.csv")):
         if not _is_real_match(output_path):
             continue
         source_path = source_root / output_path.name
@@ -9263,8 +9263,8 @@ def run_make_anatomy_midline_proposal_stage(
         )
         labels = {
             int(re.search(r"plane(\d+)", path.name).group(1)): path
-            for path in (transform / "functional" / "anatomy").glob("*.tif")
-            if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+            for path in visible_glob(transform / "functional" / "anatomy", "*.tif")
+            if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
         }
         if set(labels) != set(proposals["plane_idx"].astype(int)):
             raise ValueError("Transformed ROI labels do not cover every proposed anatomy-midline plane")
@@ -9368,8 +9368,8 @@ def run_materialize_anatomy_midline_stage(
         json_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
         labels = {
             int(re.search(r"plane(\d+)", path.name).group(1)): path
-            for path in (functional_roi_anatomy_transform_root(paths) / "functional" / "anatomy").glob("*.tif")
-            if not path.name.startswith("._") and re.search(r"plane(\d+)", path.name)
+            for path in visible_glob(functional_roi_anatomy_transform_root(paths) / "functional" / "anatomy", "*.tif")
+            if is_visible_path(path) and re.search(r"plane(\d+)", path.name)
         }
         fig = render_anatomy_midline_proposal_grid(
             proposals, imread_any(anatomy_path),
@@ -9412,7 +9412,7 @@ def run_register_hcr_to_anatomy_stage(
         source_groups = _discover_hcr_aligned_stage_files(source_root_path)
         if not source_groups["label_tiffs"] and not recompute_direct_ants:
             raise FileNotFoundError(f"HCR aligned label TIFFs are missing from {source_root_path}")
-        existing_outputs = tuple(path for path in aligned_output_root.glob("*") if path.is_file() and _is_real_match(path))
+        existing_outputs = tuple(path for path in visible_glob(aligned_output_root, "*") if path.is_file() and _is_real_match(path))
         if existing_outputs and not force_recompute:
             raise FileExistsError(
                 "register-hcr-to-anatomy outputs already exist; pass --force-recompute to overwrite: "
@@ -9456,7 +9456,7 @@ def run_register_hcr_to_anatomy_stage(
             Path(result.output_metadata_path) for result in direct_warp_results
         )
         aligned_label_paths = tuple(sorted(
-            path for path in aligned_output_root.glob("*_cp_masks_in_2p_labels_uint16.tif")
+            path for path in visible_glob(aligned_output_root, "*_cp_masks_in_2p_labels_uint16.tif")
             if path.is_file() and _is_real_match(path)
         ))
         label_metrics_path = _build_hcr_label_metrics_csv(

@@ -6,6 +6,7 @@ does not edit fish metadata or feed predictions into canonical preprocessing.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, visible_iterdir
 
 from dataclasses import dataclass
 import csv
@@ -65,7 +66,7 @@ def discover_raw_anatomy_stacks(fish_dir: Path | str) -> tuple[Path, ...]:
     anatomy_dir = Path(fish_dir) / "01_raw" / "2p" / "anatomy"
     hits = sorted(
         path
-        for path in anatomy_dir.glob("*.tif*")
+        for path in visible_glob(anatomy_dir, "*.tif*")
         if path.is_file()
         and "ex_vivo" not in path.name.lower()
         and "postclear" not in path.name.lower()
@@ -276,7 +277,7 @@ def _fish_dirs(microscopy_roots: Iterable[Path | str]) -> dict[str, Path]:
     output: dict[str, Path] = {}
     for root_value in microscopy_roots:
         root = Path(root_value)
-        for fish_dir in sorted(path for path in root.iterdir() if path.is_dir()):
+        for fish_dir in sorted(path for path in visible_iterdir(root) if path.is_dir()):
             previous = output.get(fish_dir.name)
             if previous is not None and previous != fish_dir:
                 raise ValueError(f"Fish {fish_dir.name} exists under multiple microscopy roots")

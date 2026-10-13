@@ -1,6 +1,7 @@
 """Suite2p stage helpers for notebook cells [23a], [25], and trace consumers."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import dataclass
 import hashlib
@@ -33,12 +34,12 @@ def _find_suite2p_file(plane_dir: str | Path, kind: str) -> Path | None:
         return exact
     plane_match = re.search(r"plane(\d+)", str(plane_dir.name))
     if plane_match:
-        tagged_hits = sorted(plane_dir.glob(f"*plane{int(plane_match.group(1))}_{kind}.npy"))
+        tagged_hits = sorted(visible_glob(plane_dir, f"*plane{int(plane_match.group(1))}_{kind}.npy"))
         if tagged_hits:
             return tagged_hits[0]
     hits: list[Path] = []
     for pattern in (f"*_{kind}.npy", f"*{kind}.npy"):
-        hits.extend(sorted(plane_dir.glob(pattern)))
+        hits.extend(sorted(visible_glob(plane_dir, pattern)))
     hits = sorted(set(hits))
     return hits[0] if hits else None
 
@@ -829,7 +830,7 @@ def load_suite2p_stage(
             f"(effective {orient_effective}, polarity={polarity}, source={polarity_source})"
         )
 
-    plane_dirs = [path for path in resolved_root.glob(cfg.plane_glob) if path.is_dir()]
+    plane_dirs = [path for path in visible_glob(resolved_root, cfg.plane_glob) if path.is_dir()]
     plane_dirs = sorted(
         plane_dirs,
         key=lambda path: (_plane_num_from_name(path.name) if _plane_num_from_name(path.name) is not None else path.name),

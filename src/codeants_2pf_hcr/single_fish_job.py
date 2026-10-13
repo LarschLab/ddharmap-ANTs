@@ -1,5 +1,6 @@
 """Unattended finishing orchestration; never owns scientific writer semantics."""
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
 
 from contextlib import redirect_stdout, redirect_stderr
 import fcntl
@@ -16,13 +17,13 @@ from .single_fish_run import (
 
 def _output_metadata(spec) -> dict:
     paths = {Path(output) for stage in spec.stages for output in stage.outputs}
-    for state_path in (spec.state_root / "stages").glob("*.json"):
+    for state_path in visible_glob(spec.state_root / "stages", "*.json"):
         paths.update(Path(record["path"]) for record in json.loads(state_path.read_text()).get("promoted_products", ()))
     paths.add(spec.data_root / spec.fish_id / "03_analysis/functional/pipeline_manifests/native_layout.json")
     files = set()
     for path in paths:
         if path.is_dir():
-            files.update(child for child in path.rglob("*") if child.is_file())
+            files.update(child for child in visible_rglob(path, "*") if child.is_file())
         elif path.exists():
             files.add(path)
     return {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in files}
@@ -37,11 +38,11 @@ def _gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path,
                                  output_dir=output_dir, fish_dir=fish_dir, review_gate=review_gate, manifest_paths=manifest_paths,
                                  notebook_count=notebook_count)
         inventory = {str(path.relative_to(output_dir)): _file_hash(path)
-                     for path in output_dir.rglob("*") if path.is_file()}
+                     for path in visible_rglob(output_dir, "*") if path.is_file()}
         _write_json_atomic(output_dir / "job_inventory.json", {"sha256": inventory})
     report = json.loads((output_dir / "gallery_manifest.json").read_text())
     inventory = json.loads((output_dir / "job_inventory.json").read_text())["sha256"]
-    files = {str(path.relative_to(output_dir)) for path in output_dir.rglob("*")
+    files = {str(path.relative_to(output_dir)) for path in visible_rglob(output_dir, "*")
              if path.is_file() and path.name != "job_inventory.json"}
     if files != set(inventory) or any(_file_hash(output_dir / name) != digest
                                     for name, digest in inventory.items()):
@@ -50,10 +51,10 @@ def _gallery(*, notebook_dir: Path, manifest_dir: Path, output_dir: Path,
         for source in report[key]:
             if _file_hash(Path(source["path"])) != source["sha256"]:
                 raise RuntimeError(f"Gallery source changed: {source['path']}; use a new output directory")
-    if {entry["path"] for entry in report["notebook_coverage"]} != {str(p) for p in notebook_dir.glob("*.ipynb")}:
+    if {entry["path"] for entry in report["notebook_coverage"]} != {str(p) for p in visible_glob(notebook_dir, "*.ipynb")}:
         raise RuntimeError("Gallery notebook coverage changed")
-    manifests = {str(p) for p in (manifest_paths if manifest_paths is not None else manifest_dir.glob("*_manifest.json"))
-                 if not p.name.startswith("._") and ".pre_" not in p.name}
+    manifests = {str(p) for p in (manifest_paths if manifest_paths is not None else visible_glob(manifest_dir, "*_manifest.json"))
+                 if is_visible_path(p) and ".pre_" not in p.name}
     if {entry["path"] for entry in report["writer_manifest_coverage"]} != manifests:
         raise RuntimeError("Gallery manifest coverage changed")
     for figure in report["figures"]:
@@ -122,10 +123,10 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
                     plan = build_run_plan(spec, resume=True)
                     if not plan["environment"]["ok"] or any(s["action"] != "skip" for s in plan["stages"]):
                         raise RuntimeError("No-op proof refused: some stages would run")
-                    before = {str(p): _file_hash(p) for p in (spec.state_root / "stages").glob("*.json")}
+                    before = {str(p): _file_hash(p) for p in visible_glob(spec.state_root / "stages", "*.json")}
                     products_before = _output_metadata(spec)
                     result = execute_run(spec, resume=True)
-                    after = {str(p): _file_hash(p) for p in (spec.state_root / "stages").glob("*.json")}
+                    after = {str(p): _file_hash(p) for p in visible_glob(spec.state_root / "stages", "*.json")}
                     products_unchanged = products_before == _output_metadata(spec)
                     ok = (result["status"] == "pass" and before == after
                           and products_unchanged
@@ -139,9 +140,9 @@ def run_finishing_job(*, spec_path: Path, notebook_dir: Path | None = None,
                 if gallery_dir is None:
                     # Choose after resume: changed source bytes get a new
                     # immutable evidence gallery without user intervention.
-                    sources = sorted(notebook_dir.glob("*.ipynb")) + sorted(
-                        path for path in manifest_dir.glob("*_manifest.json")
-                        if not path.name.startswith("._") and ".pre_" not in path.name)
+                    sources = sorted(visible_glob(notebook_dir, "*.ipynb")) + sorted(
+                        path for path in visible_glob(manifest_dir, "*_manifest.json")
+                        if is_visible_path(path) and ".pre_" not in path.name)
                     fingerprint = _json_hash([[str(path), _file_hash(path)] for path in sources])
                     gallery_dir = functional / "review_gallery" / spec.state_root.name / fingerprint
                 report["steps"]["export-qc"] = _gallery(

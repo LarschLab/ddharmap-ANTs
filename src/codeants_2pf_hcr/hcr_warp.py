@@ -1,6 +1,7 @@
 """HCR warp helpers and notebook-facing stage wrappers for single-fish cells [43] and [43b]."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from dataclasses import dataclass
 import json
@@ -114,7 +115,7 @@ def _find_intensity_for_round(preproc_dir: Path, round_idx: int) -> Path | None:
         sub = preproc_dir / sub_name
         if not sub.exists():
             continue
-        for path in sorted(sub.glob("*.nrrd")):
+        for path in sorted(visible_glob(sub, "*.nrrd")):
             name = path.name.lower()
             if f"round{round_idx}" not in name:
                 continue
@@ -147,7 +148,7 @@ def _find_hcr_intensity_for_mask(preproc_dir: Path, mask_path: Path, round_idx: 
         if exact.exists():
             return exact
         pattern = f"{fish_id}_round{int(round_idx)}_channel{channel}_*.nrrd" if channel is not None else f"*round{int(round_idx)}*.nrrd"
-        for path in sorted(sub.glob(pattern)):
+        for path in sorted(visible_glob(sub, pattern)):
             if "gcamp" in path.name.lower():
                 continue
             round_hits.append(path)
@@ -164,7 +165,7 @@ def _find_transform(trans_dir: Path, round_idx: int, best_round_idx: int, target
     suffix = "1Warp.nii.gz" if kind == "warp" else "0GenericAffine.mat"
     if not trans_dir.exists():
         return None
-    files = [path for path in sorted(trans_dir.glob(f"*{suffix}")) if "inverse" not in path.name.lower()]
+    files = [path for path in sorted(visible_glob(trans_dir, f"*{suffix}")) if "inverse" not in path.name.lower()]
     if not files:
         return None
 
@@ -252,7 +253,7 @@ def _bridge_transform_pair(
     def find_one(suffix: str) -> Path | None:
         candidates = [
             path
-            for path in sorted(transform_dir.glob(f"*{suffix}"))
+            for path in sorted(visible_glob(transform_dir, f"*{suffix}"))
             if re.search(rf"(^|[_-])(?:{source_pattern})(?=([_.-]|$))", path.name.lower())
             and any(alias in path.name.lower() for alias in target_aliases)
         ]

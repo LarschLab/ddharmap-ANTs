@@ -25,6 +25,7 @@ Prefer a frozen replay for changes that leave registration and geometry unchange
 
 ## Launch and read results
 
+- macOS on exFAT writes `._*` AppleDouble sidecars (for example, provenance xattrs); operational scans must use `codeants_2pf_hcr.paths.visible_glob`, `visible_rglob`, or `visible_iterdir` to ignore them and `.DS_Store`. Literal freeze archives deliberately preserve sidecars.
 - Run pipeline CLIs from the pinned checkout with `PYTHONPATH=src` and the scientific interpreter.
 - `tools/single_fish_run.py plan --spec SPEC`: inspect which stages will run before the first launch. Other subcommands are `run`, `resume`, `status`, `verify` and `audit-artifacts`.
 - `tools/single_fish_job.py --spec SPEC --validate-noop`: run, verify, audit artifacts, prove a no-op resume, and export the gallery. It exits 1 on any non-pass.

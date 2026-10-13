@@ -1,4 +1,5 @@
 """Validated native-file promotion; scientific stages keep their own writers."""
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -58,7 +59,7 @@ def rollback_promotion(journal: Path) -> None:
     """Recover exact prior files after an interrupted uncommitted stage."""
     from .single_fish_run import _file_hash, _write_json_atomic
     if (journal / "rollback.json").exists(): return
-    for path in sorted(journal.glob("intent-*.json"), reverse=True):
+    for path in sorted(visible_glob(journal, "intent-*.json"), reverse=True):
         intent = json.loads(path.read_text()); target = Path(intent["destination"]); backup = Path(intent["backup"])
         actual = _file_hash(target) if target.exists() else None
         if actual == intent["old_sha256"]: continue
@@ -70,7 +71,7 @@ def rollback_promotion(journal: Path) -> None:
             restored.replace(target)
         else:
             target.replace(journal / (path.stem + "-uncommitted-new"))
-    for backup in journal.glob("previous*manifest.json"):
+    for backup in visible_glob(journal, "previous*manifest.json"):
         previous = json.loads(backup.read_text()); target = Path(previous["path"])
         if previous["payload"] is not None: _write_json_atomic(target, previous["payload"])
         elif target.exists(): target.replace(journal / (backup.stem + "-uncommitted.json"))
@@ -102,8 +103,8 @@ def _rebind(text: str, roots: list[str], fish: Path) -> str:
 
 
 def _relocate_tree(stage_root: Path, roots: list[str], fish: Path) -> None:
-    for path in stage_root.rglob("*"):
-        if path.is_file() and path.suffix.lower() in {".json", ".csv", ".md", ".html", ".txt"} and not path.name.startswith("._"):
+    for path in visible_rglob(stage_root, "*"):
+        if path.is_file() and path.suffix.lower() in {".json", ".csv", ".md", ".html", ".txt"} and is_visible_path(path):
             original = path.read_text()
             relocated = _rebind(original, roots, fish)
             if relocated != original:
@@ -190,7 +191,7 @@ def _verify_reuse_inputs(manifest, fish: Path, original_root: str, *, aligned_ov
         # Existing accepted masks must still agree byte-for-byte.
         from .single_fish_run import _file_hash
         override = Path(aligned_override)
-        labels = list(override.glob("*_cp_masks_in_2p_labels_uint16.tif"))
+        labels = list(visible_glob(override, "*_cp_masks_in_2p_labels_uint16.tif"))
         if not labels: raise RuntimeError("Accepted frozen aligned override has no labels")
         for source in labels:
             current = aligned / source.name
@@ -248,8 +249,8 @@ def execute_native_run(spec, *, resume: bool):
             raise RuntimeError("Execution preflight failed: " + "; ".join(preflight["errors"]))
         materialize_retained_graph(spec)
     graph.mkdir(parents=True, exist_ok=True)
-    for journal in (spec.state_root / "history").glob("*"):
-        if journal.is_dir() and list(journal.glob("intent-*.json")) and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():
+    for journal in visible_glob(spec.state_root / "history", "*"):
+        if journal.is_dir() and list(visible_glob(journal, "intent-*.json")) and not (journal / "stage_commit.json").exists() and not (journal / "rollback.json").exists():
             rollback_promotion(journal)
             backup = journal / "previous_manifest.json"
             if backup.exists():
@@ -293,8 +294,8 @@ def execute_native_run(spec, *, resume: bool):
                     archived = spec.state_root / "history" / ("graph-" + stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
                     archived.parent.mkdir(parents=True, exist_ok=True);output_dir.replace(archived)
                 shutil.copytree(frozen / writer, output_dir)
-                for original in (frozen / writer).rglob("*"):
-                    if original.is_file() and not original.name.startswith("._"):
+                for original in visible_rglob(frozen / writer, "*"):
+                    if original.is_file() and is_visible_path(original):
                         copied = output_dir / original.relative_to(frozen / writer)
                         if _file_hash(original) != _file_hash(copied): raise RuntimeError("Frozen reuse hash mismatch")
             manifest = json.loads((Path(policy["frozen_manifests"]) / (writer + "_manifest.json")).read_text())
@@ -359,9 +360,9 @@ def execute_native_run(spec, *, resume: bool):
                 parameters["anatomy_label_z_mode"] = value
             elif observed != value:
                 raise RuntimeError(f"Scientific parameter mismatch {writer}: {key}: {observed} != {value}")
-        products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in output_dir.rglob("*") if p.is_file() and not p.name.startswith("._")}
+        products = {p: native_product_path(fish, writer, p.relative_to(output_dir).as_posix()) for p in visible_rglob(output_dir, "*") if p.is_file() and is_visible_path(p)}
         if writer == "materialize-anatomy-midline" and proposal is not None and imported:
-            products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in proposal.rglob("*") if p.is_file() and not p.name.startswith("._")})
+            products.update({p: native_product_path(fish, proposal.name, p.relative_to(proposal).as_posix()) for p in visible_rglob(proposal, "*") if p.is_file() and is_visible_path(p)})
         validate_native_inputs(stage.inputs, products.values())
         journal = spec.state_root / "history" / (stage.name + "-" + datetime.now().strftime("%Y%m%dT%H%M%S%f"))
         promote_files(fish, products, journal, manifest_path=Path(stage.manifest))

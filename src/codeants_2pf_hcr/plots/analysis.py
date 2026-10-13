@@ -1,6 +1,7 @@
 """Analysis figure builders used by trace-focused tools and notebook exports."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob
 
 from pathlib import Path
 import re
@@ -816,7 +817,7 @@ SINGLE_FISH_50L_GLOBAL_AUC_POINT_STYLES = {
 
 
 def _find_one(directory: Path, pattern: str) -> Path:
-    matches = sorted(directory.glob(pattern))
+    matches = sorted(visible_glob(directory, pattern))
     if not matches:
         raise FileNotFoundError(f"No files matching {pattern!r} under {directory}")
     return matches[0]

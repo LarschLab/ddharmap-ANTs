@@ -5,6 +5,7 @@ the existing package stages invoked through ``tools/single_fish_pipeline.py``.
 """
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_rglob
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -318,7 +319,7 @@ def describe_path(path_value: str | Path) -> dict[str, Any]:
     if path.is_dir():
         members: list[dict[str, Any]] = []
         total_size = 0
-        for child in sorted(path.rglob("*"), key=lambda value: value.relative_to(path).as_posix()):
+        for child in sorted(visible_rglob(path, "*"), key=lambda value: value.relative_to(path).as_posix()):
             relative = child.relative_to(path).as_posix()
             if child.is_symlink():
                 target = os.readlink(child)
@@ -686,7 +687,7 @@ def audit_run_artifacts(spec: RunSpec) -> dict[str, Any]:
             original = frozen / "match-roi-to-anatomy/registration/functional_roi_anatomy_matches.csv"
             actual = native_product_path(root, "match-roi-to-anatomy", "registration/functional_roi_anatomy_matches.csv")
             check("entire frozen geometry table including coordinates", actual.read_text() == _rebind(original.read_text(), [policy["original_root"]], root), str(actual))
-            transforms = list((frozen / "register-functional-to-anatomy").rglob("*.mat"))
+            transforms = list(visible_rglob(frozen / "register-functional-to-anatomy", "*.mat"))
             check("frozen ANTs transform bytes", bool(transforms) and all(_file_hash(path) == _file_hash(native_product_path(root, "register-functional-to-anatomy", path.relative_to(frozen / "register-functional-to-anatomy").as_posix())) for path in transforms), len(transforms))
         counts = {"roi_rows": len(rows), "responsive": sum(truth(row["response_is_active"]) for row in rows), "activated": sum(truth(row[signed[0]]) or truth(row[signed[2]]) for row in rows), "suppressed": sum(truth(row["response_is_active"]) and truth(row["response_has_suppression"]) for row in rows)}
         for pin in spec.raw.get("artifact_byte_baselines", ()):

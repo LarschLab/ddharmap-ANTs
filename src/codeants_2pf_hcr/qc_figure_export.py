@@ -1,5 +1,6 @@
 """Extract executed-notebook PNG artifacts and current writer PNGs for review."""
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
 
 import base64
 import ast
@@ -33,7 +34,7 @@ def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
         raise FileExistsError(f"Refusing existing gallery: {output_dir}")
     if review_gate is not None and review_gate.get("status") != "review_required":
         raise ValueError("Preliminary gallery must retain a review_required scientific gate")
-    notebooks = sorted(notebook_dir.glob("*.ipynb"))
+    notebooks = sorted(visible_glob(notebook_dir, "*.ipynb"))
     numbers = [re.match(r"^(\d\d)_", p.name).group(1) for p in notebooks if re.match(r"^(\d\d)_", p.name)]
     # A review-gated run stops before notebook 06 unless its recipe declares the
     # accepted-midline continuation (seven notebooks).
@@ -129,8 +130,8 @@ def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
                                  "renderer_cells_without_png": [entry for entry in cell_coverage if entry["renderer_calls"] and not entry["png_outputs"]],
                                  "blocked_or_unavailable_outputs": blocked_messages})
 
-    for manifest in sorted(manifest_paths if manifest_paths is not None else manifest_dir.glob("*_manifest.json")):
-        if manifest.name.startswith("._") or ".pre_" in manifest.name:
+    for manifest in sorted(manifest_paths if manifest_paths is not None else visible_glob(manifest_dir, "*_manifest.json")):
+        if (not is_visible_path(manifest)) or ".pre_" in manifest.name:
             continue
         payload = json.loads(manifest.read_text())
         manifest_hash = sha256(manifest)
@@ -139,7 +140,7 @@ def _build_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
             if not isinstance(output, dict) or not output.get("path"):
                 continue
             path = Path(output["path"])
-            candidates = [path] if path.suffix.lower() == ".png" else list(path.rglob("*.png")) if path.is_dir() else []
+            candidates = [path] if path.suffix.lower() == ".png" else list(visible_rglob(path, "*.png")) if path.is_dir() else []
             for candidate in sorted(candidates):
                 if not candidate.is_file():
                     raise FileNotFoundError(f"Manifest PNG missing: {candidate}")

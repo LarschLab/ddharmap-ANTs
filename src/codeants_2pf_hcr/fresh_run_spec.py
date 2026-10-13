@@ -3,6 +3,7 @@
 This is a recipe, not scientific business logic. Existing stage writers remain
 authoritative. No frozen fish-specific bundle or accepted midline is required.
 """
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 from dataclasses import asdict
 import importlib.metadata
 import json
@@ -66,9 +67,9 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     drift = functional / "ncc/z_drift/z_drift_manifest.json"
     motion = [fish / "02_reg/00_preprocessing/2p_functional/02_motionCorrected" / f"{fish_id}_plane{i}_mcorrected.tif" for i in plane_indices]
     suite = [functional / "suite2P" / f"plane{i}" / f"{fish_id}_plane{i}_{suffix}.npy" for i in plane_indices for suffix in ("F", "Fneu", "stat", "ops", "iscell", "spks")]
-    raw_metadata = sorted(p for p in (fish / "01_raw/2p/metadata").glob("*.csv") if not p.name.startswith("._"))
+    raw_metadata = sorted(p for p in visible_glob(fish / "01_raw/2p/metadata", "*.csv") if is_visible_path(p))
     aligned = fish / "03_analysis/confocal/aligned"
-    masks = sorted(p for p in aligned.glob("*_cp_masks_in_2p_labels_uint16.tif") if not p.name.startswith("._"))
+    masks = sorted(p for p in visible_glob(aligned, "*_cp_masks_in_2p_labels_uint16.tif") if is_visible_path(p))
     sidecars = [Path(str(p).replace("_labels_uint16.tif", "_warp_meta.json")) for p in masks]
     caches = [] if ncc_cache_source is None else [ncc_cache_source / name for name in ("ncc_bestz_by_plane.json", "ncc_scale_by_fish.json")]
     required = [anatomy, labels, metadata, matching, drift, *motion, *suite, *raw_metadata, *masks, *sidecars, *caches]
@@ -145,7 +146,7 @@ def build_fresh_run_spec(*, fish_id: str, data_root: Path, repo_root: Path,
     writer_manifests = [s["manifest"] for s in stages]
     notebook_dir = functional / "qc" / run_id
     for index in range(7 if midline_decision_path is not None else 6):
-        candidates = sorted((repo_root / "notebooks/qc").glob(f"{index:02}_*.ipynb"))
+        candidates = sorted(visible_glob(repo_root / "notebooks/qc", f"{index:02}_*.ipynb"))
         if len(candidates) != 1:
             raise ValueError(f"Require one source QC notebook for index {index}")
         notebook = candidates[0]

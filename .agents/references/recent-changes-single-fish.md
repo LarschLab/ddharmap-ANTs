@@ -4488,3 +4488,9 @@ Per-stimulus keys now admit only exact LB/RB/LC/RC trajectory names; non-BPI and
 - Gene-colored dashed suppressed-only cells remain visible without a BPI gate; low activity is graded grey; identified ROIs are deduped per gene/condition. No identity reconstruction or scientific response changes.
 - Added synthetic renderer and writer checks, approved figure contract, and visual preview `f049_preview.png`. Validation results are recorded in `.agent-notes.md`.
 - `.agents/` is read-only in this work session: this entry and the reference/contract changes are supplied in `f049_agent_docs.patch` for application by the reviewing orchestrator.
+
+### 2026-10-13 — AppleDouble-safe operational scans
+
+- Added dependency-free paths helpers; operational discovery and recursive hashing across the package and QC code cells ignore `._*` and `.DS_Store`. Freeze literal inventory/protection remains intact by design.
+- Regression tests cover binary stage JSON, QC 05 masks, gallery discovery/reuse, product hashes, helper filtering, and preserved freeze sidecars. No scientific table, stage, filename, or real-product byte-check changes.
+ Validation: `tests/test_appledouble.py` — 8 passed; full suite once — 691 passed, 2 skipped in 92.54s; no failures. All call sites and deliberate freeze exceptions are recorded in `appledouble_report.md`.

@@ -1,5 +1,6 @@
 """Independent per-stack manual identity review and geometry-only ROI export."""
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_iterdir
 
 import hashlib
 import json
@@ -430,7 +431,7 @@ def export_manual_identity(dataset, frozen_path, correspondence_path, geometry_p
         source_dataset_manifest=str(dataset.path), source_annotations_snapshot=str(Path(frozen_path).resolve()),
         source_correspondence=str(Path(correspondence_path).resolve()),
         hcr_centric_supported=False, hcr_centric_reason='Manual assignments do not identify confocal segmented labels')
-    provenance['output_sha256'] = {p.name: sha256(p) for p in output.iterdir() if p.is_file()}
+    provenance['output_sha256'] = {p.name: sha256(p) for p in visible_iterdir(output) if p.is_file()}
     atomic_write(output / 'manual_identity_export_manifest.json', json.dumps(provenance, indent=2))
     return result
 
@@ -501,7 +502,7 @@ def export_manual_canonical_tables(manual_root, score_root, output):
         shutil.copyfile(score_root / name, output / name)
     manifest = dict(manifest, source_manual_root=str(manual_root.resolve()), source_score_root=str(score_root.resolve()),
                     canonical_scope='roi_only', unsupported_consumers=['HCR-centric trace/status exports', 'HCR-dependent compound figures'])
-    manifest['output_sha256'] = {p.name: sha256(p) for p in output.iterdir() if p.is_file()}
+    manifest['output_sha256'] = {p.name: sha256(p) for p in visible_iterdir(output) if p.is_file()}
     atomic_write(output / 'manual_identity_export_manifest.json', json.dumps(manifest, indent=2))
     return output
 

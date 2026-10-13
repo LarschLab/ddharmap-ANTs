@@ -9,6 +9,12 @@
 
 Generated manually for the current extracted package surface.
 
+## `codeants_2pf_hcr.paths`
+
+- `is_appledouble(path)`: Check whether the basename starts with `._`.
+- `is_visible_path(path)`: Exclude AppleDouble and `.DS_Store` components; retain other hidden entries.
+- `visible_glob(directory, pattern)`, `visible_rglob(directory, pattern)`, `visible_iterdir(directory)`: Dependency-free, order-preserving Path iterators for operational directory scans.
+
 ## Trusted patterns
 
 - `context.py`: path/config normalization pattern.

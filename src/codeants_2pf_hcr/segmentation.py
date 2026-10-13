@@ -1,6 +1,7 @@
 """Segmentation and functional-label QA helpers for notebook cells [24], [26], and [26a]."""
 
 from __future__ import annotations
+from codeants_2pf_hcr.paths import visible_glob, is_visible_path
 
 from dataclasses import dataclass
 import hashlib
@@ -162,20 +163,20 @@ def collect_hcr_intensity_stack_paths(
                 raise ValueError("source must be one of: all, rbest, rn")
             for directory in directories:
                 if directory.exists():
-                    intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.nrrd")))
-                    intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.tif")))
-                    intensity_paths.extend(sorted(directory.glob("*_rbest_channel*.tiff")))
-                    intensity_paths.extend(sorted(directory.glob("*_r[0-9]*_channel*.nrrd")))
-                    intensity_paths.extend(sorted(directory.glob("*_r[0-9]*_channel*.tif")))
-                    intensity_paths.extend(sorted(directory.glob("*_r[0-9]*_channel*.tiff")))
-                    intensity_paths.extend(sorted(directory.glob("*round*_channel*.nrrd")))
-                    intensity_paths.extend(sorted(directory.glob("*round*_channel*.tif")))
-                    intensity_paths.extend(sorted(directory.glob("*round*_channel*.tiff")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*_rbest_channel*.nrrd")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*_rbest_channel*.tif")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*_rbest_channel*.tiff")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*_r[0-9]*_channel*.nrrd")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*_r[0-9]*_channel*.tif")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*_r[0-9]*_channel*.tiff")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*round*_channel*.nrrd")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*round*_channel*.tif")))
+                    intensity_paths.extend(sorted(visible_glob(directory, "*round*_channel*.tiff")))
     ignored_names = {".DS_Store", "Thumbs.db", "desktop.ini"}
     intensity_paths = [
         path
         for path in intensity_paths
-        if not any(part.startswith("._") or part in ignored_names for part in path.parts)
+        if is_visible_path(path) and not any(part in ignored_names for part in path.parts)
     ]
     intensity_paths = [path for path in intensity_paths if "fullbrain" not in path.name.lower()]
     intensity_paths = [path for path in intensity_paths if "channel1" not in path.name.lower()]
@@ -548,7 +549,7 @@ def run_anatomy_cellpose_stage(
         "*cp_masks*.tif",
         "*cp_masks*.tiff",
     ):
-        existing_candidates.extend(sorted(out_dir.glob(pattern)))
+        existing_candidates.extend(sorted(visible_glob(out_dir, pattern)))
 
     if (not cfg.force_recompute) and cfg.skip_if_exists:
         seen: set[str] = set()
