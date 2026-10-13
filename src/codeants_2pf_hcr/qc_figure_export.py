@@ -1,6 +1,6 @@
 """Extract executed-notebook PNG artifacts and current writer PNGs for review."""
 from __future__ import annotations
-from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path
+from codeants_2pf_hcr.paths import visible_glob, visible_rglob, is_visible_path, remove_tree
 
 import base64
 import ast
@@ -483,7 +483,7 @@ def export_qc_figure_gallery(*, notebook_dir: Path, manifest_dir: Path, output_d
         return {**report, "output_dir": str(output_dir)}
     except Exception:
         if staged.exists():
-            shutil.rmtree(staged)
+            remove_tree(staged)
         raise
 
 

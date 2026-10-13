@@ -154,3 +154,33 @@ def test_ten_plane_grid_and_thicker_saved_outlines():
     assert (boundary_alpha > 0).sum() > 12  # original thin perimeter
     assert len(fig.legends[0].get_texts()) == 2
     plt.close(fig)
+
+
+def test_notebook_composites_display_as_png_only(tmp_path):
+    from IPython.core.formatters import DisplayFormatter
+    from codeants_2pf_hcr.plots import gallery
+    a = tmp_path / 'a.png'; b = tmp_path / 'b.png'
+    Image.new('RGB', (20, 30), 'red').save(a)
+    Image.new('RGB', (25, 35), 'blue').save(b)
+    data, _ = DisplayFormatter().format(gallery.render_registration_review_composite(a, b))
+    assert 'image/png' in data and 'image/jpeg' not in data
+
+
+def test_remove_tree_tolerates_vanished_sidecar(tmp_path, monkeypatch):
+    import os
+    from codeants_2pf_hcr.paths import remove_tree
+    root = tmp_path / 'staged'; root.mkdir()
+    (root / 'x.png').write_bytes(b'x'); (root / '._x.png').write_bytes(b'\x00\x05\x16\x07')
+    real_unlink = os.unlink
+
+    def unlink(path, *args, **kwargs):
+        # Emulate exFAT: removing x.png also removes its ._ sidecar.
+        real_unlink(path, *args, **kwargs)
+        if str(path).endswith('x.png') and not str(path).endswith('._x.png'):
+            try:
+                real_unlink('._x.png', *args, **kwargs)
+            except FileNotFoundError:
+                pass
+    monkeypatch.setattr(os, 'unlink', unlink)
+    remove_tree(root)
+    assert not root.exists()

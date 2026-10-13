@@ -109,6 +109,33 @@ def render_hcr_pair_status_planes(viewer_data, plane_z):
     return fig
 
 
+class PngComposite:
+    """Composite that notebooks display as PNG only.
+
+    A bare PIL image is displayed as JPEG and PNG, and the gallery exporter
+    accepts PNG notebook outputs only.
+    """
+
+    def __init__(self, image):
+        self.image = image
+
+    size = property(lambda self: self.image.size)
+    width = property(lambda self: self.image.width)
+    height = property(lambda self: self.image.height)
+
+    def __array__(self, dtype=None, copy=None):
+        return np.asarray(self.image, dtype=dtype)
+
+    def save(self, *args, **kwargs):
+        return self.image.save(*args, **kwargs)
+
+    def _repr_png_(self):
+        import io
+        buffer = io.BytesIO()
+        self.image.save(buffer, format='PNG')
+        return buffer.getvalue()
+
+
 def _composite_image(panels, *, equal_width=False, side_by_side=False):
     """Full-resolution panels, optionally enlarged to comparable display scale.
 
@@ -143,7 +170,7 @@ def _composite_image(panels, *, equal_width=False, side_by_side=False):
         y = 0
         for panel in images:
             canvas.paste(panel, ((canvas.width-panel.width)//2, y)); y += panel.height
-    return canvas
+    return PngComposite(canvas)
 
 
 def render_registration_review_composite(plane_rows, intensity_rows):

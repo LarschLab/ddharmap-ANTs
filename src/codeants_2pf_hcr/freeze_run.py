@@ -277,12 +277,8 @@ def _writable_paths(root: Path, *, include_root: bool = True) -> list[str]:
 
 
 def _remove_staging_tree(root: Path) -> None:
-    def ignore_disappearing_sidecar(function: Any, path: str, error: Any) -> None:
-        # exFAT removes AppleDouble sidecars when the corresponding file is
-        # removed; scandir can have already returned that sidecar's old name.
-        if not isinstance(error[1], FileNotFoundError):
-            raise error[1]
-    shutil.rmtree(root, onerror=ignore_disappearing_sidecar)
+    from .paths import remove_tree
+    remove_tree(root)
 
 
 def _attach_read_only(image: Path, mountpoint: Path, *, read_only: bool = True) -> None:

@@ -34,4 +34,18 @@ def visible_iterdir(directory: str | Path) -> Iterator[Path]:
     return (path for path in Path(directory).iterdir() if is_visible_path(path))
 
 
-__all__ = ["is_appledouble", "is_visible_path", "visible_glob", "visible_rglob", "visible_iterdir"]
+def remove_tree(root: str | Path) -> None:
+    """shutil.rmtree that tolerates AppleDouble sidecars vanishing mid-removal.
+
+    exFAT removes a ``._`` sidecar together with its main file, so a name
+    returned by scandir can already be gone when rmtree reaches it.
+    """
+    import shutil
+
+    def ignore_vanished(function, path, error) -> None:
+        if not isinstance(error[1], FileNotFoundError):
+            raise error[1]
+    shutil.rmtree(root, onerror=ignore_vanished)
+
+
+__all__ = ["is_appledouble", "is_visible_path", "visible_glob", "visible_rglob", "visible_iterdir", "remove_tree"]
