@@ -42,6 +42,11 @@ provenance and pins that spatial manifest before any writer can start.
    - QC helpers only; not identity source.
    - Diameter and regional-review support cells `[30]` and `[34c]` are package-owned migration wrappers.
    - Native segmentation stages `[24]` and `[24a]` are package-owned and should remain orchestration-thin in the notebook; `[24a]` is ordered earlier because `[22e]` consumes `ANAT_LABELS_PATH`.
+   - Since 2026-10-14, `[24a]` segments a Hessian valley-subtracted input by default (`AnatomyCellposeConfig.boundary_enhancement`).
+     - Outputs: the input `<output_root>/cellpose_input/<stem>_<tag>.*` (`ANAT_CELLPOSE_INPUT_PATH`), the mask `cp_masks/<stem>_<tag>_8bit_cp_masks.tif`, and a `*.binding.json` record of input content and parameters.
+     - A Hessian mask is reused only when its binding matches. In raw mode, legacy unbound raw masks of the right shape are still reused.
+     - Masks made with other preprocessing (including the accepted raw-input in vivo masks) stop the cell unless `force_recompute` is given, as do masks that cannot be reused (stale binding, wrong shape, `skip_if_exists=False`).
+     - A forced replacement stages the new input, mask and binding, then promotes them together. Replaced masks inside `cp_masks/` move to a unique `<output_root>/superseded_masks/<UTC>_*/`, and a failed promotion restores the previous bundle.
 5. **HCR discovery/warp/HCR↔anatomy QC** (`[37] [39] [41] [42] [43] [44]`)
    - HCR mask discovery, warping, QC summaries.
    - Key object: `hcr_match_results`.
@@ -143,7 +148,7 @@ stages materialize accepted computational inputs and downstream tables.
 
 ### Optional manual ex-vivo identity export
 
-The standalone `tools/manual_hcr_identity.py` app owns manual call persistence and reviewed-geometry adapter outputs, outside notebook orchestration. Identity reaches the pipeline through the `manual_identity_pipeline` gate and continuation (`assign-hcr-identity --identity-source manual_exvivo`); the earlier `export-canonical-tables --manual-identity-root` ROI-only export was removed. See `docs/manual-hcr-identity-gui.md`. The app’s package-owned `manual_identity_pipeline.apply_functional_review_scope` writes hash-bound fish/mask review-scope sidecars under `structural/ex_vivo/manual_identity/functional_review_scopes/`; it prefers `plane_refs_summary_geometry.json` for accepted best Z, limits new calls to the union of ±10 anatomy-slice slabs, and preserves the complete mask inventory for geometry and session persistence. The same owner caches the inverse-mapped ZYX display volume with its ex-vivo grid metadata; the app marks its boundary/outside region in the main and orthogonal views.
+The standalone `tools/manual_hcr_identity.py` app owns manual call persistence and reviewed-geometry adapter outputs, outside notebook orchestration. Identity reaches the pipeline through the `manual_identity_pipeline` gate and continuation (`assign-hcr-identity --identity-source manual_exvivo`); the earlier `export-canonical-tables --manual-identity-root` ROI-only export was removed. See `docs/manual-hcr-identity-gui.md`. The app’s package-owned `manual_identity_pipeline.apply_functional_review_scope` writes hash-bound fish/mask review-scope sidecars under `structural/ex_vivo/manual_identity/functional_review_scopes/`; it prefers `plane_refs_summary_geometry.json` for accepted best Z. It takes the plane inventory from the accepted geometry table when one exists, so an eligible subset such as R2-only L765_f05 (planes 5–9 of ten Suite2p folders) is complete; otherwise it uses the Suite2p plane folders. It limits new calls to the union of ±10 anatomy-slice slabs, and preserves the complete mask inventory for geometry and session persistence. The same owner caches the inverse-mapped ZYX display volume with its ex-vivo grid metadata; the app marks its boundary/outside region in the main and orthogonal views.
 
 ## F049 staged trace restoration (2026-10-12)
 

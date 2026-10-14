@@ -226,12 +226,15 @@ def apply_functional_review_scope(dataset, local_root, *, pipeline_root=None, lo
     indices = {p['plane_idx'] for p in planes}
     if len(indices) != len(planes):
         raise ValueError('Duplicate global functional plane indices')
-    expected = {int(p.name[5:]) for p in paths.functional_suite2p_dir.glob('plane*')
-                if p.is_dir() and p.name[5:].isdigit() and not p.name.startswith('._')}
+    # The accepted geometry table holds the fish's eligible planes (e.g. R2-only
+    # L765_f05: 5-9 of 10 acquired). Without it, every Suite2p plane must be covered.
     geometry_path = product_path(paths, 'match-roi-to-anatomy', 'registration/functional_roi_anatomy_matches.csv')
     if geometry_path.is_file():
         geometry = pd.read_csv(geometry_path, usecols=['plane_idx'])
-        expected |= set(geometry.plane_idx.dropna().astype(int))
+        expected = set(geometry.plane_idx.dropna().astype(int))
+    else:
+        expected = {int(p.name[5:]) for p in paths.functional_suite2p_dir.glob('plane*')
+                    if p.is_dir() and p.name[5:].isdigit() and not p.name.startswith('._')}
     if refs_path != raw_refs_path:
         raw_refs = json.loads(raw_refs_path.read_text())
         if not isinstance(raw_refs, list) or not raw_refs or any(

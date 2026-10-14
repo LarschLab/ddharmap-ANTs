@@ -10243,6 +10243,7 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
     use_gpu: bool | None = None,
     compute_device: str | None = None,
     force_recompute: bool = False,
+    boundary_enhancement: str | None = "hessian2d",
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
     structural_root = ex_vivo_structural_root(paths)
@@ -10273,6 +10274,7 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
                 "force_recompute": bool(force_recompute),
                 "use_gpu": use_gpu,
                 "compute_device": compute_device,
+                "boundary_enhancement": boundary_enhancement,
                 "output_root": str(structural_root),
                 "log_lines": (),
             },
@@ -10293,9 +10295,11 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
                 skip_if_exists=True,
                 use_gpu=use_gpu,
                 compute_device=compute_device,
+                boundary_enhancement=boundary_enhancement,
             ),
         )
         label_path = Path(result["bindings"]["ANAT_LABELS_PATH"])
+        enhancement = result.get("boundary_enhancement")
         n_labels = _tiff_label_count(label_path)
         checks = (
             StageCheckRecord(
@@ -10318,6 +10322,29 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
             describe_manifest_path(label_path, label="ex vivo anatomy Cellpose masks"),
             describe_glob(structural_root / "raw" / "converted_nrrd_to_tif", "*_8bit.tif", required=False, label="ex vivo anatomy converted uint8 TIFFs"),
         )
+        from .segmentation import anatomy_mask_binding_path
+
+        binding_path = anatomy_mask_binding_path(label_path)
+        outputs += (describe_manifest_path(binding_path, required=False, label="ex vivo anatomy mask binding (Cellpose input + preprocessing)"),)
+        checks += (
+            StageCheckRecord(
+                label="ex vivo anatomy mask binding",
+                status="pass" if binding_path.exists() or not enhancement else "fail",
+                detail="the mask is bound to the Cellpose input content and preprocessing that produced it",
+                observed=binding_path.name if binding_path.exists() else None,
+            ),
+        )
+        status = "pass" if all(check.status != "fail" for check in checks) else "fail"
+        if enhancement:
+            outputs += (describe_manifest_path(Path(enhancement["cellpose_input_path"]), label="ex vivo anatomy Cellpose input (Hessian valley subtracted)"),)
+            checks += (
+                StageCheckRecord(
+                    label="ex vivo anatomy Cellpose input preprocessing",
+                    status="pass",
+                    detail="Cellpose segmented the Hessian valley-subtracted stack, not the raw stack",
+                    observed=str(enhancement["tag"]),
+                ),
+            )
     except Exception as exc:
         result = {"bindings": {}, "log_lines": []}
         status = "fail"
@@ -10345,6 +10372,7 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
             "use_gpu": use_gpu,
             "compute_device": compute_device,
             "output_root": str(structural_root),
+            "boundary_enhancement": result.get("boundary_enhancement"),
             "log_lines": tuple(result.get("log_lines", ())),
             "runtime_provenance": result.get("runtime_provenance"),
         },

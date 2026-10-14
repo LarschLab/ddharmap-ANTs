@@ -17,6 +17,11 @@ Keep this section short and current. Dated detail belongs in `recent-changes-sin
   - Each has a 26-card curated gallery under `review_gallery/20261013_curated_gallery_replay11/`.
 - **L765_f04.** The isolated current-code check passed its artifact audit (57/57) at `e2b6b58`, with the five early-screen baselines excluded by decision; 375 responders.
 - **QC.** Danin signed off the QC for all five fish (2026-10-13).
+- **Ex vivo segmentation (2026-10-14).** Cellpose now segments a Hessian valley-subtracted input by default (σ 1.5 px, β 0.5; `AnatomyCellposeConfig.boundary_enhancement`). This was adopted after the blinded ex vivo review: where the masks disagree, the Hessian input is right 79 times vs 54 for the raw input. For all five fish, the Helga β 0.5 masks replace the raw-input ex vivo masks.
+  - The old masks, stage manifests and manual-identity datasets are under `structural/ex_vivo/superseded_raw_input_20261014/`.
+  - Each fish's provenance is in `manifests/hessian_mask_import_20261014.json`, and each mask has a `*.binding.json` record.
+  - The L765_f04 manual review (revision 225) belongs to the old labels and is void.
+  - The in vivo anatomy labels are unchanged. The same default applies when they are next segmented: rerunning `[24a]` or the multiFish segmentation stops on the existing raw-input masks until `force_recompute` is given, because new labels change the accepted geometry.
 - **Open items:**
   - f04 canonical choice (per-stimulus 375 responders versus the accepted 282);
   - HCR 18-vs-19 review;

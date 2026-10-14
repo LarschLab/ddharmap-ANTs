@@ -27,7 +27,7 @@ From the checkout being assessed, use the GUI environment and the commit immedia
 ```bash
 PYTHONPATH="$PWD/src" ~/miniforge3/envs/manualIdentity/bin/python \
   tools/benchmark_cellmatcher_scroll.py \
-  --manifest /Volumes/dataDrive/dataProcessing/2p_processing/L765_f04/03_analysis/structural/ex_vivo/manual_identity/L765_f04_exvivo_a2be6cb62f04/dataset_manifest.json \
+  --manifest /Volumes/dataDrive/dataProcessing/2p_processing/L765_f04/03_analysis/structural/ex_vivo/manual_identity/L765_f04_exvivo_8f39cc28c9b6/dataset_manifest.json \
   --baseline 294603f17d27b744e4dca9d513225b6dd24aabaf \
   --steps 30 --repeats 3 --screenshots /tmp/cellmatcher-scroll-visuals
 ```

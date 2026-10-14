@@ -408,6 +408,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_gpu_args(segment_ex_vivo)
     segment_ex_vivo.add_argument("--compute-device")
     segment_ex_vivo.add_argument("--force-recompute", action="store_true")
+    segment_ex_vivo.add_argument(
+        "--boundary-enhancement",
+        choices=("hessian2d", "none"),
+        default="hessian2d",
+        help="Cellpose input preprocessing (default: Hessian valley subtraction, sigma 1.5 px, beta 0.5)",
+    )
 
     segment_hcr = subparsers.add_parser(
         "segment-hcr-cellpose",
@@ -912,6 +918,7 @@ def main(argv: list[str] | None = None) -> int:
                 use_gpu=args.use_gpu,
                 compute_device=args.compute_device,
                 force_recompute=args.force_recompute,
+                boundary_enhancement=None if args.boundary_enhancement == "none" else args.boundary_enhancement,
             )
         if args.write_manifest:
             write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))

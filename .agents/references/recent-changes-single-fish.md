@@ -1,5 +1,30 @@
 # Recent Changes - Single-Fish Workflow
 
+## 2026-10-14 — Hessian valley subtraction becomes the default Cellpose input
+
+Danin adopted Hessian-input segmentation after the blinded ex vivo review (wikiLogbook `2026-10-07_elavl3-hcr-nuclear-boundary-channel` datasets 04–06).
+
+Code:
+- `segmentation.hessian_valley_subtract` (σ 1.5 px, β 0.5) runs before Cellpose by default, through `AnatomyCellposeConfig.boundary_enhancement`, `segment-ex-vivo-anatomy-cellpose --boundary-enhancement` and `MultiFishAnatomySegmentationConfig.boundary_enhancement`.
+- The enhanced input is written and recorded in the stage manifest.
+- Each mask gets a `*.binding.json` recording the uint8 Cellpose input content hash and preprocessing; Hessian reuse requires a matching binding. Legacy unbound raw masks remain reusable in raw mode.
+- Without `force_recompute`, any existing mask that cannot be reused blocks segmentation: other preprocessing, unbound or stale Hessian masks, stale raw bindings, wrong shape, or `skip_if_exists=False`. In vivo labels feeding accepted geometry therefore cannot change silently. Raw mode never reuses Hessian masks.
+- The canonical bundle (input, mask, binding) is staged and promoted only after Cellpose succeeds. Replaced masks go to a unique `superseded_masks/<UTC>_*/`, and a failed promotion is rolled back. The stage manifest declares and checks the binding.
+- The NRRD Cellpose input is written as the exact inverse of the reader (C/ZYX order) plus `_prepare_anat_volume`'s reorder. That pre-existing reorder heuristic (last axis shortest → transpose) remains and would mis-orient unusual shapes such as XYZ 3×7×8; the five current stacks are unaffected. Separate follow-up.
+- The package reproduces the Helga-built inputs voxel for voxel for all five fish.
+- cellMatcher's review scope takes its plane inventory from the accepted geometry table when present (fixes R2-only L765_f05, planes 5–9 of ten Suite2p folders); all five fish now have datasets on the new masks.
+- Codex reviewed the change in two rounds (both: commit after fixes). Fixed:
+  - round 1: Hessian overwrite and stale reuse, raw mode reusing Hessian masks, the NRRD axis writer, ambiguous canonical masks after force, docs;
+  - round 2: raw stale replacement without force, publication rollback, archive uniqueness, binding in the manifest, NaN header comparison, raw binding hashing the uint8 Cellpose input.
+  - round 3: an explicit `anat_labels_path` sharing the canonical basename is now compared by resolved path, so it is protected instead of being treated as the canonical mask.
+  - Not covered: abrupt termination mid-promotion (rollback covers raised exceptions only; old files stay archived for manual recovery, and `.staging_*` may remain).
+  - Still open: an independent eligible-plane authority for the scope check (e.g. the accepted run spec's `accepted_choices.eligible_planes`). At present the geometry table plus both reference summaries define the inventory, so a plane lost from all three together would not be caught.
+
+Data:
+- The Helga β 0.5 ex vivo masks are now canonical for L765_f04, L758_f07, L765_f02, L765_f05 and L765_f06. Each got a binding record after re-verifying its input, then the stage was rerun with `--write-manifest`, reusing the imported mask.
+- The raw-input masks, stage manifests and old manual-identity datasets moved to `superseded_raw_input_20261014/`. That included the L765_f04 session (revision 225), which Danin then deleted.
+- In vivo anatomy labels are untouched; segmenting them with the new default is a separate, geometry-changing decision.
+
 ## 2026-10-07 — Legacy Suite2p relocation and frame repair (jobs held)
 
 User approved the fixed-seed control gallery and the subsequent native queue,

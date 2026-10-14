@@ -41,6 +41,7 @@ class MultiFishAnatomySegmentationConfig:
     use_anisotropy: bool = True
     use_gpu: bool | None = None
     compute_device: str | None = None
+    boundary_enhancement: str | None = "hessian2d"
     continue_on_error: bool = True
     verbose: bool = True
 
@@ -324,6 +325,7 @@ def run_multifish_anatomy_segmentation_stage(config: MultiFishAnatomySegmentatio
                     use_gpu=cfg.use_gpu,
                     compute_device=cfg.compute_device,
                     verbose=bool(cfg.verbose),
+                    boundary_enhancement=cfg.boundary_enhancement,
                 ),
             )
             bindings = result.get("bindings", {})

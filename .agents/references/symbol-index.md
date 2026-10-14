@@ -375,12 +375,20 @@ Generated manually for the current extracted package surface.
 
 ## `codeants_2pf_hcr.segmentation`
 
-- `AnatomyCellposeConfig`: Typed anatomy Cellpose configuration for notebook cell `[24a]`.
+- `AnatomyCellposeConfig`: Typed anatomy Cellpose configuration for notebook cell `[24a]`. `boundary_enhancement="hessian2d"` (default since 2026-10-14; `None` = raw input), `hessian_sigma_px=1.5`, `hessian_beta=0.5`.
+- `hessian_valley_subtract`: Per-plane 2D Hessian valley subtraction that darkens gaps between touching nuclei before Cellpose; uint8 in, uint8 out, plus the p99-matching scale. Reproduces the validated 2026-10-07 recipe voxel for voxel.
+- `hessian_valley_tag`: Filename tag such as `hessian2d_s1p5_b0p50`.
+- `write_anatomy_mask_binding` / `anatomy_mask_binding_path`: Write or locate the `<mask stem>.binding.json` record tying an anatomy mask to its Cellpose input content and preprocessing. Used by the stage after segmenting, and after a verified import of masks segmented elsewhere.
 - `HcrCellposeConfig`: Typed HCR Cellpose segmentation configuration for notebook cell `[24]`.
 - `resolve_hcr_cellpose_model_path`: Resolve the active HCR Cellpose model path from overrides, run config, or repo defaults.
 - `collect_hcr_intensity_stack_paths`: Discover and filter HCR intensity stacks from `rbest`/`rn` preprocessing outputs for `[24]`, optionally restricted to one source, excluding fullbrain, channel1, mask outputs, and dot/AppleDouble sidecar files.
 - `deduplicate_hcr_intensity_targets`: Collapse duplicate intensity inputs that would write the same Cellpose mask output.
-- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import, cross-platform device selection, and an optional output root used to isolate ex vivo masks under `03_analysis/structural/ex_vivo/`.
+- `run_anatomy_cellpose_stage`: Notebook-facing anatomy Cellpose stage for `[24a]` with deferred Cellpose import, cross-platform device selection, and an optional output root used to isolate ex vivo masks under `03_analysis/structural/ex_vivo/`. With boundary enhancement:
+  - it writes the enhanced input to `<output_root>/cellpose_input/<stem>_<tag>.nrrd|.tif` and masks to `cp_masks/<stem>_<tag>_8bit_cp_masks.tif`;
+  - it reuses a Hessian mask only when its `*.binding.json` (uint8 Cellpose input content SHA-256 plus preprocessing) matches; raw mode never reuses Hessian masks, but still reuses legacy unbound raw masks;
+  - without `force_recompute` it refuses (`RuntimeError`) to replace any existing mask it cannot reuse;
+  - the canonical mask/binding/input bundle changes only after Cellpose succeeds: staged files are promoted together, replaced masks inside `cp_masks/` go to a unique `superseded_masks/<UTC>_*/`, and a failure restores the old bundle. The converted 8-bit TIFF is still written before evaluation, and cached reuse may rewrite a missing or differing enhanced input whose content the binding proves;
+  - an explicit `anat_labels_path` outside the output directory is never moved.
 - `run_hcr_cellpose_stage`: Notebook-facing HCR Cellpose stage for `[24]` that prepares stack inputs, resolves anisotropy, can restrict discovery to `rbest`/`rn`, and writes mask TIFFs.
 - `resolve_functional_labels_for_plane`: Resolve per-plane functional labels for `[26]` from Suite2p, Cellpose, or legacy label sources with orientation handling.
 - `resolve_native_suite2p_labels_for_plane`: Resolve the native Suite2p label image for a plane without Cellpose fallback for `[26a]`.

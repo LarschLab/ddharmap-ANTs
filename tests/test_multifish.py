@@ -128,6 +128,7 @@ def test_run_multifish_anatomy_segmentation_reuses_existing_masks(tmp_path: Path
             local_root_override=tmp_path,
             anat_cp_model_path_override=model_path,
             cohort_outdir_override=tmp_path / "cohort_outputs" / "multiFish",
+            boundary_enhancement=None,
         )
     )
 
@@ -136,6 +137,36 @@ def test_run_multifish_anatomy_segmentation_reuses_existing_masks(tmp_path: Path
     assert int(summary.iloc[0]["n_anatomy_labels"]) == 2
     saved = pd.read_csv(tmp_path / "cohort_outputs" / "multiFish" / "multifish_anatomy_segmentation_summary.csv")
     assert saved.iloc[0]["anat_labels_path"] == str(mask_path)
+
+
+def test_run_multifish_anatomy_segmentation_refuses_to_replace_raw_input_masks_by_default(tmp_path: Path) -> None:
+    fish_dir = tmp_path / "L758_f02"
+    anat_dir = fish_dir / "02_reg" / "00_preprocessing" / "2p_anatomy"
+    mask_dir = fish_dir / "03_analysis" / "structural" / "cp_masks"
+    model_path = tmp_path / "anat_model"
+    anat_dir.mkdir(parents=True)
+    mask_dir.mkdir(parents=True)
+    model_path.touch()
+    _write_raw_orientation_metadata(fish_dir, "bottom-left")
+    tifffile.imwrite(str(anat_dir / "L758_f02_anatomy_2P_GCaMP_uint8.tif"), np.zeros((2, 5, 5), dtype=np.uint8))
+    raw_mask = mask_dir / "L758_f02_anatomy_2P_GCaMP_uint8_8bit_cp_masks.tif"
+    tifffile.imwrite(str(raw_mask), np.ones((2, 5, 5), dtype=np.uint16))
+    before = raw_mask.read_bytes()
+
+    result = run_multifish_anatomy_segmentation_stage(
+        MultiFishAnatomySegmentationConfig(
+            fish_ids_csv="L758_f02",
+            data_mode="local",
+            local_root_override=tmp_path,
+            anat_cp_model_path_override=model_path,
+            cohort_outdir_override=tmp_path / "cohort_outputs" / "multiFish",
+        )
+    )
+
+    summary = result["bindings"]["MULTIFISH_ANATOMY_SEGMENTATION_DF"]
+    assert summary.iloc[0]["status"] == "error"
+    assert "force_recompute" in summary.iloc[0]["notes"]
+    assert raw_mask.read_bytes() == before
 
 
 def test_run_multifish_anatomy_segmentation_records_missing_source(tmp_path: Path) -> None:

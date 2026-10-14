@@ -40,6 +40,217 @@ class AnatomyCellposeConfig:
     use_gpu: bool | None = None
     compute_device: str | None = None
     verbose: bool = True
+    # Cellpose input preprocessing; None segments the raw stack. Default adopted
+    # 2026-10-14 after the blinded ex vivo review (wikiLogbook dataset 06).
+    boundary_enhancement: str | None = "hessian2d"
+    hessian_sigma_px: float = 1.5
+    hessian_beta: float = 0.5
+
+
+HESSIAN_VALLEY_METHOD = "hessian2d"
+
+
+def hessian_valley_tag(sigma_px: float, beta: float) -> str:
+    """Filename tag, e.g. ``hessian2d_s1p5_b0p50``."""
+    return f"{HESSIAN_VALLEY_METHOD}_s{float(sigma_px):.1f}_b{float(beta):.2f}".replace(".", "p")
+
+
+def hessian_valley_subtract(volume: np.ndarray, *, sigma_px: float = 1.5, beta: float = 0.5) -> tuple[np.ndarray, float]:
+    """Darken the gaps between touching nuclei before Cellpose.
+
+    Per plane, the largest Hessian eigenvalue (positive in dark valleys) is
+    clipped at 0, scaled by sigma**2, matched to the stack's intensity at the
+    99th percentile, and ``beta`` times it is subtracted. Returns the uint8
+    volume (same axis order; 2D or ZYX) and the matching scale.
+    """
+    from skimage import feature
+
+    raw = np.asarray(volume, dtype=np.float32)
+    if raw.ndim not in (2, 3):
+        raise ValueError(f"Hessian valley subtraction expects a 2D or ZYX volume, got {raw.shape}")
+    planes = raw[None] if raw.ndim == 2 else raw
+    valley = np.empty(planes.shape, np.float32)
+    for z, plane in enumerate(planes):
+        hessian = feature.hessian_matrix(plane, sigma=sigma_px, order="rc", use_gaussian_derivatives=False)
+        valley[z] = np.clip(feature.hessian_matrix_eigvals(hessian)[0], 0, None) * sigma_px**2
+    # Keep the recipe's NumPy scalar arithmetic and type promotion unchanged (do not
+    # convert scale to a Python float first): the output must stay identical to the
+    # validated 2026-10-07 inputs, which it reproduces voxel for voxel.
+    scale = np.percentile(planes, 99) / max(np.percentile(valley, 99), 1e-6)
+    enhanced = np.clip(np.rint(planes - beta * scale * valley), 0, 255).astype(np.uint8)
+    return (enhanced[0] if raw.ndim == 2 else enhanced), float(scale)
+
+
+def _nrrd_array_needs_reorder(arr: np.ndarray) -> bool:
+    """Legacy heuristic in _prepare_anat_volume: reorder when the last axis is the shortest."""
+    return arr.ndim == 3 and arr.shape[-1] < min(arr.shape[0], arr.shape[1])
+
+
+def _same_nrrd_header(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    def same(x: Any, y: Any) -> bool:
+        try:
+            return np.array_equal(np.asarray(x, dtype=float), np.asarray(y, dtype=float), equal_nan=True)
+        except (TypeError, ValueError):
+            return np.array_equal(np.asarray(x, dtype=object), np.asarray(y, dtype=object))
+
+    keys = (set(a) | set(b)) - {"encoding"}
+    return all(same(a.get(k), b.get(k)) for k in keys)
+
+
+def _volume_content_sha256(arr: np.ndarray) -> str:
+    """Hash of array content, dtype and shape (independent of file encoding)."""
+    arr = np.ascontiguousarray(arr)
+    digest = hashlib.sha256(f"{arr.dtype.str}|{arr.shape}|".encode())
+    digest.update(arr.tobytes())
+    return digest.hexdigest()
+
+
+def anatomy_mask_binding_path(mask_path: str | Path) -> Path:
+    mask_path = Path(mask_path)
+    return mask_path.with_name(f"{mask_path.stem}.binding.json")
+
+
+def write_anatomy_mask_binding(
+    mask_path: str | Path,
+    cellpose_input: np.ndarray,
+    *,
+    preprocessing: dict[str, Any],
+    source_path: str | Path,
+    note: str | None = None,
+) -> Path:
+    """Record which Cellpose input (content hash + preprocessing) produced a mask.
+
+    Written by the anatomy Cellpose stage after segmenting, or after a verified
+    import of masks segmented elsewhere from the same input.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    mask_path = Path(mask_path)
+    payload = {
+        "schema_version": 1,
+        "mask": mask_path.name,
+        "mask_sha256": _file_sha256(mask_path),
+        "cellpose_input_content_sha256": _volume_content_sha256(cellpose_input),
+        "cellpose_input_shape": [int(v) for v in np.shape(cellpose_input)],
+        "preprocessing": dict(preprocessing),
+        "source_path": str(source_path),
+        "written_at": datetime.now(timezone.utc).isoformat(),
+        "note": note,
+    }
+    out = anatomy_mask_binding_path(mask_path)
+    out.write_text(json.dumps(payload, indent=1))
+    return out
+
+
+def _read_mask_binding(mask_path: Path) -> dict[str, Any] | None:
+    import json
+
+    path = anatomy_mask_binding_path(mask_path)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {"unreadable": True}
+
+
+def _mask_binding_mismatch(mask_path: Path, input_sha: str, preprocessing: dict[str, Any]) -> str | None:
+    """None when the mask is bound to this input content and preprocessing; else why not."""
+    binding = _read_mask_binding(mask_path)
+    if binding is None:
+        return "no binding record"
+    if binding.get("unreadable"):
+        return "unreadable binding record"
+    if binding.get("preprocessing") != preprocessing:
+        return f"made with preprocessing {binding.get('preprocessing')}"
+    if binding.get("cellpose_input_content_sha256") != input_sha:
+        return "made from a different Cellpose input"
+    if binding.get("mask_sha256") != _file_sha256(mask_path):
+        return "mask changed since it was bound"
+    return None
+
+
+def _mask_preprocessing_method(mask_path: Path) -> str:
+    binding = _read_mask_binding(mask_path)
+    if isinstance(binding, dict) and isinstance(binding.get("preprocessing"), dict):
+        return str(binding["preprocessing"].get("method", "unknown"))
+    return HESSIAN_VALLEY_METHOD if f"_{HESSIAN_VALLEY_METHOD}_" in mask_path.name else "none"
+
+
+def _write_cellpose_input(source: Path, volume_zyx: np.ndarray, out_path: Path, *, log_lines: list[str]) -> None:
+    """Write the Cellpose input with the source's header and axis layout (NRRD) or as TIFF.
+
+    TIFF inputs are written as plain ImageJ TIFFs; source resolution tags are not copied.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if source.suffix.lower() == ".nrrd":
+        import nrrd
+
+        # Inverse of the reader (imread_any = C/ZYX order) plus any reorder
+        # _prepare_anat_volume applied to this source; no inference from shapes.
+        source_arr, header = nrrd.read(str(source), index_order="C")
+        on_disk = volume_zyx.transpose(2, 1, 0) if _nrrd_array_needs_reorder(source_arr) else volume_zyx
+        if out_path.exists():
+            existing, existing_header = nrrd.read(str(out_path), index_order="C")
+            if np.array_equal(existing, on_disk) and _same_nrrd_header(existing_header, header):
+                return
+            log_lines.append(f"[ANAT CP] Rewriting Cellpose input (content or header differed): {out_path}")
+        nrrd.write(str(out_path), on_disk, header, index_order="C")
+    else:
+        if out_path.exists() and np.array_equal(np.asarray(tifffile.imread(str(out_path))), volume_zyx):
+            return
+        tifffile.imwrite(str(out_path), volume_zyx, imagej=True, compression="deflate")
+
+
+def _publish_segmentation(
+    *,
+    output_base: Path,
+    staged: dict[Path, Path],
+    replaced: list[Path],
+    log_lines: list[str],
+) -> Path | None:
+    """Promote staged files to their canonical paths, archiving what they replace.
+
+    ``staged`` maps a staged file to its canonical destination; ``replaced`` lists
+    canonical masks to retire. Old masks/bindings and overwritten files move to a
+    unique ``superseded_masks/<UTC>/`` folder. On any failure every move is undone,
+    so the previous canonical bundle is restored.
+    """
+    import os
+    import shutil
+    import tempfile
+    from datetime import datetime, timezone
+
+    to_archive: list[Path] = []
+    for mask in replaced:
+        to_archive += [path for path in (mask, anatomy_mask_binding_path(mask)) if path.exists()]
+    to_archive += [dest for dest in staged.values() if dest.exists() and dest not in to_archive]
+    archive = None
+    if to_archive:
+        root = output_base / "superseded_masks"
+        root.mkdir(parents=True, exist_ok=True)
+        archive = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ_"), dir=root))
+    moves: list[tuple[Path, Path]] = []
+    try:
+        for path in to_archive:
+            target = archive / path.name
+            if target.exists():
+                raise FileExistsError(f"Superseded copy already exists: {target}")
+            shutil.move(str(path), target)
+            moves.append((path, target))
+        for src, dest in staged.items():
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(src, dest)
+            moves.append((src, dest))
+    except Exception:
+        for original, moved in reversed(moves):
+            if moved.exists():
+                shutil.move(str(moved), original)
+        raise
+    for path in to_archive:
+        log_lines.append(f"[ANAT CP] Superseded {path.name} -> {archive}")
+    return archive
 
 
 def _ensure_uint_labels_local() -> Callable[[Any], np.ndarray]:
@@ -312,7 +523,7 @@ def _prepare_anat_volume(path: Path, *, log_lines: list[str]) -> np.ndarray:
     vol = np.asarray(_imread_any(path))
     if vol.ndim == 4 and vol.shape[-1] in (3, 4):
         vol = vol[..., 0]
-    if path.suffix.lower() == ".nrrd" and vol.ndim == 3 and vol.shape[-1] < min(vol.shape[0], vol.shape[1]):
+    if path.suffix.lower() == ".nrrd" and _nrrd_array_needs_reorder(vol):
         vol = vol.transpose(2, 1, 0)
         log_lines.append(f"[ANAT CP] Reordered NRRD to (Z, Y, X): {path.name} -> {vol.shape}")
     if vol.ndim not in (2, 3):
@@ -530,26 +741,91 @@ def run_anatomy_cellpose_stage(
     vol = _prepare_anat_volume(anat_src, log_lines=log_lines)
     expected_shape = tuple(int(v) for v in vol.shape)
     stem = anat_src.stem
+    enhancement: dict[str, Any] | None = None
+    preprocessing: dict[str, Any] = {"method": "none"}
+    cellpose_input_path = anat_src
+    if cfg.boundary_enhancement not in (None, "", "none"):
+        if cfg.boundary_enhancement != HESSIAN_VALLEY_METHOD:
+            raise ValueError(f"Unknown anatomy boundary enhancement: {cfg.boundary_enhancement!r}")
+        tag = hessian_valley_tag(cfg.hessian_sigma_px, cfg.hessian_beta)
+        vol, scale = hessian_valley_subtract(vol, sigma_px=cfg.hessian_sigma_px, beta=cfg.hessian_beta)
+        preprocessing = {"method": HESSIAN_VALLEY_METHOD, "sigma_px": float(cfg.hessian_sigma_px), "beta": float(cfg.hessian_beta)}
+        stem = f"{stem}_{tag}"
+        suffix = ".nrrd" if anat_src.suffix.lower() == ".nrrd" else ".tif"
+        cellpose_input_path = output_base / "cellpose_input" / f"{stem}{suffix}"
+        enhancement = {**preprocessing, "tag": tag, "scale": scale, "cellpose_input_path": str(cellpose_input_path)}
+        log_lines.append(f"[ANAT CP] Hessian valley subtraction ({tag}, scale={scale:.4f})")
+    anat_u8 = _to_uint8_preserve(vol, log_lines=log_lines)
+    input_sha = _volume_content_sha256(anat_u8)
     anat_8bit_path = convert_dir / f"{stem}_8bit.tif"
     anat_mask_out = out_dir / f"{stem}_8bit_cp_masks.tif"
 
+    # Masks made with different preprocessing are "foreign": they are never reused
+    # and never replaced without force_recompute (in vivo labels feed accepted geometry).
+    existing_masks = [p for p in visible_glob(out_dir, "*cp_masks*.tif*") if p.name != anat_mask_out.name]
+    explicit = Path(anat_labels_path) if anat_labels_path not in (None, "", False) else None
+    # Compare file identity, not names: an external mask that shares the canonical
+    # basename is still a different label set and must be protected.
+    if (
+        explicit is not None
+        and explicit.exists()
+        and explicit.resolve() != anat_mask_out.resolve()
+        and all(explicit.resolve() != p.resolve() for p in existing_masks)
+    ):
+        existing_masks.append(explicit)
+    if enhancement is not None:
+        foreign = existing_masks
+    else:
+        foreign = [p for p in existing_masks if _mask_preprocessing_method(p) != "none"]
+        if anat_mask_out.exists() and _mask_preprocessing_method(anat_mask_out) != "none":
+            foreign.append(anat_mask_out)
+    if foreign and not cfg.force_recompute:
+        raise RuntimeError(
+            f"Masks not made with preprocessing {preprocessing['method']!r} exist ({', '.join(p.name for p in foreign)}). "
+            "Segmenting now would replace labels downstream steps may depend on: rerun with force_recompute "
+            "to resegment (masks inside this output directory move to superseded_masks/; an explicit labels "
+            "path elsewhere is left in place, so pass the returned label path afterwards), or choose the "
+            "matching boundary_enhancement."
+        )
+
     reuse_path = None
     existing_candidates: list[Path] = []
-    if anat_labels_path not in (None, "", False):
-        existing_candidates.append(Path(anat_labels_path))
-    existing_candidates.append(anat_mask_out)
-    fish_token = str(fish_id or "").strip()
-    for pattern in (
-        f"{fish_token}*anatomy*cp_masks*.tif",
-        f"{fish_token}*anatomy*cp_masks*.tiff",
-        f"{fish_token}*cp_masks*.tif",
-        f"{fish_token}*cp_masks*.tiff",
-        "*anatomy*cp_masks*.tif",
-        "*anatomy*cp_masks*.tiff",
-        "*cp_masks*.tif",
-        "*cp_masks*.tiff",
-    ):
-        existing_candidates.extend(sorted(visible_glob(out_dir, pattern)))
+    if enhancement is not None:
+        # Reuse only the exact mask, and only when its binding record proves it was
+        # made from this input content with these parameters.
+        if anat_mask_out.exists() and not cfg.force_recompute:
+            why = _mask_binding_mismatch(anat_mask_out, input_sha, preprocessing)
+            if why is not None:
+                raise RuntimeError(
+                    f"{anat_mask_out.name} is not bound to the current Cellpose input ({why}); "
+                    "rerun with force_recompute to resegment."
+                )
+            if not cfg.skip_if_exists:
+                raise RuntimeError(f"skip_if_exists=False would overwrite {anat_mask_out.name}; use force_recompute.")
+            existing_candidates.append(anat_mask_out)
+    else:
+        if explicit is not None:
+            existing_candidates.append(explicit)
+        existing_candidates.append(anat_mask_out)
+        fish_token = str(fish_id or "").strip()
+        for pattern in (
+            f"{fish_token}*anatomy*cp_masks*.tif",
+            f"{fish_token}*anatomy*cp_masks*.tiff",
+            f"{fish_token}*cp_masks*.tif",
+            f"{fish_token}*cp_masks*.tiff",
+            "*anatomy*cp_masks*.tif",
+            "*anatomy*cp_masks*.tiff",
+            "*cp_masks*.tif",
+            "*cp_masks*.tiff",
+        ):
+            existing_candidates.extend(sorted(visible_glob(out_dir, pattern)))
+        # Legacy raw masks have no binding record; a binding that names other
+        # preprocessing or another input disqualifies a candidate.
+        existing_candidates = [
+            p for p in existing_candidates
+            if _mask_preprocessing_method(p) == "none"
+            and (_read_mask_binding(p) is None or _mask_binding_mismatch(p, input_sha, preprocessing) is None)
+        ]
 
     if (not cfg.force_recompute) and cfg.skip_if_exists:
         seen: set[str] = set()
@@ -568,8 +844,18 @@ def run_anatomy_cellpose_stage(
                 log_lines.append(f"[ANAT CP] Existing mask shape mismatch ({candidate}: {_mask_shape(candidate)} vs expected {expected_shape}); recomputing.")
             except Exception as exc:
                 log_lines.append(f"[ANAT CP] Could not validate existing mask {candidate}: {exc}; recomputing.")
+    if reuse_path is None and not cfg.force_recompute:
+        blocking = [p for p in existing_masks if p.exists()] + ([anat_mask_out] if anat_mask_out.exists() else [])
+        if blocking:
+            raise RuntimeError(
+                f"Existing masks cannot be reused ({', '.join(p.name for p in blocking)}: stale binding, shape/fish "
+                "check failed, or skip_if_exists=False). Replacing them needs force_recompute."
+            )
 
     if reuse_path is not None:
+        if enhancement is not None:
+            _write_cellpose_input(anat_src, vol, cellpose_input_path, log_lines=log_lines)
+            enhancement["cellpose_input_sha256"] = _file_sha256(cellpose_input_path)
         log_lines.append(f"[ANAT CP] Reusing existing anatomy masks: {reuse_path}")
         return {
             "status": "cached",
@@ -579,7 +865,9 @@ def run_anatomy_cellpose_stage(
                 "ANAT_SEG_CONVERT_DIR": convert_dir,
                 "ANAT_CP_MODEL_PATH": str(model_path),
                 "ANAT_LABELS_PATH": reuse_path,
+                "ANAT_CELLPOSE_INPUT_PATH": cellpose_input_path,
             },
+            "boundary_enhancement": enhancement,
             "log_lines": log_lines,
             "runtime_provenance": _cellpose_runtime_provenance(
                 model_path=model_path,
@@ -588,7 +876,6 @@ def run_anatomy_cellpose_stage(
             ),
         }
 
-    anat_u8 = _to_uint8_preserve(vol, log_lines=log_lines)
     if cfg.save_8bit and (cfg.force_recompute or (not anat_8bit_path.exists())):
         tifffile.imwrite(str(anat_8bit_path), anat_u8, imagej=True, compression="deflate")
         log_lines.append(f"[ANAT CP] Saved 8-bit anatomy TIFF: {anat_8bit_path}")
@@ -628,7 +915,35 @@ def run_anatomy_cellpose_stage(
 
     max_lbl = int(np.max(anat_masks)) if anat_masks.size else 0
     out_dtype = np.uint16 if max_lbl <= np.iinfo(np.uint16).max else np.uint32
-    tifffile.imwrite(str(anat_mask_out), anat_masks.astype(out_dtype), imagej=True, compression="deflate")
+    # Stage the input, mask and binding, verify them, then promote them together;
+    # replaced masks inside out_dir are archived, and a failure restores the old bundle.
+    # An explicit anat_labels_path outside out_dir is never moved.
+    import tempfile
+
+    staging = Path(tempfile.mkdtemp(prefix=".staging_", dir=output_base))
+    try:
+        staged_mask = staging / anat_mask_out.name
+        tifffile.imwrite(str(staged_mask), anat_masks.astype(out_dtype), imagej=True, compression="deflate")
+        if _mask_shape(staged_mask) != expected_shape:
+            raise RuntimeError(f"Staged mask shape {_mask_shape(staged_mask)} != input {expected_shape}")
+        staged_binding = write_anatomy_mask_binding(staged_mask, anat_u8, preprocessing=preprocessing, source_path=anat_src)
+        staged = {staged_mask: anat_mask_out, staged_binding: anatomy_mask_binding_path(anat_mask_out)}
+        if enhancement is not None:
+            staged_input = staging / cellpose_input_path.name
+            _write_cellpose_input(anat_src, vol, staged_input, log_lines=log_lines)
+            staged[staged_input] = cellpose_input_path
+        _publish_segmentation(
+            output_base=output_base,
+            staged=staged,
+            replaced=[p for p in existing_masks if p.parent == out_dir],
+            log_lines=log_lines,
+        )
+    finally:
+        import shutil
+
+        shutil.rmtree(staging, ignore_errors=True)
+    if enhancement is not None:
+        enhancement["cellpose_input_sha256"] = _file_sha256(cellpose_input_path)
     log_lines.append(f"[ANAT CP] Saved anatomy masks: {anat_mask_out} (max_label={max_lbl}, dtype={out_dtype})")
 
     return {
@@ -639,7 +954,9 @@ def run_anatomy_cellpose_stage(
             "ANAT_SEG_CONVERT_DIR": convert_dir,
             "ANAT_CP_MODEL_PATH": str(model_path),
             "ANAT_LABELS_PATH": anat_mask_out,
+            "ANAT_CELLPOSE_INPUT_PATH": cellpose_input_path,
         },
+        "boundary_enhancement": enhancement,
         "log_lines": log_lines,
         "runtime_provenance": runtime_provenance,
     }
@@ -909,9 +1226,13 @@ __all__ = [
     "collect_hcr_intensity_stack_paths",
     "deduplicate_hcr_intensity_targets",
     "export_suite2p_native_labels_stage",
+    "anatomy_mask_binding_path",
+    "hessian_valley_subtract",
+    "hessian_valley_tag",
     "resolve_functional_labels_for_plane",
     "resolve_hcr_cellpose_model_path",
     "resolve_native_suite2p_labels_for_plane",
     "run_anatomy_cellpose_stage",
     "run_hcr_cellpose_stage",
+    "write_anatomy_mask_binding",
 ]

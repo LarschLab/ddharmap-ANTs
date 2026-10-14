@@ -52,7 +52,7 @@ Do not use generic executable names such as `preprocess-anatomy` or `preprocess-
 Use broad names only as roadmap groupings. Executable writer stages should name the operation and modality, for example:
 
 - `prepare-ex-vivo-anatomy-stack`: convert/orient the raw ex vivo 2P anatomy stack into a registration-ready analysis artifact.
-- `segment-ex-vivo-anatomy-cellpose`: run Cellpose on the prepared ex vivo anatomy stack.
+- `segment-ex-vivo-anatomy-cellpose`: run Cellpose on the prepared ex vivo anatomy stack. By default (2026-10-14), the stack is first Hessian valley-subtracted; the enhanced input is written to `structural/ex_vivo/cellpose_input/` and recorded in the manifest. `--boundary-enhancement none` segments the raw stack.
 - `segment-hcr-cellpose`: run Cellpose on HCR/confocal intensity stacks from an explicit source such as `rbest`.
 
 Ex vivo analysis artifacts belong under `03_analysis/structural/ex_vivo/` and must not be mixed with canonical in vivo anatomy outputs. The earlier `02_reg/00_preprocessing/2p_anatomy/ex_vivo/` location is legacy/bridge context for registration preparation; new ex vivo Cellpose masks and manifests should live under the structural analysis ex vivo subtree.

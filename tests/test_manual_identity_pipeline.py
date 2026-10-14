@@ -224,6 +224,17 @@ def test_functional_review_scope_union_edges_cache_and_complete_fish(tmp_path, m
     refs.write_text(json.dumps([dict(index=0, best_z=5)]))
     with pytest.raises(ValueError, match='fish inventory'):
         mip.apply_functional_review_scope(dataset, tmp_path)
+    # Suite2p planes outside the accepted geometry (an eligible subset) are not
+    # required; a plane missing from the geometry fish's references still is.
+    for plane in range(4):
+        (fish / f'03_analysis/functional/suite2P/plane{plane}').mkdir(parents=True, exist_ok=True)
+    refs.write_text(json.dumps([dict(index=0, best_z=5), dict(index=1, best_z=50)]))
+    mip.apply_functional_review_scope(dataset, tmp_path, log=lambda *_: None)
+    assert dataset.review_eligible == [11, 33]
+    geometry_csv = fish / '03_analysis/functional/registration/functional_roi_anatomy_matches.csv'
+    geometry_csv.unlink()
+    with pytest.raises(ValueError, match=r'differ from fish inventory \[0, 1, 2, 3\]'):
+        mip.apply_functional_review_scope(dataset, tmp_path)
 
 
 def test_scope_preserves_existing_calls_and_blocks_new_outside_calls(tmp_path):
