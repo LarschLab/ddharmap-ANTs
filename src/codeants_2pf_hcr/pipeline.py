@@ -178,6 +178,7 @@ GRANULAR_PREPROCESSING_STAGE_NAMES: tuple[str, ...] = (
     "prepare-in-vivo-anatomy-stack",
     "prepare-ex-vivo-anatomy-stack",
     "segment-hcr-cellpose",
+    "segment-in-vivo-anatomy-cellpose",
     "segment-ex-vivo-anatomy-cellpose",
 )
 
@@ -701,6 +702,8 @@ def cellpose_stage_manifest_path(paths: PipelinePaths, stage_name: str) -> Path:
         return paths.analysis_dir / "structural" / "ex_vivo" / "manifests" / f"{stage_name}_manifest.json"
     if stage_name == "segment-hcr-cellpose":
         return paths.confocal_dir / "raw" / "manifests" / f"{stage_name}_manifest.json"
+    if stage_name == "segment-in-vivo-anatomy-cellpose":
+        return in_vivo_structural_root(paths) / "manifests" / f"{stage_name}_manifest.json"
     if stage_name == "segment-ex-vivo-anatomy-cellpose":
         return paths.analysis_dir / "structural" / "ex_vivo" / "manifests" / f"{stage_name}_manifest.json"
     return stage_manifest_path(paths, stage_name)
@@ -1204,6 +1207,15 @@ def _stage_output_specs(paths: PipelinePaths, stage_name: str) -> tuple[StageOut
                 artifact_pattern="*_cp_masks.tif",
             ),
         )
+    if stage_name == "segment-in-vivo-anatomy-cellpose":
+        return (
+            StageOutputSpec(
+                "in vivo anatomy Cellpose mask directory",
+                str(in_vivo_structural_root(paths) / "cp_masks"),
+                parity="nonempty_file",
+                artifact_pattern="*_cp_masks.tif",
+            ),
+        )
     if stage_name == "segment-ex-vivo-anatomy-cellpose":
         return (
             StageOutputSpec(
@@ -1690,6 +1702,10 @@ def _upstream_stage_input_records(paths: PipelinePaths, stage_name: str) -> tupl
         return (
             describe_glob(paths.preproc_dir / "rbest", "*", label="HCR rbest intensity inputs"),
         )
+    if stage_name == "segment-in-vivo-anatomy-cellpose":
+        return (
+            describe_manifest_path(prepared_in_vivo_anatomy_path(paths), label="prepared in vivo anatomy stack"),
+        )
     if stage_name == "segment-ex-vivo-anatomy-cellpose":
         return (
             describe_manifest_path(prepared_ex_vivo_anatomy_path(paths), label="prepared ex vivo anatomy stack"),
@@ -1783,6 +1799,10 @@ def _upstream_stage_output_records(paths: PipelinePaths, stage_name: str) -> tup
     if stage_name == "segment-hcr-cellpose":
         return (
             describe_glob(paths.confocal_raw_cp_masks_dir, "*_cp_masks.tif", label="HCR Cellpose masks"),
+        )
+    if stage_name == "segment-in-vivo-anatomy-cellpose":
+        return (
+            describe_glob(in_vivo_structural_root(paths) / "cp_masks", "*_cp_masks.tif", label="in vivo anatomy Cellpose masks"),
         )
     if stage_name == "segment-ex-vivo-anatomy-cellpose":
         structural_root = ex_vivo_structural_root(paths)
@@ -7447,6 +7467,10 @@ def _hcr_replay_plane_ref_variants(
     return deduped
 
 
+def in_vivo_structural_root(paths: PipelinePaths) -> Path:
+    return paths.analysis_dir / "structural"
+
+
 def ex_vivo_structural_root(paths: PipelinePaths) -> Path:
     return paths.analysis_dir / "structural" / "ex_vivo"
 
@@ -10246,27 +10270,84 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
     boundary_enhancement: str | None = "hessian2d",
 ) -> StageManifest:
     paths = resolve_pipeline_paths(config)
-    structural_root = ex_vivo_structural_root(paths)
-    source_path = Path(anatomy_stack_path) if anatomy_stack_path not in (None, "", False) else prepared_ex_vivo_anatomy_path(paths)
+    return _run_segment_anatomy_cellpose_stage(
+        config,
+        stage_name="segment-ex-vivo-anatomy-cellpose",
+        preparation="ex vivo",
+        structural_root=ex_vivo_structural_root(paths),
+        source_path=Path(anatomy_stack_path) if anatomy_stack_path not in (None, "", False) else prepared_ex_vivo_anatomy_path(paths),
+        anat_cp_model_path=anat_cp_model_path,
+        use_gpu=use_gpu,
+        compute_device=compute_device,
+        force_recompute=force_recompute,
+        boundary_enhancement=boundary_enhancement,
+    )
+
+
+def run_segment_in_vivo_anatomy_cellpose_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    anatomy_stack_path: str | Path | None = None,
+    anat_cp_model_path: str | Path | None = None,
+    use_gpu: bool | None = None,
+    compute_device: str | None = None,
+    force_recompute: bool = False,
+    boundary_enhancement: str | None = "hessian2d",
+) -> StageManifest:
+    """Segment the prepared in vivo anatomy stack with Cellpose.
+
+    Masks go to ``03_analysis/structural/cp_masks``, where ROI/anatomy matching
+    reads the anatomy label stack.
+    """
+    paths = resolve_pipeline_paths(config)
+    return _run_segment_anatomy_cellpose_stage(
+        config,
+        stage_name="segment-in-vivo-anatomy-cellpose",
+        preparation="in vivo",
+        structural_root=in_vivo_structural_root(paths),
+        source_path=Path(anatomy_stack_path) if anatomy_stack_path not in (None, "", False) else prepared_in_vivo_anatomy_path(paths),
+        anat_cp_model_path=anat_cp_model_path,
+        use_gpu=use_gpu,
+        compute_device=compute_device,
+        force_recompute=force_recompute,
+        boundary_enhancement=boundary_enhancement,
+    )
+
+
+def _run_segment_anatomy_cellpose_stage(
+    config: SingleFishPipelineConfig,
+    *,
+    stage_name: str,
+    preparation: str,
+    structural_root: Path,
+    source_path: Path,
+    anat_cp_model_path: str | Path | None,
+    use_gpu: bool | None,
+    compute_device: str | None,
+    force_recompute: bool,
+    boundary_enhancement: str | None,
+) -> StageManifest:
+    """Run anatomy Cellpose for one preparation ("in vivo" or "ex vivo") and record its manifest."""
+    paths = resolve_pipeline_paths(config)
     model_path = Path(anat_cp_model_path) if anat_cp_model_path not in (None, "", False) else None
     early_errors: list[str] = []
     if not source_path.exists():
-        early_errors.append(f"missing prepared ex vivo anatomy stack: {source_path}")
+        early_errors.append(f"missing prepared {preparation} anatomy stack: {source_path}")
     if model_path is None or not model_path.exists():
         early_errors.append(f"missing anatomy Cellpose model: {model_path or ''}")
     if early_errors:
         return StageManifest(
             manifest_version=PIPELINE_MANIFEST_VERSION,
-            stage_name="segment-ex-vivo-anatomy-cellpose",
+            stage_name=stage_name,
             fish_id=config.fish_id,
             status="fail",
             dry_run=False,
             generated_at=datetime.now(timezone.utc).isoformat(),
             inputs=(
-                describe_manifest_path(source_path, label="prepared ex vivo anatomy stack"),
+                describe_manifest_path(source_path, label=f"prepared {preparation} anatomy stack"),
                 _optional_manifest_path(model_path, label="anatomy Cellpose model"),
             ),
-            outputs=(describe_manifest_path(structural_root / "cp_masks", required=False, label="ex vivo anatomy Cellpose mask directory"),),
+            outputs=(describe_manifest_path(structural_root / "cp_masks", required=False, label=f"{preparation} anatomy Cellpose mask directory"),),
             checks=(),
             parameters={
                 "local_root": str(config.local_root),
@@ -10284,6 +10365,8 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
     from .segmentation import AnatomyCellposeConfig, run_anatomy_cellpose_stage
 
     try:
+        # No vox_anat: Cellpose gets no Z anisotropy factor, matching the reviewed
+        # ex vivo masks (notebook [24a] passed VOX_ANAT for legacy in vivo masks).
         result = run_anatomy_cellpose_stage(
             anat_seg_source_path=source_path,
             analysis_dir=paths.analysis_dir,
@@ -10303,13 +10386,13 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
         n_labels = _tiff_label_count(label_path)
         checks = (
             StageCheckRecord(
-                label="ex vivo anatomy Cellpose labels",
+                label=f"{preparation} anatomy Cellpose labels",
                 status="pass" if label_path.exists() else "fail",
-                detail="ex vivo anatomy masks exist under structural/ex_vivo",
+                detail=f"{preparation} anatomy masks exist under {structural_root.relative_to(paths.analysis_dir).as_posix()}",
                 observed=str(label_path),
             ),
             StageCheckRecord(
-                label="ex vivo anatomy label count",
+                label=f"{preparation} anatomy label count",
                 status="pass" if n_labels is None or n_labels >= 0 else "fail",
                 detail="non-background label count from mask TIFF",
                 observed=None if n_labels is None else str(n_labels),
@@ -10319,16 +10402,16 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
         errors: tuple[str, ...] = ()
         warnings: tuple[str, ...] = ()
         outputs = (
-            describe_manifest_path(label_path, label="ex vivo anatomy Cellpose masks"),
-            describe_glob(structural_root / "raw" / "converted_nrrd_to_tif", "*_8bit.tif", required=False, label="ex vivo anatomy converted uint8 TIFFs"),
+            describe_manifest_path(label_path, label=f"{preparation} anatomy Cellpose masks"),
+            describe_glob(structural_root / "raw" / "converted_nrrd_to_tif", "*_8bit.tif", required=False, label=f"{preparation} anatomy converted uint8 TIFFs"),
         )
         from .segmentation import anatomy_mask_binding_path
 
         binding_path = anatomy_mask_binding_path(label_path)
-        outputs += (describe_manifest_path(binding_path, required=False, label="ex vivo anatomy mask binding (Cellpose input + preprocessing)"),)
+        outputs += (describe_manifest_path(binding_path, required=False, label=f"{preparation} anatomy mask binding (Cellpose input + preprocessing)"),)
         checks += (
             StageCheckRecord(
-                label="ex vivo anatomy mask binding",
+                label=f"{preparation} anatomy mask binding",
                 status="pass" if binding_path.exists() or not enhancement else "fail",
                 detail="the mask is bound to the Cellpose input content and preprocessing that produced it",
                 observed=binding_path.name if binding_path.exists() else None,
@@ -10336,10 +10419,10 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
         )
         status = "pass" if all(check.status != "fail" for check in checks) else "fail"
         if enhancement:
-            outputs += (describe_manifest_path(Path(enhancement["cellpose_input_path"]), label="ex vivo anatomy Cellpose input (Hessian valley subtracted)"),)
+            outputs += (describe_manifest_path(Path(enhancement["cellpose_input_path"]), label=f"{preparation} anatomy Cellpose input (Hessian valley subtracted)"),)
             checks += (
                 StageCheckRecord(
-                    label="ex vivo anatomy Cellpose input preprocessing",
+                    label=f"{preparation} anatomy Cellpose input preprocessing",
                     status="pass",
                     detail="Cellpose segmented the Hessian valley-subtracted stack, not the raw stack",
                     observed=str(enhancement["tag"]),
@@ -10351,16 +10434,16 @@ def run_segment_ex_vivo_anatomy_cellpose_stage(
         errors = (str(exc),)
         warnings = ()
         checks = ()
-        outputs = (describe_manifest_path(structural_root / "cp_masks", required=False, label="ex vivo anatomy Cellpose mask directory"),)
+        outputs = (describe_manifest_path(structural_root / "cp_masks", required=False, label=f"{preparation} anatomy Cellpose mask directory"),)
     return StageManifest(
         manifest_version=PIPELINE_MANIFEST_VERSION,
-        stage_name="segment-ex-vivo-anatomy-cellpose",
+        stage_name=stage_name,
         fish_id=config.fish_id,
         status=status,
         dry_run=False,
         generated_at=datetime.now(timezone.utc).isoformat(),
         inputs=(
-            describe_manifest_path(source_path, label="prepared ex vivo anatomy stack"),
+            describe_manifest_path(source_path, label=f"prepared {preparation} anatomy stack"),
             _optional_manifest_path(model_path, label="anatomy Cellpose model"),
         ),
         outputs=outputs,
@@ -10530,6 +10613,7 @@ __all__ = [
     "discover_ex_vivo_anatomy_stack",
     "downstream_stage_names",
     "ex_vivo_structural_root",
+    "in_vivo_structural_root",
     "functional_to_anatomy_registration_root",
     "functional_roi_anatomy_transform_root",
     "functional_registration_qc_root",
@@ -10552,6 +10636,7 @@ __all__ = [
     "run_register_hcr_to_anatomy_stage",
     "run_match_roi_to_anatomy_stage",
     "run_segment_ex_vivo_anatomy_cellpose_stage",
+    "run_segment_in_vivo_anatomy_cellpose_stage",
     "run_segment_hcr_cellpose_stage",
     "run_single_fish_assign_hcr_identity_stage",
     "run_single_fish_export_canonical_tables_stage",

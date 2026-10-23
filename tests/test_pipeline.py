@@ -53,6 +53,7 @@ from codeants_2pf_hcr.pipeline import (
     run_match_roi_to_anatomy_stage,
     roi_to_anatomy_match_root,
     run_segment_ex_vivo_anatomy_cellpose_stage,
+    run_segment_in_vivo_anatomy_cellpose_stage,
     run_segment_hcr_cellpose_stage,
     run_single_fish_assign_hcr_identity_stage,
     run_single_fish_audit_inputs_stage,
@@ -2690,6 +2691,9 @@ def test_ex_vivo_stage_paths_are_structural_ex_vivo_scoped(tmp_path: Path) -> No
     assert cellpose_stage_manifest_path(paths, "segment-ex-vivo-anatomy-cellpose") == (
         fish_dir / "03_analysis" / "structural" / "ex_vivo" / "manifests" / "segment-ex-vivo-anatomy-cellpose_manifest.json"
     )
+    assert cellpose_stage_manifest_path(paths, "segment-in-vivo-anatomy-cellpose") == (
+        fish_dir / "03_analysis" / "structural" / "manifests" / "segment-in-vivo-anatomy-cellpose_manifest.json"
+    )
 
 
 def test_discover_ex_vivo_anatomy_stack_requires_explicit_choice_when_ambiguous(tmp_path: Path) -> None:
@@ -2833,6 +2837,68 @@ def test_segment_ex_vivo_anatomy_cellpose_stage_reports_missing_inputs_as_manife
     assert manifest.inputs[0].exists is False
     assert manifest.inputs[1].path == str(missing_model)
     assert manifest.outputs[0].label == "ex vivo anatomy Cellpose mask directory"
+
+
+def test_segment_in_vivo_anatomy_cellpose_stage_defaults_to_prepared_in_vivo_stack(tmp_path: Path) -> None:
+    fish_dir = _make_minimal_fish(tmp_path)
+    missing_model = tmp_path / "missing-model"
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+
+    manifest = run_segment_in_vivo_anatomy_cellpose_stage(config, anat_cp_model_path=missing_model, use_gpu=False)
+
+    assert manifest.stage_name == "segment-in-vivo-anatomy-cellpose"
+    assert manifest.status == "fail"
+    assert manifest.inputs[0].path == str(prepared_in_vivo_anatomy_path(resolve_pipeline_paths(config)))
+    assert manifest.inputs[0].label == "prepared in vivo anatomy stack"
+    assert manifest.outputs[0].path == str(fish_dir / "03_analysis" / "structural" / "cp_masks")
+    assert manifest.outputs[0].label == "in vivo anatomy Cellpose mask directory"
+
+
+def test_segment_in_vivo_anatomy_cellpose_stage_segments_prepared_stack_into_structural_cp_masks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import numpy as np
+    import tifffile
+
+    import codeants_2pf_hcr.segmentation as segmentation
+
+    fish_dir = _make_minimal_fish(tmp_path)
+    config = SingleFishPipelineConfig(fish_id=fish_dir.name, local_root=tmp_path, strict=True)
+    prepared = prepared_in_vivo_anatomy_path(resolve_pipeline_paths(config))
+    prepared.parent.mkdir(parents=True, exist_ok=True)
+    prepared.write_bytes(b"nrrd")
+    model = tmp_path / "anatomy-model"
+    model.write_bytes(b"model")
+    structural = fish_dir / "03_analysis" / "structural"
+    mask = structural / "cp_masks" / "prepared_hessian2d_s1p5_b0p50_8bit_cp_masks.tif"
+    mask.parent.mkdir(parents=True, exist_ok=True)
+    tifffile.imwrite(mask, np.array([[0, 1], [2, 2]], dtype=np.uint16))
+    segmentation.anatomy_mask_binding_path(mask).write_text("{}")
+    cellpose_input = structural / "cellpose_input" / "prepared_hessian2d_s1p5_b0p50.nrrd"
+    calls = []
+
+    def fake_cellpose(**kwargs):
+        calls.append(kwargs)
+        return {
+            "bindings": {"ANAT_LABELS_PATH": mask},
+            "boundary_enhancement": {"tag": "hessian2d_s1p5_b0p50", "cellpose_input_path": str(cellpose_input)},
+            "log_lines": [],
+            "runtime_provenance": {},
+        }
+
+    monkeypatch.setattr(segmentation, "run_anatomy_cellpose_stage", fake_cellpose)
+
+    manifest = run_segment_in_vivo_anatomy_cellpose_stage(config, anat_cp_model_path=model, use_gpu=False)
+
+    assert manifest.status == "pass", manifest.errors
+    assert calls[0]["anat_seg_source_path"] == prepared
+    assert calls[0]["output_root"] == structural
+    assert "vox_anat" not in calls[0]
+    assert calls[0]["config"].boundary_enhancement == "hessian2d"
+    assert calls[0]["config"].force_recompute is False
+    assert manifest.outputs[0].path == str(mask)
+    assert {check.label: check.observed for check in manifest.checks}["in vivo anatomy label count"] == "2"
+    assert manifest.outputs[-1].label == "in vivo anatomy Cellpose input (Hessian valley subtracted)"
 
 
 def test_segment_hcr_cellpose_stage_can_reuse_cached_masks_without_model(tmp_path: Path) -> None:
@@ -4636,6 +4702,7 @@ def test_single_fish_pipeline_cli_help_exposes_current_read_only_and_granular_wr
     assert "register-functional-to-anatomy" in result.stdout
     assert "prepare-ex-vivo-anatomy-stack" in result.stdout
     assert "segment-ex-vivo-anatomy-cellpose" in result.stdout
+    assert "segment-in-vivo-anatomy-cellpose" in result.stdout
     assert "segment-hcr-cellpose" in result.stdout
     for command in (
         "preprocess-functional",

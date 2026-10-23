@@ -1276,11 +1276,42 @@ def _maybe_reorder_anatomy_stack(data: Any) -> tuple[np.ndarray, bool]:
     return arr, reordered
 
 
+def _average_frames_per_slice(path: Path) -> np.ndarray | None:
+    """Average a Z stack that was saved with every frame of every slice kept.
+
+    ScanImage writes such a stack (``logAverageFactor = 1``) as a ``ZTYX``
+    series. Each slice becomes the mean of its frames, rounded back to the
+    source integer dtype, which is what ScanImage writes when it averages
+    during acquisition. Slices are read one at a time to bound memory.
+
+    Returns:
+        The averaged ``(Z, Y, X)`` stack, or ``None`` when ``path`` is not a
+        ``ZTYX`` stack.
+    """
+    with tifffile.TiffFile(path) as tif:
+        series = tif.series[0]
+        if series.axes != "ZTYX":
+            return None
+        n_slices, frames_per_slice = int(series.shape[0]), int(series.shape[1])
+        if len(series.pages) != n_slices * frames_per_slice:
+            raise ValueError(
+                f"{path.name}: ZTYX series {series.shape} does not match its {len(series.pages)} pages"
+            )
+        slices = []
+        for z in range(n_slices):
+            frames = tif.asarray(key=range(z * frames_per_slice, (z + 1) * frames_per_slice), series=0)
+            slices.append(np.rint(frames.mean(axis=0, dtype=np.float64)).astype(frames.dtype))
+    return np.stack(slices)
+
+
 def _load_anatomy_volume_for_uint8(path: Path) -> tuple[np.ndarray, str, bool]:
     if path.suffix.lower() == ".nrrd":
         data, reader = _read_nrrd_volume(path)
         data, reordered = _maybe_reorder_anatomy_stack(data)
         return np.asarray(data), reader, reordered
+    averaged = _average_frames_per_slice(path)
+    if averaged is not None:
+        return averaged, "tifffile (mean of frames per Z slice)", False
     return np.asarray(tifffile.imread(path)), "tifffile", False
 
 
@@ -2584,7 +2615,7 @@ def preprocess_anatomy_uint8_stage(
             vol, reader, reordered_to_zxy = _load_anatomy_volume_for_uint8(source_path)
             anatomy_shape = tuple(int(v) for v in vol.shape)
             log_lines.append(f"[INFO] Anatomy uint8 source: {source_path}")
-            log_lines.append(f"[INFO] Anatomy source shape={anatomy_shape} dtype={vol.dtype}")
+            log_lines.append(f"[INFO] Anatomy source shape={anatomy_shape} dtype={vol.dtype} reader={reader}")
             if reordered_to_zxy:
                 log_lines.append(f"[INFO] Reordered anatomy to (Z, X, Y): {anatomy_shape}")
             anat_u8, range_stats = _signed_stack_to_uint8(vol)
@@ -2622,6 +2653,7 @@ def preprocess_anatomy_uint8_stage(
             "polarity_source": polarity_source,
             "target_xy_shape": list(target_xy_shape) if target_xy_shape is not None else None,
             "source_shape": list(anatomy_shape),
+            "source_reader": reader,
             "source_xy_shape": list(source_xy_shape) if source_xy_shape is not None else None,
             "output_shape": [int(v) for v in anat_u8.shape],
         }

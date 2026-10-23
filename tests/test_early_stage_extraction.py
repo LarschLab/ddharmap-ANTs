@@ -109,6 +109,38 @@ def test_preprocess_anatomy_uint8_stage_writes_canonical_registration_nrrd(tmp_p
     np.testing.assert_array_equal(np.transpose(data, (2, 1, 0)), _read_nrrd_zyx(result["bindings"]["ANAT_8BIT_STACK_PATH"]))
 
 
+def test_preprocess_anatomy_uint8_stage_averages_frames_of_an_unaveraged_z_stack(tmp_path: Path) -> None:
+    # A Z stack saved without averaging (ScanImage logAverageFactor = 1) is a
+    # ZTYX series; each slice must become the rounded mean of its frames.
+    preproc_dir = tmp_path / "preproc"
+    raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_00001.tif"
+    raw_path.parent.mkdir(parents=True)
+    frames = np.zeros((2, 5, 2, 2), dtype=np.int16)
+    frames[0, :, 0, 0] = [1, 2, 3, 4, 6]  # mean 3.2 -> 3
+    frames[0, :, 1, 1] = [-10, -10, -10, -10, 0]  # mean -8
+    frames[1, :, 0, 1] = [7, 7, 8, 8, 8]  # mean 7.6 -> 8
+    frames[1, :, 1, 0] = 20
+    tifffile.imwrite(raw_path, frames, metadata={"axes": "ZTYX"}, photometric="minisblack")
+    averaged = np.array([[[3, 0], [0, -8]], [[0, 8], [20, 0]]], dtype=np.int16)
+
+    result = preprocess_anatomy_uint8_stage(
+        anat_stack_path=raw_path,
+        anat_stack_path_orig=raw_path,
+        preproc_dir=preproc_dir,
+        config=AnatomyUint8PreprocessingConfig(
+            force_recompute_anat_uint8=True,
+            apply_func_orientation=False,
+            flip_z_for_registration=False,
+            target_xy_shape=None,
+        ),
+    )
+
+    out = _read_nrrd_zyx(result["bindings"]["ANAT_8BIT_STACK_PATH"])
+    shifted = averaged.astype(np.float64) + 8.0
+    np.testing.assert_array_equal(out, np.rint(shifted * (255.0 / 28.0)).astype(np.uint8))
+    assert result["artifacts"]["source_reader"] == "tifffile (mean of frames per Z slice)"
+
+
 def test_preprocess_anatomy_uint8_stage_flips_z_for_registration(tmp_path: Path) -> None:
     preproc_dir = tmp_path / "preproc"
     raw_path = preproc_dir / "2p_anatomy" / "fish_anatomy_2P_GCaMP.tif"

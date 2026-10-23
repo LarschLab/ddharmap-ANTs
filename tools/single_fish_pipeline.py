@@ -35,6 +35,7 @@ from codeants_2pf_hcr.pipeline import (
     run_match_roi_to_anatomy_stage,
     run_segment_ex_vivo_anatomy_cellpose_stage,
     run_segment_hcr_cellpose_stage,
+    run_segment_in_vivo_anatomy_cellpose_stage,
     run_single_fish_assign_hcr_identity_stage,
     run_single_fish_export_canonical_tables_stage,
     run_single_fish_freeze_legacy_baseline_stage,
@@ -398,22 +399,23 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_ex_vivo.add_argument("--output-path", type=Path)
     prepare_ex_vivo.add_argument("--force-recompute", action="store_true")
 
-    segment_ex_vivo = subparsers.add_parser(
-        "segment-ex-vivo-anatomy-cellpose",
-        help="Writer stage: segment the prepared ex vivo anatomy stack with Cellpose.",
-    )
-    _add_common_fish_args(segment_ex_vivo)
-    segment_ex_vivo.add_argument("--anatomy-stack-path", type=Path)
-    segment_ex_vivo.add_argument("--anat-cp-model-path", required=True, type=Path)
-    _add_gpu_args(segment_ex_vivo)
-    segment_ex_vivo.add_argument("--compute-device")
-    segment_ex_vivo.add_argument("--force-recompute", action="store_true")
-    segment_ex_vivo.add_argument(
-        "--boundary-enhancement",
-        choices=("hessian2d", "none"),
-        default="hessian2d",
-        help="Cellpose input preprocessing (default: Hessian valley subtraction, sigma 1.5 px, beta 0.5)",
-    )
+    for preparation in ("in vivo", "ex vivo"):
+        segment_anatomy = subparsers.add_parser(
+            f"segment-{preparation.replace(' ', '-')}-anatomy-cellpose",
+            help=f"Writer stage: segment the prepared {preparation} anatomy stack with Cellpose.",
+        )
+        _add_common_fish_args(segment_anatomy)
+        segment_anatomy.add_argument("--anatomy-stack-path", type=Path)
+        segment_anatomy.add_argument("--anat-cp-model-path", required=True, type=Path)
+        _add_gpu_args(segment_anatomy)
+        segment_anatomy.add_argument("--compute-device")
+        segment_anatomy.add_argument("--force-recompute", action="store_true")
+        segment_anatomy.add_argument(
+            "--boundary-enhancement",
+            choices=("hessian2d", "none"),
+            default="hessian2d",
+            help="Cellpose input preprocessing (default: Hessian valley subtraction, sigma 1.5 px, beta 0.5)",
+        )
 
     segment_hcr = subparsers.add_parser(
         "segment-hcr-cellpose",
@@ -900,7 +902,12 @@ def main(argv: list[str] | None = None) -> int:
             write_cellpose_stage_manifest(manifest, resolve_pipeline_paths(config))
         sys.stdout.write(stage_manifest_to_json(manifest))
         return 1 if manifest.status == "fail" else 0
-    if args.command == "segment-ex-vivo-anatomy-cellpose":
+    if args.command in ("segment-in-vivo-anatomy-cellpose", "segment-ex-vivo-anatomy-cellpose"):
+        run_segment_anatomy = (
+            run_segment_in_vivo_anatomy_cellpose_stage
+            if args.command == "segment-in-vivo-anatomy-cellpose"
+            else run_segment_ex_vivo_anatomy_cellpose_stage
+        )
         config = SingleFishPipelineConfig(
             fish_id=args.fish_id,
             local_root=args.local_root,
@@ -911,7 +918,7 @@ def main(argv: list[str] | None = None) -> int:
             pipeline_root=args.pipeline_root,
         )
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-            manifest = run_segment_ex_vivo_anatomy_cellpose_stage(
+            manifest = run_segment_anatomy(
                 config,
                 anatomy_stack_path=args.anatomy_stack_path,
                 anat_cp_model_path=args.anat_cp_model_path,
